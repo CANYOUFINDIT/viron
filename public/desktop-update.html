@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'" />
+  <title>Viron Update</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: "Avenir Next", "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+      --paper: #f7f7f7;
+      --surface: #ffffff;
+      --ink: #122024;
+      --muted: #52656b;
+      --line: #d7dfe0;
+      --track: #e8edee;
+      --accent: #18806d;
+      --accent-strong: #126f60;
+      --focus: #219780;
+    }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body { background: var(--paper); color: var(--ink); -webkit-font-smoothing: antialiased; }
+    button { font: inherit; }
+    .titlebar {
+      display: none;
+      height: 38px;
+      padding: 0 16px 0 84px;
+      border-bottom: 1px solid var(--line);
+      align-items: center;
+      background: color-mix(in srgb, var(--surface) 94%, transparent);
+      -webkit-app-region: drag;
+      user-select: none;
+    }
+    body[data-platform="darwin"] .titlebar { display: flex; }
+    .titlebar strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 700; }
+    main {
+      height: 100%;
+      padding: 18px 22px 16px;
+      display: grid;
+      grid-template-columns: 52px minmax(0, 1fr);
+      align-items: center;
+      gap: 20px;
+    }
+    body[data-platform="darwin"] main { height: calc(100% - 38px); }
+    .app-icon-fallback {
+      width: 52px;
+      height: 52px;
+      border-radius: 12px;
+      display: grid;
+      place-items: center;
+      background: #0e4d50;
+      color: #dff2ec;
+      font-size: 24px;
+      font-weight: 700;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .18), 0 2px 4px rgba(8, 22, 25, .16);
+    }
+    .app-icon-fallback[hidden] { display: none; }
+    .content { min-width: 0; }
+    .status {
+      margin: 0 0 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 17px;
+      line-height: 22px;
+      font-weight: 700;
+    }
+    .progress {
+      position: relative;
+      width: 100%;
+      height: 8px;
+      overflow: hidden;
+      border-radius: 4px;
+      background: var(--track);
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--line) 72%, transparent);
+    }
+    .progress > i {
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      background: var(--accent);
+      transform: scaleX(0);
+      transform-origin: left center;
+      transition: transform 180ms cubic-bezier(.22, 1, .36, 1);
+    }
+    .progress.is-indeterminate > i {
+      width: 44%;
+      transform: translateX(-115%);
+      animation: progress-indeterminate 1.15s cubic-bezier(.65, 0, .35, 1) infinite;
+    }
+    .footer { min-width: 0; margin-top: 14px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    .detail {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--muted);
+      font-size: 14px;
+      font-variant-numeric: tabular-nums;
+    }
+    .cancel-button {
+      flex: 0 0 auto;
+      min-width: 100px;
+      height: 36px;
+      padding: 0 18px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface);
+      color: var(--ink);
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 650;
+      transition: background 150ms ease, border-color 150ms ease, transform 100ms ease;
+    }
+    .cancel-button:hover { border-color: #bec8ca; background: #f3f6f5; }
+    .cancel-button:active { transform: translateY(1px); }
+    .cancel-button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+    .cancel-button:disabled { border-color: transparent; background: var(--track); color: var(--muted); cursor: default; transform: none; }
+    @keyframes progress-indeterminate {
+      0% { transform: translateX(-115%); }
+      100% { transform: translateX(330%); }
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --paper: #0e1719;
+        --surface: #152124;
+        --ink: #e7ecea;
+        --muted: #a2b3af;
+        --line: #344844;
+        --track: #263936;
+        --accent: #5bc4a8;
+        --accent-strong: #68cfad;
+        --focus: #68cfad;
+      }
+      .cancel-button:hover { border-color: #526661; background: #1a2a2c; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .progress > i, .cancel-button { transition: none; }
+      .progress.is-indeterminate > i { animation-duration: 2.3s; }
+    }
+  </style>
+</head>
+<body>
+  <header class="titlebar"><strong>Viron Update</strong></header>
+  <main>
+    <div>
+      <span class="app-icon-fallback" aria-hidden="true">V</span>
+    </div>
+    <section class="content">
+      <h1 class="status" aria-live="polite">Downloading update…</h1>
+      <div class="progress" role="progressbar" aria-label="Update download progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div>
+      <footer class="footer">
+        <span class="detail">0 B / 0 B</span>
+        <button class="cancel-button" type="button">Cancel</button>
+      </footer>
+    </section>
+  </main>
+  <script>
+    const status = document.querySelector(".status");
+    const progress = document.querySelector(".progress");
+    const bar = progress.querySelector("i");
+    const detail = document.querySelector(".detail");
+    const cancelButton = document.querySelector(".cancel-button");
+    const titlebar = document.querySelector(".titlebar strong");
+
+    const copies = {
+      "zh-CN": {
+        title: "正在更新 Viron", progress: "更新下载进度", cancelling: "正在取消更新…", cleaning: "正在清理已下载文件",
+        preparing: "正在验证更新…", downloaded: (version) => `Viron ${version} 已下载`, installing: "正在安装更新…",
+        restarting: "安装完成后将自动重新启动", downloading: "正在下载更新…", cancellingButton: "正在取消", cancel: "取消", wait: "请稍候",
+      },
+      en: {
+        title: "Updating Viron", progress: "Update download progress", cancelling: "Cancelling update…", cleaning: "Cleaning downloaded files",
+        preparing: "Verifying update…", downloaded: (version) => `Viron ${version} downloaded`, installing: "Installing update…",
+        restarting: "Viron will restart automatically after installation", downloading: "Downloading update…", cancellingButton: "Cancelling", cancel: "Cancel", wait: "Please wait",
+      },
+    };
+
+    function formatBytes(value) {
+      if (!Number.isFinite(value) || value <= 0) return "0 B";
+      const units = ["B", "KB", "MB", "GB"];
+      const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+      const amount = value / (1024 ** index);
+      return `${index === 0 ? Math.round(amount) : amount.toFixed(1)} ${units[index]}`;
+    }
+
+    function render(state) {
+      const language = state.language === "zh-CN" ? "zh-CN" : "en";
+      const copy = copies[language];
+      document.documentElement.lang = language;
+      document.title = copy.title;
+      titlebar.textContent = copy.title;
+      progress.setAttribute("aria-label", copy.progress);
+      document.body.dataset.platform = state.platform || "unknown";
+      const percent = state.total > 0 ? Math.min(state.received / state.total, 1) : 0;
+      progress.classList.toggle("is-indeterminate", state.phase === "preparing" || state.phase === "installing" || state.phase === "cancelling");
+      if (!progress.classList.contains("is-indeterminate")) bar.style.transform = `scaleX(${percent})`;
+      progress.setAttribute("aria-valuenow", String(Math.round(percent * 100)));
+
+      if (state.phase === "cancelling") {
+        status.textContent = copy.cancelling;
+        detail.textContent = copy.cleaning;
+      } else if (state.phase === "preparing") {
+        status.textContent = copy.preparing;
+        detail.textContent = copy.downloaded(state.version);
+      } else if (state.phase === "installing") {
+        status.textContent = copy.installing;
+        detail.textContent = copy.restarting;
+      } else {
+        status.textContent = copy.downloading;
+        detail.textContent = `${formatBytes(state.received)} / ${formatBytes(state.total)}`;
+      }
+
+      cancelButton.disabled = !state.cancellable;
+      cancelButton.textContent = state.phase === "cancelling" ? copy.cancellingButton : state.cancellable ? copy.cancel : copy.wait;
+    }
+
+    cancelButton.addEventListener("click", () => {
+      if (!cancelButton.disabled) window.vironUpdate.requestCancel();
+    });
+    window.vironUpdate.onState(render);
+  </script>
+</body>
+</html>
