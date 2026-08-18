@@ -8,6 +8,7 @@ const versionedFiles = [
   "docker-compose.full.yml",
   "docker-compose.lite.yml",
   "README.md",
+  "README.zh-CN.md",
   "docs/USER-GUIDE.md",
   "release/README.md",
 ];

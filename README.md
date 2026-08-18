@@ -3,92 +3,127 @@
 <h1 align="center">Viron</h1>
 
 <p align="center">
-  开发运维全家桶<br />
+  <a href="./README.md">English</a> · <a href="./README.zh-CN.md">简体中文</a>
+</p>
+
+<p align="center">
+  An all-in-one workbench for development and operations<br />
   <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" /></a>
   <img alt="Version" src="https://img.shields.io/badge/version-0.1.6-informational.svg" />
 </p>
 
-Viron 是面向开发与运维的一站式工作台。它把 Web 浏览器、SSH 终端、MySQL / MariaDB、Redis、主机监控和 Agent 放在同一个环境里，减少在终端、数据库客户端、浏览器和跳板机之间来回切换。组织、项目组和资源授权用来控制谁能进哪套环境；操作审计、终端录像和 SQL 历史用来追溯谁做了什么。
+Viron keeps a website, SSH hosts, MySQL / MariaDB, Redis, host monitoring, and an Agent in one environment. The goal is to stop jumping between a terminal, a database client, a browser, and a jump host. Organizations, project groups, and resource grants control who can enter which environment. Audit events, terminal recordings, and SQL history show who did what.
 
-<p align="center"><img src="image/封面.png" alt="Viron 登录页" width="920" /></p>
+<p align="center"><img src="image/封面.png" alt="Viron sign-in page" width="920" /></p>
 
-## 功能
+## Server, Web client, and desktop App
 
-- **Web 浏览器**：以网站为单位录入多个登录账号，并可同时打开。账号之间登录态隔离，开发时不用反复切换视角。
-- **SSH 终端**：真实终端，支持登录脚本、命令历史和收藏，常用命令不用反复手敲。同时提供双栏 SFTP，以及浏览器里的 `rz` / `sz`。
-- **数据库**：MySQL / MariaDB 工作台覆盖 Navicat 日常运维中约 70% 的能力，包括对象树、SQL、表设计、数据网格、导入导出和同步。
-- **Redis**：Standalone 工作台覆盖绝大多数常用场景，包括键浏览、六种核心类型维护、TTL 和受控命令。
-- **监控**：经现有 SSH 链路一键安装 `viron-monitor`，采集主机状态，并在异常时告警。
-- **Agent**：内置助手可以分析当前环境信息，必要时按确认直接操作环境数据。同时也提供 MCP，方便接到其他 Agent 里使用。
-- **组织与审计**：个人空间、组织、项目组和资源授权满足企业内部的数据权限控制；操作事件、终端录像和 SQL 历史可按成员追溯。
+Viron is one product with three pieces. They share the same accounts, workspaces, environments, and encrypted credentials. They are not three independent tools.
 
-## 界面
+```text
+                         Viron Server
+              accounts · permissions · credentials
+                   audit · environments
+                            │
+           ┌────────────────┴────────────────┐
+           │                                 │
+    Full edition only                  Lite or Full
+   static UI + Chromium                 API / WebSocket
+           │                                 │
+     Web client                        Desktop App
+   (any browser)                    (macOS / Windows)
+   traffic leaves                    local by default,
+   from the server                   or via the server
+```
 
-示例图来自真实使用界面。图中含内部信息，因此做了大面积马赛克，请见谅。
+**Server** is the control plane. It stores users, organizations, environments, encrypted secrets, and audit records. Every Web session and every App login talks to one server Endpoint. The server has two editions:
 
-**环境总览** — 按组浏览环境卡片，查看每个环境的 Web、SSH、数据库和 Redis 资源。
+| Edition | What it includes | What it does not include |
+| --- | --- | --- |
+| **Full** | API, WebSocket, the Web UI, Chromium for target websites, and server-side forwarding for SSH / SFTP / logs / database / Redis | Nothing required for browser use |
+| **Lite** | API, credential grants, and server-side forwarding for SSH / SFTP / logs / database / Redis | The Web UI and Chromium. Open it from the App, not from a browser. |
 
-<p align="center"><img src="image/环境总览.png" alt="环境总览" width="920" /></p>
+**Web client** is the UI served by a Full server. Open the server URL in a browser. No install is required. Target SSH, database, Redis, logs, and website sessions are opened **on the server**. Website pages run in server-side Chromium. Use this when you want a single egress path and no local client.
 
-**Web 入口** — 同一网站下管理多个账号，登录态相互隔离。
+**Desktop App** is the same workbench, packaged for macOS 12+ and Windows. In the App you enter a Viron Endpoint (Lite or Full). Target connections default to **this computer**. You can switch supported protocols to server forwarding when the machine cannot reach the target. If the server cannot proxy websites (Lite, or Full without that capability), the App still opens those pages with local Chromium. The App also hosts native overlays, local MCP, and system notifications.
 
-<p align="center"><img src="image/环境详情-web.png" alt="环境详情 Web 入口" width="920" /></p>
+| | Web client | Desktop App |
+| --- | --- | --- |
+| How you open it | Browser → Full server URL | Install the App → enter the Endpoint |
+| Works with | Full server | Lite or Full server |
+| Where target traffic starts | Always the server | This computer by default; optional server forwarding |
+| Website pages | Server Chromium | Local Chromium, or server Chromium when Full forwarding is available |
+| Typical fit | No install, shared egress | Direct LAN access, or mixed local / forwarded paths |
 
-**SSH 终端** — 登录脚本、命令历史，以及 SFTP 和 `rz` / `sz`。
+The workbench itself is shared. Switching between Web and App does not create a second product, only a different place for the connection to start.
 
-<p align="center"><img src="image/环境详情-SSH.png" alt="环境详情 SSH 终端" width="920" /></p>
+## Features
 
-**实时日志** — 经 SSH 跟踪多个文件，支持过滤、高亮和上下文。
+- **Web browser.** Save several login accounts per site and open them together. Sessions stay isolated, so you do not keep switching account views while developing.
+- **SSH terminal.** Real sessions with login scripts, command history, and favorites. Also includes dual-pane SFTP and in-browser `rz` / `sz`.
+- **Database.** The MySQL / MariaDB workbench covers about 70% of day-to-day Navicat work: object tree, SQL, table design, data grid, import / export, and sync.
+- **Redis.** The Standalone workbench covers the usual cases: key browsing, the six core types, TTL, and guarded commands.
+- **Monitoring.** Install `viron-monitor` over the existing SSH path, collect host metrics, and raise alerts when something is wrong.
+- **Agent.** The built-in assistant can read the current environment and, after confirmation, operate on it. Viron also exposes MCP so other agents can use the same capabilities.
+- **Organizations and audit.** Personal spaces, organizations, project groups, and grants enforce internal data access. Operations, terminal recordings, and SQL history are attributable per member.
 
-<p align="center"><img src="image/环境详情-日志.png" alt="环境详情实时日志" width="920" /></p>
+## Screenshots
 
-**数据库** — MySQL / MariaDB 对象树、查询和表数据维护。
+These shots come from a real workspace. Internal details are heavily mosaicked.
 
-<p align="center"><img src="image/环境详情-数据库.png" alt="环境详情数据库" width="920" /></p>
+**Environment overview** — Group environment cards and see Web, SSH, database, and Redis resources.
 
-**监控** — 一键安装采集服务，查看主机状态并接收告警。
+<p align="center"><img src="image/环境总览.png" alt="Environment overview" width="920" /></p>
 
-<p align="center"><img src="image/环境详情-服务维护.png" alt="环境详情服务维护" width="920" /></p>
+**Web entries** — Several accounts on the same site, with isolated sessions.
 
-## 运行方式
+<p align="center"><img src="image/环境详情-web.png" alt="Environment Web entries" width="920" /></p>
 
-| 方式 | 适用场景 |
-| --- | --- |
-| Full 服务端 | 浏览器直接打开服务地址。目标连接由中心服务发起，Web 页面由服务端 Chromium 打开。 |
-| Lite 服务端 + 桌面客户端 | 中心只提供控制面和凭据授权。目标流量默认由当前电脑发出。 |
-| Full 服务端 + 桌面客户端 | 可按设备在本机直连与服务端转发之间切换。 |
+**SSH terminal** — Login scripts, command history, SFTP, and `rz` / `sz`.
 
-当前版本为 **0.1.6**。桌面客户端支持 macOS 12+（Apple Silicon / Intel）和 Windows（x86 / x64 / arm64）。
+<p align="center"><img src="image/环境详情-SSH.png" alt="Environment SSH terminal" width="920" /></p>
 
-## 快速开始
+**Live logs** — Follow several files over SSH, with filter, highlight, and context.
 
-需要 Docker 24 与 Docker Compose v2。
+<p align="center"><img src="image/环境详情-日志.png" alt="Environment live logs" width="920" /></p>
+
+**Database** — MySQL / MariaDB object tree, queries, and table data.
+
+<p align="center"><img src="image/环境详情-数据库.png" alt="Environment database" width="920" /></p>
+
+**Monitoring** — One-click collector install, host status, and alerts.
+
+<p align="center"><img src="image/环境详情-服务维护.png" alt="Environment service maintenance" width="920" /></p>
+
+## Quick start
+
+Docker 24 and Docker Compose v2 are required. Current release: **0.1.6**.
 
 ```bash
 cp .env.example .env
 ```
 
-编辑 `.env`，至少修改首次管理员密码。然后启动 Full 服务端：
+Edit `.env` and change the first admin password. Start the Full server:
 
 ```bash
 docker compose -f docker-compose.full.yml up -d --build
 ```
 
-浏览器打开 `http://127.0.0.1:8080`。健康检查为同一地址的 `GET /healthz`。
+Open `http://127.0.0.1:8080` in a browser. Health check: `GET /healthz` on the same origin.
 
-只为桌面客户端提供服务、不需要浏览器页面时，改用 Lite：
+If you only need the desktop App and do not want the browser UI:
 
 ```bash
 docker compose -f docker-compose.lite.yml up -d --build
 ```
 
-生产环境请保持 `ALLOW_WEAK_PASSWORDS=false`。直接使用 HTTP 时保持 `COOKIE_SECURE=false`；放在 HTTPS 反向代理后面时设为 `true`。元数据库默认使用 `DATA_DIR` 下的 SQLite；也可以改为已有的 MySQL 8+ / MariaDB 10.6+。
+Keep `ALLOW_WEAK_PASSWORDS=false` in production. Leave `COOKIE_SECURE=false` for plain HTTP; set it to `true` behind an HTTPS reverse proxy. Metadata defaults to SQLite under `DATA_DIR`, or you can point it at MySQL 8+ / MariaDB 10.6+.
 
-更完整的部署、迁移、备份和客户端安装说明见 [使用手册](./docs/USER-GUIDE.md)。
+Desktop clients support macOS 12+ (Apple Silicon and Intel) and Windows (x86 / x64 / arm64). Deployment, migration, backup, and installer details are in the [user guide](./docs/USER-GUIDE.md).
 
-## 本地开发
+## Local development
 
-需要 Node.js 22.19+。
+Node.js 22.19+ is required.
 
 ```bash
 npm ci
@@ -96,7 +131,7 @@ cp .env.example .env
 ./scripts/dev-service.sh start
 ```
 
-默认 API 地址为 `http://127.0.0.1:8080`。启用浏览器客户端时，开发界面为 `http://127.0.0.1:5173`。
+API: `http://127.0.0.1:8080`. With the Web client enabled, the dev UI is `http://127.0.0.1:5173`.
 
 ```bash
 npm run typecheck
@@ -104,25 +139,25 @@ npm test
 npm run build
 ```
 
-## 文档
+## Documentation
 
-| 文档 | 内容 |
+| Document | Contents |
 | --- | --- |
-| [使用手册](./docs/USER-GUIDE.md) | 功能说明、操作路径和管理维护 |
-| [技术设计](./TECHNICAL-DESIGN.md) | 架构、安全边界、数据模型和验收口径 |
-| [MCP](./docs/MCP.md) | 远程 / 本机 MCP 接入与能力范围 |
-| [脚本同步](./docs/SCRIPT-SYNC.md) | 隔离脚本同步的输入输出约定 |
-| [路线图](./docs/ROADMAP.md) | 尚未交付的后续方向 |
-| [安全政策](./SECURITY.md) | 漏洞披露方式 |
+| [User guide](./docs/USER-GUIDE.md) | Features, operating paths, and administration (Chinese) |
+| [Technical design](./TECHNICAL-DESIGN.md) | Architecture, security boundaries, and acceptance (Chinese) |
+| [MCP](./docs/MCP.md) | Remote and local MCP access (Chinese) |
+| [Script sync](./docs/SCRIPT-SYNC.md) | Isolated script-sync contract (Chinese) |
+| [Roadmap](./docs/ROADMAP.md) | Unshipped directions (Chinese) |
+| [Security policy](./SECURITY.md) | Vulnerability reporting |
 
-## 安全
+## Security
 
-连接密码、私钥、Cookie 和 TLS 材料使用 AES-256-GCM 加密保存。实例主密钥默认生成在数据目录中，权限为 `0600`。MCP 默认关闭；开启后也不会把已保存的秘密写入工具参数或返回结果。
+Passwords, private keys, cookies, and TLS material are stored with AES-256-GCM. The instance master key is created in the data directory with mode `0600`. MCP is off by default and never returns saved secrets in tool arguments or results.
 
-请勿把 `.env`、`data/` 或 `secrets/` 提交到版本库。发现漏洞请按 [SECURITY.md](./SECURITY.md) 私下报告。
+Do not commit `.env`, `data/`, or `secrets/`. Report vulnerabilities privately as described in [SECURITY.md](./SECURITY.md).
 
-## 许可
+## License
 
-本项目以 [Apache License 2.0](./LICENSE) 发布。第三方组件见 [NOTICE](./NOTICE) 和 [monitor/THIRD_PARTY_NOTICES.md](./monitor/THIRD_PARTY_NOTICES.md)。
+Viron is released under the [Apache License 2.0](./LICENSE). Third-party notices are in [NOTICE](./NOTICE) and [monitor/THIRD_PARTY_NOTICES.md](./monitor/THIRD_PARTY_NOTICES.md).
 
-Navicat 是 PremiumSoft CyberTech Ltd. 的商标。SecureCRT 是 VanDyke Software, Inc. 的商标。Viron 与这些产品没有从属关系，仅提供独立实现的连接导入和协议兼容。
+Navicat is a trademark of PremiumSoft CyberTech Ltd. SecureCRT is a trademark of VanDyke Software, Inc. Viron is not affiliated with those products. Import and protocol compatibility are independent implementations.
