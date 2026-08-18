@@ -1,0 +1,88 @@
+name: viron
+
+services:
+  viron:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: full
+      args:
+        APT_MIRROR: "${VIRON_APT_MIRROR:-http://mirrors.aliyun.com/debian}"
+        APT_SECURITY_MIRROR: "${VIRON_APT_SECURITY_MIRROR:-http://mirrors.aliyun.com/debian-security}"
+      additional_contexts:
+        "golang:1.26-bookworm": "docker-image://${VIRON_DOCKER_REGISTRY_MIRROR:-docker.io}/library/golang:1.26-bookworm"
+        "node:22-bookworm-slim": "docker-image://${VIRON_DOCKER_REGISTRY_MIRROR:-docker.io}/library/node:22-bookworm-slim"
+      cache_from:
+        - "type=local,src=${VIRON_DOCKER_CACHE_DIR:-.tmp/docker-build-cache}/compose/full"
+      cache_to:
+        - "type=local,dest=${VIRON_DOCKER_CACHE_DIR:-.tmp/docker-build-cache}/compose/full,mode=max"
+    image: viron-server-full:0.1.6
+    container_name: viron-server
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: "${PORT:-8080}"
+      DATA_DIR: /data
+      NODE_ENV: production
+      SCRIPT_RUNNER_SOCKET: /run/viron-script-runner/runner.sock
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${HOST:-127.0.0.1}:${PORT:-8080}:${PORT:-8080}"
+    volumes:
+      - "${DATA_DIR:-./data}:/data"
+      - "${VIRON_MASTER_KEY_FILE:-./docker/no-external-master-key}:/run/secrets/viron_configured_master_key:ro"
+      - "script-runner-socket:/run/viron-script-runner"
+    depends_on:
+      script-runner:
+        condition: service_healthy
+
+  script-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: script-runner
+      args:
+        APT_MIRROR: "${VIRON_APT_MIRROR:-http://mirrors.aliyun.com/debian}"
+        APT_SECURITY_MIRROR: "${VIRON_APT_SECURITY_MIRROR:-http://mirrors.aliyun.com/debian-security}"
+      additional_contexts:
+        "golang:1.26-bookworm": "docker-image://${VIRON_DOCKER_REGISTRY_MIRROR:-docker.io}/library/golang:1.26-bookworm"
+        "node:22-bookworm-slim": "docker-image://${VIRON_DOCKER_REGISTRY_MIRROR:-docker.io}/library/node:22-bookworm-slim"
+      cache_from:
+        - "type=local,src=${VIRON_DOCKER_CACHE_DIR:-.tmp/docker-build-cache}/compose/script-runner"
+      cache_to:
+        - "type=local,dest=${VIRON_DOCKER_CACHE_DIR:-.tmp/docker-build-cache}/compose/script-runner,mode=max"
+    image: viron-script-runner:0.1.6
+    container_name: viron-script-runner
+    restart: unless-stopped
+    init: true
+    environment:
+      SCRIPT_RUNNER_SOCKET_GID: "${SCRIPT_RUNNER_SOCKET_GID:-10001}"
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - KILL
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    cpus: 1.0
+    mem_limit: 256m
+    pids_limit: 128
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    volumes:
+      - "script-runner-socket:/run/viron-script-runner"
+    networks:
+      - script-egress
+
+networks:
+  script-egress:
+
+volumes:
+  script-runner-socket:

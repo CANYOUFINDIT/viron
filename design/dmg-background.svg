@@ -1,0 +1,37 @@
+<svg width="920" height="400" viewBox="0 0 920 400" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="920" height="400" fill="#F4F7F7"/>
+  <path d="M0 0H920V6H0V0Z" fill="#4ED8B5"/>
+
+  <text
+    x="460"
+    y="58"
+    fill="#11181C"
+    font-family="-apple-system, BlinkMacSystemFont, Helvetica Neue, sans-serif"
+    font-size="25"
+    font-weight="650"
+    text-anchor="middle"
+  >安装 Viron</text>
+  <text
+    x="460"
+    y="88"
+    fill="#5F6B70"
+    font-family="-apple-system, BlinkMacSystemFont, Helvetica Neue, sans-serif"
+    font-size="15"
+    text-anchor="middle"
+  >将 Viron 拖到“应用程序”</text>
+
+  <path d="M348 218H569" stroke="#263D3A" stroke-width="5" stroke-linecap="round"/>
+  <path d="M552 201L571 218L552 235" stroke="#263D3A" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="460" cy="218" r="32" fill="#E5F8F3" stroke="#B9E8DC" stroke-width="2"/>
+  <path d="M445 218H473" stroke="#16866F" stroke-width="4" stroke-linecap="round"/>
+  <path d="M463 208L474 218L463 228" stroke="#16866F" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <text
+    x="460"
+    y="357"
+    fill="#7C888C"
+    font-family="-apple-system, BlinkMacSystemFont, Helvetica Neue, sans-serif"
+    font-size="12"
+    text-anchor="middle"
+  >完成复制后，可从“应用程序”中打开 Viron</text>
+</svg>

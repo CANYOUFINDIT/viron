@@ -1,0 +1,20 @@
+Viron
+Copyright 2026 futongyong
+
+This product includes software developed by third parties. Their licenses
+remain unchanged and are not replaced by the Apache License 2.0 that covers
+Viron itself.
+
+- GSAP (GreenSock Animation Platform)
+  Standard "no charge" license: https://gsap.com/standard-license
+- InfluxData Telegraf v1.39.2 (selected input plugins used by viron-monitor-collector)
+  MIT License
+- Kubernetes client-go, api, and apimachinery v0.36.2
+  Apache License 2.0
+- modernc.org/sqlite
+  BSD 3-Clause License
+- Electron and Chromium (desktop App and Full server edition)
+  Electron MIT License; Chromium BSD-style licenses
+- Other npm and Go dependencies
+  See package-lock.json, monitor/go.mod, monitor/collector/go.mod,
+  and monitor/THIRD_PARTY_NOTICES.md

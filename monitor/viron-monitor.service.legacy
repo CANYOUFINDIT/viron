@@ -1,0 +1,22 @@
+[Unit]
+Description=Viron host and service monitor
+After=local-fs.target
+
+[Service]
+Type=simple
+User=root
+Group=viron-monitor
+EnvironmentFile=-/etc/viron-monitor/viron-monitor.env
+ExecStart=/usr/local/bin/viron-monitor run
+Restart=on-failure
+RestartSec=5s
+UMask=0007
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=full
+ReadWriteDirectories=/var/lib/viron-monitor /run/viron-monitor
+RuntimeDirectory=viron-monitor
+
+[Install]
+WantedBy=multi-user.target

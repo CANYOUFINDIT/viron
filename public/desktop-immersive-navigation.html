@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'" />
+  <title>Viron Immersive Navigation</title>
+  <style>
+    :root { color-scheme: light dark; font-family: "Avenir Next", "PingFang SC", "Microsoft YaHei", sans-serif; }
+    * { box-sizing: border-box; }
+    html, body, #app { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; }
+    button { font: inherit; }
+    .handle, .collapse { padding: 0; border: 0; background: #5d9ad6; color: white; display: grid; place-items: center; cursor: pointer; box-shadow: 0 5px 14px rgba(18,67,112,.28); }
+    .handle { width: 100%; height: 100%; touch-action: none; }
+    body[data-edge="left"] .handle { border-radius: 0 11px 11px 0; }
+    body[data-edge="right"] .handle { border-radius: 11px 0 0 11px; }
+    body[data-edge="top"] .handle { border-radius: 0 0 11px 11px; }
+    .chevron { width: 11px; height: 11px; border-top: 2px solid currentColor; border-right: 2px solid currentColor; }
+    body[data-edge="left"] .handle .chevron { transform: rotate(45deg); }
+    body[data-edge="right"] .handle .chevron { transform: rotate(-135deg); }
+    body[data-edge="top"] .handle .chevron { transform: rotate(135deg); }
+    .panel { position: relative; width: 100%; height: 100%; border: 1px solid #d7dfe0; background: rgba(255,255,255,.97); color: #122024; box-shadow: 0 20px 54px rgba(8,22,25,.22), 0 3px 12px rgba(8,22,25,.12); display: grid; grid-template-rows: auto minmax(0,1fr) auto; overflow: hidden; }
+    body[data-edge="left"] .panel { border-radius: 0 15px 15px 0; }
+    body[data-edge="right"] .panel { border-radius: 15px 0 0 15px; }
+    body[data-edge="top"] .panel { border-radius: 0 0 15px 15px; }
+    .collapse { position: absolute; z-index: 3; width: 28px; height: 42px; }
+    body[data-edge="left"] .collapse { right: 0; top: 32px; border-radius: 9px 0 0 9px; }
+    body[data-edge="right"] .collapse { left: 0; top: 32px; border-radius: 0 9px 9px 0; }
+    body[data-edge="top"] .collapse { left: 32px; bottom: 0; width: 42px; height: 28px; border-radius: 9px 9px 0 0; }
+    body[data-edge="left"] .collapse .chevron { transform: rotate(-135deg); }
+    body[data-edge="right"] .collapse .chevron { transform: rotate(45deg); }
+    body[data-edge="top"] .collapse .chevron { transform: rotate(-45deg); }
+    header { min-height: 72px; padding: 17px 18px 14px; border-bottom: 1px solid #e8edee; background: linear-gradient(135deg, #edf8f4, white); }
+    header span, header strong { display: block; }
+    header span { color: #18806d; font-family: "SFMono-Regular", Consolas, monospace; font-size: 9px; font-weight: 800; letter-spacing: .16em; }
+    header strong { margin-top: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
+    nav { min-height: 0; padding: 10px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #d7dfe0 transparent; }
+    .row { width: 100%; min-width: 0; min-height: 36px; padding: 0 9px; border: 0; border-radius: 7px; background: transparent; color: #52656b; display: grid; grid-template-columns: 18px minmax(0,1fr) auto auto; align-items: center; gap: 7px; text-align: left; cursor: pointer; }
+    .row:hover { background: #f3f6f5; color: #1c2c31; }
+    .row.active { background: #edf8f4; color: #126f60; }
+    .row .icon { width: 18px; text-align: center; font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; font-weight: 800; }
+    .row .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 700; }
+    .row small { min-width: 20px; height: 19px; padding: 0 5px; border-radius: 10px; background: #e8edee; color: #73858a; display: grid; place-items: center; white-space: nowrap; font-size: 10px; }
+    .row small.planned { width: auto; background: #ffedc8; color: #b46b0d; }
+    .twisty { width: 7px; height: 7px; margin-right: 2px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg); transition: transform .16s ease; }
+    .twisty.closed { transform: rotate(-45deg); }
+    .branch { position: relative; }
+    .web-branch::before, .account-branch::before { content: ""; position: absolute; top: 0; bottom: 4px; width: 1px; background: #e8edee; }
+    .web-branch::before { left: 18px; }
+    .account-branch::before { left: 31px; }
+    .row.level-2 { padding-left: 14px; grid-template-columns: 12px minmax(0,1fr) auto auto; }
+    .row.level-2 .icon { width: 6px; height: 6px; margin-left: 1px; border: 1px solid #219780; border-radius: 50%; background: white; font-size: 0; }
+    .row.level-3 { min-height: 32px; padding-left: 28px; grid-template-columns: 15px minmax(0,1fr); }
+    .row.level-3 .label { font-size: 11px; font-weight: 650; }
+    .empty { min-height: 31px; padding: 7px 10px 7px 43px; color: #9aa8ac; display: flex; align-items: center; font-size: 10px; }
+    footer { padding: 10px; border-top: 1px solid #e8edee; }
+    footer button { width: 100%; height: 34px; padding: 0 10px; border: 1px solid #e8edee; border-radius: 7px; background: white; color: #73858a; cursor: pointer; font-size: 11px; font-weight: 700; }
+    footer button:hover { border-color: #f8dedb; background: #f8dedb; color: #b7473f; }
+    body[data-theme="dark"] { color-scheme: dark; }
+    body[data-theme="dark"] .panel { border-color: #344844; background: rgba(21,33,36,.98); color: #e7ecea; }
+    body[data-theme="dark"] header { border-color: #263936; background: linear-gradient(135deg, #14312d, #152124); }
+    body[data-theme="dark"] nav { scrollbar-color: #344844 transparent; }
+    body[data-theme="dark"] .row { color: #a2b3af; }
+    body[data-theme="dark"] .row:hover { background: #1a2a2c; color: #e7ecea; }
+    body[data-theme="dark"] .row.active { background: #14312d; color: #68cfad; }
+    body[data-theme="dark"] .row small { background: #263936; color: #849792; }
+    body[data-theme="dark"] .web-branch::before, body[data-theme="dark"] .account-branch::before { background: #263936; }
+    body[data-theme="dark"] .row.level-2 .icon, body[data-theme="dark"] footer button { background: #152124; }
+    body[data-theme="dark"] footer { border-color: #263936; }
+    body[data-theme="dark"] footer button { border-color: #263936; color: #849792; }
+  </style>
+</head>
+<body data-edge="right">
+  <main id="app"></main>
+  <script>
+    const api = window.vironImmersiveNavigation;
+    const app = document.getElementById("app");
+    let state = null;
+    let pointerStart = null;
+    let dragging = false;
+    let hoverOpenTimer = null;
+    let hoverCollapseTimer = null;
+
+    function clearHoverOpen() {
+      if (hoverOpenTimer === null) return;
+      window.clearTimeout(hoverOpenTimer);
+      hoverOpenTimer = null;
+    }
+
+    function clearHoverCollapse() {
+      if (hoverCollapseTimer === null) return;
+      window.clearTimeout(hoverCollapseTimer);
+      hoverCollapseTimer = null;
+    }
+
+    function scheduleHoverOpen() {
+      clearHoverCollapse();
+      if (!state || state.expanded || pointerStart || hoverOpenTimer !== null) return;
+      hoverOpenTimer = window.setTimeout(() => {
+        hoverOpenTimer = null;
+        if (state && !state.expanded && !pointerStart) api.action({ type: "toggle" });
+      }, 120);
+    }
+
+    function scheduleHoverCollapse() {
+      clearHoverOpen();
+      if (!state?.expanded || hoverCollapseTimer !== null) return;
+      hoverCollapseTimer = window.setTimeout(() => {
+        hoverCollapseTimer = null;
+        if (state?.expanded) api.action({ type: "collapse" });
+      }, 80);
+    }
+
+    function element(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    function button(className, action, label) {
+      const node = element("button", className);
+      node.type = "button";
+      if (label) node.setAttribute("aria-label", label);
+      node.addEventListener("click", () => api.action(action));
+      return node;
+    }
+
+    function chevron() { return element("span", "chevron"); }
+
+    function treeRow({ level = 1, icon, label, count, active, planned, tag, twisty, action }) {
+      const row = button(`row level-${level}${active ? " active" : ""}`, action, label);
+      row.append(element("span", "icon", icon), element("span", "label", label));
+      if (tag !== undefined) row.append(element("small", "planned", String(tag)));
+      if (count !== undefined) row.append(element("small", planned ? "planned" : "", String(count)));
+      if (twisty !== undefined) row.append(element("span", `twisty${twisty ? "" : " closed"}`));
+      return row;
+    }
+
+    function attachHandleDrag(handle) {
+      handle.addEventListener("pointerenter", (event) => {
+        if (event.pointerType === "mouse") scheduleHoverOpen();
+      });
+      handle.addEventListener("pointerleave", (event) => {
+        if (event.pointerType === "mouse") clearHoverOpen();
+      });
+      handle.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0) return;
+        clearHoverOpen();
+        pointerStart = { x: event.screenX, y: event.screenY };
+        dragging = false;
+        handle.setPointerCapture(event.pointerId);
+      });
+      handle.addEventListener("pointermove", (event) => {
+        if (!pointerStart) return;
+        if (!dragging && Math.hypot(event.screenX - pointerStart.x, event.screenY - pointerStart.y) < 5) return;
+        if (!dragging) api.action({ type: "drag-start", screenX: pointerStart.x, screenY: pointerStart.y });
+        dragging = true;
+        api.action({ type: "drag-move", screenX: event.screenX, screenY: event.screenY });
+      });
+      const finish = (event) => {
+        if (!pointerStart) return;
+        if (dragging) api.action({ type: "drag-end", screenX: event.screenX, screenY: event.screenY });
+        else api.action({ type: "toggle" });
+        pointerStart = null;
+        dragging = false;
+      };
+      handle.addEventListener("pointerup", finish);
+      handle.addEventListener("pointercancel", (event) => {
+        if (dragging) api.action({ type: "drag-end", screenX: event.screenX, screenY: event.screenY });
+        pointerStart = null;
+        dragging = false;
+      });
+      handle.addEventListener("click", (event) => {
+        if (event.detail === 0) api.action({ type: "toggle" });
+      });
+    }
+
+    function render() {
+      if (!state) {
+        app.replaceChildren();
+        return;
+      }
+      document.body.dataset.edge = state.dock.edge;
+      document.body.dataset.theme = state.dark ? "dark" : "light";
+      const zh = state.language === "zh-CN";
+      const copy = (chinese, english) => zh ? chinese : english;
+      document.documentElement.lang = zh ? "zh-CN" : "en";
+      app.replaceChildren();
+      if (!state.expanded) {
+        const handle = element("button", "handle");
+        handle.type = "button";
+        handle.setAttribute("aria-label", copy("展开环境导航", "Expand environment navigation"));
+        handle.append(chevron());
+        attachHandleDrag(handle);
+        app.append(handle);
+        return;
+      }
+
+      const panel = element("section", "panel");
+      panel.addEventListener("pointerenter", (event) => {
+        if (event.pointerType === "mouse") clearHoverCollapse();
+      });
+      panel.addEventListener("pointerleave", (event) => {
+        if (event.pointerType === "mouse") scheduleHoverCollapse();
+      });
+      const collapse = button("collapse", { type: "collapse" }, copy("收起环境导航", "Collapse environment navigation"));
+      collapse.append(chevron());
+      const header = element("header");
+      header.append(element("span", "", "IMMERSIVE WORKSPACE"), element("strong", "", state.environmentName));
+      const nav = element("nav");
+      nav.append(treeRow({ icon: "◎", label: copy("Web 入口", "Web Entries"), count: state.counts.web, active: state.activeTab === "web", twisty: state.webExpanded, action: { type: "toggle-web" } }));
+      if (state.webExpanded) {
+        const webBranch = element("div", "branch web-branch");
+        for (const entry of state.entries) {
+          webBranch.append(treeRow({ level: 2, icon: "", label: entry.name, count: entry.credentialCount, active: state.selectedEntryId === entry.id, twisty: state.expandedEntryId === entry.id, action: { type: "toggle-entry", entryId: entry.id } }));
+          if (state.expandedEntryId === entry.id) {
+            const accounts = element("div", "branch account-branch");
+            if (entry.loading) accounts.append(element("span", "empty", copy("正在读取登录账号…", "Loading login accounts…")));
+            for (const credential of entry.credentials || []) {
+              accounts.append(treeRow({ level: 3, icon: "⌁", label: credential.username, active: state.activeTab === "web" && state.selectedEntryId === entry.id && state.selectedCredentialId === credential.id, action: { type: "select-credential", entryId: entry.id, credentialId: credential.id } }));
+            }
+            if (!entry.loading && entry.credentials && !entry.credentials.length) accounts.append(element("span", "empty", copy("暂无登录账号", "No login accounts")));
+            webBranch.append(accounts);
+          }
+        }
+        if (!state.entries.length) webBranch.append(element("span", "empty", copy("暂无 Web 入口", "No Web entries")));
+        nav.append(webBranch);
+      }
+      nav.append(
+        treeRow({ icon: ">_", label: copy("SSH 终端", "SSH Terminal"), count: state.counts.ssh, active: state.activeTab === "ssh", action: { type: "select-tab", tab: "ssh" } }),
+        treeRow({ icon: "≡", label: copy("日志", "Logs"), count: state.counts.logs, active: state.activeTab === "logs", action: { type: "select-tab", tab: "logs" } }),
+        treeRow({ icon: "◫", label: copy("数据库", "Database"), count: state.counts.database, active: state.activeTab === "database", action: { type: "select-tab", tab: "database" } }),
+        treeRow({ icon: "R", label: "Redis", count: state.counts.redis, active: state.activeTab === "redis", action: { type: "select-tab", tab: "redis" } }),
+        treeRow({ icon: "▤", label: copy("知识库", "Knowledge Base"), count: state.counts.knowledge, active: state.activeTab === "knowledge", action: { type: "select-tab", tab: "knowledge" } }),
+        treeRow({ icon: "⌕", label: copy("服务维护", "Service Maintenance"), tag: copy("开发中", "In development"), count: `${copy("服务", "Services")} ${state.counts.maintenance} · ${copy("主机", "Hosts")} ${state.maintenanceHostCount}`, active: state.activeTab === "maintenance", action: { type: "select-tab", tab: "maintenance" } }),
+      );
+      const footer = element("footer");
+      footer.append(button("", { type: "exit" }, copy("退出沉浸模式", "Exit immersive mode")));
+      panel.append(collapse, header, nav, footer);
+      app.append(panel);
+    }
+
+    api.onState((next) => {
+      state = next;
+      if (!state?.expanded) clearHoverCollapse();
+      render();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && state?.expanded) api.action({ type: "collapse" });
+    });
+  </script>
+</body>
+</html>
