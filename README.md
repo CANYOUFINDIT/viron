@@ -10,6 +10,8 @@
 
 Viron 把同一个业务环境里的网站入口、SSH 主机、MySQL / MariaDB、Redis、实时日志和服务监控放在一个工作空间中，并在浏览器与桌面客户端里直接完成操作。连接凭据由服务端加密保存，权限按工作空间校验。
 
+<p align="center"><img src="image/封面.png" alt="Viron 登录页" width="920" /></p>
+
 ## 功能
 
 - **环境工作区**：按环境组织 Web、SSH、日志、数据库、Redis 和服务维护；后台已连接环境可用画中画返回现场。
@@ -20,6 +22,32 @@ Viron 把同一个业务环境里的网站入口、SSH 主机、MySQL / MariaDB�
 - **服务维护**：经现有 SSH 链路安装 `viron-monitor`，纳管 systemd、Docker、Podman、Supervisor 和 Kubernetes 工作负载，并提供趋势图与告警。
 - **协作与审计**：个人空间、组织、项目组和资源授权；操作事件、终端录像与 SQL 历史可追溯。
 - **MCP**：可选接入 Codex 等 MCP 客户端，在当前账号权限内读取资源并执行受控操作。
+
+## 界面
+
+**环境总览** — 按组浏览环境卡片，查看每个环境的 Web、SSH、数据库和 Redis 资源。
+
+<p align="center"><img src="image/环境总览.png" alt="环境总览" width="920" /></p>
+
+**Web 入口** — 同一环境内切换网站和登录账号，按需打开隔离的浏览器页面。
+
+<p align="center"><img src="image/环境详情-web.png" alt="环境详情 Web 入口" width="920" /></p>
+
+**SSH 终端** — 真实终端、命令历史与收藏，以及分屏和 SFTP。
+
+<p align="center"><img src="image/环境详情-SSH.png" alt="环境详情 SSH 终端" width="920" /></p>
+
+**实时日志** — 经 SSH 跟踪多个文件，支持过滤、高亮和上下文。
+
+<p align="center"><img src="image/环境详情-日志.png" alt="环境详情实时日志" width="920" /></p>
+
+**数据库** — MySQL / MariaDB 对象树、查询和表数据维护。
+
+<p align="center"><img src="image/环境详情-数据库.png" alt="环境详情数据库" width="920" /></p>
+
+**服务维护** — 宿主机监控、服务发现和告警。
+
+<p align="center"><img src="image/环境详情-服务维护.png" alt="环境详情服务维护" width="920" /></p>
 
 ## 运行方式
 
