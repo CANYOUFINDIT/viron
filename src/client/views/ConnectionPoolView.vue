@@ -1067,7 +1067,7 @@ onMounted(async () => {
     <el-dialog v-model="environmentDialog" align-center class="envman-dialog connection-environment-dialog" width="620px" append-to-body>
       <template #header><div class="dialog-title"><span class="dialog-title__icon"><Layers3 :size="19" /></span><div><h3>{{ $t('新建环境') }}</h3></div><TipIcon :content="$t('创建后会自动选中该环境，当前连接表单不会被清空。')" placement="left" /></div></template>
       <el-form label-position="top" class="dialog-form-grid">
-        <el-form-item :label="$t('环境名称')" required><el-input v-model="environmentForm.name" maxlength="120" :placeholder="$t('例如：NCCP 生产环境')" /></el-form-item>
+        <el-form-item :label="$t('环境名称')" required><el-input v-model="environmentForm.name" maxlength="120" :placeholder="$t('例如：生产环境')" /></el-form-item>
         <el-form-item :label="$t('环境组')"><div class="inline-create-field"><el-select v-model="environmentForm.groupId" clearable :placeholder="$t('未分组')"><el-option v-for="group in environmentGroups" :key="group.id" :label="group.name" :value="group.id" /></el-select><el-button :aria-label="$t('新建环境组')" :title="$t('新建环境组')" @click="openEnvironmentGroupCreate"><Plus :size="14" /></el-button></div></el-form-item>
         <el-form-item :label="$t('标签')" class="form-span-2"><el-input v-model="environmentForm.tags" :placeholder="$t('多个标签用逗号分隔')" /></el-form-item>
         <el-form-item :label="$t('环境说明')" class="form-span-2"><el-input v-model="environmentForm.description" type="textarea" :rows="3" maxlength="2000" /></el-form-item>
