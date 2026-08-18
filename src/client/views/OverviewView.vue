@@ -744,7 +744,7 @@ onMounted(load);
 
     <el-dialog v-model="environmentDialog" align-center class="envman-dialog" :title="$t('新建环境')" width="620px">
       <el-form label-position="top" class="dialog-form-grid">
-        <el-form-item :label="$t('环境名称')" required><el-input v-model="environmentForm.name" :placeholder="$t('例如：NCCP 生产环境')" /></el-form-item>
+        <el-form-item :label="$t('环境名称')" required><el-input v-model="environmentForm.name" :placeholder="$t('例如：生产环境')" /></el-form-item>
         <el-form-item :label="$t('环境组')"><el-select v-model="environmentForm.groupId" clearable :placeholder="$t('未分组')" style="width:100%"><el-option v-for="group in groups" :key="group.id" :label="group.name" :value="group.id" /></el-select></el-form-item>
         <el-form-item :label="$t('标签')" class="form-span-2"><el-input v-model="environmentForm.tags" :placeholder="$t('多个标签用逗号分隔')" /></el-form-item>
         <el-form-item :label="$t('环境说明')" class="form-span-2"><el-input v-model="environmentForm.description" type="textarea" :rows="3" /></el-form-item>

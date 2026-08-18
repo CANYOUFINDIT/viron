@@ -223,7 +223,7 @@ onMounted(load);
 
     <el-dialog v-model="importDialog" align-center class="envman-dialog" :title="$t('导入外部 SSH 密钥')" width="680px">
       <el-form label-position="top" class="vault-form">
-        <el-form-item :label="$t('密钥名称')" required><el-input v-model="importForm.name" maxlength="160" :placeholder="$t('例如 One-Agent 194 id_rsa')" /></el-form-item>
+        <el-form-item :label="$t('密钥名称')" required><el-input v-model="importForm.name" maxlength="160" :placeholder="$t('例如 bastion-01 id_rsa')" /></el-form-item>
         <el-form-item :label="$t('私钥口令')"><el-input v-model="importForm.passphrase" type="password" show-password :placeholder="$t('私钥未加密时留空')" /></el-form-item>
         <el-form-item :label="$t('私钥文件')" class="form-span-2">
           <label class="key-file-picker"><input ref="keyFileInput" type="file" accept=".pem,.key,.ppk,id_rsa,id_ed25519,text/plain" @change="selectKeyFile"><Upload :size="17" /><span><strong>{{ importForm.filename || $t('选择私钥文件') }}</strong><small>{{ $t('OpenSSH、PEM、PKCS#1 或 PKCS#8，最大 128 KiB') }}</small></span></label>

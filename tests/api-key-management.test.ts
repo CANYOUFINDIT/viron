@@ -48,7 +48,7 @@ describe("API key management and provisioning", () => {
       method: "POST",
       url: "/api/v1/platform/api-keys",
       cookies: adminCookie,
-      payload: { name: "one-agent" },
+      payload: { name: "integration-client" },
     });
     expect(platformKeyResponse.statusCode).toBe(201);
     const platformKey = platformKeyResponse.json().apiKey as string;
@@ -69,17 +69,17 @@ describe("API key management and provisioning", () => {
     const ownerId = ensureOwner.json().id as string;
     const ensureUser = await app.inject({
       method: "POST", url: "/api/v1/platform/users/ensure", headers: platformHeaders,
-      payload: { username: "one-agent-user", password: "User-password-123" },
+      payload: { username: "integration-client-user", password: "User-password-123" },
     });
     const userId = ensureUser.json().id as string;
     expect((await app.inject({
       method: "POST", url: "/api/v1/platform/users/ensure", headers: platformHeaders,
-      payload: { username: "one-agent-user", password: "Different-password-123" },
+      payload: { username: "integration-client-user", password: "Different-password-123" },
     })).json()).toMatchObject({ id: userId, created: false });
 
     const organizationResponse = await app.inject({
       method: "POST", url: "/api/v1/platform/organizations/ensure", headers: platformHeaders,
-      payload: { name: "One Agent", ownerUserId: ownerId },
+      payload: { name: "Operations", ownerUserId: ownerId },
     });
     const organizationId = organizationResponse.json().id as string;
     expect(organizationResponse.json()).toMatchObject({ ownerUserId: ownerId, created: true });
@@ -101,7 +101,7 @@ describe("API key management and provisioning", () => {
 
     const personalKeyResponse = await app.inject({
       method: "POST", url: `/api/v1/platform/users/${userId}/api-keys`, headers: platformHeaders,
-      payload: { name: "one-agent-login" },
+      payload: { name: "integration-client-login" },
     });
     expect(personalKeyResponse.statusCode).toBe(201);
     const personalKey = personalKeyResponse.json().apiKey as string;
@@ -127,7 +127,7 @@ describe("API key management and provisioning", () => {
     expect(consume.headers["cache-control"]).toBe("no-store");
     const sessionCookie = consume.cookies.find((item) => item.name === "envman_session")!.value;
     const me = await app.inject({ method: "GET", url: "/api/v1/auth/me", cookies: { envman_session: sessionCookie } });
-    expect(me.json()).toMatchObject({ user: { id: userId, username: "one-agent-user" }, workspace: { id: organizationId, role: "member" } });
+    expect(me.json()).toMatchObject({ user: { id: userId, username: "integration-client-user" }, workspace: { id: organizationId, role: "member" } });
 
     const replay = await app.inject({
       method: "POST", url: "/auth/api-key/consume",

@@ -97,10 +97,10 @@ describe("workspace SSH key management", () => {
         method: "POST",
         url: "/api/v1/ssh-keys/import",
         cookies: admin,
-        payload: { name: "One-Agent 194", privateKey: importedPair.private, passphrase: "" },
+        payload: { name: "bastion-01", privateKey: importedPair.private, passphrase: "" },
       });
       expect(imported.statusCode, imported.body).toBe(201);
-      expect(imported.json()).toMatchObject({ name: "One-Agent 194", algorithm: "ssh-ed25519", connectionCount: 0 });
+      expect(imported.json()).toMatchObject({ name: "bastion-01", algorithm: "ssh-ed25519", connectionCount: 0 });
       expect(imported.body).not.toContain("OPENSSH PRIVATE KEY");
 
       const generated = await app.inject({
@@ -216,7 +216,7 @@ describe("workspace SSH key management", () => {
 
       const list = await app.inject({ method: "GET", url: "/api/v1/ssh-keys", cookies: admin });
       expect(list.json().items).toEqual(expect.arrayContaining([
-        expect.objectContaining({ id: imported.json().id, name: "One-Agent 194", connectionCount: 2 }),
+        expect.objectContaining({ id: imported.json().id, name: "bastion-01", connectionCount: 2 }),
         expect.objectContaining({ id: generated.json().id, name: "Viron generated", connectionCount: 0 }),
       ]));
       expect(list.body).not.toContain("OPENSSH PRIVATE KEY");

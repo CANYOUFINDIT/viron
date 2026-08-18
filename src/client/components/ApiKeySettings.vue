@@ -197,7 +197,7 @@ onMounted(loadKeys);
         <div><strong>{{ $t("平台 API Key") }}</strong><small>{{ $t("仅平台管理员维护。它可以调用账号、组织和项目组供应接口，请只保存在受信任的服务端。") }}</small></div>
       </div>
       <div class="key-create-row">
-        <el-input v-model="platformName" maxlength="128" :placeholder='$t("例如：One-Agent")' @keyup.enter="createKey('platform')" />
+        <el-input v-model="platformName" maxlength="128" :placeholder='$t("例如：集成服务")' @keyup.enter="createKey('platform')" />
         <el-button type="primary" :loading="saving" @click="createKey('platform')"><Plus :size="15" />{{ $t("创建平台 Key") }}</el-button>
       </div>
       <div class="key-list">
