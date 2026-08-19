@@ -108,7 +108,7 @@ cp .env.example .env
 docker compose -f docker-compose.full.yml up -d --build
 ```
 
-浏览器打开 `http://127.0.0.1:8080`。健康检查为同一地址的 `GET /healthz`。
+浏览器打开 `http://127.0.0.1:8080`。存活检查为同一地址的 `GET /healthz`；容器健康检查为 `GET /readyz`，它会真实探测元数据库，不可用时返回 503。
 
 只为桌面客户端提供服务、不需要浏览器页面时，改用 Lite：
 

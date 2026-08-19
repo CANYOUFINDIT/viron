@@ -1055,10 +1055,11 @@ docker compose -f docker-compose.full.yml up -d --build
 ```bash
 docker compose -f docker-compose.full.yml ps
 curl http://127.0.0.1:8080/healthz
+curl http://127.0.0.1:8080/readyz
 curl http://127.0.0.1:8080/api/v1/version
 ```
 
-Lite 部署把命令中的 Compose 文件改为 `docker-compose.lite.yml`。两个文件都会启动非 root `viron` 主服务和不发布端口、没有 Viron 数据挂载的 `script-runner`；主服务健康检查会等待 Runner 的 Unix Socket 就绪。成功时 `/healthz` 返回 HTTP 200、`status: "ok"`、`product: "viron"` 和 `productVersion: "0.1.6"`；版本接口也应返回服务端 `0.1.6`、API 协议范围和各平台安装包状态。只有端口可访问但版本或产品不符，不能视为 0.1.6 验证通过。
+Lite 部署把命令中的 Compose 文件改为 `docker-compose.lite.yml`。两个文件都会启动非 root `viron` 主服务和不发布端口、没有 Viron 数据挂载的 `script-runner`；主服务健康检查会等待 Runner 的 Unix Socket 就绪。成功时 `/healthz` 返回 HTTP 200、`status: "ok"`、`product: "viron"` 和 `productVersion: "0.1.6"`；版本接口也应返回服务端 `0.1.6`、API 协议范围和各平台安装包状态。只有端口可访问但版本或产品不符，不能视为 0.1.6 验证通过。`/healthz` 只表示进程存活与产品身份，不接触元数据库；容器 HEALTHCHECK 打的是 `/readyz`，它会真实探测元数据库，正常返回 HTTP 200 和 `status: "ok"`，元数据库不可用时返回 HTTP 503 和 `error: "DATABASE_UNAVAILABLE"`，容器随之判为 unhealthy。
 
 ### 18.2 使用 MySQL/MariaDB 作为元数据库
 
