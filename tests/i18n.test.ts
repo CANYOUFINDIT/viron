@@ -38,6 +38,7 @@ describe("Viron message catalog", () => {
     expect(translateMessage("en", "设置")).toBe("Settings");
     expect(translateMessage("en", "请求失败（{{0}}）", [503])).toBe("Request failed (503)");
     expect(localizeUnknownMessage("en", "请求失败（502）")).toBe("Request failed (502)");
+    expect(translateMessage("en", "元数据库不可用")).toBe("Metadata database unavailable");
     expect(translateMessage("zh-CN", "请求失败（{{0}}）", [503])).toBe("请求失败（503）");
   });
 });

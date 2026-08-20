@@ -3411,6 +3411,7 @@ const generatedEnMessages: Record<string, string> = {
   "预览": "Preview",
   "预览与已存在连接处理": "Preview and existing connection processing",
   "遇到错误时继续": "Continue on error",
+  "元数据库不可用": "Metadata database unavailable",
   "元素": "element",
   "元素已追加到 List 尾部": "Elements have been appended to the end of the List",
   "元素值": "element value",

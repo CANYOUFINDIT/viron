@@ -138,4 +138,30 @@ describe("Viron readiness probe", () => {
     renameSync(`${config.databasePath}.moved`, config.databasePath);
     await app.close();
   });
+
+  it("localizes the unavailable message for English clients", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "viron-readyz-i18n-test-"));
+    directories.push(directory);
+    const config = configFor(directory);
+    const db = await openDatabase(config);
+    await ensureAdmin(db, config);
+    const app = await buildApp({ config, db, logger: false });
+
+    renameSync(config.databasePath, `${config.databasePath}.moved`);
+    const english = await app.inject({ method: "GET", url: "/readyz", headers: { "accept-language": "en" } });
+    expect(english.statusCode).toBe(503);
+    expect(english.json()).toEqual({
+      error: "DATABASE_UNAVAILABLE",
+      message: "Metadata database unavailable",
+    });
+    const chinese = await app.inject({ method: "GET", url: "/readyz", headers: { "accept-language": "zh-CN" } });
+    expect(chinese.statusCode).toBe(503);
+    expect(chinese.json()).toEqual({
+      error: "DATABASE_UNAVAILABLE",
+      message: "元数据库不可用",
+    });
+
+    renameSync(`${config.databasePath}.moved`, config.databasePath);
+    await app.close();
+  });
 });
