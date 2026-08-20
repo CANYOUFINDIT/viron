@@ -1,4 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { constants } from "node:fs";
+import { access } from "node:fs/promises";
 import type Database from "better-sqlite3";
 import mysql, { type Pool, type PoolConnection, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
 
@@ -21,6 +23,7 @@ export interface EnvmanDatabase {
   exec(sql: string): Promise<void>;
   transaction<T>(callback: () => T | Promise<T>): () => Promise<T>;
   backup(destinationPath: string): Promise<void>;
+  ping(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -79,6 +82,14 @@ export class SqliteDatabaseClient implements EnvmanDatabase {
 
   backup(destinationPath: string): Promise<void> {
     return this.mutex.run(() => this.raw.backup(destinationPath).then(() => undefined));
+  }
+
+  async ping(): Promise<void> {
+    // 两段检查缺一不可：进程已经持有库文件的 fd，删除库文件或改成不可读写之后任何 SQL 依然成功，
+    // 只有校验库文件路径本身才能发现；反过来路径检查看不到连接已关闭、页损坏这类故障，需要真实读兜住。
+    if (!this.raw.memory && this.raw.name) await access(this.raw.name, constants.R_OK | constants.W_OK);
+    // 必须读到真实数据页，`SELECT 1` 是常量表达式，由表达式求值器直接算出、不碰任何数据页。
+    await this.prepare("SELECT count(*) AS count FROM sqlite_master").get();
   }
 
   close(): Promise<void> {
@@ -177,6 +188,12 @@ export class MysqlDatabaseClient implements EnvmanDatabase {
 
   async backup(): Promise<void> {
     throw new Error("MySQL 模式暂不支持平台快照导出");
+  }
+
+  async ping(): Promise<void> {
+    // 直接用连接池而不是 this.query：就绪检查要验证的正是连接池仍能拿到可用连接，
+    // 不能被 AsyncLocalStorage 里正在进行的事务连接顶替。
+    await this.pool.query("SELECT 1");
   }
 
   async close(): Promise<void> {

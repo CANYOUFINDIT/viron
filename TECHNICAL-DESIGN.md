@@ -741,7 +741,8 @@ API 前缀：`/api/v1`
 
 ### 14.0 产品与协议发现
 
-- `GET /healthz`：返回运行状态、兼容保留的 `version`、`product=viron`、根 `package.json` 中的 `productVersion`、API 协议范围和当前服务端转发能力。
+- `GET /healthz`：返回运行状态、兼容保留的 `version`、`product=viron`、根 `package.json` 中的 `productVersion`、API 协议范围和当前服务端转发能力。只表示进程存活与产品身份，不接触元数据库。
+- `GET /readyz`：真实探测元数据库连通性。SQLite 校验库文件路径仍可读写并执行一次读到数据页的查询；MySQL 用连接池执行 `SELECT 1`。正常返回 HTTP 200 和 `status: "ok"`、`database` 为当前方言；不可用或超过就绪检查时限时返回 HTTP 503 和 `DATABASE_UNAVAILABLE`，原始错误只写日志不进响应。容器 HEALTHCHECK 使用该端点。
 - `GET /api/v1/capabilities`：无需登录即可返回产品标识、产品版本、API 协议最小/最大值、`desktopLocal.web/ssh/sftp/logs/database/redis/inspection` 及对应服务端转发分项能力；不返回连接、凭据或内部地址。API 协议 v2 表示中心服务支持本机 Web、SSH/SFTP/日志、数据库、Redis 和连接巡检共用的设备密钥、一次性凭据信封和签名报告接口。
 - `GET /api/v1/version`：无需登录返回服务端产品版本、当前 API 协议版本与兼容范围，以及统一安装包清单中 macOS `arm64/x64`、Windows `x86/x64/arm64` 的客户端版本、可用状态、固定同源下载 URL、真实文件名和大小。服务端与所有客户端的产品 SemVer 只来自根 `package.json`。
 - `GET /api/v1/desktop-installers/:platform/:architecture`：无需登录从统一安装包清单流式返回精确平台/架构包；精确架构不存在时回退到同平台 Universal 包。没有匹配项时返回 `DESKTOP_INSTALLER_NOT_AVAILABLE`，不回退到其他具体架构。
@@ -919,7 +920,7 @@ Compose 提供两个互斥的主服务入口，并为两者配置同一隔离 Ru
 - 两个 Compose 文件都启动 `viron` 与 `script-runner`。`script-runner` 不发布端口、不挂载 `/data`，只挂载 `DATA_DIR/script-runner` 中的 Unix Socket 目录；它使用只读根文件系统、独立临时文件系统、能力白名单和 CPU/内存/PID 限额。主服务仍是唯一对外 HTTP/WebSocket 入口，不引入 Nginx。
 - `HOST` 表示宿主机端口绑定地址；容器内部固定监听 `0.0.0.0`。`PORT` 同时用于宿主机发布和容器监听。`DATA_DIR` 表示宿主机路径，Compose 将其挂载到容器 `/data`。
 - `DATABASE_HOST=127.0.0.1`、`localhost` 或 `::1` 在镜像内映射为 `host.docker.internal`，Linux Compose 通过 `host-gateway` 提供该名称；其他地址原样使用。
-- 对外健康检查固定为同一 Viron Endpoint 下的 `GET /healthz`。
+- 对外健康检查固定为同一 Viron Endpoint 下的 `GET /readyz`；`GET /healthz` 仍是不接触元数据库的存活与产品识别端点。
 
 ### 16.2 镜像
 

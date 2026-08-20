@@ -127,6 +127,16 @@ export async function buildApp(options: BuildAppOptions) {
   await app.register(websocket);
 
   app.get("/healthz", async () => ({ status: "ok", version: PRODUCT_VERSION, ...productCapabilities(webClientEnabled, options.config.mcpEnabled === true) }));
+  app.get("/readyz", async (_request, reply) => {
+    try {
+      await app.db.ping();
+    } catch (error) {
+      // 原始错误只进日志，响应固定为不含路径、账号和连接串的短语。
+      app.log.error({ err: error }, "readiness probe failed");
+      return reply.code(503).send({ error: "DATABASE_UNAVAILABLE", message: "元数据库不可用" });
+    }
+    return { status: "ok", database: app.db.dialect };
+  });
   app.get("/api/v1/capabilities", async () => productCapabilities(webClientEnabled, options.config.mcpEnabled === true));
   await app.register(registerVersionRoutes, { prefix: "/api/v1" });
 

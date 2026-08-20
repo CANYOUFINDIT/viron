@@ -36,6 +36,7 @@ function mysqlDialectAdapter(db: EnvmanDatabase): EnvmanDatabase {
     exec: (sql) => sql.startsWith("SET FOREIGN_KEY_CHECKS") ? Promise.resolve() : db.exec(sql),
     transaction: db.transaction.bind(db),
     backup: db.backup.bind(db),
+    ping: db.ping.bind(db),
     close: db.close.bind(db),
   };
 }
