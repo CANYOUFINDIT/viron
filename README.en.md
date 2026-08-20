@@ -109,7 +109,7 @@ Edit `.env` and change the first admin password. Start the Full server:
 docker compose -f docker-compose.full.yml up -d --build
 ```
 
-Open `http://127.0.0.1:8080` in a browser. Health check: `GET /healthz` on the same origin.
+Open `http://127.0.0.1:8080` in a browser. Liveness check: `GET /healthz` on the same origin; the container health check is `GET /readyz`, which probes the metadata database and returns 503 when it is unavailable.
 
 If you only need the desktop App and do not want the browser UI:
 
