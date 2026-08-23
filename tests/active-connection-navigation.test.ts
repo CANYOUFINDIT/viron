@@ -98,7 +98,8 @@ describe("active connection navigation", () => {
     // contract unchanged; implementation moved from src/desktop/main.ts
     const desktopWebRuntime = source("src/desktop/web-view-runtime.ts");
     const ssh = source("src/client/components/SshWorkbench.vue");
-    const database = source("src/client/components/DatabaseWorkbench.vue");
+    // contract unchanged; implementation moved from src/client/components/DatabaseWorkbench.vue
+    const database = source("src/client/components/database-workbench/use-database-connections.ts");
     const desktopWeb = source("src/client/components/DesktopWebAccountBrowser.vue");
     expect(desktopSshIpc).toContain("return { ...opened, activeConnectionId: registrationId };");
     expect(desktopWebRuntime).toContain('reserveDesktopRuntime("web", credentialId, undefined, originEnvironmentId)');
