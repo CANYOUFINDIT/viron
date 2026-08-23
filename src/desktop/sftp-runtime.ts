@@ -8,6 +8,7 @@ import { createReadStream, createWriteStream, type Stats as LocalStats } from "n
 import { chmod, lstat as localLstat, mkdir, readdir as localReaddir, rename as localRename, rmdir, stat as localStat, unlink } from "node:fs/promises";
 import type { FileEntryWithStats, SFTPWrapper, Stats } from "ssh2";
 import type { DesktopSshCredential } from "./device-identity.js";
+import { contextKey } from "./ssh-context.js";
 import {
   connectDesktopSshConnection,
   desktopSshErrorMessage,
@@ -156,10 +157,6 @@ const TRANSFER_LIMIT = 3;
 const SFTP_FILE_TYPE_MASK = 0o170000;
 const SFTP_DIRECTORY_TYPE = 0o040000;
 const SFTP_SYMLINK_TYPE = 0o120000;
-
-function contextKey(context: DesktopSshContext): string {
-  return `${context.endpoint}\0${context.userId}\0${context.workspaceType}\0${context.workspaceId}`;
-}
 
 function transferCancelled(task: ManagedTransfer): boolean {
   return task.status === "cancelled";

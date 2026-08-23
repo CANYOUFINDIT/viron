@@ -13,18 +13,15 @@ import {
 import type { DesktopRedisCredential } from "./device-identity.js";
 import { connectDesktopSsh, type ConnectedDesktopSsh, type DesktopSshContext } from "./ssh-runtime.js";
 import { IdleResourcePool } from "../shared/idle-resource-pool.js";
+import { contextKey } from "./ssh-context.js";
+import { jsonResponse, type DesktopRedisResponse } from "./json-response.js";
+
+export type { DesktopRedisResponse };
 
 export interface DesktopRedisRequest {
   path: string;
   method?: string;
   body?: { kind: "text" | "form"; value?: string };
-}
-
-export interface DesktopRedisResponse {
-  status: number;
-  statusText: string;
-  headers: Array<[string, string]>;
-  body: string;
 }
 
 export interface DesktopRedisExecutionReport {
@@ -54,19 +51,6 @@ class DesktopRedisError extends Error {
 }
 
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
-
-function contextKey(context: DesktopSshContext): string {
-  return `${context.endpoint}\0${context.userId}\0${context.workspaceType}\0${context.workspaceId}`;
-}
-
-function jsonResponse(status: number, body?: unknown): DesktopRedisResponse {
-  return {
-    status,
-    statusText: status === 204 ? "No Content" : status >= 400 ? "Error" : "OK",
-    headers: body === undefined ? [] : [["content-type", "application/json; charset=utf-8"]],
-    body: body === undefined ? "" : JSON.stringify(body),
-  };
-}
 
 function parsedJson(request: DesktopRedisRequest): Record<string, unknown> {
   if (request.body?.kind !== "text") return {};
