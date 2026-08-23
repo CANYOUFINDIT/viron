@@ -10,6 +10,8 @@ const desktopMain = readFileSync(new URL("../src/desktop/main.ts", import.meta.u
 const desktopAgentChat = readFileSync(new URL("../src/desktop/overlays/agent-chat-window.ts", import.meta.url), "utf8");
 // contract unchanged; implementation moved from src/desktop/main.ts
 const desktopExecutionRouter = readFileSync(new URL("../src/desktop/execution-router.ts", import.meta.url), "utf8");
+// contract unchanged; implementation moved from src/desktop/main.ts
+const desktopWebRuntime = readFileSync(new URL("../src/desktop/web-view-runtime.ts", import.meta.url), "utf8");
 const desktopSshRuntime = readFileSync(new URL("../src/desktop/ssh-runtime.ts", import.meta.url), "utf8");
 const agentRuntime = readFileSync(new URL("../src/desktop/agent-runtime.ts", import.meta.url), "utf8");
 const sshTerminalPane = readFileSync(new URL("../src/client/components/SshTerminalPane.vue", import.meta.url), "utf8");
@@ -493,9 +495,9 @@ describe("AI Agent floating window layout", () => {
   });
 
   it("dismisses quick input when a native desktop page receives the click", () => {
-    expect(desktopMain).toContain('nativeView.webContents.on("before-mouse-event"');
-    expect(desktopMain).toContain('mouse.type !== "mouseDown"');
-    expect(desktopMain).toContain('mainWindow.webContents.send("viron:native-view-pointer-down")');
+    expect(desktopWebRuntime).toContain('nativeView.webContents.on("before-mouse-event"');
+    expect(desktopWebRuntime).toContain('mouse.type !== "mouseDown"');
+    expect(desktopWebRuntime).toContain('mainWindow.webContents.send("viron:native-view-pointer-down")');
     expect(desktopPreload).toContain('onNativeViewPointerDown: (listener: () => void)');
     expect(desktopClient).toContain("export function onDesktopNativeViewPointerDown");
     expect(floatingWindow).toContain("onDesktopNativeViewPointerDown(handleNativeViewPointerDown)");
