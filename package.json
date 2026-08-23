@@ -41,7 +41,7 @@
     "test": "vitest run",
     "verify:database-navicat": "node scripts/verify-database-navicat-interactions.mjs",
     "service": "bash scripts/dev-service.sh",
-    "admin:reset": "tsx scripts/reset-admin-password.ts",
+    "admin:reset": "tsx src/server/cli/reset-admin-password.ts",
     "user:migrate": "tsx src/server/cli/migrate-user-system.ts",
     "database:migrate:mysql": "tsx src/server/cli/migrate-sqlite-to-mysql.ts",
     "secret:generate": "node scripts/generate-secret.mjs"
