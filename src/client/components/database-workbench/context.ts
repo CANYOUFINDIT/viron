@@ -120,33 +120,12 @@ export function deferDatabaseWorkbenchPart<Key extends keyof DatabaseWorkbenchCo
   ctx: DatabaseWorkbenchContext,
   key: Key,
 ): NonNullable<DatabaseWorkbenchContext[Key]> {
-  const bridges = new Map<PropertyKey, object>();
   const proxy = new Proxy({}, {
     get(_target, property) {
-      const cached = bridges.get(property);
-      if (cached) return cached;
-      const callable = (..._args: unknown[]): unknown => undefined;
-      const bridge = new Proxy(callable, {
-        apply(_fn, _thisArg, args) {
-          const part = requireDatabaseWorkbenchPart(ctx, key) as object;
-          const member = Reflect.get(part, property);
-          if (typeof member !== "function") throw new TypeError(`Database workbench member is not callable: ${String(property)}`);
-          return Reflect.apply(member, part, args);
-        },
-        get(_fn, nestedProperty) {
-          const part = requireDatabaseWorkbenchPart(ctx, key) as object;
-          const member = Reflect.get(part, property);
-          const nested = Reflect.get(Object(member), nestedProperty, member);
-          return typeof nested === "function" ? nested.bind(member) : nested;
-        },
-        set(_fn, nestedProperty, value) {
-          const part = requireDatabaseWorkbenchPart(ctx, key) as object;
-          const member = Reflect.get(part, property);
-          return Reflect.set(Object(member), nestedProperty, value, member);
-        },
-      });
-      bridges.set(property, bridge);
-      return bridge;
+      return Reflect.get(requireDatabaseWorkbenchPart(ctx, key) as object, property);
+    },
+    set(_target, property, value) {
+      return Reflect.set(requireDatabaseWorkbenchPart(ctx, key) as object, property, value);
     },
   });
   return proxy as NonNullable<DatabaseWorkbenchContext[Key]>;
