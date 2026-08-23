@@ -11,6 +11,8 @@ const desktopMain = readFileSync(new URL("../src/desktop/main.ts", import.meta.u
 const desktopAgentIpc = readFileSync(new URL("../src/desktop/ipc/register-agent-ipc.ts", import.meta.url), "utf8");
 // contract unchanged; implementation moved from src/desktop/main.ts
 const desktopExecutionIpc = readFileSync(new URL("../src/desktop/ipc/register-execution-ipc.ts", import.meta.url), "utf8");
+// contract unchanged; implementation moved from src/desktop/main.ts
+const desktopStaticOverlaySmoke = readFileSync(new URL("../src/desktop/smoke/static-overlay-smoke.ts", import.meta.url), "utf8");
 const desktopAgentChat = readFileSync(new URL("../src/desktop/overlays/agent-chat-window.ts", import.meta.url), "utf8");
 // contract unchanged; implementation moved from src/desktop/main.ts
 const desktopExecutionRouter = readFileSync(new URL("../src/desktop/execution-router.ts", import.meta.url), "utf8");
@@ -296,7 +298,7 @@ describe("AI Agent floating window layout", () => {
     expect(settingsView).toContain('{ key: "ai-agent" as const, label: tr("Viron Agent"), icon: Bot }');
     expect(settingsView).toContain("Viron Agent 仍在开发中");
     expect(settingsView).not.toContain("小 V 入口");
-    expect(desktopMain).toContain('label: tr("打开 Viron Agent")');
+    expect(desktopStaticOverlaySmoke).toContain('label: tr("打开 Viron Agent")');
   });
 
   it("provides a bottom quick composer and stacked response bubbles", () => {

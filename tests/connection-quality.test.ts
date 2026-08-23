@@ -79,7 +79,8 @@ describe("connection quality monitor", () => {
     const overlay = readFileSync(new URL("../src/client/components/ConnectionQualityOverlay.vue", import.meta.url), "utf8");
     const controller = readFileSync(new URL("../src/client/components/ConnectionQualityWindow.vue", import.meta.url), "utf8");
     const card = readFileSync(new URL("../src/client/components/ConnectionQualityCard.vue", import.meta.url), "utf8");
-    const desktopMain = readFileSync(new URL("../src/desktop/main.ts", import.meta.url), "utf8");
+    // contract unchanged; implementation moved from src/desktop/main.ts
+    const desktopSmoke = readFileSync(new URL("../src/desktop/smoke/static-overlay-smoke.ts", import.meta.url), "utf8");
     // contract unchanged; implementation moved from src/desktop/main.ts
     const desktopOverlay = readFileSync(new URL("../src/desktop/overlays/connection-quality-window.ts", import.meta.url), "utf8");
     expect(controller).toContain("updateDesktopConnectionQuality");
@@ -87,14 +88,14 @@ describe("connection quality monitor", () => {
     expect(overlay).toContain("opacity: 0;");
     expect(desktopOverlay).toContain("connectionQualityVisualWindow");
     expect(desktopOverlay).toContain("interaction.moveAbove(connectionQualityVisualWindow.getMediaSourceId())");
-    expect(desktopMain).toContain("runDesktopConnectionQualitySmoke");
-    expect(desktopMain).toContain("webViewStayedVisible");
+    expect(desktopSmoke).toContain("runDesktopConnectionQualitySmoke");
+    expect(desktopSmoke).toContain("webViewStayedVisible");
     expect(card).not.toContain("connection-quality-card__header");
     expect(card).toContain("targetIsLocal");
     expect(card).toContain("targetIsLocal ? $t('本机') : 'VIRON'");
     expect(card).toContain("@pointerdown=\"emit('panelPointerdown', $event)\"");
     expect(controller).toContain("suppressClickAfterDrag");
-    expect(desktopMain).toContain("testButtonClearance");
+    expect(desktopSmoke).toContain("testButtonClearance");
   });
 
   it("is mounted globally but remains opt-in per device", () => {

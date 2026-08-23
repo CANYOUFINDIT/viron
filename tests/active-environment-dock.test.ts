@@ -265,9 +265,12 @@ describe("active environment picture-in-picture", () => {
     const overlay = source("src/client/components/ActiveEnvironmentDockOverlay.vue");
     const overlayPreload = source("src/desktop/active-environment-dock-preload.cts");
     const desktopBrowser = source("src/client/components/DesktopWebAccountBrowser.vue");
-    const desktopMain = source("src/desktop/main.ts");
     // contract unchanged; implementation moved from src/desktop/main.ts
     const desktopCoreIpc = source("src/desktop/ipc/register-core-ipc.ts");
+    // contract unchanged; implementation moved from src/desktop/main.ts
+    const desktopStaticOverlaySmoke = source("src/desktop/smoke/static-overlay-smoke.ts");
+    // contract unchanged; implementation moved from src/desktop/main.ts
+    const desktopDockSmoke = source("src/desktop/smoke/active-environment-dock-smoke.ts");
     // contract unchanged; implementation moved from src/desktop/main.ts
     const desktopDockOverlay = source("src/desktop/overlays/active-environment-dock-window.ts");
     // contract unchanged; implementation moved from src/desktop/main.ts
@@ -361,42 +364,42 @@ describe("active environment picture-in-picture", () => {
     expect(desktopWebRuntime).toContain("captureWebContentsPreview");
     expect(desktopWebRuntime).toContain("captureDesktopRendererPreview");
     expect(desktopCoreIpc).toContain('ipcMain.handle("viron:renderer-preview:capture"');
-    expect(desktopMain).toContain("webContents.capturePage()");
+    expect(desktopStaticOverlaySmoke).toContain("webContents.capturePage()");
     expect(desktopWebRuntime).toContain("if (!view.visible) return");
     expect(desktopWebRuntime).toContain(".toJPEG(72)");
     expect(desktopWebRuntime).not.toContain("x: -16_384");
     expect(desktopWebRuntime).toContain("layoutDesktopWebViewPages");
     expect(desktopCoreIpc).toContain("if (view.previewing) view.visible = false;");
     expect(desktopWebRuntime).toContain("setBackgroundThrottling(!view.previewing)");
-    expect(desktopMain).toContain("previewFrameChanged");
-    expect(desktopMain).toContain("retainedPreviewPixels");
-    expect(desktopMain).toContain("dragPositionDelivered");
+    expect(desktopDockSmoke).toContain("previewFrameChanged");
+    expect(desktopDockSmoke).toContain("retainedPreviewPixels");
+    expect(desktopDockSmoke).toContain("dragPositionDelivered");
     expect(desktopDockOverlay).toContain("handleActiveEnvironmentDockDrag");
     expect(desktopCoreIpc).toContain('ipcMain.on("viron:active-environment-dock:drag"');
     expect(desktopCoreIpc).toContain('ipcMain.handle("viron:active-environment-dock:layout"');
     expect(desktopDockOverlay).toContain("publishActiveEnvironmentDockLayout");
     expect(desktopDockOverlay).toContain("if (activeEnvironmentDockDrag) return");
     expect(desktopCoreIpc).toContain("dockBounds.x - contentBounds.x + action.origin.x");
-    expect(desktopMain).toContain("cardDragMovedWindow");
-    expect(desktopMain).toContain("closeActionDelivered");
-    expect(desktopMain).toContain("closeStateRemoved");
-    expect(desktopMain).toContain("画中画关闭后卡片未移除");
-    expect(desktopMain).toContain("nativeAboveWebView");
-    expect(desktopMain).toContain("passiveHoverFocusStable");
-    expect(desktopMain).toContain('app.focus({ steal: true })');
-    expect(desktopMain).toContain("hoverIntentStable");
-    expect(desktopMain).toContain("nativePointerTrackingStable");
-    expect(desktopMain).toContain("collapseAnimationStable");
-    expect(desktopMain).toContain("collapseResizeSynchronized");
-    expect(desktopMain).toContain("lightweightLayoutStable");
-    expect(desktopMain).toContain("updateLayoutFromRenderer");
-    expect(desktopMain).toContain("programmaticMoveIgnored");
+    expect(desktopDockSmoke).toContain("cardDragMovedWindow");
+    expect(desktopDockSmoke).toContain("closeActionDelivered");
+    expect(desktopDockSmoke).toContain("closeStateRemoved");
+    expect(desktopDockSmoke).toContain("画中画关闭后卡片未移除");
+    expect(desktopDockSmoke).toContain("nativeAboveWebView");
+    expect(desktopDockSmoke).toContain("passiveHoverFocusStable");
+    expect(desktopDockSmoke).toContain('app.focus({ steal: true })');
+    expect(desktopDockSmoke).toContain("hoverIntentStable");
+    expect(desktopDockSmoke).toContain("nativePointerTrackingStable");
+    expect(desktopDockSmoke).toContain("collapseAnimationStable");
+    expect(desktopDockSmoke).toContain("collapseResizeSynchronized");
+    expect(desktopDockSmoke).toContain("lightweightLayoutStable");
+    expect(desktopDockSmoke).toContain("updateLayoutFromRenderer");
+    expect(desktopDockSmoke).toContain("programmaticMoveIgnored");
     expect(desktopDockOverlay).toContain("scheduleActiveEnvironmentDockCollapseLayout");
     expect(desktopDockOverlay).toContain("ACTIVE_ENVIRONMENT_DOCK_TRANSITION_MS + 34");
     expect(desktopDockOverlay).toContain("electronScreen.getCursorScreenPoint()");
     expect(desktopDockOverlay).not.toContain("scheduleActiveEnvironmentDockPositionSync");
     expect(desktopDockOverlay).not.toContain('overlay.on("move"');
-    expect(desktopMain).toContain("expandedAligned");
+    expect(desktopDockSmoke).toContain("expandedAligned");
     expect(desktopDockOverlay).toContain("focusable: false");
     expect(host).toContain("takeEnvironmentWorkspaceTransition");
     expect(host).toContain("gsap.fromTo(target");
