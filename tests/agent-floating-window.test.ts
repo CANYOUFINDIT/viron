@@ -7,6 +7,10 @@ const settingsView = readFileSync(new URL("../src/client/views/SettingsView.vue"
 const desktopClient = readFileSync(new URL("../src/client/desktop.ts", import.meta.url), "utf8");
 const desktopPreload = readFileSync(new URL("../src/desktop/preload.cts", import.meta.url), "utf8");
 const desktopMain = readFileSync(new URL("../src/desktop/main.ts", import.meta.url), "utf8");
+// contract unchanged; implementation moved from src/desktop/main.ts
+const desktopAgentIpc = readFileSync(new URL("../src/desktop/ipc/register-agent-ipc.ts", import.meta.url), "utf8");
+// contract unchanged; implementation moved from src/desktop/main.ts
+const desktopExecutionIpc = readFileSync(new URL("../src/desktop/ipc/register-execution-ipc.ts", import.meta.url), "utf8");
 const desktopAgentChat = readFileSync(new URL("../src/desktop/overlays/agent-chat-window.ts", import.meta.url), "utf8");
 // contract unchanged; implementation moved from src/desktop/main.ts
 const desktopExecutionRouter = readFileSync(new URL("../src/desktop/execution-router.ts", import.meta.url), "utf8");
@@ -329,7 +333,7 @@ describe("AI Agent floating window layout", () => {
     expect(desktopPreload).toContain('ipcRenderer.invoke("viron:agent:workbench:respond", input)');
     expect(desktopPreload).not.toContain("viron:agent:ssh-diagnostic");
     expect(desktopSshRuntime).toContain('sshCommandRiskLevel(normalizedCommand) !== "low"');
-    expect(desktopMain).toContain('agent-(?:context|diagnostics)');
+    expect(desktopExecutionIpc).toContain('agent-(?:context|diagnostics)');
     expect(floatingWindow).toContain("desktopAppState.value?.endpoint");
     expect(floatingWindow).toContain("desktopAppState.value?.executionMode");
     expect(sshTerminalPane).toContain('sendTransportText(`\\x01\\x0b${command}\\r`)');
@@ -342,16 +346,16 @@ describe("AI Agent floating window layout", () => {
   });
 
   it("persists policy changes before stopping sessions and settles invalid workbench responses", () => {
-    const saveHandler = desktopMain.slice(
-      desktopMain.indexOf('ipcMain.handle("viron:agent:settings:save"'),
-      desktopMain.indexOf('ipcMain.handle("viron:agent:models:list"'),
+    const saveHandler = desktopAgentIpc.slice(
+      desktopAgentIpc.indexOf('ipcMain.handle("viron:agent:settings:save"'),
+      desktopAgentIpc.indexOf('ipcMain.handle("viron:agent:models:list"'),
     );
     expect(saveHandler.indexOf("desktopAgentSettingsStore.save")).toBeGreaterThanOrEqual(0);
     expect(saveHandler.indexOf("desktopAgentSettingsStore.save")).toBeLessThan(saveHandler.indexOf("desktopAgentRuntime.stopAll"));
 
-    const workbenchHandler = desktopMain.slice(
-      desktopMain.indexOf('ipcMain.handle("viron:agent:workbench:respond"'),
-      desktopMain.indexOf('ipcMain.handle("viron:agent:chat:stop"'),
+    const workbenchHandler = desktopAgentIpc.slice(
+      desktopAgentIpc.indexOf('ipcMain.handle("viron:agent:workbench:respond"'),
+      desktopAgentIpc.indexOf('ipcMain.handle("viron:agent:chat:stop"'),
     );
     expect(workbenchHandler).toContain("if (requestId) settleAgentWorkbenchExecution");
     expect(workbenchHandler).toContain('if (!input.result) throw new Error(tr("Viron Agent 工作台执行结果无效"))');

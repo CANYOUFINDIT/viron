@@ -93,13 +93,14 @@ describe("active connection navigation", () => {
   });
 
   it("returns exact active connection ids from desktop-local runtimes", () => {
-    const main = source("src/desktop/main.ts");
+    // contract unchanged; implementation moved from src/desktop/main.ts
+    const desktopSshIpc = source("src/desktop/ipc/register-ssh-ipc.ts");
     // contract unchanged; implementation moved from src/desktop/main.ts
     const desktopWebRuntime = source("src/desktop/web-view-runtime.ts");
     const ssh = source("src/client/components/SshWorkbench.vue");
     const database = source("src/client/components/DatabaseWorkbench.vue");
     const desktopWeb = source("src/client/components/DesktopWebAccountBrowser.vue");
-    expect(main).toContain("return { ...opened, activeConnectionId: registrationId };");
+    expect(desktopSshIpc).toContain("return { ...opened, activeConnectionId: registrationId };");
     expect(desktopWebRuntime).toContain('reserveDesktopRuntime("web", credentialId, undefined, originEnvironmentId)');
     expect(ssh).toContain("response.activeConnectionId ?? response.session.id");
     expect(database).toContain("rememberActiveConnectionOrigin(runtime.item.id, props.environmentId)");
