@@ -7,6 +7,8 @@ data/*
 secrets/*
 !secrets/.gitkeep
 .env
+.env.*
+!.env.example
 *.log
 .DS_Store
 .idea/
@@ -15,8 +17,20 @@ release/*.tar.gz
 release/*.dmg
 release/*.exe
 .playwright-cli/
+output/
 output/playwright/
 docs/tasks/
+
+# Local private workspace — runtime data, keys, and internal notes. Never publish.
+private/
+master_key
+*.db
+*.db-shm
+*.db-wal
+*.cast
+*.pem
+*.p12
+*.pfx
 
 # Local agent / skill files — not part of the published project
 AGENTS.md
