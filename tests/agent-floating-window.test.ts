@@ -7,6 +7,7 @@ const settingsView = readFileSync(new URL("../src/client/views/SettingsView.vue"
 const desktopClient = readFileSync(new URL("../src/client/desktop.ts", import.meta.url), "utf8");
 const desktopPreload = readFileSync(new URL("../src/desktop/preload.cts", import.meta.url), "utf8");
 const desktopMain = readFileSync(new URL("../src/desktop/main.ts", import.meta.url), "utf8");
+const desktopAgentChat = readFileSync(new URL("../src/desktop/overlays/agent-chat-window.ts", import.meta.url), "utf8");
 const desktopSshRuntime = readFileSync(new URL("../src/desktop/ssh-runtime.ts", import.meta.url), "utf8");
 const agentRuntime = readFileSync(new URL("../src/desktop/agent-runtime.ts", import.meta.url), "utf8");
 const sshTerminalPane = readFileSync(new URL("../src/client/components/SshTerminalPane.vue", import.meta.url), "utf8");
@@ -71,8 +72,8 @@ describe("AI Agent floating window layout", () => {
     expect(floatingWindow).toContain("updateDesktopAgentChatChrome");
     expect(floatingWindow).toContain("setDesktopAgentChatIgnoreMouse");
     expect(floatingWindow).toContain('type: "scene-snapshot"');
-    expect(desktopMain).toContain("desktop-agent-chat.html");
-    expect(desktopMain).toContain("setAgentChatNativeOverlay");
+    expect(desktopAgentChat).toContain("desktop-agent-chat.html");
+    expect(desktopAgentChat).toContain("setAgentChatNativeOverlay");
     expect(readFileSync(new URL("../scripts/package-windows.mjs", import.meta.url), "utf8")).toContain("/dist/desktop-renderer/desktop-agent-chat.html");
     expect(readFileSync(new URL("../vite.config.ts", import.meta.url), "utf8")).toContain("desktop-agent-chat");
   });

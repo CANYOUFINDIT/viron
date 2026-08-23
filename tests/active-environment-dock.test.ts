@@ -266,6 +266,8 @@ describe("active environment picture-in-picture", () => {
     const overlayPreload = source("src/desktop/active-environment-dock-preload.cts");
     const desktopBrowser = source("src/client/components/DesktopWebAccountBrowser.vue");
     const desktopMain = source("src/desktop/main.ts");
+    // Contract: native dock window ownership moved in desktop refactor PR 7.
+    const desktopDockOverlay = source("src/desktop/overlays/active-environment-dock-window.ts");
     const transition = source("src/client/environment-workspace-transition.ts");
     const windowsPackage = source("scripts/package-windows.mjs");
 
@@ -365,11 +367,11 @@ describe("active environment picture-in-picture", () => {
     expect(desktopMain).toContain("previewFrameChanged");
     expect(desktopMain).toContain("retainedPreviewPixels");
     expect(desktopMain).toContain("dragPositionDelivered");
-    expect(desktopMain).toContain("handleActiveEnvironmentDockDrag");
+    expect(desktopDockOverlay).toContain("handleActiveEnvironmentDockDrag");
     expect(desktopMain).toContain('ipcMain.on("viron:active-environment-dock:drag"');
     expect(desktopMain).toContain('ipcMain.handle("viron:active-environment-dock:layout"');
-    expect(desktopMain).toContain("publishActiveEnvironmentDockLayout");
-    expect(desktopMain).toContain("if (activeEnvironmentDockDrag) return");
+    expect(desktopDockOverlay).toContain("publishActiveEnvironmentDockLayout");
+    expect(desktopDockOverlay).toContain("if (activeEnvironmentDockDrag) return");
     expect(desktopMain).toContain("dockBounds.x - contentBounds.x + action.origin.x");
     expect(desktopMain).toContain("cardDragMovedWindow");
     expect(desktopMain).toContain("closeActionDelivered");
@@ -385,13 +387,13 @@ describe("active environment picture-in-picture", () => {
     expect(desktopMain).toContain("lightweightLayoutStable");
     expect(desktopMain).toContain("updateLayoutFromRenderer");
     expect(desktopMain).toContain("programmaticMoveIgnored");
-    expect(desktopMain).toContain("scheduleActiveEnvironmentDockCollapseLayout");
-    expect(desktopMain).toContain("ACTIVE_ENVIRONMENT_DOCK_TRANSITION_MS + 34");
-    expect(desktopMain).toContain("electronScreen.getCursorScreenPoint()");
-    expect(desktopMain).not.toContain("scheduleActiveEnvironmentDockPositionSync");
-    expect(desktopMain).not.toContain('overlay.on("move"');
+    expect(desktopDockOverlay).toContain("scheduleActiveEnvironmentDockCollapseLayout");
+    expect(desktopDockOverlay).toContain("ACTIVE_ENVIRONMENT_DOCK_TRANSITION_MS + 34");
+    expect(desktopDockOverlay).toContain("electronScreen.getCursorScreenPoint()");
+    expect(desktopDockOverlay).not.toContain("scheduleActiveEnvironmentDockPositionSync");
+    expect(desktopDockOverlay).not.toContain('overlay.on("move"');
     expect(desktopMain).toContain("expandedAligned");
-    expect(desktopMain).toContain("focusable: false");
+    expect(desktopDockOverlay).toContain("focusable: false");
     expect(host).toContain("takeEnvironmentWorkspaceTransition");
     expect(host).toContain("gsap.fromTo(target");
     expect(host).toContain("environmentId !== enteringEnvironmentId");

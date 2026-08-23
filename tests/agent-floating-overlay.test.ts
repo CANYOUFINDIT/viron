@@ -10,6 +10,8 @@ describe("AI Agent native overlay layout", () => {
     const floatingWindow = readFileSync(new URL("../src/client/components/AgentFloatingWindow.vue", import.meta.url), "utf8");
     const nativeOverlay = readFileSync(new URL("../src/client/components/AgentFloatingOverlay.vue", import.meta.url), "utf8");
     const webBrowser = readFileSync(new URL("../src/client/components/DesktopWebAccountBrowser.vue", import.meta.url), "utf8");
+    // Contract: launcher ownership moved out of main.ts in desktop refactor PR 7.
+    const launcherOverlay = readFileSync(new URL("../src/desktop/overlays/agent-launcher-window.ts", import.meta.url), "utf8");
     const desktopMain = readFileSync(new URL("../src/desktop/main.ts", import.meta.url), "utf8");
     expect(floatingWindow).not.toContain("desktopWebAgentLauncherVisible");
     expect(floatingWindow).not.toContain("<AgentFloatingLauncher");
@@ -20,12 +22,12 @@ describe("AI Agent native overlay layout", () => {
     expect(nativeOverlay).toContain('document.addEventListener("lostpointercapture", finishDrag)');
     expect(nativeOverlay).toContain("state.interactionLayer");
     expect(nativeOverlay).toContain("opacity: 0;");
-    expect(desktopMain).toContain("agentLauncherVisualWindow");
-    expect(desktopMain).toContain("agentFloatingOverlayInteractionState");
-    expect(desktopMain).toContain("interaction.moveAbove(agentLauncherVisualWindow.getMediaSourceId())");
-    expect(desktopMain).not.toContain("agentLauncherHitTestTimer");
-    expect(desktopMain).not.toContain("screen.getCursorScreenPoint()");
-    expect(desktopMain).toContain("focusable: false");
+    expect(launcherOverlay).toContain("agentLauncherVisualWindow");
+    expect(launcherOverlay).toContain("agentFloatingOverlayInteractionState");
+    expect(launcherOverlay).toContain("interaction.moveAbove(agentLauncherVisualWindow.getMediaSourceId())");
+    expect(launcherOverlay).not.toContain("agentLauncherHitTestTimer");
+    expect(launcherOverlay).not.toContain("screen.getCursorScreenPoint()");
+    expect(launcherOverlay).toContain("focusable: false");
     expect(desktopMain).toContain("!agentLauncherWindow!.isFocusable()");
   });
 
