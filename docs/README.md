@@ -6,4 +6,5 @@
 - [MCP](./MCP.md)：远程与本机 MCP 的接入方式、能力范围和安全约束。
 - [脚本同步](./SCRIPT-SYNC.md)：隔离脚本同步的 JSON 契约与处理规则。
 - [路线图](./ROADMAP.md)：尚未交付的后续方向，不代表排期承诺。
+- [内部结构重构规格](./INTERNAL-STRUCTURE-REFACTOR.md)：行为保持的代码拆分与优化实施规格，按堆叠 PR 交给 Codex 执行。
 - [安全政策](../SECURITY.md)：漏洞披露方式。

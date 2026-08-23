@@ -1,0 +1,1148 @@
+# Viron 内部结构重构与代码优化实施规格
+
+| 字段 | 值 |
+| --- | --- |
+| 文档标题 | Viron 内部结构重构与代码优化实施规格 |
+| 作者 | Viron maintainers（Codex 实施规格） |
+| 日期 | 2026-08-23 |
+| 状态 | Draft |
+| 实现者 | Codex |
+| 仓库 | `/Users/futongyong/project/hyperone/viron` |
+| 性质 | **行为保持重构**（behavior-preserving refactor） |
+
+本文是给 Codex 的**实施规格**，不是讨论稿。按 PR 顺序在**同一条堆叠分支**上执行。每一步都有**具名符号清单**、禁止改动、命令和验收。行为将要改变时立刻停下来，不要自行发明产品改动或「顺便对齐」两端实现。
+
+---
+
+## Codex 执行规则
+
+1. **Git（堆叠，禁止从过期 `main` 开互不相关的 F2–F5）**
+   - 禁止在 `main` 上开发、提交或推送。未经用户明确要求，不得把功能分支合并进 `main`。
+   - 本程序**只切一次**功能分支：从最新 `main` 检出 `codex/internal-structure-refactor`。
+   - 文末每个 PR 项 = 该分支上的**一个提交**（或从**上一 PR 提交 tip** 再 `git checkout -b codex/<pr-slug>`）。**禁止**对 PR 6 之后的项执行 `git checkout main && git checkout -b ...`。
+   - 若用户要拆成多个 GitHub PR：PR *n* 的基线必须是 PR *n-1* 的 tip，而不是当前 `main`。
+   - 分支名使用 `codex/` 前缀。
+2. **一次一个 PR，顺序 = Key Decision 5 = 文末 PR Plan，全部串行。** 禁止「PR 2–5 可并行」：它们共享 `ssh-runtime.ts` / `sftp-runtime.ts` / `redis-runtime.ts`（PR 2 改全部 runtime 的 `contextKey`；PR 3–5 再改同一批文件）。Vue PR **依赖** `main.ts` 拆分完成（PR 11），因为 `tests/agent-floating-window.test.ts` 同时读取 `main.ts`、`DatabaseWorkbench.vue`、`AgentFloatingWindow.vue`、`SettingsView.vue`。
+3. **行为保持**：不新增产品功能，不改 UX，不改 HTTP 路径、IPC 通道名、cookie、localStorage key、SQL alias、`/data/envman.db` 文件名。提取模块时公开 API 取最小集；禁止 `export *`。
+4. **发现行为必须变才能拆**：停止该工作项，在 PR 描述写明阻塞点。两端测试不一致时**不要**把一边改成另一边。
+5. **体积**：新文件与拆完后的残留文件原则上 `< ~800` 行。God file 残留硬检查点 `< 1200` 行，目标 `< 800`。**例外（硬性）：** `ServiceMaintenancePanel.vue` 与 `AgentFloatingWindow.vue` 的硬门是 **script+template 行数**，不是整个 `.vue` 的 `wc -l`。它们的 scoped CSS 必须留在原 `.vue`，禁止为了压行数把 CSS 搬进 `base.css` 或兄弟 `.css`（会改特异度并打散 CSS-lock 测试）。纯数据转储（`i18n-messages.ts`、schema DDL、MCP catalog）例外，且本程序不拆它们。
+6. **类型纪律**：`src/` 无 `as any` / `@ts-ignore`。保持 `strict`。
+7. **CSS-lock 测试**：现有 `readFileSync`/`readFile` + `toContain` 一律保留，本程序不新增。字符串或**标识符名**搬家时，**同一 PR** 只改**该断言**的读取路径，并加一行：`// contract unchanged; implementation moved from <old-path>`。被 grep 的**标识符不得改名**。**禁止**把 `tests/agent-floating-window.test.ts` 顶部的整份 `const desktopMain = readFileSync(...main.ts)` 一次性改成新文件：该绑定覆盖 overlay、smoke、`viron:api` deny list、agent IPC slice、web-view mouse-event、`currentAgentRuntimeScope()` 定义、以及留在 `main.ts` 的 whenReady `executeSshDiagnostic`/`executeDatabaseRead`。必须拆成 per-assertion `readFileSync`（可与留下的 `desktopMain` 并存，例如 `desktopChatOverlay`）。`currentAgentRuntimeScope()`（带括号）在 PR 10 改读 `execution-router.ts`，不要和 whenReady 无括号的 `currentScope: currentAgentRuntimeScope` 绑在一起。模式同 `connection-quality.test.ts`。
+8. **验证**：每个 PR 跑 `npm run typecheck` + 点名测试。下列 PR **必须再跑全量 `npm test`**：PR 1（改 `base.css`）、PR 3、PR 4、PR 5、PR 10、PR 17。点名测试与全量套件不一致 → 停，不要「修 helper 去迁就一边」。
+9. **提交粒度**：一个 PR 只做该工作项。不要引入 ESLint/Prettier 工作流或 Pinia/Vuex。
+10. **i18n**：中文字面量当 key。共享 helper 返回中文源串；桌面展示路径再 `tr()`。不要改 `src/shared/i18n-messages.ts`。
+11. **机械搬函数，禁止为拆而重写 DI。** Overlay / IPC 抽出时保持**现有函数名**为 `export function`。不要引入 `OverlayHost` class，不要把 `layoutAgentLauncherWindow` 改名为 class method（除非同时 `export function layoutAgentLauncherWindow` 作为别名且测试改读新文件后仍能 grep 到原名）。窗口 `let` 留在拥有它的 overlay 模块内，`main.ts` 不重新 `new BrowserWindow` 那些 overlay。
+
+---
+
+## Overview
+
+Viron 是双运行时产品：Web 请求一律打到 Fastify；桌面 App 在 `executionMode === "local"` 时由 Electron main 的 `*-runtime.ts` 本地执行，在 `"server"` 时由 main 转发到 Endpoint。维护成本来自组合层从未搬走：`src/desktop/main.ts` 6549 行（203 个 function，102 个 `ipcMain.handle`）、`DatabaseWorkbench.vue` 3609 行（201 个本地函数）。独立路由页包装器 `src/client/views/DatabaseWorkbenchView.vue`（31 行，`defineOptions({ name: "DatabaseWorkbenchView" })`）**本程序不改**。
+
+本程序只做内部拆分与无状态 helper 提取。双运行时进程边界不变。完成后：`main.ts` 降为锁 / `whenReady` / `createWindow` / shutdown；Vue 工作台 `<script>` 进入 colocated composable（同一 SFC 实例，KeepAlive 不丢状态）；desktop/server 共用 SSH/SFTP/Redis 纯函数。HTTP/IPC/cookie/存储键/CSS 锁定字符串与标识符保持原值。
+
+---
+
+## Background & Motivation
+
+### 当前规模（2026-08-23 实测）
+
+| 树 | 行数 |
+| --- | ---: |
+| `src/client`（ts/vue/css） | 50561 |
+| `src/server`（ts） | 30886 |
+| `src/desktop`（ts/cts） | 15574 |
+| `src/shared`（ts） | 12148 |
+| `tests`（ts） | 22985 |
+| `monitor`（go） | 4059 |
+
+TypeScript `strict`；`src/` 中无 `as any` / `@ts-ignore` / `export *`。无 Pinia。`tsconfig.server.json` 与 `tsconfig.desktop.json` 已 include `src/shared/**/*.ts`；client `tsconfig.json` 不含 shared（`vue-tsc` 不检查 `node:crypto` 的 shared SSH helper，可接受）。
+
+KeepAlive 有两条路径，都要保留：
+
+- `App.vue`：`include="SshWorkbenchView,DatabaseWorkbenchView"`（缓存的是 **view 包装器**）。
+- `EnvironmentDetailView.vue`：分别 KeepAlive **`DatabaseWorkbench`、`ServiceMaintenancePanel`、`SshWorkbench`、`RedisWorkbench`、日志、知识库** 组件本身。
+
+### 痛点
+
+1. `main.ts` 混杂状态、菜单、5 类 overlay、HTTP 代理、MCP、execution、WebContentsView、IPC、smoke。Runtime 类已独立。
+2. Vue god 组件已有子组件，壳仍拥有 wiring。`handleNavigatorMenuAction` 2584–2739（156 行）。
+3. SSH/SFTP/Redis helper 双份复制（含 `tryKeyboard`）。
+4. 死代码：`PlannedFeatureNotice.vue`；重复 CLI。
+
+`src/server/app.ts`（212 行）不要重排。`i18n-messages.ts`（5052）、`mcp-tools.ts`（2193）、`mysql-schema.ts`（1155）不拆。
+
+---
+
+## Goals & Non-Goals
+
+### Goals
+
+- 删除死代码与重复 CLI。
+- 按**符号清单**把 `main.ts` 拆到具名模块；残留 `< 1200`（目标 `< 800`）。
+- 去重 `contextKey` / `jsonResponse`（不合并 `mcpJsonResponse`）。
+- 提取共享 SSH / SFTP plan / Redis options；**两个 runtime 进程保留**。
+- Vue god 的 `<script>` 抽到 composable/子视图；工作台禁止拆成会 remount 的子 Vue。
+- 可选：剪切 `SQLITE_SCHEMA` 原文；**不**引入 migrator。
+
+### Non-Goals
+
+见「明确不做」。
+
+---
+
+## Key Decisions
+
+1. **只做行为保持重构。**
+2. **双运行时保留。** 只抽无状态 helper。
+3. **中文 i18n key 不变。** desktop 边界才 `tr()`。
+4. **无 Pinia、无 ESLint 工作流、无 MCP catalog 重写。**
+5. **第一波顺序（PR Plan 必须与此一致，禁止 Vue 与 `main.ts` 拆分并行）：** 死代码 → desktop `contextKey`/`jsonResponse` → 共享 SSH / login-script / error-map / SFTP-plan / Redis-options → `main.ts` 拆分（**state/menu/guards → overlay 函数搬迁 → web-view → IPC → HTTP/MCP/execution → smoke**）→ Vue（DatabaseWorkbench → ServiceMaintenance → AgentFloatingWindow → Settings → Organization）→ 可选 schema 文件剪切。
+6. **CSS-lock 测试保留，不新增。** 同 PR 改读取路径。被 grep 的标识符名不得改。
+7. **体积：** 新模块 `< ~800`。`main.ts` / `DatabaseWorkbench.vue` / `SettingsView.vue` / `OrganizationView.vue` 硬检查点 `< 1200`。`ServiceMaintenancePanel.vue` 与 `AgentFloatingWindow.vue` 硬门 = script+template，CSS 留在 `.vue`。
+8. **Overlay = 机械搬 `export function`，保留 CSS-lock 标识符。** 不引入 `OverlayHost` class。`raiseAgentOverlayWindows` 放在 `overlays/agent-chat-window.ts`（唯一调用方 `applyAgentChatChromeVisibility` 旁边），单向 import launcher 的窗口 `let`；`moveTop` 顺序锁定为 chat → visual launcher → interaction launcher，并在函数上用注释冻结。Dock 使用 `electronScreen.getCursorScreenPoint()`；launcher **禁止**使用。chat 模块禁止 import `app-state.ts`。
+9. **Vue：** 工作台只 composable；`DatabaseWorkbenchView.vue` 不动。Settings/Organization 可拆子 Vue。
+10. **具名导出，禁止 `export *`。**
+11. **兼容：** `envman_session`、`envman-theme`、`envman-language`、`envman:route-reload:`、`SELECT 1 AS envman_connection_check`、`/data/envman.db`、`-- ENVMAN_STATEMENT_BOUNDARY`。
+12. **Monitor Go 模型不去重**（两个 `go.mod`，1.25.0 vs 1.26.0）。
+13. **Schema migrator = Phase 2。** 第一波只剪切字符串；`openDatabase` / `ensureAdmin` 调用**与 HEAD 相同的函数名、相同顺序**。`claimLegacyResources` 只从 `ensureAdmin` 调用，不要塞进 `openDatabase`。
+
+---
+
+## Proposed Design
+
+### 当前与目标：双运行时
+
+```mermaid
+flowchart LR
+  subgraph Client["src/client Vue"]
+    UI[Workbench / Settings]
+  end
+
+  subgraph Electron["Electron main src/desktop"]
+    Main["main.ts 组合层"]
+    LocalRT["ssh/sftp/redis/db/log/inspect runtime"]
+    Proxy["endpointFetch / viron:api"]
+  end
+
+  subgraph Server["Fastify src/server"]
+    Routes["routes/*"]
+    SrvRT["ssh/sftp/redis/db/log/inspect"]
+  end
+
+  UI -->|"Web HTTP/WS"| Routes
+  UI -->|"App IPC"| Main
+  Main -->|"executionMode=local"| LocalRT
+  Main -->|"executionMode=server"| Proxy --> Routes
+  Routes --> SrvRT
+  LocalRT -.->|"今日：复制的 connectConfig / buildPlan / redisOptions"| SrvRT
+```
+
+```mermaid
+flowchart LR
+  subgraph Shared["src/shared 无状态 helper"]
+    SSH["ssh-connect.ts / ssh-error.ts / ssh-login-script.ts"]
+    SFTP["sftp-transfer-plan.ts"]
+    REDIS["redis-options.ts"]
+    EXIST["已有 ssh-client.ts idle-resource-pool.ts ..."]
+  end
+  DSSH[desktop ssh-runtime.ts] --> SSH
+  SSSH[server ssh/connector.ts] --> SSH
+  DSFTP[desktop sftp-runtime.ts] --> SFTP
+  SSFTP[server sftp/transfer-manager.ts] --> SFTP
+  DREDIS[desktop redis-runtime.ts] --> REDIS
+  SREDIS[server redis/connector.ts] --> REDIS
+```
+
+进程边界不变。`forward()` 在 SSH connector 与 **database** runtime 还有副本（返回 `Readable` vs `ClientChannel`）。**PR 3 不抽 database `forward`。**
+
+### 目标：`main.ts` 按符号搬家（不是按行号切）
+
+```mermaid
+flowchart TB
+  Main["main.ts：lock / whenReady / createWindow / shutdown"]
+  State["app-state.ts + app-menu.ts + device-session.ts + ipc-guards.ts"]
+  Overlays["overlays/*.ts：同名 export function\nraiseAgentOverlayWindows 在 chat 模块"]
+  WebView["web-view-runtime.ts"]
+  IPC["ipc/register-*.ts"]
+  Exec["execution-router.ts + http-proxy.ts + mcp-desktop-bridge.ts"]
+  Smoke["smoke/*.ts"]
+  Main --> State
+  Main --> Overlays
+  Main --> WebView
+  Main --> IPC
+  Main --> Exec
+  Main --> Smoke
+```
+
+---
+
+## 工作项详述
+
+---
+
+### 工作项 A — 删除死代码并去重 admin reset CLI
+
+#### 1. 现状
+
+- `PlannedFeatureNotice.vue` 15 行，零 importer。CSS 仅 `base.css` 498–506、3924、4776。
+- `scripts/reset-admin-password.ts`（34）与 `src/server/cli/reset-admin-password.ts`（32）。`package.json` `"admin:reset": "tsx scripts/reset-admin-password.ts"`。
+- `docs/USER-GUIDE.md` 仍文档 `node dist/server/cli/reset-admin-password.js`。
+
+#### 2. 目标
+
+删除组件与 CSS。`admin:reset` 指向 `src/server/cli/reset-admin-password.ts`。删除 `scripts/` 副本。CLI usage **两行都保留**：
+
+```
+Usage: npm run admin:reset -- <username> <new-password>
+Usage: node dist/server/cli/reset-admin-password.js <username> <new-password>
+```
+
+因此 **不改** `docs/USER-GUIDE.md`。若有人删掉 dist 那一行 → 必须同步 USER-GUIDE；本规格选择保留，故指南不动。
+
+#### 3. 步骤
+
+1. `rg PlannedFeatureNotice planned-feature` 确认仅组件 + `base.css`。
+2. 删组件；从 `base.css` 只删 `planned-feature-*` 与 `@keyframes planned-feature-in`，不碰相邻选择器。
+3. 更新 CLI usage 为两行；改 `package.json`；删 `scripts/reset-admin-password.ts`。
+
+#### 4. 禁止改动
+
+- 不改其它 CSS。不改参数顺序。不改 argon2id / session 删除。不改 USER-GUIDE。
+
+#### 5. 验证（必须全量）
+
+```bash
+npm run typecheck
+npm test
+```
+
+点名内环若需：`tests/dialog-style.test.ts tests/database-grid-styles.test.ts tests/ssh-terminal-styles.test.ts tests/database-navicat-toolbar-order.test.ts`。
+
+#### 6. 验收
+
+- [ ] 组件与 `planned-feature` CSS 消失
+- [ ] `scripts/reset-admin-password.ts` 消失；`admin:reset` 可用
+- [ ] USER-GUIDE 未改
+- [ ] 全量 `npm test` 通过
+
+#### 7. 体积
+
+无新文件。
+
+---
+
+### 工作项 B — 提取 desktop `contextKey` / `jsonResponse`
+
+#### 1. 现状
+
+`contextKey` 七处逐字复制（非 export）：`ssh-runtime.ts:129`、`sftp-runtime.ts:160`、`log-runtime.ts:55`、`redis-runtime.ts:58`、`database-runtime.ts:141`、`database-operations-runtime.ts:96`、`connection-inspection-runtime.ts:58`。
+
+`jsonResponse` 四处。database / database-operations / redis：`status === 204 ? "No Content"` + `body === undefined` 时无 headers。inspection（`:62-68`）**要求** `body: unknown`、总是 JSON headers、无 204 分支。今日 inspection 调用点总是传 body。
+
+`mcpJsonResponse`（`main.ts:2156`）与 `desktopResponseToMcp`（`:2160`）是 **MCP `McpApiResponse`**，**禁止**并入本 helper。
+
+`DesktopSshContext` 必须继续可从 `ssh-runtime.ts` 作 `export type` 导入。
+
+#### 2. 目标
+
+```ts
+// src/desktop/ssh-context.ts
+export interface DesktopSshContext {
+  endpoint: string;
+  userId: string;
+  workspaceType: "personal" | "organization";
+  workspaceId: string;
+}
+export function contextKey(context: DesktopSshContext): string {
+  return `${context.endpoint}\0${context.userId}\0${context.workspaceType}\0${context.workspaceId}`;
+}
+```
+
+```ts
+// src/desktop/json-response.ts
+export interface DesktopJsonResponse {
+  status: number;
+  statusText: string;
+  headers: Array<[string, string]>;
+  body: string;
+}
+export type DesktopDatabaseResponse = DesktopJsonResponse;
+export type DesktopRedisResponse = DesktopJsonResponse;
+export type DesktopInspectionResponse = DesktopJsonResponse;
+
+export function jsonResponse(status: number, body?: unknown): DesktopJsonResponse {
+  return {
+    status,
+    statusText: status === 204 ? "No Content" : status >= 400 ? "Error" : "OK",
+    headers: body === undefined ? [] : [["content-type", "application/json; charset=utf-8"]],
+    body: body === undefined ? "" : JSON.stringify(body),
+  };
+}
+```
+
+各 runtime 删除本地接口，改用上述 alias（或继续 `import type { DesktopDatabaseResponse }` 从 json-response）。**不要改 inspection 调用点**（继续传 body）。`ssh-runtime.ts`：`export type { DesktopSshContext } from "./ssh-context.js"`。`contextKey` **不要**新做成 public export（可从 ssh-context 导出供 runtime 用，但不要从 ssh-runtime 再导出）。
+
+#### 3. 步骤
+
+按上替换 7+4 处。`rg "function contextKey|function jsonResponse" src/desktop` 只剩 json-response/ssh-context。
+
+#### 4. 禁止改动
+
+- `\0` 顺序。不改 inspection 调用。不碰 `mcpJsonResponse` / `desktopResponseToMcp`。不放到 `src/shared`。
+
+#### 5. 验证
+
+```bash
+npm run typecheck
+npm test -- tests/desktop-ssh-runtime.test.ts tests/desktop-log-runtime.test.ts tests/desktop-database-runtime.test.ts tests/desktop-database-operations-runtime.test.ts tests/desktop-connection-quality-probe.test.ts tests/redis.test.ts tests/sftp-transfer.test.ts tests/desktop-local-inspection.integration.test.ts tests/desktop-local-ssh.integration.test.ts tests/desktop-local-database.integration.test.ts tests/desktop-local-log.integration.test.ts
+```
+
+#### 6. 验收
+
+- [ ] 一处 `contextKey`、一处 `jsonResponse`
+- [ ] alias 名称保留
+- [ ] `mcpJsonResponse` 仍只在 MCP 桥
+- [ ] typecheck + 点名测试通过
+
+#### 7. 体积
+
+各 `< 50` 行。
+
+---
+
+### 工作项 C — 共享 SSH login script / error map / connect config
+
+#### 1. 现状
+
+`normalizeSshLoginScript`：`src/server/ssh/options.ts:6-9`；desktop 复制 `normalizedLoginScript` 于 `ssh-runtime.ts:358`、`log-runtime.ts:59`。
+
+错误正则顺序：authentication → timed out → ECONNREFUSED → ENOTFOUND|EAI_AGAIN → Host key。desktop 包 `tr()`。
+
+`connectConfig` 两边均设置 `tryKeyboard = true`（`authType === "keyboardInteractive"`），`connectClient` 把 password 传给 `connectSshClient`。
+
+`forward()` **四份**：`src/desktop/ssh-runtime.ts:174`、`src/server/ssh/connector.ts:130`（`Promise<Readable>`）；`src/desktop/database-runtime.ts:241`、`src/server/database-workbench/connector.ts:110`（`Promise<ClientChannel>`）。**本 PR 不抽 database 两份。** SSH 两份可以抽到 `ssh-connect.ts`，也可以继续重复到后续 PR——默认：**SSH 两份可以抽；database 两份明确 out of scope。**
+
+Server `inspectionError`（`connection-inspection.ts:8-16`）文案/顺序与 SSH helper **不同**（`认证失败，请检查用户名和凭据`、`目标端口拒绝连接`）。Desktop inspection 已委托 `desktopSshErrorMessage`。**任何改 inspection 字符串 = 行为变化 → 停。** 本 PR Files **不要**包含 `connection-inspection.ts`。
+
+#### 2. 目标
+
+`src/shared/ssh-login-script.ts`：现有 `normalizeSshLoginScript` 原文。`options.ts` **具名** re-export，保留 `preserveSshLoginScript`。`tests/ssh-login-script.test.ts` import 路径保持从 `options.js`。
+
+`src/shared/ssh-error.ts`：
+
+```ts
+export function sshErrorMessage(error: unknown): string {
+  const value = error instanceof Error ? error.message : String(error);
+  if (/authentication/i.test(value)) return "SSH 认证失败，请检查用户名和凭据";
+  if (/timed out/i.test(value)) return "SSH 连接超时";
+  if (/ECONNREFUSED/i.test(value)) return "SSH 端口拒绝连接";
+  if (/ENOTFOUND|EAI_AGAIN/i.test(value)) return "无法解析 SSH 主机地址";
+  if (/Host key/i.test(value)) return "SSH 主机指纹不匹配";
+  return value;
+}
+```
+
+`desktopSshErrorMessage` 仍从 `ssh-runtime.ts` export：`return tr(sshErrorMessage(error));`。
+
+`src/shared/ssh-connect.ts` **必须**是下面这份实现（含 `tryKeyboard`、passphrase、两个中文 key），不得用「只写 keepalive」的缩写稿：
+
+```ts
+import { createHash } from "node:crypto";
+import type { Readable } from "node:stream";
+import type { ConnectConfig } from "ssh2";
+
+export interface SshConnectInput {
+  host: string;
+  port: number;
+  username: string;
+  authType: "password" | "privateKey" | "keyboardInteractive";
+  credential: { password?: string; privateKey?: string; passphrase?: string };
+  options: { keepAliveSeconds?: number; hostKeySha256?: string };
+}
+
+export function sshHostVerifier(expected: string | undefined): ConnectConfig["hostVerifier"] {
+  if (!expected) return undefined;
+  const normalizedExpected = expected.replace(/^SHA256:/i, "").replace(/=+$/, "");
+  return (key: Buffer) => {
+    const actual = createHash("sha256").update(key).digest("base64").replace(/=+$/, "");
+    return actual === normalizedExpected;
+  };
+}
+
+export function buildSshConnectConfig(
+  connection: SshConnectInput,
+  sock: Readable | undefined,
+  translate: (key: string) => string = (key) => key,
+): ConnectConfig {
+  const config: ConnectConfig = {
+    host: connection.host,
+    port: connection.port,
+    username: connection.username,
+    readyTimeout: 15_000,
+    keepaliveInterval: Math.max(0, Number(connection.options.keepAliveSeconds ?? 30)) * 1000,
+    keepaliveCountMax: 3,
+    hostVerifier: sshHostVerifier(connection.options.hostKeySha256),
+    sock,
+  };
+  if (connection.authType === "privateKey") {
+    if (!connection.credential.privateKey) throw new Error(translate("该连接没有保存私钥"));
+    config.privateKey = connection.credential.privateKey;
+    if (connection.credential.passphrase) config.passphrase = connection.credential.passphrase;
+  } else {
+    if (!connection.credential.password) throw new Error(translate("该连接没有保存密码"));
+    config.password = connection.credential.password;
+    if (connection.authType === "keyboardInteractive") config.tryKeyboard = true;
+  }
+  return config;
+}
+```
+
+desktop `connectConfig` 改为调用 `buildSshConnectConfig(connection, sock, tr)`。server 用默认 `translate`。`connectClient` 仍本地：keyboardInteractive 时传 password 给 `connectSshClient`。
+
+#### 3. 步骤
+
+按上替换。不要改 log 的 `OUTPUT_BUFFER_LIMIT = 256 * 1024`。不要合并 pool。
+
+#### 4. 禁止改动
+
+- 正则顺序与中文。`tryKeyboard` 必须在。
+- 不改 `connection-inspection.ts` 字符串。
+- 不改 database `forward`。
+- 不碰 `mcpJsonResponse`。
+
+#### 5. 验证（必须全量）
+
+```bash
+npm run typecheck
+npm test
+```
+
+内环：`tests/ssh-login-script.test.ts tests/ssh-client.test.ts tests/ssh.test.ts tests/desktop-ssh-runtime.test.ts tests/desktop-log-runtime.test.ts tests/desktop-local-ssh.integration.test.ts tests/desktop-local-log.integration.test.ts`。`idle-resource-pool.test.ts` 不是本 PR 范围，不必点名。
+
+#### 6. 验收
+
+- [ ] `rg "tryKeyboard" src/shared/ssh-connect.ts` 命中
+- [ ] `rg "认证失败，请检查用户名和凭据" src` 与 `rg "SSH 认证失败" src` **两种文案都在**（inspection vs SSH）
+- [ ] `connection-inspection.ts` 无 diff
+- [ ] `database-runtime.ts` / `database-workbench/connector.ts` 的 `forward` 无 diff
+- [ ] 全量 `npm test`
+
+#### 7. 体积
+
+三文件合计 `< 200` 行。
+
+---
+
+### 工作项 D — 共享 SFTP plan / copy
+
+#### 1. 现状
+
+算法接近但**不等价**：
+
+- desktop `existingStats`（`sftp-runtime.ts:341-348`）用 `desktopSshErrorMessage(error)` 做 `/no such file/i`；server（`transfer-manager.ts:149-156`）用通用 `errorMessage`。
+- desktop `copyEntry` 的 `signal: AbortSignal`（必填，`signal.aborted`）；server `signal?: AbortSignal`（`signal?.aborted`）。
+- 循环还依赖 `conflictDecision`、`ensureDirectory`、`removeEntry`、`entryType`、`collectConflicts`。
+- desktop `SftpFileSystem` 另有 `stat` + `close()`，**不要删**。
+- `materializeEntry`（拖出到本机）留 desktop。
+
+禁止「以 server 测试为准去改 desktop」。两端测试不一致 → **停**。
+
+#### 2. 目标
+
+```ts
+// src/shared/sftp-transfer-plan.ts
+export type SftpConflict = "overwrite" | "skip";
+export interface SftpPlanAttributes {
+  size: number;
+  mode: number;
+  isDirectory(): boolean;
+  isSymbolicLink(): boolean;
+}
+export interface SftpPlanEntry { filename: string }
+export interface SftpPlanFileSystem {
+  lstat(path: string): Promise<SftpPlanAttributes>;
+  readdir(path: string): Promise<SftpPlanEntry[]>;
+  mkdir(path: string): Promise<void>;
+  rmdir(path: string): Promise<void>;
+  unlink(path: string): Promise<void>;
+  chmod(path: string, mode: number): Promise<void>;
+  createReadStream(path: string): NodeJS.ReadableStream;
+  createWriteStream(path: string, options: { flags: "w"; mode: number }): NodeJS.WritableStream;
+}
+export interface SftpTransferPlan { sourceType: "file" | "directory"; totalBytes: number; totalFiles: number }
+export interface SftpTransferProgress { transferredBytes: number; completedFiles: number; skippedFiles: number }
+
+export function isSftpMissingFileCode(error: unknown): boolean {
+  const code = (error as { code?: string | number }).code;
+  return code === 2 || code === "ENOENT" || code === "NO_SUCH_FILE";
+}
+
+export async function existingSftpStats(
+  fs: SftpPlanFileSystem,
+  path: string,
+  isMissingFile: (error: unknown) => boolean,
+): Promise<SftpPlanAttributes | null> { /* try lstat; isMissingFile → null; else throw */ }
+
+export function sftpConflictDecision(
+  targetPath: string,
+  fallback: SftpConflict,
+  decisions: Readonly<Record<string, SftpConflict>> | undefined,
+): SftpConflict { return decisions?.[targetPath] ?? fallback; }
+
+export async function buildSftpPlan(fs: SftpPlanFileSystem, path: string, signal: AbortSignal | undefined, translate: (key: string, values?: readonly unknown[]) => string): Promise<SftpTransferPlan>
+export async function ensureSftpDirectory(...)
+export async function removeSftpEntry(...)
+export async function collectSftpConflicts(...)
+export async function copySftpEntry(..., signal: AbortSignal | undefined, ...)
+```
+
+注入：
+
+- desktop `isMissingFile`: `(error) => isSftpMissingFileCode(error) || /no such file/i.test(desktopSshErrorMessage(error))`
+- server: `(error) => isSftpMissingFileCode(error) || /no such file/i.test(error instanceof Error ? error.message : String(error))`
+
+`copySftpEntry` 用 `if (signal?.aborted) throw signal.reason`（兼容必填/可选）。desktop 调用点继续传入 AbortSignal。
+
+symlink / skip：`skippedFiles += buildPlan.totalFiles`；`mode & 0o777`；`TRANSFER_LIMIT = 3`；`DESKTOP_LOCAL_SFTP_CONNECTION_ID` 不变。
+
+server 继续 export `transferSftpEntry`。adapter 把 `TransferSftp` 回调包成 `SftpPlanFileSystem`。desktop 不要为了满足 shared 类型而删 `stat`/`close`。
+
+错误文案：desktop `tr(...)`；server 最终 `.message` 必须与现测字面量一致（路径用拼接，不要留下未替换 `{{0}}`）。
+
+#### 3. 步骤
+
+1. 抽出 shared，两端注入 `isMissingFile`。
+2. 跑 server `tests/sftp-transfer.test.ts` **和** desktop SFTP 测试。不一致就停。
+
+#### 4. 禁止改动
+
+- 不把 desktop 行为「修」成 server。
+- 不合并 local SFTP 进 server。
+- 不改 IPC/HTTP。
+- 不删 desktop `stat`/`close`。
+
+#### 5. 验证（必须全量）
+
+```bash
+npm run typecheck
+npm test
+```
+
+内环必须含：`tests/sftp-transfer.test.ts tests/sftp.test.ts tests/sftp-selection.test.ts tests/desktop-ssh-runtime.test.ts tests/desktop-local-ssh.integration.test.ts`。
+
+#### 6. 验收
+
+- [ ] shared 含 `existingSftpStats` / `ensureSftpDirectory` / `removeSftpEntry` / `sftpConflictDecision` / injectable `isMissingFile`
+- [ ] desktop 与 server 测试均绿；若曾 diverge → 本 PR 应已 stop 而非静默统一
+- [ ] `transferSftpEntry` 仍 export
+- [ ] 全量 `npm test`
+
+#### 7. 体积
+
+`sftp-transfer-plan.ts` `< 450`。desktop `sftp-runtime.ts` 允许 800–900。
+
+---
+
+### 工作项 E — 共享 Redis `buildRedisOptions`
+
+保持原字段级对象，包括 `connectionName` 由调用方传入、`connectTimeout`/`commandTimeout` 默认 10_000、`retryStrategy: () => null`、TLS `servername` fallback。
+
+`isDesktopRedisExecutionPath` 必须继续 `new URL(path, "http://desktop.local").pathname` 再测正则，禁止简化成 raw `path`。
+
+不抽 SSH tunnel。不碰 `mcpJsonResponse`。
+
+验证：全量 `npm test`。内环 `tests/redis.test.ts tests/redis-availability.test.ts tests/redis-workbench-format.test.ts`。无 desktop local Redis integration 测试，全量套件即回归网。
+
+禁止改动加一条：不把 `mcpJsonResponse` 折进 `jsonResponse`。
+
+---
+
+### 工作项 F — `main.ts` 按符号拆分（6 个连续 PR：F0–F5）
+
+**禁止按行号切文件。** 下列是每个新文件的**拥有符号**。把函数**原样** `export function` 搬走，标识符名不变。
+
+#### 跨域符号（不得跟错文件）
+
+| 符号 | 归属 | 说明 |
+| --- | --- | --- |
+| `publishDesktopAppState` | `src/desktop/app-state.ts`（PR 7 与 overlay 同时落地：它调用 `sendToAgentChat`） | 向 mainWindow **和** agent chat 发 `viron:state-changed`。`app-state.ts` **单向** `import { sendToAgentChat } from "./overlays/agent-chat-window.js"`。**chat 模块禁止 import `app-state.ts`**（避免环）。 |
+| `raiseAgentOverlayWindows` | `src/desktop/overlays/agent-chat-window.ts`（**不要**独立 `raise-agent-overlays.ts`） | 唯一调用方是同文件的 `applyAgentChatChromeVisibility`（今日 `main.ts:976`）。函数体读本模块 `agentChatWindow` 以及 launcher 的 `agentLauncherVisualWindow` / `agentLauncherWindow`。chat **单向** `import { agentLauncherWindow, agentLauncherVisualWindow } from "./agent-launcher-window.js"`（launcher 导出这两个 `let`；只在函数体内解引用，不要在模块顶层读）。launcher **禁止** import chat。`moveTop` 顺序锁定：① `agentChatWindow` ② `agentLauncherVisualWindow` ③ `agentLauncherWindow`，在函数上写注释冻结。 |
+| `cachedDesktopWebUrl` `rememberDesktopWebLastUrl` `forgetDesktopWebLastUrl` | `web-view-runtime.ts` | 不是 app-state。 |
+| `desktopWebSession` | `web-view-runtime.ts` | |
+| `localMcpLauncherPath` `localMcpStatus` | `mcp-desktop-bridge.ts` | |
+| `sendImmersiveNavigationAction` | `overlays/immersive-navigation-window.ts` | 在 trustedSender 之前就存在，不是 ipc-guards。 |
+| `endpointStateKey` `executionModeForEndpoint` `currentExecutionMode` `executionScopeForEndpoint` | `execution-router.ts` | |
+| `requireDesktopString` `requireDesktopInput` `desktopBinary` | `ipc/desktop-ipc-parse.ts`（与 SSH/agent IPC 一起，F3） | **不是** web-view。 |
+| `agentSettingsInput` `agentModelListInput` `agentChatRequest` `monitorAlertNotificationInput` `agentDatabaseContextInput` | `ipc/register-agent-ipc.ts` 或同文件 parse | 不是 web-view。 |
+| `closeDesktopExecution` | `execution-router.ts` | 定义 3577。 |
+| `closeDesktopMcpOperations` | **定义**在 `mcp-desktop-bridge.ts`。**调用点**见下表，搬家时 **Promise.all 成员与参数（含 `false`）逐字保留**。 |
+
+`closeDesktopMcpOperations` 调用点（定义 vs 调用分属 F4 定义、F3 部分调用——F3 若先搬 IPC 则 import 该函数；因此 **F4 必须先于或与「含这些 handler 的 IPC 搬家」同堆叠，实际 PR 顺序：F4=PR10 在 F3=PR9 之后，故 F3 阶段这些 handler 仍留 main.ts，由 F4 连同 handler 一起搬**）：
+
+| 位置 | 必须保留的源码片段（测试锁定） |
+| --- | --- |
+| `viron:execution-mode:set` | `closeDesktopMcpOperations(),\n      closeAllDesktopWebViews(),\n      closeDesktopExecution(tr("App 连接模式已切换"))` |
+| `viron:endpoint:set` 切换 | `closeDesktopMcpOperations(),\n          closeAllDesktopWebViews(),\n          closeDesktopExecution(tr("Endpoint 已切换"))` |
+| `viron:endpoint:clear` | `await Promise.all([closeDesktopMcpOperations(), closeAllDesktopWebViews(), closeDesktopExecution(tr("Endpoint 已清除"))` |
+| login/logout/workspace | `await Promise.all([closeDesktopMcpOperations(), closeAllDesktopWebViews(), closeDesktopExecution(reason)])` |
+| `before-quit` | `closeDesktopMcpOperations(false),\n    desktopMcpBroker?.close()` |
+| MCP 窗口创建 | `["X-Viron-MCP-Origin", activeEndpoint.endpoint]`、`session: activeEndpoint.partition`、`contextIsolation: true`、`nodeIntegration: false`、`sandbox: true`、`modal: false`、`closable: true` |
+
+**F3 不要搬** execution-mode / endpoint / viron:api / MCP enabled / **`viron:service-socket:*`** 这些 handler。F3 只搬 overlay IPC + clipboard/titlebar/shortcuts/artifacts/download/web-view IPC 等不含 MCP close 序列、也不依赖 execution-router 的 handler。`tests/desktop-mcp-security.test.ts` 的读取路径在 **F4（PR 10）** 才改。
+
+#### 残留 `main.ts` 必须留下的符号
+
+- `app.commandLine.appendSwitch("use-mock-keychain")` 在 `app.whenReady()` **之前**（`macos-packaging.test.ts`）
+- `process.argv.includes("--smoke-test") || app.requestSingleInstanceLock()`（`desktop-updater.test.ts`）
+- `shouldBlockLaunchForActiveUpdate` + 「正在安装更新」
+- `createWindow`（装配 overlay `layout*` 调用、`titleBarOverlay: desktopTitleBarOverlay("login")`）
+- `developmentApplicationIcon`（仅 `createWindow` / dock icon 使用，留 main.ts）
+- `app.whenReady` 里 `DesktopAgentRuntime` 装配字面量 **`executeSshDiagnostic: async`、`executeDatabaseRead: async`**（`tests/agent-floating-window.test.ts` ~371–372；**F0–F5 都不搬这两段**）。同装配的 `currentScope: currentAgentRuntimeScope,`（~6492，**无 `()`**）也留在 `main.ts`，但那**不是**测试锁定串
+- **`async function currentAgentRuntimeScope()`** 定义（今日 ~2597）归 F4 `execution-router.ts`。测试 `toContain("currentAgentRuntimeScope()")` 命中的是该签名以及 F3 将搬走的 `await currentAgentRuntimeScope()` 调用，**不是** whenReady 的无括号属性。PR 9 后定义仍在 `main.ts`（断言继续读 `main.ts`）；**PR 10 必须把该断言改读 `execution-router.ts`**，且锁定串保持带 `()`，禁止弱化成无括号的 `currentAgentRuntimeScope`（会误匹配 `currentScope: currentAgentRuntimeScope`）
+- `before-quit` / `window-all-closed` / `second-instance`
+- `--smoke-test` 分支调用 smoke 函数（函数体在 F5 搬走）
+
+#### F0 目标文件符号（PR 6）
+
+`window-host.ts`：`getMainWindow` / `setMainWindow`（或 `export let mainWindow`，若导出则保持名字 `mainWindow`）。`preload`/`app.getAppPath()` helper 可放这里。
+
+`app-state.ts`：`DesktopStateFile`、`statePath`、`readState`、`writeState`、`shortcutPreferences`、`currentAgentEntryMode`、`electronAccelerator`、`sendShortcutAction`、`publicState`。**不要**放 web-url helpers。`publishDesktopAppState` 等 F1。
+
+`device-session.ts`：`devicePath`、`readDeviceFile`、`writeDeviceFile`、`identityKey`、`rememberSystemKeyAccessConsent`、`forgetSystemKeyAccessConsent`、`hasStoredDeviceIdentity`、`systemKeyAccessCopy`、`deviceIdentity`、`confirmSystemKeyAccess`、`endpointSession`。**不要**放 `desktopWebSession`。
+
+`ipc-guards.ts`：`isTrustedAppSender`、`trustedSender`、`trustedMainWindowSender`、`trustedAgentChatSender`。
+
+`app-menu.ts`：`installApplicationMenu`。调用点：`createWindow`、以及 titlebar/language IPC 里重建菜单处——F0 只搬函数，调用点仍在 main，F3 再随 IPC 走。
+
+#### F1 overlay（PR 7）— 同名函数，模块级 `let` 留在该文件
+
+`overlays/agent-launcher-window.ts` 拥有并 **`export let`**：`agentLauncherWindow`、`agentLauncherVisualWindow`（供 chat 单向 import）；另有 `agentLauncherState`、`agentLauncherLoaded`、`agentLauncherVisualLoaded`。函数：`layoutAgentLauncherWindow`、`publishAgentLauncherState`、`createAgentLauncherWindow`、`ensureAgentLauncherWindow`、`updateAgentLauncherWindow`。保持 `focusable: false`、`interaction.moveAbove(agentLauncherVisualWindow.getMediaSourceId())`。**禁止** `screen.getCursorScreenPoint()` / `agentLauncherHitTestTimer`。本文件禁止 import `agent-chat-window.ts` 或 `app-state.ts`。
+
+`overlays/agent-chat-window.ts`：`agentChatWindow`、`agentChatHostState`、`agentChatChromeVisible`、`agentChatIgnoreMouse`、`agentChatNativeOverlay`、`pendingAgentHostActions`。函数：`sendToAgentChat`（供 `app-state.ts` 单向 import）、`layoutAgentChatWindow`、`publishAgentHostState`、`applyAgentChatIgnoreMouse`、`applyAgentChatChromeVisibility`、`raiseAgentOverlayWindows`、`setAgentChatNativeOverlay`、`ensureAgentChatWindow`、`updateAgentChatHost`、`settleAgentHostAction`、`requestAgentHostAction`。
+
+`raiseAgentOverlayWindows` **写在本文件**（紧挨唯一调用方 `applyAgentChatChromeVisibility`），不要第三文件。函数顶部注释冻结顺序：
+
+```ts
+// z-order: chat, then visual launcher, then interaction launcher. Do not reverse.
+export function raiseAgentOverlayWindows(): void {
+  if (agentChatWindow && !agentChatWindow.isDestroyed() && agentChatWindow.isVisible()) agentChatWindow.moveTop();
+  if (agentLauncherVisualWindow && !agentLauncherVisualWindow.isDestroyed() && agentLauncherVisualWindow.isVisible()) {
+    agentLauncherVisualWindow.moveTop();
+  }
+  if (agentLauncherWindow && !agentLauncherWindow.isDestroyed() && agentLauncherWindow.isVisible()) {
+    agentLauncherWindow.moveTop();
+  }
+}
+```
+
+只在函数体内读 launcher `let`，不要在模块初始化时读。本文件禁止 import `app-state.ts`。
+
+`app-state.ts` 追加：`publishDesktopAppState`（`import { sendToAgentChat } from "./overlays/agent-chat-window.js"`）。
+
+`overlays/connection-quality-window.ts`：`connectionQualityWindow`、`connectionQualityVisualWindow`、`connectionQualityState`、loaded flags。函数：`layoutConnectionQualityWindow`、`publishConnectionQualityState`、`createConnectionQualityWindow`、`ensureConnectionQualityWindow`、`updateConnectionQualityWindow`。保持 `moveAbove(connectionQualityVisualWindow.getMediaSourceId())`。
+
+`overlays/active-environment-dock-window.ts`：dock 全部 `let`（含 `activeEnvironmentDockPointerTimer`、`activeEnvironmentDockDrag`）。函数：`layoutActiveEnvironmentDockWindow`、`stopActiveEnvironmentDockCollapseLayout`、`scheduleActiveEnvironmentDockCollapseLayout`、`publishActiveEnvironmentDockState`、`publishActiveEnvironmentDockLayout`、`stopActiveEnvironmentDockPointerTracking`、`activeEnvironmentDockPointerInside`、`scheduleActiveEnvironmentDockPointerTracking`、`activeEnvironmentDockPosition`、`sendActiveEnvironmentDockPosition`、`handleActiveEnvironmentDockDrag`、`ensureActiveEnvironmentDockWindow`、`updateActiveEnvironmentDockWindow`、`updateActiveEnvironmentDockLayoutWindow`。**保留** `electronScreen.getCursorScreenPoint()`。
+
+`overlays/immersive-navigation-window.ts`：`sendImmersiveNavigationAction`、`immersiveNavigationViewport`、`layoutImmersiveNavigationWindow`、`publishImmersiveNavigationState`、`ensureImmersiveNavigationWindow`、`updateImmersiveNavigationWindow`、`handleImmersiveNavigationDrag`。
+
+`createWindow` 的 `move`/`resize`/`closed` 继续调用这些 **同名** `layout*`。
+
+#### F2 web-view（PR 8）
+
+`web-view-runtime.ts`：web-url 三函数、`desktopWebSession`、`ManagedDesktopWebView`/`ManagedDesktopWebPage` 类型、`webViewBounds`、`webViewState`、`previewImageDataUrl`、`captureWebContentsPreview`、`captureDesktopWebViewPreview`、`desktopRendererPreviewBounds`、`captureDesktopRendererPreview`、`touchDesktopWebView`、`trackDesktopWebPartition`、`sendWebViewState`、`notifyWebView`、`autoFillWebPage`、`activeDesktopWebPage`、`layoutDesktopWebViewPages`、`activateDesktopWebPage`、`removeDesktopWebPage`、`destroyDesktopWebPages`、`desktopWebPreferences`、`inspectDesktopWebElement`、`openDesktopWebLinkInNewPage`、`desktopWebContextMenuItem`、`createDesktopWebPage`（含 `nativeView.webContents.on("before-mouse-event"` / `mouse.type !== "mouseDown"` / `viron:native-view-pointer-down`）、`clearDesktopWebSession`、`latestDesktopWebCredential`、`applyDesktopWebCredential`、`reopenDesktopWebViews`、`refreshDesktopWebViews`、`resetDesktopWebViews`、`resetDesktopWebView`、`openDesktopWebView`、`snapshotDesktopWebCredential`、`actOnDesktopWebCredential`、`controlDesktopWebCredential`、`uploadDesktopWebCredential`、`closeDesktopWebView`、`closeAllDesktopWebViews`、`localWebView`、`handleDesktopWebViewAction`、`desktopWebMutationContext`、`reconcileDesktopWebMutation`。
+
+**不要**搬 `suggestedFilename`（可跟 download IPC / http-proxy）、**不要**搬 `requireDesktopString*`、**不要**搬 `closeDesktopExecution`。
+
+#### F3 IPC（PR 9）
+
+`ipc/register-ssh-ipc.ts`：`registerDesktopSshIpc`（含 sftp/recordings）。
+`ipc/register-log-ipc.ts`：`registerDesktopLogIpc`。
+`ipc/register-agent-ipc.ts`：`registerDesktopAgentIpc` + `executeAgentSshRead`、`emitDesktopAgentEvent`、`settleAgentWorkbenchExecution`、`requestAgentWorkbenchExecution`、`agentWorkbenchExecutionResponse`、`validateAgentWorkbenchExecutionResult`、`executeAgentSshWorkbenchRead`、`executeAgentDatabaseRead` + agent 输入 parse。
+`ipc/desktop-ipc-parse.ts`：`requireDesktopString`、`requireDesktopInput`、`desktopBinary`。
+`ipc/register-core-ipc.ts`：overlay 的 `ipcMain.handle("viron:immersive-navigation:*")` 等、clipboard、titlebar-theme、shortcuts、monitor-alert、artifacts、download、save-text-file、web-view IPC、`viron:state`、language。**不要**搬 `viron:execution-mode:set`、`viron:endpoint:*`、`viron:api`、`viron:mcp:*`、**`viron:service-socket:*`**（后一组与 `openServiceSocket` 同属 F4）。
+
+通道名逐字复制。每个 handle 仍先 `trustedSender`/`trustedMainWindowSender`/`trustedAgentChatSender`。
+
+#### F4 HTTP / MCP / execution（PR 10）
+
+`http-proxy.ts`：`requestUrl`、`requestBody`、`endpointFetch`、`endpointJson`、`suggestedFilename`。
+`mcp-desktop-bridge.ts`：`localMcpLauncherPath`、`localMcpStatus`、`openDesktopMcpOperationWindow`、`closeDesktopMcpOperations`、`mcpRequestPath`、`mcpDesktopRequest`、`mcpFormFile`、`isDesktopLocalMcpExecutionPath`、`boundedDesktopSshBatchResult`、`executeDesktopMcpApprovedRequest`、`completeDesktopMcpOperation`、`handleDesktopMcpOperationResponse`、`invokeDesktopMcpTool`、`mcpJsonResponse`、`desktopResponseToMcp`、`environmentIdForLog`。**禁止**把 `mcpJsonResponse` 改成 `jsonResponse`。
+`execution-router.ts`：execution-mode helpers、`reserveDesktopRuntime`、`releaseDesktopRuntimeReservation`、`trackDesktopRuntime`、`syncDesktopRuntimeConnections`、**具名 service-socket 四函数** `sendServiceSocketEvent`、`serviceSocketBytes`、`openServiceSocket`、`closeAllServiceSockets`（及 `serviceSockets` Map；它们依赖 `currentExecutionMode` / `activeEndpoint` / `executionScopeForEndpoint`）、`emptyExecutionActivity`、`executionRuntimeApiMissing`、`closeServerForwardingRuntime`、`currentExecutionActivity`、`ensureDeviceRegistration`、`currentDeviceAuthorization`、`localWebCredential`、`localSshCredential`、`localDatabaseCredential`、`localRedisCredential`、`signedDesktopOperation`、`reportSignedDesktopOperation`、四份 `reportDesktop*`、`currentDesktopSshContext`、`currentDesktopAuthContext`、`currentAgentSettingsScope`、`agentRuntimeScope`、`currentAgentRuntimeScope`、`touchDesktopDatabaseRequest`、`touchDesktopRedisRequest`、`closeDesktopExecution`。
+
+然后把 `viron:execution-mode:set`、`viron:mcp:*`、`viron:endpoint:*`、`viron:api`、`viron:execution-activity`、**`viron:service-socket:open|send|close`** 搬进 `ipc/register-execution-ipc.ts`（不要拆到 F3 `register-core-ipc.ts`：handlers 必须与四函数同一 PR，否则无法编译）。**锁定的 Promise.all 字符串不变**。
+
+本 PR **必须全量 `npm test`**。
+
+#### F5 smoke（PR 11）
+
+`smoke/*.ts`：`waitForDesktopWebTitle`、`desktopSmokeStage`、`waitForDesktopWebNotice`、`runDesktopWebSmoke`、`runDesktopSshSmoke`、`runDesktopLogSmoke`、`runDesktopDatabaseSmoke`、`runDesktopInspectionSmoke`、`waitForDesktopWindowSnapshot`、`runDesktopImmersiveNavigationSmoke`、`runDesktopAgentLauncherSmoke`（内含锁定串 `label: tr("打开 Viron Agent")`，今日 `main.ts:5434`，**不是** overlay）、`runDesktopConnectionQualitySmoke`、`runDesktopActiveEnvironmentDockSmoke`。`createWindow` 的 `--smoke-test` 只 import 调用。stdout `VIRON_DESKTOP_SMOKE` / stage / 退出码不变。
+
+#### CSS-lock 测试：精确字符串与负责 PR
+
+改 `readFileSync`/`readFile` 路径时加一行合同注释。
+
+| 测试文件 | 锁定字符串/标识符 | 改路径的 PR |
+| --- | --- | --- |
+| `macos-packaging.test.ts` | `use-mock-keychain` 在 `whenReady` 前 | **不改路径**（留 main.ts） |
+| `desktop-updater.test.ts` | `requestSingleInstanceLock`、`--smoke-test") \|\| app.requestSingleInstanceLock()`、`shouldBlockLaunchForActiveUpdate`、`正在安装更新` | **不改路径** |
+| `desktop-titlebar-layout.test.ts` | `titleBarOverlay: desktopTitleBarOverlay("login")` | **不改路径** |
+| `agent-floating-overlay.test.ts` | `agentLauncherVisualWindow`、`agentFloatingOverlayInteractionState`、`interaction.moveAbove(agentLauncherVisualWindow.getMediaSourceId())`、`focusable: false`、`!agentLauncherWindow!.isFocusable()`、**不**含 `agentLauncherHitTestTimer`、**不**含 launcher 的 `screen.getCursorScreenPoint()` | PR 7 → `overlays/agent-launcher-window.ts` |
+| `agent-floating-window.test.ts` | **禁止**把顶部 `const desktopMain = readFileSync(main.ts)` 整份改绑到任一新文件。按下表 **拆成 per-assertion `readFileSync`**（可与留下的 `desktopMain` 并存）。 | 见下一分组 |
+| 同上 · overlay | `desktop-agent-chat.html`、`setAgentChatNativeOverlay`（测试 ~74–75） | **仅 PR 7** → `overlays/agent-chat-window.ts`（新常量如 `desktopChatOverlay`）。**其余 `desktopMain` 断言仍读 `main.ts`。** |
+| 同上 · web-view | `nativeView.webContents.on("before-mouse-event"`、`mouse.type !== "mouseDown"`、`mainWindow.webContents.send("viron:native-view-pointer-down")`（测试 ~493–495） | **PR 8** → `web-view-runtime.ts` |
+| 同上 · agent IPC | `ipcMain.handle("viron:agent:settings:save"` … `models:list` slice；`workbench:respond` … `chat:stop` slice（测试 ~340–353） | **PR 9** → `ipc/register-agent-ipc.ts` |
+| 同上 · deny list | `agent-(?:context|diagnostics)`（测试 ~327；今日 `viron:api` ~4844） | **PR 10** → 持有 `viron:api` 的文件（`http-proxy.ts` / `ipc/register-execution-ipc.ts`） |
+| 同上 · `currentAgentRuntimeScope()` | 测试 ~370：`toContain("currentAgentRuntimeScope()")`。今日命中 `async function currentAgentRuntimeScope()`（~2597）以及 `await currentAgentRuntimeScope()`（~4312 / ~4322）。**不**命中 whenReady `currentScope: currentAgentRuntimeScope,`（无 `()`） | **PR 9** 调用点随 agent IPC 搬走，定义仍在 `main.ts` → 断言**继续读 `main.ts`**。**PR 10** 定义进 `execution-router.ts` → **只把这一条**改读 `execution-router.ts`，锁定串仍是 `currentAgentRuntimeScope()`（含括号） |
+| 同上 · smoke label | `label: tr("打开 Viron Agent")`（测试 ~290；今日 **`runDesktopAgentLauncherSmoke` ~5434**，不是 overlay） | **PR 11** → 含该 smoke 的文件（如 `smoke/overlay-smoke.ts`） |
+| 同上 · whenReady 装配 | `executeSshDiagnostic: async`、`executeDatabaseRead: async`（测试 ~371–372；今日 `app.whenReady` ~6397 / ~6434） | **不改路径，留 `main.ts`**（F0–F5 不搬这两段装配） |
+| `connection-quality.test.ts` | `connectionQualityVisualWindow`、`interaction.moveAbove(connectionQualityVisualWindow.getMediaSourceId())` | PR 7 |
+| 同上 | `runDesktopConnectionQualitySmoke`、`testButtonClearance`、`webViewStayedVisible` | PR 11 → smoke 文件（PR 7 期间这些仍在 main.ts，测试继续读 main.ts） |
+| `active-environment-dock.test.ts` | `handleActiveEnvironmentDockDrag`、`publishActiveEnvironmentDockLayout`、`scheduleActiveEnvironmentDockCollapseLayout`、`electronScreen.getCursorScreenPoint()`、`focusable: false`、IPC `viron:active-environment-dock:drag` / `:layout` | PR 7 overlay + PR 9 若 IPC 搬走 |
+| 同上 | `captureDesktopWebViewPreview`、`captureWebContentsPreview`、`captureDesktopRendererPreview`、`viron:renderer-preview:capture`、`webContents.capturePage()`、`layoutDesktopWebViewPages`、`if (view.previewing) view.visible = false;`、`.toJPEG(72)` | PR 8 |
+| 同上 | smoke 标志 `previewFrameChanged`、`retainedPreviewPixels`、`dragPositionDelivered`、`closeActionDelivered`、`nativeAboveWebView`、`passiveHoverFocusStable`、`hoverIntentStable`、`nativePointerTrackingStable`、`collapseAnimationStable`、`collapseResizeSynchronized`、`lightweightLayoutStable`、`programmaticMoveIgnored`、`expandedAligned`、`cardDragMovedWindow`、`画中画关闭后卡片未移除` | PR 11 smoke |
+| `desktop-web-overlay.test.ts` | `ensureAgentChatWindow`、`setAgentChatNativeOverlay`、`desktop-agent-chat.html` | PR 7 |
+| `desktop-titlebar-theme.test.ts` | `ipcMain.handle("viron:titlebar-theme:set"` | PR 9 |
+| `clipboard.test.ts` | `viron:clipboard:read-text` / `write-text` 含 `trustedSender(event)` | PR 9 |
+| `desktop-monitor-alert-notification.test.ts` | `viron:monitor-alert:notify`、`monitorAlertNotificationInput`、`viron:monitor-alert-open`、**不** `shell.openExternal(input.url)` | PR 9（notify handler） |
+| `active-connection-navigation.test.ts` | `return { ...opened, activeConnectionId: registrationId };`、`reserveDesktopRuntime("web", credentialId, undefined, originEnvironmentId)` | PR 8/10（openDesktopWebView / execution-router） |
+| `environment-preload.test.ts` | `registrationId: string`、`const releaseReservation = releaseDesktopRuntimeReservation(managed.registrationId)`、`await releaseReservation` | PR 8 |
+| `desktop-mcp-security.test.ts` | 上表 MCP close 序列 + sandbox 窗口字段 | **PR 10 only**（F3 验证命令不要跑失败：F3 的验证列表**去掉**该文件，改到 PR 10） |
+
+#### F* 禁止改动
+
+IPC 通道名、overlay HTML、vite inputs、preload 名、`focusable: false`、`moveAbove`、dock 光标跟踪、smoke JSON、双运行时。
+
+#### F* 验证
+
+每步 `npm run typecheck` + 上表受影响测试。PR 10 全量 `npm test`。PR 7–9 不要把 `tests/desktop-mcp-security.test.ts` 放进必跑列表，除非该 PR 尚未搬走它锁定的字符串（它们仍在 main.ts 则测试仍读 main.ts 会过）。
+
+#### F 验收合计
+
+- [ ] `wc -l src/desktop/main.ts` `< 1200` 目标 `< 800`
+- [ ] 每个新文件 `< 800`（smoke 可按场景拆）
+- [ ] `rg ipcMain.handle src/desktop` 通道集合等于拆前
+- [ ] `raiseAgentOverlayWindows` 在 `agent-chat-window.ts`，三步 `moveTop` 顺序未改，无独立 raise 模块、无 chat→app-state 环
+- [ ] 无 OverlayHost class，函数名仍可被测试 grep
+- [ ] `tests/agent-floating-window.test.ts` 未把整份 `desktopMain` 改绑到单一新文件
+
+---
+
+### 工作项 G — `DatabaseWorkbench.vue` composable
+
+#### 1. 现状
+
+3609 行，201 个本地函数，无 `<style>`。`handleNavigatorMenuAction` 2584–2739。
+
+包装器 `src/client/views/DatabaseWorkbenchView.vue`（31 行）**禁止修改**。`App.vue` KeepAlive 名字 `DatabaseWorkbenchView`；`EnvironmentDetailView.vue` KeepAlive 的是 `DatabaseWorkbench`。两条都要继续工作。
+
+Agent scene **三次**注册 + unmount 清理，缺一不可：
+
+```ts
+onMounted(() => { ... if (props.active) { registerDatabaseAgentScene(); registerDatabaseAgentWorkbenchExecution(); } });
+watch(() => props.active, (active) => { if (active) { registerDatabaseAgentScene(); registerDatabaseAgentWorkbenchExecution(); } else { /* remove both providers */ } });
+onActivated(() => { if (props.active) { registerDatabaseAgentScene(); registerDatabaseAgentWorkbenchExecution(); void focusInitialConnection(); } });
+onBeforeUnmount(() => { /* remove providers; drain pendingAgentDatabaseExecutions */ });
+```
+
+`pendingAgentDatabaseExecutions` 必须是 composable **实例闭包**里的 `Map`，禁止模块级单例。
+
+#### 2. 目标：function → 文件（禁止猜）
+
+`types.ts`：所有 interface/type（`DatabaseConnection`、`QueryTab`、`QueryJob`、…）。
+
+`format.ts`：`formatBytes`、`textSize`、`sqlIdentifier`。
+
+`use-database-layout.ts`：`persistWorkbenchPreferences`、`restoreWorkbenchPreferences`、`setConnectionPaneWidth`、`startConnectionPaneResize`、`resizeConnectionPane`、`setExplorerPaneWidth`、`startExplorerPaneResize`、`resizeExplorerPane`、`setConnectionPaneVisible`、`setInformationPaneVisible`、`setQueryResultLayout`。以及 layout 相关 ref：`connectionPaneWidth`、`connectionPaneVisible`、`explorerPaneWidth`、`informationPaneVisible`、`informationPaneTab`、`queryResultLayout`、`queryFocused`、`workbenchElement`。
+
+**Navicat 测试规则（锁定）：**
+
+- **搬** `const connectionPaneVisible = ref(true);` 进 `use-database-layout.ts`。
+- **禁止**在 `.vue` 再留第二个 `ref(true)`。
+- **禁止**在 `.vue` 留空的 `function persistWorkbenchPreferences` 桩去骗 `region()`。
+- 更新 `tests/database-navicat-toolbar-order.test.ts`：
+  - `toContain("const connectionPaneVisible = ref(true);")` 改为读 `use-database-layout.ts`
+  - `region(..., "function persistWorkbenchPreferences", "function restoreWorkbenchPreferences")` 改为读 composable 文件
+  - template 断言（`data-navicat-action`、`<aside v-if="connectionPaneVisible"`、`:class`）**继续读** `DatabaseWorkbench.vue`
+  - 注释：`// contract unchanged; connectionPaneVisible default still true, moved to use-database-layout.ts`
+
+`use-database-connections.ts`：`toggleConnectionGroup`、`setConnectionCollapsed`、`connectionChildrenVisible`、`handleConnectionNodeClick`、`load`、`showConnectionError`、`selectConnection`、`closeConnection`、`editConnection`、`copyConnection`、`createConnection`、`createConnectionProfile`、`switchConnectionProfile`、`refreshConnectionProfileEditor`、`handleConnectionProfileAction`、`focusConnection`、`selectConnectionById`、`refreshConnections`、`updateConnectionPreference`、`connectionUpdateBody`、`moveConnectionToGroup`、`createConnectionGroup`、`openConnectionShare`、`grantSharedConnection`、`revokeSharedConnection`、`openConnectionContextMenu`、`deleteConnection`、`collapseAllNavigation`、`testConnection`、`pollDatabaseSession`、`focusInitialConnection`、`resetDatabaseWorkspace`、`handleGlobalConnectionCommand`。
+
+`use-database-navigator.ts`：`categoryKey`、`categoryDefinition`、`isObjectCategory`、`categoryItems`、`categoryCount`、`categorySelected`、`navigatorTargetKey`、`objectCategoryLabel`、`objectSelectionKey`、`selectedObject`、`selectedObjectInCategory`、`selectObject`、`visibleCategoryItems`、`refreshSchemas`、`loadDatabaseObjects`、`loadSqlCompletionCatalog`、`selectDatabaseNode`、`toggleDatabase`、`objectFavorite`、`loadObjectFavorites`、`loadObjectGroups`、`objectGroup`、`createObjectGroup`、`addNavigatorObjectToGroup`、`excludeNavigatorObjectFromGroup`、`toggleObjectFavorite`、`removeObjectFavorite`、`openObjectFavorite`、`openCategory`、`toggleCategory`、`openNavigatorObject`、`selectNavigatorObject`、`showNavigatorDdl`、`refreshObjectCategory`、`selectedCategoryContext`、`selectedTableContext`、`currentTableContext`、`openSelectedObject`、`designSelectedObject`、`designSelectedTable`、`designCurrentTable`、`createObjectTemplate`、`deleteObject`、`deleteSelectedObject`、`clearDatabaseLocalState`、`openGlobalCategory`、`handleGlobalTableCommand`、`loadInformationDdl`、`openDatabaseDictionary`、`openTableDictionary`、`closeDatabase`、`editDatabaseTemplate`、`createDatabaseTemplate`、`deleteDatabase`、`dumpTableStructure`、`reverseNavigatorTarget`、`createBiWorkspaceFromTarget`、`openObjectPrivileges`、`openDatabaseSearch`、`openDatabaseSearchResult`、`navigatorObject`、`chooseNavigatorObject`、`openTableWizard`、`duplicateObjectDraft`、`fetchObjectDdl`、`rewriteCreateObjectName`、`copyNavigatorObject`、`pasteNavigatorObject`、`duplicateTableDraft`、`tableMutationDraft`、`renameObjectDraft`、`openNavigatorContextMenu`、`showDdl`、`openObject`。
+
+`use-database-query-tabs.ts`：`newTab`、`queryTabDirty`、`newDataTab`、`newCommandLine`、`newTableDesigner`、`newObjectTab`、`newUtilityTab`、`newArtifactTab`、`closeTab`、`setTableDesignerDirty`、`handleTableDesignerSaved`、`waitForQueryJob`、`removeTabsForDatabase`、`triggerSelectedTableAction`、`clearTableAction`、`refreshUtilityTab`、`createFromUtilityTab`、`closeTaskPanelRequest`、`openTaskPanel`、`requireSelectedDatabase`、`handleGlobalQueryCommand`、`runQuery`、`pollJob`、`cancelQuery`、`formatSql`、`explainSql`、`handleQueryRunCommand`、`handleBuiltQuery`、`insertCodeSnippet`、`handleGeneratedData`、`executeDatabaseStatement`、`handleWorkbenchShortcut`、`handleWorkbenchKeydown`、`queryResult`、`resultSummary`。
+
+`use-database-artifacts.ts`：`queryFavoritesForDatabase`、`savedQueriesForDatabase`、`databaseTaskDatabase`、`backupTasksForDatabase`、`selectedSavedQuery`、`selectedBackup`、`selectUtilityItem`、`utilitySelectionKey`、`handleGlobalBackupCommand`、`openSyncDialog`、`handleDatabaseToolCommand`、`startDatabaseBackup`、`runServerReload`、`syncSavedQueryTab`、`saveQueryTab`、`openSavedQuery`、`deleteSavedQuery`、`duplicateSavedQuery`、`renameSavedQuery`、`exportSavedQuery`、`selectBrowserSqlFile`、`openExternalQuery`、`openSavedQueryExternally`、`revealSavedQuery`、`restoreSelectedBackup`、`deleteBackupObject`、`duplicateBackupObject`、`renameBackupObject`、`extractBackupSql`、`revealBackupObject`、`extractSqlFromFile`、`addFavorite`、`loadHistory`、`loadFavorites`、`loadSavedQueries`、`loadDatabaseTasks`、`updateDatabaseTasks`、`openSaved`、`deleteFavorite`。
+
+`use-database-agent-scene.ts`：`registerDatabaseAgentScene`、`databaseAgentResult`、`executeAgentDatabaseWorkbench`、`registerDatabaseAgentWorkbenchExecution`；内部 `const pendingAgentDatabaseExecutions = new Map(...)`（**非**模块顶层）。
+
+`navigator-menu-actions.ts`：`handleNavigatorMenuAction`（接收 ctx，不要模块单例）。
+
+`.vue` 壳（不要抽走）：`focusSearchInput`（今日 ~3230，5 行 DOM focus/select helper，仅被 `handleWorkbenchShortcut` 调用）。
+
+**`.vue` 壳必须仍含这些精确调用（不要改成只在 composable 内部偷偷注册）：**
+
+- `onMounted` 里 `registerDatabaseAgentScene()` 与 `registerDatabaseAgentWorkbenchExecution()`（在 `props.active` 下）
+- `watch(() => props.active, ...)` 同样两对 register/remove
+- `onActivated` 同样两 register + `focusInitialConnection`
+- `onBeforeUnmount` 清理 `pendingAgentDatabaseExecutions`（可通过 composable 返回的 `disposeAgentScene()`，但 vue 必须**调用**它）
+
+Template 不动。`data-navicat-action` 顺序不动。
+
+#### 3–7
+
+禁止改 HTTP、KeepAlive 名、包装器。验证：
+
+```bash
+npm run typecheck
+npm test -- tests/database-navicat-toolbar-order.test.ts tests/database-navigator-menu.test.ts tests/database-query-execution.test.ts tests/database-query-favorites.test.ts tests/database-saved-queries.test.ts tests/database-table-designer.test.ts tests/database-table-data.test.ts tests/agent-database-scene.test.ts tests/agent-database-context.test.ts tests/agent-floating-window.test.ts tests/active-connection-navigation.test.ts tests/dialog-style.test.ts
+```
+
+`tests/agent-floating-window.test.ts` 对 DatabaseWorkbench 的断言（`domain: "database"`、`pendingAgentDatabaseExecutions`）改读 `use-database-agent-scene.ts`。
+
+验收：vue `< 1200` 目标 `< 800`；无第二份 `connectionPaneVisible`；三次 agent 注册仍在 vue 壳。
+
+---
+
+### 工作项 H — `ServiceMaintenancePanel.vue`
+
+Script 抽到 `service-maintenance/*.ts`。**scoped CSS 留在 vue。** 硬门 = script+template `< 800`，不是 `wc -l` 整个 vue。
+
+函数归属：
+
+- `use-maintenance-directory.ts`：`directoryIds`、`orderedDirectoryItems`、`directoryDropTarget`、`insertAfterDirectoryTarget`、`startDirectoryDrag`、`dragDirectoryOver`、`leaveDirectoryDropTarget`、`persistDirectoryOrder`、`dropDirectoryItem`、`endDirectoryDrag`、`canMoveDirectoryItem`、`moveDirectoryItem`、`handleDirectoryMove`
+- `use-monitor-install.ts`：install task 全套（`isInstallTaskActive` … `installMonitorOnHost`、`clearMonitorData`、`validMonitorInstallPath`、`promptMonitorInstallPath`）
+- `use-script-actions.ts`：`resolveScriptActionIcon` … `executeScriptAction`、`formatScriptDuration`、`scriptExecutionSummary`
+- `use-alert-settings.ts`：`openAlertSettings`、`saveAlertSettings` 及相关
+- `use-maintenance-payload.ts`：其余 fetch/select/save/deployment/k8s/host 指标
+
+KeepAlive：`onActivated`/`onDeactivated` **留在 vue** 并调用 composable 的 start/stop。
+
+验证含 `tests/service-discovery-layout.test.ts`（仍读 vue，因为 CSS/template 未搬）。
+
+---
+
+### 工作项 I — `AgentFloatingWindow.vue`
+
+CSS+template 留 vue。硬门 = script+template。
+
+#### function → 文件
+
+`use-agent-launcher-chrome.ts`：`currentViewport`、`defaultButtonPosition`、`storedButtonPosition`、`storedEdge`、`persistButtonPosition`、`persistEdgeState`、`collapseAtEdge`、`expandFromEdge`、`collapseToEdge`、`togglePanel`、`settleButtonDrag`、`handleDesktopLauncherAction`、`syncDesktopLauncherOverlay`、`handleViewportResize`、`isDialogOverlayTarget`、`dialogOverlayOpen`、`handleDocumentPointerDown`、`handleNativeViewPointerDown`、`handlePointerOutside`、`isAgentHitTarget`、`syncIgnoreMouse`、`handleOverlayMouseMove`。
+
+`use-agent-sessions.ts`：`loadSettings`、`applyConversation`、`loadSessions`、`ensureLaunchConversation`、`refreshSessionList`、`createConversation`、`selectConversation`、`renameConversation`、`deleteConversation`、`resetRunArtifacts`。
+
+`use-agent-chat.ts`：`nowIso`、`newMessage`、`restoreQuickBubblesFromHistory`、`collapseQuickHistoryStack`、`hideQuickBubbles`、`showQuickBubbles`、`toggleQuickHistoryStack`、`trackQuickBubble`、`closeQuickBubble`、`toggleQuickBubble`、`scrollToBottom`、`resizeComposerInput`、`expandComposer`、`collapseComposer`、`quickPromptLabel`、`scriptLineLabel`、`currentSceneCard`、`upsertContextCard`、`captureCurrentScene`、`ensureAssistantMessage`、`applyTurnStats`、`handleAgentEvent`、`sendMessageFor`、`sendMessage`、`sendQuickMessage`、`toggleQuickComposer`、`handleAppShortcut`、`stopRun`、`openSettings`。
+
+`use-agent-suggestions.ts`：`fillSshSuggestion`、`canFillSshSuggestion`、`fillSshScriptSuggestion`、`sshSuggestionTarget`、`isExecutableSuggestion`、`sshSuggestionBadge`、`databaseSuggestionBadge`、`executeSshSuggestion`、`cancelSshSuggestion`、`stopActiveDiagnostic`、`databaseSuggestionTarget`、`fillDatabaseSuggestion`、`executeDatabaseSuggestion`、`cancelDatabaseSuggestion`、`respondVironApproval`。
+
+#### `tests/agent-floating-window.test.ts` 断言搬家后的源文件
+
+| 断言内容 | 搬家后读取 |
+| --- | --- |
+| template：`v-if="!composerExpanded"`、`@click="expandComposer"`、`v-else class="agent-composer"`、`v-html="renderAgentMarkdown"`、`<AgentTurnStats`、`v-if="entryMode === 'floating'"`、`class="agent-session-history"`、`$t('小 V')`、`data-agent-overlay`（在 QuickSurface 的仍读 QuickSurface） | **仍读 `.vue` template** |
+| CSS：`height: min(640px, calc(100dvh - 112px));`、`flex: 1 1 0;`、`overflow-wrap: anywhere;`、`.agent-message.is-assistant` | **仍读 `.vue` style** |
+| `composerExpanded.value = false;`、`sendMessageFor`、`await captureCurrentScene()`、`handleAgentEvent`、`hideQuickBubbles` / `showQuickBubbles` / `collapseQuickHistoryStack`、`ensureLaunchConversation`、`applyConversation` | `use-agent-chat.ts` / `use-agent-sessions.ts`（按上表函数归属） |
+| `changeAgentEntryMode('disabled')`、`.agent-entry-settings`、`Viron Agent 仍在开发中`、`repeat(3, minmax(0, 1fr))` | **仍读 SettingsView.vue，直到 PR 15** 再改 `AgentSettingsSection.vue` |
+| `domain: "database"`、`pendingAgentDatabaseExecutions` | `use-database-agent-scene.ts`（PR 12 已改） |
+| `desktop-agent-chat.html`、`setAgentChatNativeOverlay` | **仅这两条**改读 `overlays/agent-chat-window.ts`（PR 7）。**禁止**改顶部整份 `desktopMain` |
+| `label: tr("打开 Viron Agent")`（desktopMain 那条，~290） | 仍读 `main.ts` 直到 **PR 11** 再读 smoke 文件。不要在 PR 7 绑到 overlay |
+| `agent-(?:context|diagnostics)` | 仍读 `main.ts` 直到 **PR 10** |
+| `viron:agent:settings:save` / `workbench:respond` slice | 仍读 `main.ts` 直到 **PR 9** → `register-agent-ipc.ts` |
+| `executeSshDiagnostic: async`、`executeDatabaseRead: async` | **永远读 `main.ts`**（whenReady 装配不搬） |
+| `currentAgentRuntimeScope()`（必须带括号） | 仍读 `main.ts` 直到 **PR 10** → `execution-router.ts` 的 `async function currentAgentRuntimeScope()` 签名。不要弱化成无括号，也不要改读 whenReady 的 `currentScope: currentAgentRuntimeScope` |
+| `nativeView.webContents.on("before-mouse-event"` 等 | 仍读 `main.ts` 直到 **PR 8** → `web-view-runtime.ts` |
+| `AgentQuickSurface.vue` / `preload.cts` / `SshTerminalPane.vue` | 不搬 |
+
+切片 `watch(open)` / `async function sendMessageFor` / `function sendMessage()`：改为对 **composable 文件** 做同样 `region()`，不要在 vue 留函数桩。
+
+---
+
+### 工作项 J — SettingsView section 拆分
+
+10 个 section 与 `SettingsSection` 联合类型一致。`ApiKeySettings.vue` 不重建。
+
+`selectSection` 继续 `router.replace({ query: { ...route.query, section } })`。MCP 面板有 `@click="selectSection('api-keys')"`。子组件必须：
+
+```ts
+const emit = defineEmits<{ "select-section": [key: SettingsSection] }>();
+// 模板：@click="emit('select-section', 'api-keys')"
+```
+
+父级 `@select-section="selectSection"`。也可以传 prop `selectSection`，但 **MCP→API Key 按钮不能变成死按钮**。
+
+CSS 随 section 走。`tests/agent-floating-window.test.ts` 里 Settings 断言改读 `AgentSettingsSection.vue`。
+
+**依赖 PR 14（AgentFloatingWindow）**，因为同一 lock 测试文件。
+
+---
+
+### 工作项 K — OrganizationView
+
+三面板。Dialog 可随 panel 走 **当且仅当** 保留 `class="envman-dialog"` 与 `#footer`。`tests/dialog-style.test.ts` 扫描全部 vue。
+
+---
+
+### 工作项 L — 可选 SQLITE_SCHEMA 剪切
+
+**删除任何「重写的 openDatabase 步骤清单」。** Codex 做：
+
+1. 把 `export const SQLITE_SCHEMA = \`...\`` **原文剪切**到 `src/server/sqlite-schema.ts`。
+2. `database.ts` `import { SQLITE_SCHEMA } from "./sqlite-schema.js"`。
+3. 若再搬 patch 函数到 `database-patches.ts`：`openDatabase` 与 `ensureAdmin` 必须调用 **与 HEAD 相同的函数名、相同顺序**。不要根据文档「复述」顺序。
+4. `claimLegacyResources` 只留在 `ensureAdmin`，不要从 `openDatabase` 调用。
+5. 验收：`openDatabase` 函数体相对 HEAD 的 diff **仅允许** import 路径 / 被抽出函数改为从 patches 文件 import，**不允许**重排语句。
+6. `mysql.integration.test.ts` 无 MySQL 时按现有 skip，不要改 CI。
+
+本 PR 全量 `npm test`。
+
+---
+
+## API / Interface Changes
+
+无 HTTP/IPC 合同变化。`preload.cts` 通道字符串不改。`mcpJsonResponse` 保持独立。
+
+---
+
+## Data Model Changes
+
+第一波无 schema 语义变化。不要在文档或代码里发明一份与 HEAD 不同的 patch 食谱。机械剪切；`openDatabase`/`ensureAdmin` 调用序 = HEAD。
+
+---
+
+## Alternatives Considered
+
+1. **合并双运行时** — 否决（产品边界）。
+2. **工作台拆子 Vue** — 否决（KeepAlive 丢状态）。Settings/Organization 允许。
+3. **Pinia** — 否决。
+4. **第一波 versioned migrator** — 否决，Phase 2。
+5. **OverlayHost class + 新方法名** — 否决。CSS-lock grep 标识符；机械 `export function`。
+6. **独立 `raise-agent-overlays.ts`** — 否决。会与 chat/launcher 的 `let` 形成 ESM 环；函数留在唯一调用方 `agent-chat-window.ts`。
+
+---
+
+## Security & Privacy Considerations
+
+同前：IPC `trustedSender`、MCP sandbox、凭据不进 shared、hostVerifier 原文、`raiseAgentOverlayWindows` 顺序。inspection 文案分叉视为安全/UX 合同，禁止 DRY 掉。
+
+---
+
+## Observability
+
+smoke stdout/stage 不变。不把 `mcpJsonResponse` 与 HTTP `jsonResponse` 混用。
+
+---
+
+## Rollout Plan
+
+纯重构，无 flag。回滚=revert 单个提交。L 项不改数据库文件。
+
+---
+
+## Open Questions
+
+无阻塞项。SFTP 两端若测试冲突：停（规则 4），不要选边。
+
+---
+
+## 文件拆分对照表
+
+按**符号**不是行号。见工作项 B–L 与 F 符号表。摘要：
+
+| 新文件 | 拥有的代表符号 |
+| --- | --- |
+| `ssh-context.ts` | `DesktopSshContext`、`contextKey` |
+| `json-response.ts` | `jsonResponse` + response type aliases |
+| `shared/ssh-connect.ts` | `buildSshConnectConfig`（含 `tryKeyboard`）、`sshHostVerifier` |
+| `shared/ssh-error.ts` | `sshErrorMessage` |
+| `shared/ssh-login-script.ts` | `normalizeSshLoginScript` |
+| `shared/sftp-transfer-plan.ts` | `buildSftpPlan`、`copySftpEntry`、`existingSftpStats`、`isMissingFile` 注入 |
+| `shared/redis-options.ts` | `buildRedisOptions` |
+| `app-state.ts` | `readState`、`publishDesktopAppState` |
+| `app-menu.ts` | `installApplicationMenu` |
+| `device-session.ts` | `deviceIdentity`、`confirmSystemKeyAccess` |
+| `ipc-guards.ts` | `trustedSender*` |
+| `overlays/*` | 同名 `layout*`/`ensure*`/`update*` + 窗口 `let` |
+| `overlays/agent-chat-window.ts` | overlay chat 函数 + `raiseAgentOverlayWindows` + `sendToAgentChat`（app-state 单向 import） |
+| `web-view-runtime.ts` | web-url helpers、`openDesktopWebView`、captures |
+| `execution-router.ts` | `closeDesktopExecution`、`reserveDesktopRuntime`、`local*Credential`、`openServiceSocket`、`sendServiceSocketEvent`、`serviceSocketBytes`、`closeAllServiceSockets` |
+| `mcp-desktop-bridge.ts` | `closeDesktopMcpOperations` 定义、`mcpJsonResponse` |
+| `ipc/desktop-ipc-parse.ts` | `requireDesktopString*` |
+| `sqlite-schema.ts` | 仅 `SQLITE_SCHEMA` 原文 |
+
+不拆：`i18n-messages.ts`、`mcp-tools.ts`、`mysql-schema.ts`、`database-runtime.ts`、`app.ts`、`database-sync.ts`、monitor 双 module、`DatabaseWorkbenchView.vue`。
+
+---
+
+## 回归与验收
+
+- [ ] `npm run typecheck`
+- [ ] `npm test` 全量（至少在 PR 1/3/4/5/10/17 与最终）
+- [ ] IPC 通道集合不变
+- [ ] cookie/storage/SQL alias/db 路径不变
+- [ ] 无 `export *`、无 Pinia、无新 `as any`
+- [ ] `main.ts` `< 1200`
+- [ ] `ServiceMaintenancePanel.vue` / `AgentFloatingWindow.vue`：**不要**用整文件 `wc -l < 1200` 去逼 CSS 外迁
+- [ ] `DatabaseWorkbenchView.vue` 无 diff
+- [ ] `use-mock-keychain` 仍在 `whenReady` 前
+- [ ] inspection 两种认证失败文案仍都在
+- [ ] `mcpJsonResponse` 未被折叠
+
+```bash
+npm run typecheck
+npm test
+wc -l src/desktop/main.ts src/client/components/DatabaseWorkbench.vue src/client/views/SettingsView.vue src/client/views/OrganizationView.vue
+```
+
+---
+
+## 明确不做
+
+同前，并明确：不把 database `forward` 纳入 PR 3；不把 inspection 错误映射并入 SSH helper；不把 `mcpJsonResponse` 并入 `jsonResponse`；不改 `DatabaseWorkbenchView.vue`；不为压行数外迁 H/I 的 scoped CSS。
+
+---
+
+## Risks
+
+| 风险 | 严重度 | 缓解 |
+| --- | --- | --- |
+| 按行号切错域 | 高 | 只用符号清单 |
+| Overlay class 改名导致 lock 失败 | 高 | 同名 `export function` |
+| `tryKeyboard` 丢失 | 高 | 粘贴完整 `buildSshConnectConfig` |
+| SFTP ENOENT 语义被统一 | 高 | 注入 `isMissingFile`；测试冲突则停 |
+| 复述错误的 SQLite patch 序 | 高 | 禁止食谱；diff `openDatabase` 体 |
+| 漏掉 agent scene 三次注册 | 高 | vue 壳保留三处调用 |
+| 从 `main` 平行开 F2 | 高 | 强制堆叠分支 |
+| Vue 与 main 同时改 `agent-floating-window.test.ts` | 中 | Vue 依赖 PR 11 |
+
+---
+
+## References
+
+`AGENTS.md`、`TECHNICAL-DESIGN.md`、`package.json` scripts、现有 shared/runtime、CSS-lock 测试表（工作项 F）。`docs/USER-GUIDE.md` 的 dist CLI 行保留故不改。
+
+---
+
+## PR Plan
+
+与 Key Decision 5 一致。全部提交落在 `codex/internal-structure-refactor`（或 PR *n* 基于 PR *n-1* tip）。
+
+### PR 1 — 死代码 / CLI
+
+- **Title:** `chore: remove unused PlannedFeatureNotice and duplicate admin-reset CLI`
+- **Files:** `PlannedFeatureNotice.vue`（删）、`base.css`、`scripts/reset-admin-password.ts`（删）、`src/server/cli/reset-admin-password.ts`、`package.json`。**不改** `docs/USER-GUIDE.md`
+- **Dependencies:** 无
+- **Description:** 删组件+CSS；CLI 双行 usage；全量 `npm test`
+
+### PR 2 — contextKey / jsonResponse
+
+- **Title:** `refactor(desktop): extract contextKey and jsonResponse helpers`
+- **Files:** 新增 `ssh-context.ts`、`json-response.ts`；7 个 runtime
+- **Dependencies:** PR 1（堆叠）
+- **Description:** type alias；不改 inspection 调用；不碰 `mcpJsonResponse`
+
+### PR 3 — 共享 SSH
+
+- **Title:** `refactor: extract shared SSH login-script, error map, and connect config`
+- **Files:** `src/shared/ssh-login-script.ts`、`ssh-error.ts`、`ssh-connect.ts`；`options.ts`、`connector.ts`、`session-manager.ts`、`log-stream-manager.ts`、desktop `ssh-runtime.ts`、`log-runtime.ts`。**不含** `connection-inspection.ts`、**不含** database `forward` 两文件
+- **Dependencies:** PR 2（串行；共享 `ssh-runtime.ts`）
+- **Description:** 完整 `tryKeyboard` 实现；全量 `npm test`；inspection 文案分叉验收
+
+### PR 4 — 共享 SFTP
+
+- **Title:** `refactor: extract shared SFTP transfer plan and copy algorithm`
+- **Files:** `src/shared/sftp-transfer-plan.ts`；`transfer-manager.ts`；`sftp-runtime.ts`
+- **Dependencies:** PR 3（串行；共享 `sftp-runtime.ts`，且 PR 2 已改该文件的 `contextKey`）
+- **Description:** injectable `isMissingFile`；含 `tests/desktop-local-ssh.integration.test.ts`；冲突则停；全量 `npm test`
+
+### PR 5 — 共享 Redis options
+
+- **Title:** `refactor: extract shared Redis connect options builder`
+- **Files:** `src/shared/redis-options.ts`；`redis-runtime.ts`；`redis/connector.ts`
+- **Dependencies:** PR 4（串行；共享 `redis-runtime.ts`）
+- **Description:** 不抽 tunnel；不改 `isDesktopRedisExecutionPath` 的 URL 解析；全量 `npm test`
+
+### PR 6 — main.ts state / menu / guards
+
+- **Title:** `refactor(desktop): extract app-state, device-session, ipc-guards, and app-menu from main.ts`
+- **Files:** 新增 `window-host.ts`、`app-state.ts`、`device-session.ts`、`ipc-guards.ts`、`app-menu.ts`；改 `main.ts`
+- **Dependencies:** PR 5
+- **Description:** 符号见 F0。不含 overlay、不含 web-url helpers、不含 `publishDesktopAppState`（等 PR 7）
+
+### PR 7 — overlay 函数搬迁
+
+- **Title:** `refactor(desktop): move overlay window functions out of main.ts`
+- **Files:** `overlays/*.ts`（**无** `raise-agent-overlays.ts`；`raiseAgentOverlayWindows` 在 `agent-chat-window.ts`）；`app-state.ts` 增加 `publishDesktopAppState`；改 `main.ts`；`tests/agent-floating-window.test.ts` **只**把 `desktop-agent-chat.html` / `setAgentChatNativeOverlay` 两条改读 chat overlay，**整份 `desktopMain` 仍指向 `main.ts`**
+- **Dependencies:** PR 6
+- **Description:** 同名 `export function`；chat 单向 import launcher `let`；chat 禁止 import `app-state.ts`；smoke 函数仍在 main
+
+### PR 8 — web-view
+
+- **Title:** `refactor(desktop): extract desktop web-view runtime from main.ts`
+- **Files:** `web-view-runtime.ts`；`main.ts`；dock/preload 测试中 capture 相关路径；`tests/agent-floating-window.test.ts` 仅 mouse-event 三条改读 `web-view-runtime.ts`（`desktopMain` 常量仍读 `main.ts`）
+- **Dependencies:** PR 7
+- **Description:** 含 web-url helpers、`desktopWebSession`、`createDesktopWebPage` 的 `before-mouse-event`；不含 `requireDesktopString*` / `closeDesktopExecution`
+
+### PR 9 — IPC 注册器
+
+- **Title:** `refactor(desktop): move IPC registrars out of main.ts`
+- **Files:** `ipc/register-ssh-ipc.ts`、`register-log-ipc.ts`、`register-agent-ipc.ts`、`desktop-ipc-parse.ts`、`register-core-ipc.ts`；clipboard/titlebar/monitor-alert 测试；`tests/agent-floating-window.test.ts` 仅 `settings:save` / `workbench:respond` slice 改读 `register-agent-ipc.ts`
+- **Dependencies:** PR 8
+- **Description:** **不搬** execution-mode / endpoint / viron:api / mcp / service-socket handlers。不跑 `desktop-mcp-security.test.ts` 作为「应失败」项——那些字符串仍在 main.ts
+
+### PR 10 — HTTP / MCP / execution
+
+- **Title:** `refactor(desktop): extract HTTP proxy, MCP bridge, and execution router`
+- **Files:** `http-proxy.ts`、`mcp-desktop-bridge.ts`、`execution-router.ts`（含 `openServiceSocket` / `sendServiceSocketEvent` / `serviceSocketBytes` / `closeAllServiceSockets`、**以及 `async function currentAgentRuntimeScope()` 定义**）、`ipc/register-execution-ipc.ts`（含 `viron:service-socket:*`）；`desktop-mcp-security.test.ts` 改读取路径；`tests/agent-floating-window.test.ts` 改两条独立 `readFileSync`：① `agent-(?:context|diagnostics)` → `viron:api` 所在文件；② **`currentAgentRuntimeScope()` → `execution-router.ts`**（保持带 `()`；不要改 `executeSshDiagnostic: async` / `executeDatabaseRead: async`，它们仍读 `main.ts`）
+- **Dependencies:** PR 9
+- **Description:** MCP close 序列逐字；`mcpJsonResponse` 独立；service-socket helpers 与 IPC 同 PR；`currentAgentRuntimeScope()` 锁跟定义走，不跟 whenReady 无括号属性；**全量 `npm test`**
+
+### PR 11 — smoke
+
+- **Title:** `refactor(desktop): extract desktop smoke tests from main.ts`
+- **Files:** `smoke/*.ts`；`createWindow` 调用点；quality/dock 测试中 smoke 标志路径；`tests/agent-floating-window.test.ts` 仅 `label: tr("打开 Viron Agent")` 改读含 `runDesktopAgentLauncherSmoke` 的 smoke 文件
+- **Dependencies:** PR 10
+- **Description:** `main.ts` `< 1200`。`executeSshDiagnostic: async` / `executeDatabaseRead: async` 仍在 `main.ts` whenReady 装配。`currentAgentRuntimeScope()` 已在 PR 10 改读 `execution-router.ts`，本 PR 不要把它改回 `main.ts`。此后才允许 Vue PR
+
+### PR 12 — DatabaseWorkbench composable
+
+- **Title:** `refactor(client): extract DatabaseWorkbench script into composables`
+- **Files:** `components/database-workbench/*`；`DatabaseWorkbench.vue`；navicat 测试改 composable 路径；`agent-floating-window.test.ts` 的 database 断言
+- **Dependencies:** **PR 11**
+- **Description:** 函数表见 G；三次 agent 注册留在 vue；不改 `DatabaseWorkbenchView.vue`
+
+### PR 13 — ServiceMaintenance composable
+
+- **Title:** `refactor(client): extract ServiceMaintenancePanel script into composables`
+- **Files:** `components/service-maintenance/*`；`ServiceMaintenancePanel.vue`（CSS 留下）
+- **Dependencies:** PR 12（顺序锁定；即使文件不冲突也串行，避免同时改 EnvironmentDetail KeepAlive 语义）
+
+### PR 14 — AgentFloatingWindow composable
+
+- **Title:** `refactor(client): extract AgentFloatingWindow script into composables`
+- **Files:** `components/agent-floating-window/*`；`AgentFloatingWindow.vue`；`tests/agent-floating-window.test.ts` 按断言表改路径
+- **Dependencies:** PR 13（且该测试已在 PR 7/11/12 改过 main/database 路径）
+
+### PR 15 — Settings sections
+
+- **Title:** `refactor(client): split SettingsView into section components`
+- **Files:** `views/settings/*`；`SettingsView.vue`；`agent-floating-window.test.ts` Settings 断言 → `AgentSettingsSection.vue`
+- **Dependencies:** **PR 14**
+- **Description:** `emit('select-section', key)` 供 MCP→API Key
+
+### PR 16 — Organization panels
+
+- **Title:** `refactor(client): split OrganizationView into structure, invitation, and platform panels`
+- **Files:** `views/organization/*`；`OrganizationView.vue`
+- **Dependencies:** PR 15（程序顺序；文件独立但遵守 Decision 5）
+
+### PR 17 — 可选 SQLITE_SCHEMA
+
+- **Title:** `refactor(server): move SQLITE_SCHEMA into sqlite-schema.ts`
+- **Files:** `sqlite-schema.ts`；可选 `database-patches.ts`；`database.ts`
+- **Dependencies:** PR 16（放最后）
+- **Description:** 原文剪切；`openDatabase` 体除 import 外与 HEAD 同序；全量 `npm test`
+
+---
+
+以上 PR 均可单独审查，但必须堆叠。合入 `main` 仅在用户明确要求时由用户操作。
