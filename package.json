@@ -25,6 +25,7 @@
     "build:web": "vite build",
     "build:server": "tsc -p tsconfig.server.json",
     "build:desktop": "vite build --mode desktop && tsc -p tsconfig.desktop.json",
+    "verify:desktop-startup": "node scripts/verify-desktop-startup.mjs",
     "build:monitor": "bash scripts/build-viron-monitor.sh",
     "package:macos": "bash scripts/package-macos.sh",
     "package:macos:arm64": "bash scripts/package-macos.sh --arch=arm64",

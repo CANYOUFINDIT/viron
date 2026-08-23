@@ -12,7 +12,8 @@ describe("AI Agent native overlay layout", () => {
     const webBrowser = readFileSync(new URL("../src/client/components/DesktopWebAccountBrowser.vue", import.meta.url), "utf8");
     // contract unchanged; implementation moved from src/desktop/main.ts
     const launcherOverlay = readFileSync(new URL("../src/desktop/overlays/agent-launcher-window.ts", import.meta.url), "utf8");
-    const desktopMain = readFileSync(new URL("../src/desktop/main.ts", import.meta.url), "utf8");
+    // contract unchanged; implementation moved from src/desktop/main.ts
+    const desktopSmoke = readFileSync(new URL("../src/desktop/smoke/static-overlay-smoke.ts", import.meta.url), "utf8");
     expect(floatingWindow).not.toContain("desktopWebAgentLauncherVisible");
     expect(floatingWindow).not.toContain("<AgentFloatingLauncher");
     expect(nativeOverlay).toContain('import AgentFloatingLauncher from "./AgentFloatingLauncher.vue"');
@@ -28,7 +29,7 @@ describe("AI Agent native overlay layout", () => {
     expect(launcherOverlay).not.toContain("agentLauncherHitTestTimer");
     expect(launcherOverlay).not.toContain("screen.getCursorScreenPoint()");
     expect(launcherOverlay).toContain("focusable: false");
-    expect(desktopMain).toContain("!agentLauncherWindow!.isFocusable()");
+    expect(desktopSmoke).toContain("!agentLauncherWindow!.isFocusable()");
   });
 
   it("uses an always-interactive window matching the visible button", () => {
