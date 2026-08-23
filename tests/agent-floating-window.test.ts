@@ -23,6 +23,8 @@ const agentRuntime = readFileSync(new URL("../src/desktop/agent-runtime.ts", imp
 const sshTerminalPane = readFileSync(new URL("../src/client/components/SshTerminalPane.vue", import.meta.url), "utf8");
 const sshWorkbench = readFileSync(new URL("../src/client/components/SshWorkbench.vue", import.meta.url), "utf8");
 const databaseWorkbench = readFileSync(new URL("../src/client/components/DatabaseWorkbench.vue", import.meta.url), "utf8");
+// contract unchanged; database Agent providers moved from DatabaseWorkbench.vue
+const databaseAgentScene = readFileSync(new URL("../src/client/components/database-workbench/use-database-agent-scene.ts", import.meta.url), "utf8");
 
 describe("AI Agent floating window layout", () => {
   it("keeps the composer collapsed until the user opens it", () => {
@@ -343,8 +345,8 @@ describe("AI Agent floating window layout", () => {
     expect(sshTerminalPane).toContain("!snapshot.reliable");
     expect(sshTerminalPane).toContain("Boolean(snapshot.value)");
     expect(sshWorkbench).toContain('domain: "ssh"');
-    expect(databaseWorkbench).toContain('domain: "database"');
-    expect(databaseWorkbench).toContain("pendingAgentDatabaseExecutions");
+    expect(databaseAgentScene).toContain('domain: "database"');
+    expect(databaseAgentScene).toContain("pendingAgentDatabaseExecutions");
   });
 
   it("persists policy changes before stopping sessions and settles invalid workbench responses", () => {
