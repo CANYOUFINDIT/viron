@@ -1,0 +1,26 @@
+.client-version-card { position: relative; margin-top: 24px; padding: 22px; overflow: hidden; border: 1px solid var(--ink-100); border-radius: 12px; background: linear-gradient(135deg, var(--ink-50), color-mix(in srgb, var(--teal-50) 38%, var(--surface))); display: grid; grid-template-columns: 54px minmax(0, 1fr) auto; align-items: center; gap: 16px; }
+.client-version-card__icon { width: 54px; height: 54px; border: 1px solid color-mix(in srgb, var(--teal-500) 22%, var(--ink-100)); border-radius: 14px 14px 14px 5px; background: var(--surface); color: var(--teal-600); box-shadow: 0 8px 22px rgba(15, 68, 58, .08); display: grid; place-items: center; }
+.client-version-card__copy { min-width: 0; }
+.client-version-card__copy small, .client-version-card__copy strong { display: block; }
+.client-version-card__copy small { color: var(--teal-600); font-family: var(--font-mono); font-size: 9px; font-weight: 800; letter-spacing: .14em; }
+.client-version-card__copy strong { margin-top: 4px; color: var(--ink-800); font-size: 17px; }
+.client-version-card__copy em { margin-left: 4px; color: var(--teal-700); font-family: var(--font-mono); font-style: normal; }
+.client-version-card__copy p { margin: 5px 0 0; overflow: hidden; color: var(--ink-400); font-size: 11px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
+.client-version-card__progress { position: absolute; right: 0; bottom: 0; left: 0; height: 3px; overflow: hidden; background: color-mix(in srgb, var(--teal-500) 12%, transparent); }
+.client-version-card__progress i { position: absolute; top: 0; bottom: 0; width: 36%; border-radius: 999px; background: linear-gradient(90deg, transparent, var(--teal-500), var(--teal-400), transparent); animation: client-version-progress 1.15s ease-in-out infinite; }
+@keyframes client-version-progress {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(310%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .client-version-card__progress i { width: 100%; animation: none; }
+}
+@media (max-width: 900px) {
+  .client-version-card { grid-template-columns: 48px minmax(0, 1fr); padding: 18px; }
+  .client-version-card__icon { width: 48px; height: 48px; }
+  .client-version-card :deep(.el-button) { width: 100%; grid-column: 1 / -1; }
+}
+.client-version-card {
+  border-radius: var(--radius-panel);
+  box-shadow: none;
+}
