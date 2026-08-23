@@ -3,10 +3,7 @@ export interface SshLoginScriptOptions {
   loginScript?: string;
 }
 
-export function normalizeSshLoginScript(script: string): string {
-  const normalized = script.replace(/\r\n?/g, "\n");
-  return normalized.endsWith("\n") ? normalized : `${normalized}\n`;
-}
+export { normalizeSshLoginScript } from "../../shared/ssh-login-script.js";
 
 function parseOptions(value: string): Record<string, unknown> {
   try {
