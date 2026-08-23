@@ -26,6 +26,8 @@
     "build:server": "tsc -p tsconfig.server.json",
     "build:desktop": "vite build --mode desktop && tsc -p tsconfig.desktop.json",
     "verify:desktop-startup": "node scripts/verify-desktop-startup.mjs",
+    "verify:user-flows": "npm run build && node scripts/verify-user-flows.mjs",
+    "verify:full-regression": "npm run typecheck && npm test && npm run verify:user-flows && npm run build:desktop && npm run verify:desktop-startup",
     "build:monitor": "bash scripts/build-viron-monitor.sh",
     "package:macos": "bash scripts/package-macos.sh",
     "package:macos:arm64": "bash scripts/package-macos.sh --arch=arm64",
