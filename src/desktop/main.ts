@@ -5,8 +5,8 @@ import {
   translate as tr,
 } from "./i18n.js";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { WebSocket as NodeWebSocket, type RawData } from "ws";
@@ -28,14 +28,12 @@ import {
   type Session,
 } from "electron";
 import {
-  createDeviceIdentity,
   openDatabaseCredentialEnvelope,
   openCredentialEnvelope,
   openRedisCredentialEnvelope,
   openSshCredentialEnvelope,
   signDeviceReport,
   solveDeviceChallenge,
-  validateDeviceIdentity,
   type CredentialEnvelope,
   type DesktopDatabaseCredential,
   type DesktopRedisCredential,
@@ -43,7 +41,7 @@ import {
   type DesktopSshCredential,
   type DeviceIdentity,
 } from "./device-identity.js";
-import { EndpointValidationError, normalizeEndpoint, validateEndpoint, type ProductCapabilities } from "./endpoint.js";
+import { EndpointValidationError, normalizeEndpoint, validateEndpoint } from "./endpoint.js";
 import {
   DESKTOP_WEB_PAGE_LIMIT,
   cacheableDesktopWebUrl,
@@ -102,10 +100,6 @@ import {
   type DesktopSshContext,
 } from "./ssh-runtime.js";
 import { sshCommandRiskLevel } from "../shared/ssh-command-risk.js";
-import {
-  SYSTEM_KEY_ACCESS_CONSENT_VERSION,
-  systemKeyAccessConsentRequired,
-} from "./system-key-access.js";
 import type { DesktopExecutionMode } from "../shared/execution-mode.js";
 import type { ActiveConnectionType } from "../shared/active-connection.js";
 import {
@@ -123,13 +117,11 @@ import {
 } from "../shared/immersive-navigation.js";
 import {
   effectiveShortcutBindings,
-  parseShortcutBinding,
   sanitizeShortcutOverrides,
   shortcutActionForInput,
   shortcutConflict,
   shortcutValidationError,
   type ShortcutActionId,
-  type ShortcutOverrides,
 } from "../shared/keyboard-shortcuts.js";
 import {
   agentDatabaseReadResult,
@@ -137,7 +129,6 @@ import {
   agentTransportValue,
   type AgentChatRequest,
   type AgentDatabaseContextInput,
-  type AgentEntryMode,
   type AgentModelListInput,
   type AgentSettingsInput,
   type AgentToolApprovalResponseInput,
@@ -184,7 +175,6 @@ import {
 import { DesktopAgentAuditStore } from "./agent-audit.js";
 import { DesktopAgentSettingsStore, type AgentSettingsScope } from "./agent-settings.js";
 import { DesktopAgentSessionStore } from "./agent-session-store.js";
-import { DesktopSecretStorage } from "./secret-storage.js";
 import { listAgentModels } from "./agent-models.js";
 import { DesktopAgentRuntime } from "./agent-runtime.js";
 import { agentRuntimeScopeMatches, type AgentRuntimeScope } from "./agent-diagnostic-session.js";
@@ -199,40 +189,39 @@ import {
   type DesktopMcpStatus,
   type McpApprovalMode,
 } from "../shared/mcp-settings.js";
+import {
+  currentAgentEntryMode,
+  electronAccelerator,
+  readState,
+  shortcutPreferences,
+  writeState,
+} from "./app-state.js";
+import {
+  activeEndpoint,
+  currentExecutionMode,
+  endpointStateKey,
+  executionModeForEndpoint,
+  executionScopeForEndpoint,
+  setActiveEndpoint,
+} from "./endpoint-context.js";
+import {
+  confirmSystemKeyAccess,
+  deviceIdentity,
+  endpointSession,
+  forgetSystemKeyAccessConsent,
+  rememberSystemKeyAccessConsent,
+} from "./device-session.js";
+import { mainWindow, setMainWindow } from "./window-host.js";
 
 if (process.platform === "darwin") app.commandLine.appendSwitch("use-mock-keychain");
 
 const gotTheLock = process.argv.includes("--smoke-test") || app.requestSingleInstanceLock();
 if (!gotTheLock) app.quit();
 
-interface DesktopStateFile {
-  language?: import("../shared/i18n.js").Language;
-  recentEndpoint?: string;
-  agentEntryMode?: AgentEntryMode;
-  executionModes?: Record<string, DesktopExecutionMode>;
-  executionScopes?: Record<string, string>;
-  localMcpEnabled?: boolean;
-  localMcpApprovalMode?: McpApprovalMode;
-  systemKeyAccessConsentVersion?: number;
-  shortcutOverrides?: ShortcutOverrides;
-  webLastUrls?: Record<string, string>;
-}
-
 function developmentApplicationIcon(): string | undefined {
   if (app.isPackaged) return undefined;
   const icon = join(app.getAppPath(), "design", "logo", "viron-logo.png");
   return existsSync(icon) ? icon : undefined;
-}
-
-interface StoredDeviceIdentity {
-  deviceId: string;
-  keyId: string;
-  publicKey: string;
-  encryptedPrivateKey: string;
-}
-
-interface DesktopDeviceFile {
-  identities?: Record<string, StoredDeviceIdentity>;
 }
 
 interface DesktopRequestBody {
@@ -250,13 +239,6 @@ interface DesktopRequest {
   method?: string;
   headers?: Array<[string, string]>;
   body?: DesktopRequestBody;
-}
-
-interface ActiveEndpoint {
-  endpoint: string;
-  protocolVersion: number;
-  capabilities: ProductCapabilities;
-  partition: Session;
 }
 
 interface DesktopAuthContext {
@@ -372,7 +354,6 @@ class DesktopApiError extends Error {
   }
 }
 
-let mainWindow: BrowserWindow | null = null;
 if (gotTheLock) {
   app.on("second-instance", () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -417,14 +398,11 @@ let activeEnvironmentDockDrag: {
   origin: { x: number; y: number };
   moved: boolean;
 } | null = null;
-let activeEndpoint: ActiveEndpoint | null = null;
 const desktopWebViews = new Map<string, ManagedDesktopWebView>();
 const trackedWebPartitions = new WeakSet<Session>();
 const serviceSockets = new Map<string, ManagedServiceSocket>();
 const desktopRuntimeRegistrations = new Map<string, DesktopRuntimeRegistration>();
 const pendingCredentialRequests = new Set<string>();
-let systemKeyAccessConsentPrompt: Promise<void> | null = null;
-let systemKeyAccessConfirmedThisLaunch = false;
 let desktopSshRuntime: DesktopSshRuntime;
 let desktopSftpRuntime: DesktopSftpRuntime;
 let desktopLogRuntime: DesktopLogRuntime;
@@ -468,27 +446,6 @@ let desktopAuthContext: DesktopAuthContext | null = null;
 let desktopAuthEndpoint: string | null = null;
 let desktopRuntimeHeartbeat: NodeJS.Timeout | null = null;
 let shortcutCaptureActive = false;
-
-function statePath(): string {
-  return join(app.getPath("userData"), "desktop-state.json");
-}
-
-function devicePath(): string {
-  return join(app.getPath("userData"), "desktop-devices.json");
-}
-
-function readState(): DesktopStateFile {
-  try {
-    return JSON.parse(readFileSync(statePath(), "utf8")) as DesktopStateFile;
-  } catch {
-    return {};
-  }
-}
-
-function writeState(state: DesktopStateFile): void {
-  mkdirSync(app.getPath("userData"), { recursive: true });
-  writeFileSync(statePath(), `${JSON.stringify(state, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-}
 
 function cachedDesktopWebUrl(entryUrl: string, key: string): string {
   return restorableDesktopWebUrl(entryUrl, readState().webLastUrls?.[key]);
@@ -534,22 +491,6 @@ function localMcpStatus(): DesktopMcpStatus {
     clients: broker.clients,
     lastError: desktopMcpLastError,
   };
-}
-
-function shortcutPreferences() {
-  const overrides = sanitizeShortcutOverrides(readState().shortcutOverrides);
-  return { overrides, bindings: effectiveShortcutBindings(overrides, process.platform) };
-}
-
-function currentAgentEntryMode(): AgentEntryMode {
-  return agentEntryMode(readState().agentEntryMode);
-}
-
-function electronAccelerator(binding: string): string | undefined {
-  const parsed = parseShortcutBinding(binding);
-  if (!parsed) return undefined;
-  const modifiers = parsed.modifiers.map((modifier) => modifier === "Mod" ? "CommandOrControl" : modifier);
-  return [...modifiers, parsed.key].join("+");
 }
 
 function sendShortcutAction(action: ShortcutActionId): void {
@@ -615,158 +556,6 @@ function installApplicationMenu(): void {
     },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
-}
-
-function endpointStateKey(endpoint: string): string {
-  return createHash("sha256").update(endpoint).digest("hex");
-}
-
-function executionModeForEndpoint(endpoint: string): DesktopExecutionMode {
-  return readState().executionModes?.[endpointStateKey(endpoint)] === "server" ? "server" : "local";
-}
-
-function currentExecutionMode(): DesktopExecutionMode {
-  return activeEndpoint ? executionModeForEndpoint(activeEndpoint.endpoint) : "local";
-}
-
-function executionScopeForEndpoint(endpoint: string): string {
-  const state = readState();
-  const key = endpointStateKey(endpoint);
-  const existing = state.executionScopes?.[key];
-  if (existing) return existing;
-  const created = randomUUID();
-  writeState({ ...state, executionScopes: { ...state.executionScopes, [key]: created } });
-  return created;
-}
-
-function readDeviceFile(): DesktopDeviceFile {
-  try {
-    return JSON.parse(readFileSync(devicePath(), "utf8")) as DesktopDeviceFile;
-  } catch {
-    return {};
-  }
-}
-
-function writeDeviceFile(state: DesktopDeviceFile): void {
-  mkdirSync(app.getPath("userData"), { recursive: true });
-  writeFileSync(devicePath(), `${JSON.stringify(state, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-}
-
-function identityKey(endpoint: string, userId: string): string {
-  return createHash("sha256").update(`${endpoint}\0${userId}`).digest("hex");
-}
-
-function rememberSystemKeyAccessConsent(): void {
-  if (process.platform === "darwin") return;
-  const state = readState();
-  if (state.systemKeyAccessConsentVersion === SYSTEM_KEY_ACCESS_CONSENT_VERSION) return;
-  writeState({ ...state, systemKeyAccessConsentVersion: SYSTEM_KEY_ACCESS_CONSENT_VERSION });
-}
-
-function forgetSystemKeyAccessConsent(): void {
-  if (process.platform === "darwin") return;
-  const state = readState();
-  if (state.systemKeyAccessConsentVersion === undefined) return;
-  delete state.systemKeyAccessConsentVersion;
-  writeState(state);
-}
-
-function hasStoredDeviceIdentity(endpoint: string, userId: string): boolean {
-  return Boolean(readDeviceFile().identities?.[identityKey(endpoint, userId)]);
-}
-
-function systemKeyAccessCopy(): { message: string; detail: string } {
-  if (process.platform === "win32") {
-    return {
-      message: tr("允许 Viron 使用 Windows 安全存储保护设备密钥？"),
-      detail: [
-        tr("为了从当前电脑安全连接 Web 账号、SSH/SFTP 主机、环境日志和数据库，Viron 会为当前 Endpoint 和用户生成独立设备私钥，并使用当前 Windows 用户的数据保护能力加密保存。"),
-        tr("设备私钥只供 Viron 主进程使用，不会打包进安装程序，也不会上传到 Endpoint。"),
-      ].join("\n\n"),
-    };
-  }
-  return {
-    message: tr("允许 Viron 使用操作系统安全存储保护设备密钥？"),
-    detail: tr("设备私钥只供 Viron 主进程使用，不会打包进 App，也不会上传到 Endpoint。"),
-  };
-}
-
-function deviceIdentity(endpoint: string, userId: string): DeviceIdentity {
-  const state = readDeviceFile();
-  const key = identityKey(endpoint, userId);
-  const stored = state.identities?.[key];
-  const secretStorage = new DesktopSecretStorage(app.getPath("userData"));
-  if (stored && secretStorage.supports(stored.encryptedPrivateKey)) {
-    let privateKey: string;
-    try {
-      privateKey = secretStorage.decrypt(stored.encryptedPrivateKey, `device-private-key:${key}`);
-    } catch {
-      throw new Error(tr("未能读取本机保存的 Viron 设备私钥，请重新登录后重试"));
-    }
-    const identity = {
-      deviceId: stored.deviceId,
-      keyId: stored.keyId,
-      publicKey: stored.publicKey,
-      privateKey,
-    };
-    if (validateDeviceIdentity(identity)) return identity;
-  }
-  const created = createDeviceIdentity();
-  let encryptedPrivateKey: string;
-  try {
-    encryptedPrivateKey = secretStorage.encrypt(created.privateKey, `device-private-key:${key}`);
-  } catch {
-    throw new Error(tr("未能在本机保存 Viron 设备私钥，请检查当前用户的数据目录权限"));
-  }
-  const next: StoredDeviceIdentity = {
-    deviceId: created.deviceId,
-    keyId: created.keyId,
-    publicKey: created.publicKey,
-    encryptedPrivateKey,
-  };
-  writeDeviceFile({ identities: { ...state.identities, [key]: next } });
-  return created;
-}
-
-async function confirmSystemKeyAccess(endpoint: string, userId: string): Promise<void> {
-  if (process.platform === "darwin") return;
-  if (systemKeyAccessConfirmedThisLaunch) return;
-  if (systemKeyAccessConsentPrompt) return await systemKeyAccessConsentPrompt;
-  if (!systemKeyAccessConsentRequired(
-    readState().systemKeyAccessConsentVersion,
-    hasStoredDeviceIdentity(endpoint, userId),
-  )) {
-    systemKeyAccessConfirmedThisLaunch = true;
-    return;
-  }
-  systemKeyAccessConsentPrompt = (async () => {
-    if (!mainWindow) throw new Error(tr("主窗口不可用"));
-    const copy = systemKeyAccessCopy();
-    const result = await dialog.showMessageBox(mainWindow, {
-      type: "info",
-      title: tr("Viron 系统安全存储授权"),
-      message: copy.message,
-      detail: copy.detail,
-      buttons: [tr("同意并继续"), tr("暂不允许")],
-      defaultId: 0,
-      cancelId: 1,
-      noLink: true,
-    });
-    if (result.response !== 0) throw new Error(tr("已取消系统安全存储授权，Viron 未访问操作系统安全存储"));
-    systemKeyAccessConfirmedThisLaunch = true;
-  })();
-  try {
-    await systemKeyAccessConsentPrompt;
-  } finally {
-    systemKeyAccessConsentPrompt = null;
-  }
-}
-
-function endpointSession(endpoint: string): Session {
-  const key = createHash("sha256").update(endpoint).digest("hex").slice(0, 32);
-  const endpointPartition = session.fromPartition(`persist:viron-endpoint-${key}`);
-  endpointPartition.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
-  return endpointPartition;
 }
 
 function desktopWebSession(endpoint: string, userId: string, credentialId: string): Session {
@@ -2366,7 +2155,6 @@ async function currentDeviceAuthorization(): Promise<{
     rememberSystemKeyAccessConsent();
   } catch (error) {
     forgetSystemKeyAccessConsent();
-    systemKeyAccessConfirmedThisLaunch = false;
     throw error;
   }
   try {
@@ -4811,7 +4599,7 @@ function registerIpc(): void {
           closeServerForwardingRuntime(tr("Endpoint 已切换")),
         ]);
       }
-      activeEndpoint = { ...validated, partition: endpointPartition };
+      setActiveEndpoint({ ...validated, partition: endpointPartition });
       writeState({ ...readState(), recentEndpoint: validated.endpoint });
       void desktopUpdater.check().catch((error) => {
         process.stderr.write(`Viron update check failed: ${error instanceof Error ? error.message : String(error)}\n`);
@@ -4832,7 +4620,7 @@ function registerIpc(): void {
   ipcMain.handle("viron:endpoint:clear", async (event) => {
     trustedSender(event);
     await Promise.all([closeDesktopMcpOperations(), closeAllDesktopWebViews(), closeDesktopExecution(tr("Endpoint 已清除")), closeServerForwardingRuntime(tr("Endpoint 已清除"))]);
-    activeEndpoint = null;
+    setActiveEndpoint(null);
     return publicState();
   });
 
@@ -6142,7 +5930,7 @@ async function createWindow(): Promise<void> {
   const icon = developmentApplicationIcon();
   if (!existsSync(preload) || !existsSync(renderer)) throw new Error(tr("桌面 App 静态资源不完整，请先执行 npm run build:desktop"));
 
-  mainWindow = new BrowserWindow({
+  const createdMainWindow = setMainWindow(new BrowserWindow({
     width: 1440,
     height: 920,
     minWidth: 1100,
@@ -6162,14 +5950,14 @@ async function createWindow(): Promise<void> {
       sandbox: true,
       webSecurity: true,
     },
-  });
-  mainWindow.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
-  mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  mainWindow.webContents.on("before-input-event", (event, input) => {
+  }));
+  createdMainWindow.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  createdMainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  createdMainWindow.webContents.on("before-input-event", (event, input) => {
     if (input.type !== "keyDown" || input.isAutoRepeat) return;
     if (shortcutCaptureActive) {
       event.preventDefault();
-      mainWindow?.webContents.send("viron:shortcut-capture-input", {
+      createdMainWindow.webContents.send("viron:shortcut-capture-input", {
         key: input.key,
         meta: input.meta,
         control: input.control,
@@ -6190,25 +5978,25 @@ async function createWindow(): Promise<void> {
     event.preventDefault();
     sendShortcutAction(action);
   });
-  mainWindow.webContents.on("will-navigate", (event, url) => {
-    if (url !== mainWindow?.webContents.getURL()) event.preventDefault();
+  createdMainWindow.webContents.on("will-navigate", (event, url) => {
+    if (url !== createdMainWindow.webContents.getURL()) event.preventDefault();
   });
-  mainWindow.once("ready-to-show", () => mainWindow?.show());
-  mainWindow.on("move", () => {
+  createdMainWindow.once("ready-to-show", () => createdMainWindow.show());
+  createdMainWindow.on("move", () => {
     layoutImmersiveNavigationWindow();
     layoutAgentLauncherWindow();
     layoutAgentChatWindow();
     layoutConnectionQualityWindow();
     layoutActiveEnvironmentDockWindow();
   });
-  mainWindow.on("resize", () => {
+  createdMainWindow.on("resize", () => {
     layoutImmersiveNavigationWindow();
     layoutAgentLauncherWindow();
     layoutAgentChatWindow();
     layoutConnectionQualityWindow();
     layoutActiveEnvironmentDockWindow();
   });
-  mainWindow.on("closed", () => {
+  createdMainWindow.on("closed", () => {
     void closeAllDesktopWebViews();
     immersiveNavigationWindow?.close();
     immersiveNavigationState = null;
@@ -6224,15 +6012,15 @@ async function createWindow(): Promise<void> {
     activeEnvironmentDockWindow?.close();
     activeEnvironmentDockState = null;
     shortcutCaptureActive = false;
-    mainWindow = null;
+    setMainWindow(null);
   });
   installApplicationMenu();
-  await mainWindow.loadFile(renderer);
+  await createdMainWindow.loadFile(renderer);
   desktopSmokeStage("renderer-loaded");
 
   if (process.argv.includes("--smoke-test")) {
     try {
-      mainWindow.show();
+      createdMainWindow.show();
       await new Promise((resolve) => setTimeout(resolve, 100));
       const smokeEndpoint = process.argv.find((argument) => argument.startsWith("--smoke-endpoint="))?.slice("--smoke-endpoint=".length);
       desktopSmokeStage(smokeEndpoint ? "endpoint-start" : "static-smoke");
@@ -6248,13 +6036,13 @@ async function createWindow(): Promise<void> {
       const connectionQuality = await runDesktopConnectionQualitySmoke();
       const activeEnvironmentDock = await runDesktopActiveEnvironmentDockSmoke();
       if (smokeEndpoint) {
-        const endpointResult = await mainWindow.webContents.executeJavaScript(
+        const endpointResult = await createdMainWindow.webContents.executeJavaScript(
           `window.vironDesktop.setEndpoint(${JSON.stringify(smokeEndpoint)})`,
         ) as { ok: boolean };
         endpointValidated = endpointResult.ok;
         desktopSmokeStage(endpointResult.ok ? "endpoint-ready" : "endpoint-rejected");
         if (endpointResult.ok) {
-          const response = await mainWindow.webContents.executeJavaScript(
+          const response = await createdMainWindow.webContents.executeJavaScript(
             `window.vironDesktop.request({ path: "/api/v1/capabilities" })`,
           ) as { status: number };
           apiStatus = response.status;
@@ -6287,7 +6075,7 @@ async function createWindow(): Promise<void> {
           }
         }
       }
-      const result = await mainWindow.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+      const result = await createdMainWindow.webContents.executeJavaScript(`new Promise((resolve, reject) => {
         const deadline = Date.now() + 10000;
         const inspect = () => {
           const loginVisible = Boolean(document.querySelector('.login-page'));
