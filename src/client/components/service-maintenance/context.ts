@@ -203,33 +203,12 @@ export function requireMaintenancePart<Key extends keyof MaintenanceContext>(ctx
 }
 
 export function deferMaintenancePart<Key extends keyof MaintenanceContext>(ctx: MaintenanceContext, key: Key): NonNullable<MaintenanceContext[Key]> {
-  const bridges = new Map<PropertyKey, object>();
   const proxy = new Proxy({}, {
     get(_target, property) {
-      const cached = bridges.get(property);
-      if (cached) return cached;
-      const callable = (..._args: unknown[]): unknown => undefined;
-      const bridge = new Proxy(callable, {
-        apply(_fn, _thisArg, args) {
-          const part = requireMaintenancePart(ctx, key) as object;
-          const member = Reflect.get(part, property);
-          if (typeof member !== "function") throw new TypeError(`Maintenance member is not callable: ${String(property)}`);
-          return Reflect.apply(member, part, args);
-        },
-        get(_fn, nestedProperty) {
-          const part = requireMaintenancePart(ctx, key) as object;
-          const member = Reflect.get(part, property);
-          const nested = Reflect.get(Object(member), nestedProperty, member);
-          return typeof nested === "function" ? nested.bind(member) : nested;
-        },
-        set(_fn, nestedProperty, value) {
-          const part = requireMaintenancePart(ctx, key) as object;
-          const member = Reflect.get(part, property);
-          return Reflect.set(Object(member), nestedProperty, value, member);
-        },
-      });
-      bridges.set(property, bridge);
-      return bridge;
+      return Reflect.get(requireMaintenancePart(ctx, key) as object, property);
+    },
+    set(_target, property, value) {
+      return Reflect.set(requireMaintenancePart(ctx, key) as object, property, value);
     },
   });
   return proxy as NonNullable<MaintenanceContext[Key]>;

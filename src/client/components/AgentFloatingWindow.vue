@@ -1,5 +1,4 @@
-<script setup lang="ts">import { translate as tr } from "../i18n";
-
+<script setup lang="ts">
 import {
   Activity,
   ChevronDown,
@@ -19,1291 +18,206 @@ import {
   Trash2,
   X,
 } from "@lucide/vue";
-import { ElMessage, ElMessageBox } from "element-plus";
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { onBeforeUnmount, onMounted } from "vue";
 import {
-  desktopAppState,
-  desktopAgentSettings,
-  createDesktopAgentSession,
-  deleteDesktopAgentSession,
-  getDesktopAgentSettings,
-  getCurrentDesktopAgentSession,
-  isDesktopApp,
-  listDesktopAgentSessions,
   onDesktopAgentEvent,
   onDesktopAgentLauncherAction,
   onDesktopNativeViewPointerDown,
-  readDesktopAgentSshContext,
-  readDesktopAgentDatabaseContext,
-  recordDesktopAgentAction,
-  renameDesktopAgentSession,
-  respondDesktopAgentWorkbenchExecution,
-  respondDesktopAgentApproval,
-  sendDesktopAgentChat,
-  selectDesktopAgentSession,
-  stopDesktopAgentChat,
   updateDesktopAgentLauncher,
 } from "../desktop";
 import {
-  agentHostState,
   applyAgentHostState,
-  executeAgentHostWorkbench,
-  isAgentChatOverlayRuntime,
   getDesktopAgentHost,
-  focusDesktopAgentChat,
   onDesktopAgentChatPointerOutside,
   onDesktopAgentHostState,
-  performAgentHostAction,
-  setDesktopAgentChatIgnoreMouse,
   updateDesktopAgentChatChrome,
 } from "../agent-host";
 import { onAppShortcut } from "../keyboard-shortcuts";
-import {
-  AGENT_FLOATING_BUTTON_SIZE,
-  agentFloatingSnapEdge,
-  clampAgentFloatingPosition,
-  nearestAgentFloatingEdge,
-  snapAgentFloatingPosition,
-  type AgentFloatingEdge,
-  type AgentFloatingPosition,
-  type AgentFloatingViewport,
-} from "../agent-floating-position";
-import { agentFloatingOverlayLayout } from "../agent-floating-overlay";
-import { agentQuickBubblesFromMessages, latestAgentQuickBubbleId, shouldStartFreshAgentConversation } from "../agent-quick-history";
-import { agentSceneName } from "../agent-context-card-display";
 import { renderAgentMarkdown } from "../agent-markdown";
-import { agentToolActivity, type AgentToolActivity } from "../agent-tool-activity";
-import { agentDatabaseReadResult, agentDatabaseSqlSuggestion, agentSshCommandSuggestion, agentSshDiagnosticResult, agentSshScriptSuggestion, agentVironToolApprovalSuggestion } from "../../shared/agent";
-import type { AgentChatMessage, AgentContextCard, AgentConversationSummary, AgentDatabaseReadResult, AgentDatabaseSqlSuggestion, AgentEntryMode, AgentSshCommandSuggestion, AgentSshDiagnosticResult, AgentSshScriptSuggestion, AgentStreamEvent, AgentTurnUsage, AgentVironToolApprovalSuggestion } from "../../shared/agent";
-import type { AgentFloatingOverlayAction } from "../../shared/agent-floating-overlay";
+import { agentToolActivity } from "../agent-tool-activity";
 import AgentQuickSurface from "./AgentQuickSurface.vue";
 import AgentTurnStats from "./AgentTurnStats.vue";
+import { createAgentFloatingContext } from "./agent-floating-window/context";
+import { useAgentSessions } from "./agent-floating-window/use-agent-sessions";
+import { useAgentSuggestions } from "./agent-floating-window/use-agent-suggestions";
+import { useAgentChat } from "./agent-floating-window/use-agent-chat";
+import { useAgentLauncherChrome } from "./agent-floating-window/use-agent-launcher-chrome";
 
-interface AgentOverlayDragState {
-  startX: number;
-  startY: number;
-  origin: AgentFloatingPosition;
-}
+const agentFloatingContext = createAgentFloatingContext();
+const agentSessions = useAgentSessions(agentFloatingContext);
+agentFloatingContext.sessions = agentSessions;
+const agentSuggestions = useAgentSuggestions(agentFloatingContext);
+agentFloatingContext.suggestions = agentSuggestions;
+const agentChat = useAgentChat(agentFloatingContext);
+agentFloatingContext.chat = agentChat;
+const agentLauncherChrome = useAgentLauncherChrome(agentFloatingContext);
+agentFloatingContext.launcherChrome = agentLauncherChrome;
+const agentFloating = { ...agentLauncherChrome, ...agentSessions, ...agentChat, ...agentSuggestions };
 
-type AgentSshSuggestionState = AgentSshCommandSuggestion & {
-  id: string;
-  runId?: string;
-  executing?: boolean;
-  cancelling?: boolean;
-  result?: AgentSshDiagnosticResult;
-  error?: string;
-};
+const {
+  edgeCollapsedStorageKey,
+  edgeStorageKey,
+  positionStorageKey,
+  desktop,
+  overlayRuntime,
+  open,
+  viewport,
+  buttonPosition,
+  edgeCollapsed,
+  snappedEdge,
+  dragging,
+  activePresentation,
+  agentRoot,
+  ignoreMouse,
+  overlayDragState,
+  visible,
+  entryMode,
+  floatingVisible,
+  rootStyle,
+  panelAlignLeft,
+  panelBelow,
+  floatingButtonLabel,
+  chromeVisible,
+  currentViewport,
+  defaultButtonPosition,
+  storedButtonPosition,
+  storedEdge,
+  persistButtonPosition,
+  persistEdgeState,
+  collapseAtEdge,
+  expandFromEdge,
+  collapseToEdge,
+  togglePanel,
+  settleButtonDrag,
+  handleDesktopLauncherAction,
+  syncDesktopLauncherOverlay,
+  handleViewportResize,
+  isDialogOverlayTarget,
+  dialogOverlayOpen,
+  handleDocumentPointerDown,
+  handleNativeViewPointerDown,
+  handlePointerOutside,
+  isAgentHitTarget,
+  syncIgnoreMouse,
+  handleOverlayMouseMove,
+  currentSessionId,
+  sessionItems,
+  sessionsLoading,
+  historyOpen,
+  sessionsLoadSeq,
+  launchConversationReady,
+  loadSessionsTail,
+  loadSettings,
+  applyConversation,
+  loadSessions,
+  ensureLaunchConversation,
+  refreshSessionList,
+  createConversation,
+  selectConversation,
+  renameConversation,
+  deleteConversation,
+  resetRunArtifacts,
+  input,
+  composerExpanded,
+  settings,
+  settingsError,
+  loadingSettings,
+  running,
+  activeRunId,
+  activeMessageId,
+  messages,
+  contextCards,
+  toolActivities,
+  addingContext,
+  quickComposerVisible,
+  quickBubbleIds,
+  quickBubblePrompts,
+  quickExpandedBubbleId,
+  quickHistoryTiled,
+  quickBubblesHidden,
+  scrollBody,
+  composerInput,
+  pendingQuickPrompt,
+  inputLimit,
+  configured,
+  diagnosticActive,
+  sendDisabled,
+  inputCount,
+  agentStatusText,
+  panelBodyVisible,
+  currentSessionTitle,
+  quickBubbles,
+  quickActionBubbleId,
+  sceneLabel,
+  displayedQuickBubbles,
+  nowIso,
+  newMessage,
+  restoreQuickBubblesFromHistory,
+  collapseQuickHistoryStack,
+  hideQuickBubbles,
+  showQuickBubbles,
+  toggleQuickHistoryStack,
+  trackQuickBubble,
+  closeQuickBubble,
+  toggleQuickBubble,
+  scrollToBottom,
+  resizeComposerInput,
+  expandComposer,
+  collapseComposer,
+  quickPromptLabel,
+  scriptLineLabel,
+  currentSceneCard,
+  upsertContextCard,
+  captureCurrentScene,
+  ensureAssistantMessage,
+  applyTurnStats,
+  handleAgentEvent,
+  sendMessageFor,
+  sendMessage,
+  sendQuickMessage,
+  toggleQuickComposer,
+  handleAppShortcut,
+  stopRun,
+  openSettings,
+  sshSuggestions,
+  sshScriptSuggestions,
+  databaseSuggestions,
+  vironApprovals,
+  sshDiagnosticExecuting,
+  databaseDiagnosticExecuting,
+  quickSshSuggestions,
+  quickSshScriptSuggestions,
+  quickDatabaseSuggestions,
+  fillSshSuggestion,
+  canFillSshSuggestion,
+  fillSshScriptSuggestion,
+  sshSuggestionTarget,
+  isExecutableSuggestion,
+  sshSuggestionBadge,
+  databaseSuggestionBadge,
+  executeSshSuggestion,
+  cancelSshSuggestion,
+  stopActiveDiagnostic,
+  databaseSuggestionTarget,
+  fillDatabaseSuggestion,
+  executeDatabaseSuggestion,
+  cancelDatabaseSuggestion,
+  respondVironApproval,
+  startAgentChatWatchers,
+  startAgentSuggestionsWatchers,
+  startAgentLauncherChromeWatchers,
+} = agentFloating;
 
-type AgentDatabaseSuggestionState = AgentDatabaseSqlSuggestion & {
-  id: string;
-  runId?: string;
-  executing?: boolean;
-  cancelling?: boolean;
-  result?: AgentDatabaseReadResult;
-  error?: string;
-};
+startAgentChatWatchers();
+startAgentSuggestionsWatchers();
+startAgentLauncherChromeWatchers();
 
-type AgentSshScriptSuggestionState = AgentSshScriptSuggestion & {
-  id: string;
-};
-
-type AgentVironApprovalState = Omit<AgentVironToolApprovalSuggestion, "input"> & {
-  input: unknown;
-  id: string;
-  executing?: boolean;
-  error?: string;
-};
-
-const edgeCollapsedStorageKey = "viron-agent-edge-collapsed";
-const edgeStorageKey = "viron-agent-edge";
-const positionStorageKey = "viron-agent-position";
-
-function currentViewport(): AgentFloatingViewport {
-  return { width: window.innerWidth, height: window.innerHeight };
-}
-
-function defaultButtonPosition(viewport: AgentFloatingViewport): AgentFloatingPosition {
-  return clampAgentFloatingPosition({ x: viewport.width - AGENT_FLOATING_BUTTON_SIZE - 24, y: viewport.height - AGENT_FLOATING_BUTTON_SIZE - 24 }, viewport);
-}
-
-function storedButtonPosition(viewport: AgentFloatingViewport): AgentFloatingPosition {
-  try {
-    const value = JSON.parse(localStorage.getItem(positionStorageKey) || "null") as Partial<AgentFloatingPosition> | null;
-    if (value && Number.isFinite(value.x) && Number.isFinite(value.y)) {
-      return clampAgentFloatingPosition({ x: Number(value.x), y: Number(value.y) }, viewport);
-    }
-  } catch {
-    // Fall back to the default position when local state is malformed.
-  }
-  return defaultButtonPosition(viewport);
-}
-
-function storedEdge(): AgentFloatingEdge | null {
-  const value = localStorage.getItem(edgeStorageKey);
-  return value === "left" || value === "right" || value === "top" || value === "bottom" ? value : null;
-}
-
-const desktop = isDesktopApp();
-const overlayRuntime = isAgentChatOverlayRuntime();
-const open = ref(false);
-const viewport = ref<AgentFloatingViewport>(currentViewport());
-const buttonPosition = ref<AgentFloatingPosition>(storedButtonPosition(viewport.value));
-const edgeCollapsed = ref(localStorage.getItem(edgeCollapsedStorageKey) === "1");
-const snappedEdge = ref<AgentFloatingEdge | null>(edgeCollapsed.value ? (storedEdge() || "right") : null);
-const dragging = ref(false);
-const input = ref("");
-const composerExpanded = ref(false);
-const settings = desktopAgentSettings;
-const settingsError = ref("");
-const loadingSettings = ref(false);
-const running = ref(false);
-const activeRunId = ref("");
-const activeMessageId = ref("");
-const messages = ref<AgentChatMessage[]>([]);
-const currentSessionId = ref("");
-const sessionItems = ref<AgentConversationSummary[]>([]);
-const sessionsLoading = ref(false);
-const historyOpen = ref(false);
-const contextCards = ref<AgentContextCard[]>([]);
-const toolActivities = ref<AgentToolActivity[]>([]);
-const sshSuggestions = ref<AgentSshSuggestionState[]>([]);
-const sshScriptSuggestions = ref<AgentSshScriptSuggestionState[]>([]);
-const databaseSuggestions = ref<AgentDatabaseSuggestionState[]>([]);
-const vironApprovals = ref<AgentVironApprovalState[]>([]);
-const addingContext = ref(false);
-const quickComposerVisible = ref(false);
-const quickBubbleIds = ref<string[]>([]);
-const quickBubblePrompts = ref<Record<string, string>>({});
-const quickExpandedBubbleId = ref("");
-const quickHistoryTiled = ref(false);
-const quickBubblesHidden = ref(false);
-const activePresentation = ref<AgentEntryMode>("floating");
-const agentRoot = ref<HTMLElement | null>(null);
-const scrollBody = ref<HTMLElement | null>(null);
-const composerInput = ref<HTMLTextAreaElement | null>(null);
 let removeAgentEventListener: (() => void) | undefined;
 let removeAgentLauncherActionListener: (() => void) | undefined;
 let removeNativeViewPointerDownListener: (() => void) | undefined;
 let removeAppShortcutListener: (() => void) | undefined;
 let removeHostStateListener: (() => void) | undefined;
 let removePointerOutsideListener: (() => void) | undefined;
-let ignoreMouse = true;
-let overlayDragState: AgentOverlayDragState | null = null;
-let pendingQuickPrompt = "";
-let sessionsLoadSeq = 0;
-let launchConversationReady = false;
-let loadSessionsTail = Promise.resolve();
-const inputLimit = 2000;
-
-if (edgeCollapsed.value && snappedEdge.value) {
-  buttonPosition.value = snapAgentFloatingPosition(buttonPosition.value, snappedEdge.value, viewport.value);
-}
-
-const visible = computed(() => desktop && Boolean(agentHostState.userId));
-const entryMode = computed<AgentEntryMode>(() => desktopAppState.value?.agentEntryMode ?? "disabled");
-const floatingVisible = computed(() => visible.value && entryMode.value === "floating");
-const configured = computed(() => Boolean(settings.value?.configured));
-const sshDiagnosticExecuting = computed(() => sshSuggestions.value.some((item) => item.executing));
-const databaseDiagnosticExecuting = computed(() => databaseSuggestions.value.some((item) => item.executing));
-const diagnosticActive = computed(() => Boolean(activeRunId.value));
-const sendDisabled = computed(() => addingContext.value || diagnosticActive.value || sshDiagnosticExecuting.value || databaseDiagnosticExecuting.value || !input.value.trim() || !configured.value);
-const inputCount = computed(() => input.value.length);
-const rootStyle = computed(() => ({ left: `${buttonPosition.value.x}px`, top: `${buttonPosition.value.y}px` }));
-const panelAlignLeft = computed(() => buttonPosition.value.x + AGENT_FLOATING_BUTTON_SIZE / 2 < viewport.value.width / 2);
-const panelBelow = computed(() => buttonPosition.value.y + AGENT_FLOATING_BUTTON_SIZE / 2 < viewport.value.height / 2);
-const floatingButtonLabel = computed(() => {
-  if (edgeCollapsed.value && !open.value) return tr("展开并打开 Viron Agent");
-  return open.value ? tr("关闭 Viron Agent") : tr("打开 Viron Agent");
-});
-const agentStatusText = computed(() => {
-  if (loadingSettings.value) return tr("正在读取本机配置");
-  if (settingsError.value) return tr("配置读取失败");
-  if (!configured.value) return tr("需要配置模型");
-  if (running.value) return tr("正在生成");
-  if (diagnosticActive.value) return tr("等待逐步确认");
-  return tr("本机模型已就绪");
-});
-const panelBodyVisible = computed(() => (
-  loadingSettings.value
-  || Boolean(settingsError.value)
-  || !configured.value
-  || messages.value.length > 0
-  || toolActivities.value.length > 0
-  || sshSuggestions.value.length > 0
-  || sshScriptSuggestions.value.length > 0
-  || databaseSuggestions.value.length > 0
-  || vironApprovals.value.length > 0
-));
-const currentSessionTitle = computed(() => sessionItems.value.find((item) => item.id === currentSessionId.value)?.title || tr("新对话"));
-const quickBubbles = computed(() => quickBubbleIds.value.flatMap((id) => {
-  const message = messages.value.find((item) => item.id === id && item.role === "assistant");
-  if (!message) return [];
-  return [{
-    id,
-    prompt: quickBubblePrompts.value[id] || tr("小 V"),
-    content: message.content,
-    running: running.value && activeMessageId.value === id,
-    durationMs: message.durationMs,
-    usage: message.usage,
-  }];
-}));
-const quickActionBubbleId = computed(() => quickBubbleIds.value.at(-1) ?? "");
-const quickSshSuggestions = computed(() => (
-  quickExpandedBubbleId.value === quickActionBubbleId.value ? sshSuggestions.value : []
-));
-const quickSshScriptSuggestions = computed(() => (
-  quickExpandedBubbleId.value === quickActionBubbleId.value ? sshScriptSuggestions.value : []
-));
-const quickDatabaseSuggestions = computed(() => (
-  quickExpandedBubbleId.value === quickActionBubbleId.value ? databaseSuggestions.value : []
-));
-const sceneLabel = computed(() => agentSceneName(agentHostState.routeName));
-const displayedQuickBubbles = computed(() => quickBubblesHidden.value ? [] : quickBubbles.value);
-const chromeVisible = computed(() => visible.value && (
-  (entryMode.value === "floating" && open.value)
-  || (entryMode.value === "quick" && (quickComposerVisible.value || displayedQuickBubbles.value.length > 0))
-));
-
-function quickPromptLabel(value: string): string {
-  const normalized = value.replace(/\s+/g, " ").trim();
-  return normalized.length > 42 ? `${normalized.slice(0, 42)}…` : normalized || tr("小 V");
-}
-
-function scriptLineLabel(script: string): string {
-  return tr("{{0}} 行", [script.split("\n").length]);
-}
-
-function collapseQuickHistoryStack() {
-  quickHistoryTiled.value = false;
-  if (quickBubbleIds.value.length) {
-    quickExpandedBubbleId.value = latestAgentQuickBubbleId(quickBubbleIds.value);
-  }
-}
-
-function hideQuickBubbles() {
-  quickBubblesHidden.value = true;
-  collapseQuickHistoryStack();
-}
-
-function showQuickBubbles() {
-  quickBubblesHidden.value = false;
-  if (!quickBubbleIds.value.length && messages.value.length) {
-    restoreQuickBubblesFromHistory(messages.value);
-  }
-}
-
-function toggleQuickHistoryStack() {
-  if (quickHistoryTiled.value) {
-    collapseQuickHistoryStack();
-    return;
-  }
-  quickHistoryTiled.value = true;
-}
-
-function trackQuickBubble(messageId: string, prompt: string) {
-  quickBubblesHidden.value = false;
-  quickBubblePrompts.value = { ...quickBubblePrompts.value, [messageId]: quickPromptLabel(prompt) };
-  quickBubbleIds.value = [...quickBubbleIds.value.filter((id) => id !== messageId), messageId].slice(-3);
-  quickExpandedBubbleId.value = messageId;
-  quickHistoryTiled.value = false;
-}
-
-function closeQuickBubble(messageId: string) {
-  if (messageId === quickActionBubbleId.value) stopActiveDiagnostic();
-  quickBubbleIds.value = quickBubbleIds.value.filter((id) => id !== messageId);
-  if (!quickBubbleIds.value.includes(quickExpandedBubbleId.value)) {
-    quickExpandedBubbleId.value = latestAgentQuickBubbleId(quickBubbleIds.value);
-  }
-  if (quickBubbleIds.value.length <= 1) quickHistoryTiled.value = false;
-}
-
-function toggleQuickBubble(messageId: string) {
-  const latestId = latestAgentQuickBubbleId(quickBubbleIds.value);
-  if (!quickHistoryTiled.value && quickBubbleIds.value.length > 1 && messageId !== latestId) {
-    quickHistoryTiled.value = true;
-    return;
-  }
-  quickExpandedBubbleId.value = quickExpandedBubbleId.value === messageId ? "" : messageId;
-}
-
-function scrollToBottom() {
-  void nextTick(() => {
-    if (!scrollBody.value) return;
-    scrollBody.value.scrollTop = scrollBody.value.scrollHeight;
-  });
-}
-
-function resizeComposerInput() {
-  const textarea = composerInput.value;
-  if (!textarea) return;
-  textarea.style.height = "auto";
-  const nextHeight = Math.min(textarea.scrollHeight, 118);
-  textarea.style.height = `${nextHeight}px`;
-  textarea.style.overflowY = textarea.scrollHeight > nextHeight ? "auto" : "hidden";
-}
-
-function expandComposer() {
-  if (!configured.value) {
-    void openSettings();
-    return;
-  }
-  if (running.value) return;
-  composerExpanded.value = true;
-  void nextTick(() => {
-    resizeComposerInput();
-    composerInput.value?.focus();
-    scrollToBottom();
-  });
-}
-
-function collapseComposer() {
-  composerExpanded.value = false;
-  scrollToBottom();
-}
-
-function nowIso(): string {
-  return new Date().toISOString();
-}
-
-function newMessage(role: AgentChatMessage["role"], content: string, id: string = crypto.randomUUID()): AgentChatMessage {
-  return { id, role, content, createdAt: nowIso() };
-}
-
-async function loadSettings() {
-  if (!desktop || !agentHostState.userId) return;
-  loadingSettings.value = true;
-  settingsError.value = "";
-  try {
-    settings.value = await getDesktopAgentSettings();
-  } catch (error) {
-    settings.value = null;
-    settingsError.value = error instanceof Error ? error.message : tr("读取 Viron Agent 配置失败");
-  } finally {
-    loadingSettings.value = false;
-  }
-}
-
-function restoreQuickBubblesFromHistory(history: AgentChatMessage[]) {
-  const restored = agentQuickBubblesFromMessages(history);
-  quickBubblePrompts.value = Object.fromEntries(restored.map((item) => [item.id, quickPromptLabel(item.prompt)]));
-  quickBubbleIds.value = restored.map((item) => item.id);
-  quickExpandedBubbleId.value = latestAgentQuickBubbleId(quickBubbleIds.value);
-  quickHistoryTiled.value = false;
-}
-
-function applyConversation(conversation: { id: string; messages: AgentChatMessage[] }, options?: { restoreQuick?: boolean }) {
-  const restoreQuick = options?.restoreQuick === true;
-  const keepLiveRun = conversation.id === currentSessionId.value && (running.value || diagnosticActive.value);
-  currentSessionId.value = conversation.id;
-  if (!keepLiveRun) {
-    messages.value = conversation.messages.slice();
-    resetRunArtifacts();
-  }
-  if (restoreQuick) {
-    quickBubblesHidden.value = false;
-    restoreQuickBubblesFromHistory(keepLiveRun ? messages.value : conversation.messages);
-  } else if (!keepLiveRun) {
-    quickBubbleIds.value = [];
-    quickBubblePrompts.value = {};
-    quickExpandedBubbleId.value = "";
-    quickHistoryTiled.value = false;
-    quickBubblesHidden.value = false;
-  }
-  scrollToBottom();
-}
-
-async function loadSessions(options?: { startFresh?: boolean; restoreQuick?: boolean }) {
-  if (!desktop || !agentHostState.userId) return;
-  const seq = ++sessionsLoadSeq;
-  const run = async () => {
-    sessionsLoading.value = true;
-    try {
-      const current = await getCurrentDesktopAgentSession();
-      if (seq !== sessionsLoadSeq) return;
-      if (options?.startFresh && shouldStartFreshAgentConversation(current.messages)) {
-        const created = await createDesktopAgentSession();
-        if (seq !== sessionsLoadSeq) return;
-        const list = await listDesktopAgentSessions();
-        if (seq !== sessionsLoadSeq) return;
-        sessionItems.value = list.items;
-        applyConversation(created);
-        launchConversationReady = true;
-        return;
-      }
-      const list = await listDesktopAgentSessions();
-      if (seq !== sessionsLoadSeq) return;
-      sessionItems.value = list.items;
-      applyConversation(current, { restoreQuick: options?.restoreQuick === true && !options?.startFresh });
-      if (options?.startFresh) launchConversationReady = true;
-    } catch (error) {
-      if (seq !== sessionsLoadSeq) return;
-      ElMessage.error(error instanceof Error ? error.message : tr("读取 Viron Agent 历史会话失败"));
-    } finally {
-      if (seq === sessionsLoadSeq) sessionsLoading.value = false;
-    }
-  };
-  const queued = loadSessionsTail.then(run, run);
-  loadSessionsTail = queued.then(() => undefined, () => undefined);
-  return queued;
-}
-
-async function ensureLaunchConversation() {
-  if (launchConversationReady) return;
-  await loadSessions({ startFresh: true });
-}
-
-async function refreshSessionList() {
-  const list = await listDesktopAgentSessions();
-  sessionItems.value = list.items;
-  currentSessionId.value = list.currentSessionId;
-}
-
-function resetRunArtifacts() {
-  toolActivities.value = [];
-  sshSuggestions.value = [];
-  sshScriptSuggestions.value = [];
-  databaseSuggestions.value = [];
-  vironApprovals.value = [];
-}
-
-async function createConversation() {
-  if (diagnosticActive.value) await stopActiveDiagnostic();
-  const conversation = await createDesktopAgentSession();
-  applyConversation(conversation);
-  historyOpen.value = false;
-  await refreshSessionList();
-}
-
-async function selectConversation(sessionId: string) {
-  if (diagnosticActive.value && sessionId !== currentSessionId.value) await stopActiveDiagnostic();
-  const conversation = await selectDesktopAgentSession(sessionId);
-  applyConversation(conversation, { restoreQuick: true });
-  launchConversationReady = true;
-  historyOpen.value = false;
-}
-
-async function renameConversation(item: AgentConversationSummary) {
-  try {
-    const response = await ElMessageBox.prompt(tr("请输入新名称"), tr("重命名会话"), {
-      confirmButtonText: tr("重命名"),
-      cancelButtonText: tr("取消"),
-      inputValue: item.title,
-      inputValidator: (value) => Boolean(value.trim()) || tr("请输入新名称"),
-    });
-    const title = response.value.trim();
-    if (title === item.title) return;
-    await renameDesktopAgentSession(item.id, title);
-    await refreshSessionList();
-  } catch (error) {
-    if (error === "cancel" || error === "close") return;
-    ElMessage.error(error instanceof Error ? error.message : tr("重命名失败"));
-  }
-}
-
-async function deleteConversation(item: AgentConversationSummary) {
-  const keepWindow = open.value;
-  const keepComposer = quickComposerVisible.value;
-  const keepHistory = historyOpen.value;
-  try {
-    await ElMessageBox.confirm(tr("删除会话“{0}”？", [item.title]), tr("删除会话"), {
-      confirmButtonText: tr("删除"),
-      cancelButtonText: tr("取消"),
-      type: "warning",
-    });
-    if (diagnosticActive.value && item.id === currentSessionId.value) await stopActiveDiagnostic();
-    const current = await deleteDesktopAgentSession(item.id);
-    applyConversation(current, { restoreQuick: current.messages.length > 0 });
-    launchConversationReady = true;
-    await refreshSessionList();
-  } catch (error) {
-    if (error !== "cancel" && error !== "close") {
-      ElMessage.error(error instanceof Error ? error.message : tr("删除失败"));
-    }
-  } finally {
-    if (keepWindow) open.value = true;
-    if (keepComposer) quickComposerVisible.value = true;
-    if (keepHistory) historyOpen.value = true;
-  }
-}
-
-function currentSceneCard(): AgentContextCard {
-  return {
-    id: `scene:${agentHostState.routePath}`,
-    kind: "scene",
-    title: sceneLabel.value,
-    summary: tr("当前应用页面为{0}，路径为 {1}。该引用不包含连接输出、凭据或工作台编辑内容。", [sceneLabel.value, agentHostState.routePath]),
-    source: agentHostState.routePath,
-    createdAt: nowIso(),
-  };
-}
-
-function upsertContextCard(card: AgentContextCard) {
-  if (card.kind === "ssh") contextCards.value = contextCards.value.filter((item) => item.kind !== "ssh" || item.id === card.id);
-  if (card.kind === "database") contextCards.value = contextCards.value.filter((item) => item.kind !== "database" || item.id === card.id);
-  const existingIndex = contextCards.value.findIndex((item) => item.id === card.id);
-  if (existingIndex >= 0) contextCards.value.splice(existingIndex, 1, card);
-  else contextCards.value.push(card);
-}
-
-async function captureCurrentScene() {
-  if (addingContext.value || diagnosticActive.value) return;
-  contextCards.value = [];
-  const snapshot = await performAgentHostAction({ type: "scene-snapshot" });
-  if (snapshot.ok && snapshot.result) applyAgentHostState(snapshot.result as import("../../shared/agent-host").AgentHostState);
-  const sshScene = agentHostState.ssh?.routePath === agentHostState.routePath ? agentHostState.ssh : null;
-  const databaseScene = agentHostState.database?.routePath === agentHostState.routePath ? agentHostState.database : null;
-  if (!sshScene) {
-    if (databaseScene) {
-      if (!databaseScene.localExecution || !databaseScene.connected) {
-        upsertContextCard(currentSceneCard());
-        return;
-      }
-      addingContext.value = true;
-      try {
-        const snapshot = await readDesktopAgentDatabaseContext({
-          connectionId: databaseScene.connectionId,
-          database: databaseScene.database,
-          editorSql: databaseScene.editorSql,
-          selectedSql: databaseScene.selectedSql,
-          resultPreview: databaseScene.resultPreview,
-        });
-        const schema = snapshot.schema.map((object) => `${object.type === "view" ? tr("视图") : tr("表")} ${object.name}(${object.columns.map((column) => `${column.name}:${column.dataType}`).join(", ")})`).join("\n");
-        upsertContextCard({
-          id: `database:${snapshot.connectionId}:${snapshot.database}`,
-          kind: "database",
-          title: tr("数据库 · {0} / {1}", [snapshot.connectionName, snapshot.database]),
-          summary: [tr("目标：{0} / {1}", [snapshot.connectionName, snapshot.database]), `Schema：\n${schema || tr("[无可见对象]")}`, tr("当前 SQL：\n{0}", [snapshot.editorSql || tr("[空]")]), tr("选中 SQL：\n{0}", [snapshot.selectedSql || tr("[无]")]), tr("结果预览：\n{0}", [JSON.stringify(snapshot.resultPreview)])].join("\n"),
-          source: `desktop-database:${snapshot.connectionId}:${encodeURIComponent(snapshot.database)}`,
-          createdAt: snapshot.capturedAt,
-          resourceId: snapshot.connectionId,
-        });
-      } catch {
-        upsertContextCard(currentSceneCard());
-      } finally { addingContext.value = false; }
-      return;
-    }
-    upsertContextCard(currentSceneCard());
-    return;
-  }
-  if (sshScene.status !== "connected") {
-    upsertContextCard(currentSceneCard());
-    return;
-  }
-  addingContext.value = true;
-  try {
-    const snapshot = await readDesktopAgentSshContext(sshScene.sessionId);
-    const summary = [
-      tr("当前 SSH 会话：{0} ({1})。", [snapshot.connectionName, snapshot.host]),
-      tr("工作目录线索：{0}。", [sshScene.currentDirectory || tr("未知")]),
-      tr("最近输出：{0} 行 / {1} 字节；已移除终端控制字符，脱敏 {2} 处{3}。", [snapshot.lineCount, snapshot.includedBytes, snapshot.redactionCount, snapshot.truncated ? tr("，内容已截断") : ""]),
-      snapshot.output ? tr("输出内容：\n{0}", [snapshot.output]) : tr("输出内容：[暂无可用输出]"),
-    ].join("\n");
-    upsertContextCard({
-      id: `ssh:${snapshot.sessionId}`,
-      kind: "ssh",
-      title: `SSH · ${snapshot.connectionName}`,
-      summary,
-      source: `${snapshot.executionTarget === "server-forwarded" ? "server" : "desktop"}-ssh:${snapshot.sessionId}`,
-      createdAt: snapshot.capturedAt,
-      resourceId: snapshot.connectionId,
-    });
-  } catch {
-    upsertContextCard(currentSceneCard());
-  } finally {
-    addingContext.value = false;
-  }
-}
-
-function ensureAssistantMessage(messageId: string): AgentChatMessage {
-  let message = messages.value.find((item) => item.id === messageId);
-  if (!message) {
-    message = newMessage("assistant", "", messageId);
-    messages.value.push(message);
-  }
-  return message;
-}
-
-function applyTurnStats(messageId: string, durationMs?: number, usage?: AgentTurnUsage) {
-  const message = ensureAssistantMessage(messageId);
-  if (typeof durationMs === "number") message.durationMs = durationMs;
-  if (usage) message.usage = usage;
-}
-
-function handleAgentEvent(event: AgentStreamEvent) {
-  if (event.type === "workbench-execution-request") {
-    if (event.runId !== activeRunId.value) {
-      void respondDesktopAgentWorkbenchExecution({ requestId: event.requestId, error: tr("Viron Agent 工作台执行现场已经失效") }).catch(() => undefined);
-      return;
-    }
-    void executeAgentHostWorkbench(event)
-      .then((result) => respondDesktopAgentWorkbenchExecution({ requestId: event.requestId, result }))
-      .catch((error) => respondDesktopAgentWorkbenchExecution({
-        requestId: event.requestId,
-        error: error instanceof Error ? error.message : tr("Viron Agent 工作台执行失败"),
-      }))
-      .catch(() => undefined);
-    return;
-  }
-  if (event.type === "workbench-execution-cancel") {
-    void performAgentHostAction({
-      type: "workbench-cancel",
-      requestId: event.requestId,
-      domain: event.domain,
-      reason: event.reason,
-    }).catch(() => undefined);
-    return;
-  }
-  if (event.type === "run-start") {
-    if (event.sessionId !== currentSessionId.value) return;
-    activeRunId.value = event.runId;
-    activeMessageId.value = event.messageId;
-    running.value = true;
-    ensureAssistantMessage(event.messageId);
-    if (activePresentation.value === "quick") trackQuickBubble(event.messageId, pendingQuickPrompt);
-    scrollToBottom();
-    return;
-  }
-  if (event.runId !== activeRunId.value) return;
-  if (event.type === "text-delta") {
-    ensureAssistantMessage(event.messageId).content += event.delta;
-    scrollToBottom();
-  } else if (event.type === "tool-call") {
-    const activity = agentToolActivity(event);
-    if (activity) toolActivities.value.push(activity);
-    scrollToBottom();
-  } else if (event.type === "tool-result") {
-    const activity = agentToolActivity(event);
-    if (activity) toolActivities.value.push(activity);
-    vironApprovals.value = vironApprovals.value.filter((item) => item.id !== event.toolCallId);
-    const suggestion = agentSshCommandSuggestion(event.output);
-    if (suggestion) {
-      sshSuggestions.value = [
-        ...sshSuggestions.value.filter((item) => item.id !== event.toolCallId),
-        { ...suggestion, id: event.toolCallId },
-      ];
-    }
-    const scriptSuggestion = agentSshScriptSuggestion(event.output);
-    if (scriptSuggestion) {
-      sshScriptSuggestions.value = [
-        ...sshScriptSuggestions.value.filter((item) => item.id !== event.toolCallId),
-        { ...scriptSuggestion, id: event.toolCallId },
-      ];
-    }
-    const databaseSuggestion = agentDatabaseSqlSuggestion(event.output);
-    if (databaseSuggestion) databaseSuggestions.value = [...databaseSuggestions.value.filter((item) => item.id !== event.toolCallId), { ...databaseSuggestion, id: event.toolCallId }];
-    const sshResult = agentSshDiagnosticResult(event.output);
-    if (sshResult) {
-      const existing = sshSuggestions.value.find((item) => item.id === event.toolCallId);
-      if (existing) Object.assign(existing, { result: sshResult, executing: false, cancelling: false, error: undefined });
-    }
-    const databaseResult = agentDatabaseReadResult(event.output);
-    if (databaseResult) {
-      const existing = databaseSuggestions.value.find((item) => item.id === event.toolCallId);
-      if (existing) Object.assign(existing, { result: databaseResult, executing: false, cancelling: false, error: undefined });
-    }
-    scrollToBottom();
-  } else if (event.type === "approval-required") {
-    const vironApproval = agentVironToolApprovalSuggestion(event.suggestion);
-    if (vironApproval) {
-      const state: AgentVironApprovalState = Object.assign({}, vironApproval, { id: event.toolCallId });
-      vironApprovals.value = [...vironApprovals.value.filter((item) => item.id !== event.toolCallId), state];
-    }
-    const sshSuggestion = agentSshCommandSuggestion(event.suggestion);
-    if (sshSuggestion) {
-      sshSuggestions.value = [...sshSuggestions.value.filter((item) => item.id !== event.toolCallId), { ...sshSuggestion, id: event.toolCallId }];
-    }
-    const databaseSuggestion = agentDatabaseSqlSuggestion(event.suggestion);
-    if (databaseSuggestion) {
-      databaseSuggestions.value = [...databaseSuggestions.value.filter((item) => item.id !== event.toolCallId), { ...databaseSuggestion, id: event.toolCallId }];
-    }
-    scrollToBottom();
-  } else if (event.type === "execution-start") {
-    const vironApproval = agentVironToolApprovalSuggestion(event.suggestion);
-    if (vironApproval) {
-      const state: AgentVironApprovalState = Object.assign({}, vironApproval, { id: event.toolCallId, executing: true });
-      vironApprovals.value = [...vironApprovals.value.filter((item) => item.id !== event.toolCallId), state];
-    }
-    const sshSuggestion = agentSshCommandSuggestion(event.suggestion);
-    if (sshSuggestion) {
-      sshSuggestions.value = [...sshSuggestions.value.filter((item) => item.id !== event.toolCallId), { ...sshSuggestion, id: event.toolCallId, runId: event.runId, executing: true }];
-    }
-    const databaseSuggestion = agentDatabaseSqlSuggestion(event.suggestion);
-    if (databaseSuggestion) {
-      databaseSuggestions.value = [...databaseSuggestions.value.filter((item) => item.id !== event.toolCallId), { ...databaseSuggestion, id: event.toolCallId, runId: event.runId, executing: true }];
-    }
-    scrollToBottom();
-  } else if (event.type === "tool-error") {
-    const vironApproval = vironApprovals.value.find((item) => item.id === event.toolCallId);
-    if (vironApproval) Object.assign(vironApproval, { executing: false, error: event.message });
-    const sshSuggestion = sshSuggestions.value.find((item) => item.id === event.toolCallId);
-    if (sshSuggestion) Object.assign(sshSuggestion, { executing: false, cancelling: false, error: event.message });
-    const databaseSuggestion = databaseSuggestions.value.find((item) => item.id === event.toolCallId);
-    if (databaseSuggestion) Object.assign(databaseSuggestion, { executing: false, cancelling: false, error: event.message });
-    scrollToBottom();
-  } else if (event.type === "run-pause") {
-    running.value = false;
-    scrollToBottom();
-  } else if (event.type === "run-finish") {
-    applyTurnStats(event.messageId, event.durationMs, event.usage);
-    for (const suggestion of [...sshSuggestions.value, ...databaseSuggestions.value]) {
-      if (suggestion.approval?.runId === event.runId || suggestion.runId === event.runId) Object.assign(suggestion, { executing: false, cancelling: false });
-    }
-    running.value = false;
-    activeRunId.value = "";
-    activeMessageId.value = "";
-    void refreshSessionList().catch(() => undefined);
-    scrollToBottom();
-  } else if (event.type === "run-error") {
-    const messageId = event.messageId ?? (activeMessageId.value || crypto.randomUUID());
-    ensureAssistantMessage(messageId).content += tr("\n\n请求失败：{0}", [event.message]);
-    applyTurnStats(messageId, event.durationMs, event.usage);
-    for (const suggestion of [...sshSuggestions.value, ...databaseSuggestions.value]) {
-      if (suggestion.approval?.runId === event.runId || suggestion.runId === event.runId) Object.assign(suggestion, { executing: false, cancelling: false, error: event.message });
-    }
-    running.value = false;
-    activeRunId.value = "";
-    activeMessageId.value = "";
-    scrollToBottom();
-  } else if (event.type === "run-abort") {
-    const messageId = event.messageId ?? (activeMessageId.value || crypto.randomUUID());
-    ensureAssistantMessage(messageId).content += tr("\n\n已停止：{0}", [event.reason]);
-    applyTurnStats(messageId, event.durationMs, event.usage);
-    if (activePresentation.value === "quick") trackQuickBubble(messageId, pendingQuickPrompt);
-    for (const suggestion of [...sshSuggestions.value, ...databaseSuggestions.value]) {
-      if ((suggestion.approval?.runId === event.runId || suggestion.runId === event.runId) && !suggestion.result) Object.assign(suggestion, { executing: false, cancelling: false, error: event.reason });
-    }
-    running.value = false;
-    activeRunId.value = "";
-    activeMessageId.value = "";
-    scrollToBottom();
-  }
-}
-
-async function sendMessageFor(presentation: AgentEntryMode) {
-  const content = input.value.trim();
-  if (!content || running.value) return;
-  if (diagnosticActive.value || sshDiagnosticExecuting.value || databaseDiagnosticExecuting.value) {
-    ElMessage.warning(tr("请先完成或结束当前多步诊断"));
-    return;
-  }
-  if (!configured.value) {
-    await openSettings();
-    return;
-  }
-  input.value = "";
-  composerExpanded.value = false;
-  if (presentation === "quick") quickHistoryTiled.value = false;
-  resetRunArtifacts();
-  await captureCurrentScene();
-  messages.value.push(newMessage("user", content));
-  activePresentation.value = presentation;
-  pendingQuickPrompt = presentation === "quick" ? content : "";
-  scrollToBottom();
-  try {
-    const started = await sendDesktopAgentChat({
-      sessionId: currentSessionId.value,
-      message: content,
-      sceneHint: {
-        routePath: agentHostState.routePath,
-        routeName: sceneLabel.value,
-        contexts: contextCards.value,
-        capturedAt: nowIso(),
-      },
-    });
-    currentSessionId.value = started.sessionId;
-    activeRunId.value = activeRunId.value || started.runId;
-    activeMessageId.value = activeMessageId.value || started.messageId;
-    running.value = true;
-  } catch (error) {
-    const failure = newMessage("assistant", tr("请求失败：{0}", [error instanceof Error ? error.message : tr("发送 Viron Agent 请求失败")]));
-    messages.value.push(failure);
-    if (presentation === "quick") trackQuickBubble(failure.id, content);
-    running.value = false;
-    scrollToBottom();
-  }
-}
-
-function sendMessage() {
-  return sendMessageFor("floating");
-}
-
-function sendQuickMessage() {
-  if (!input.value.trim() || addingContext.value || diagnosticActive.value || !configured.value) return;
-  return sendMessageFor("quick");
-}
-
-async function toggleQuickComposer() {
-  if (entryMode.value !== "quick") return;
-  if (quickComposerVisible.value) {
-    quickComposerVisible.value = false;
-    return;
-  }
-  if (!settings.value && !loadingSettings.value) await loadSettings();
-  if (loadingSettings.value) {
-    ElMessage.info(tr("正在读取 Viron Agent 配置"));
-    return;
-  }
-  if (!configured.value) {
-    ElMessage.warning(tr("请先配置 Viron Agent 模型"));
-    await openSettings();
-    return;
-  }
-  await ensureLaunchConversation();
-  quickComposerVisible.value = true;
-  if (messages.value.length && !quickBubblesHidden.value) restoreQuickBubblesFromHistory(messages.value);
-}
-
-function handleAppShortcut(action: import("../../shared/keyboard-shortcuts").ShortcutActionId) {
-  if (action === "app.agentQuickInput") void toggleQuickComposer();
-}
-
-async function fillSshSuggestion(suggestion: AgentSshCommandSuggestion) {
-  const prefix = "desktop-ssh:";
-  const sessionId = suggestion.source.startsWith(prefix) ? suggestion.source.slice(prefix.length) : "";
-  if (!sessionId || !contextCards.value.some((card) => card.id === suggestion.contextId && card.source === suggestion.source)) {
-    ElMessage.warning(tr("该命令建议对应的 SSH 现场已被移除"));
-    return;
-  }
-  const filled = await performAgentHostAction({ type: "fill-ssh", sessionId, command: suggestion.command });
-  if (!filled.ok || !filled.filled) {
-    ElMessage.warning(tr("请切回对应 SSH 会话，并确认终端停留在 Shell 提示符"));
-    return;
-  }
-  ElMessage.success(tr("命令已填入终端，未执行"));
-}
-
-function canFillSshSuggestion(suggestion: AgentSshCommandSuggestion): boolean {
-  return suggestion.source.startsWith("desktop-ssh:");
-}
-
-async function fillSshScriptSuggestion(suggestion: AgentSshScriptSuggestion) {
-  const prefix = "desktop-ssh:";
-  const sessionId = suggestion.source.startsWith(prefix) ? suggestion.source.slice(prefix.length) : "";
-  if (!sessionId || !contextCards.value.some((card) => card.id === suggestion.contextId && card.source === suggestion.source)) {
-    ElMessage.warning(tr("该脚本建议对应的 SSH 现场已被移除"));
-    return;
-  }
-  const filled = await performAgentHostAction({ type: "fill-ssh-script", sessionId, script: suggestion.script });
-  if (!filled.ok || !filled.filled) {
-    ElMessage.warning(tr("请切回对应 SSH 会话，确认终端停留在 Shell 提示符并启用安全粘贴模式"));
-    return;
-  }
-  void recordDesktopAgentAction({
-    action: "ssh_script_filled",
-    target: sessionId,
-    summary: tr("将 Viron Agent Shell 脚本安全填入当前终端，未执行（{{0}}，{{1}} 行）", [suggestion.interpreter, suggestion.script.split("\n").length]),
-  }).catch(() => undefined);
-  ElMessage.success(tr("脚本已安全填入终端，未执行"));
-}
-
-function sshSuggestionTarget(suggestion: AgentSshCommandSuggestion): { sessionId: string; context: AgentContextCard } | null {
-  const match = suggestion.source.match(/^(?:desktop|server)-ssh:(.+)$/);
-  const sessionId = match?.[1] ?? "";
-  const context = contextCards.value.find((card) => card.id === suggestion.contextId && card.source === suggestion.source);
-  return sessionId && context ? { sessionId, context } : null;
-}
-
-function isExecutableSuggestion(execution: AgentSshCommandSuggestion["execution"] | AgentDatabaseSqlSuggestion["execution"]): boolean {
-  return execution === "confirm-read" || execution === "confirm-write";
-}
-
-function sshSuggestionBadge(suggestion: AgentSshCommandSuggestion): string {
-  if (suggestion.approval) {
-    return suggestion.execution === "confirm-write"
-      ? tr("L3 · 第 {0}/{1} 步", [suggestion.approval.step, suggestion.approval.maxSteps])
-      : tr("L2 · 第 {0}/{1} 步", [suggestion.approval.step, suggestion.approval.maxSteps]);
-  }
-  if (suggestion.execution === "confirm-write") return tr("按策略自动执行写命令");
-  if (suggestion.execution === "confirm-read") return tr("按策略自动执行");
-  return tr("只填入，不执行");
-}
-
-function databaseSuggestionBadge(suggestion: AgentDatabaseSqlSuggestion): string {
-  if (suggestion.approval) {
-    return suggestion.execution === "confirm-write"
-      ? tr("L3 · 第 {0}/{1} 步", [suggestion.approval.step, suggestion.approval.maxSteps])
-      : tr("第 {0}/{1} 步", [suggestion.approval.step, suggestion.approval.maxSteps]);
-  }
-  if (suggestion.execution === "confirm-write") return tr("按策略自动执行写 SQL");
-  if (suggestion.execution === "confirm-read") return tr("按策略自动执行");
-  return tr("仅填入");
-}
-
-async function executeSshSuggestion(suggestion: AgentSshSuggestionState) {
-  if (!isExecutableSuggestion(suggestion.execution) || suggestion.executing || !suggestion.approval) return;
-  if (!sshSuggestionTarget(suggestion)) return void ElMessage.warning(tr("该命令建议对应的 SSH 现场已被移除"));
-  suggestion.executing = true;
-  suggestion.cancelling = false;
-  suggestion.result = undefined;
-  suggestion.error = undefined;
-  try {
-    await respondDesktopAgentApproval({ runId: suggestion.approval.runId, approvalId: suggestion.approval.approvalId, approved: true });
-    ElMessage.info(suggestion.execution === "confirm-write"
-      ? tr("已批准第 {0}/{1} 步，正在执行 SSH 写命令", [suggestion.approval.step, suggestion.approval.maxSteps])
-      : tr("已批准第 {0}/{1} 步，正在执行 SSH 只读诊断", [suggestion.approval.step, suggestion.approval.maxSteps]));
-  } catch (error) {
-    suggestion.executing = false;
-    suggestion.error = error instanceof Error ? error.message : tr("SSH 命令审批失败");
-    ElMessage.error(suggestion.error);
-  }
-}
-
-async function cancelSshSuggestion(suggestion: AgentSshSuggestionState) {
-  const runId = suggestion.approval?.runId ?? suggestion.runId;
-  if (!runId || suggestion.cancelling) return;
-  suggestion.cancelling = true;
-  try {
-    const result = await stopDesktopAgentChat(runId);
-    if (!result.stopped) suggestion.cancelling = false;
-  } catch (error) {
-    suggestion.cancelling = false;
-    ElMessage.error(error instanceof Error ? error.message : tr("取消 SSH 诊断失败"));
-  }
-}
-
-async function stopActiveDiagnostic() {
-  const runId = activeRunId.value;
-  if (!runId) return;
-  await stopDesktopAgentChat(runId).catch(() => undefined);
-  if (activeRunId.value === runId) {
-    running.value = false;
-    activeRunId.value = "";
-    activeMessageId.value = "";
-  }
-}
-
-function databaseSuggestionTarget(suggestion: AgentDatabaseSqlSuggestion) {
-  const match = suggestion.source.match(/^desktop-database:([^:]+):(.+)$/);
-  return match ? { connectionId: match[1], database: decodeURIComponent(match[2]) } : null;
-}
-
-async function fillDatabaseSuggestion(suggestion: AgentDatabaseSqlSuggestion) {
-  const target = databaseSuggestionTarget(suggestion);
-  if (!target || !contextCards.value.some((card) => card.id === suggestion.contextId && card.source === suggestion.source)) return void ElMessage.warning(tr("该 SQL 对应的数据库现场已被移除"));
-  const filled = await performAgentHostAction({
-    type: "fill-database",
-    connectionId: target.connectionId,
-    database: target.database,
-    sql: suggestion.sql,
-  });
-  if (!filled.ok || !filled.filled) return void ElMessage.warning(tr("请切回对应的本机数据库连接和数据库"));
-  void recordDesktopAgentAction({ action: "database_sql_filled", target: `${target.connectionId}:${target.database}`, summary: tr("将 Viron Agent SQL 填入当前编辑器，未执行") }).catch(() => undefined);
-  ElMessage.success(tr("SQL 已填入编辑器，未执行"));
-}
-
-async function executeDatabaseSuggestion(suggestion: AgentDatabaseSuggestionState) {
-  const target = databaseSuggestionTarget(suggestion);
-  if (!target || !isExecutableSuggestion(suggestion.execution) || suggestion.executing || !suggestion.approval) return;
-  if (!contextCards.value.some((card) => card.id === suggestion.contextId && card.source === suggestion.source)) return void ElMessage.warning(tr("该 SQL 对应的数据库现场已被移除"));
-  suggestion.executing = true;
-  suggestion.cancelling = false;
-  suggestion.result = undefined;
-  suggestion.error = undefined;
-  try {
-    await respondDesktopAgentApproval({ runId: suggestion.approval.runId, approvalId: suggestion.approval.approvalId, approved: true });
-    ElMessage.info(suggestion.execution === "confirm-write"
-      ? tr("已批准第 {0}/{1} 步，正在执行数据库写 SQL", [suggestion.approval.step, suggestion.approval.maxSteps])
-      : tr("已批准第 {0}/{1} 步，正在执行数据库只读查询", [suggestion.approval.step, suggestion.approval.maxSteps]));
-  } catch (error) {
-    suggestion.executing = false;
-    suggestion.error = error instanceof Error ? error.message : tr("数据库 SQL 审批失败");
-    ElMessage.error(suggestion.error);
-  }
-}
-
-async function cancelDatabaseSuggestion(suggestion: AgentDatabaseSuggestionState) {
-  const runId = suggestion.approval?.runId ?? suggestion.runId;
-  if (!runId || suggestion.cancelling) return;
-  suggestion.cancelling = true;
-  try {
-    const result = await stopDesktopAgentChat(runId);
-    if (!result.stopped) suggestion.cancelling = false;
-  } catch (error) {
-    suggestion.cancelling = false;
-    ElMessage.error(error instanceof Error ? error.message : tr("取消数据库诊断失败"));
-  }
-}
-
-async function respondVironApproval(item: AgentVironApprovalState, approved: boolean) {
-  if (item.executing) return;
-  item.executing = approved;
-  item.error = undefined;
-  try {
-    await respondDesktopAgentApproval({
-      runId: item.approval.runId,
-      approvalId: item.approval.approvalId,
-      approved,
-      ...(!approved ? { reason: tr("用户拒绝了本次 Viron 操作") } : {}),
-    });
-    if (!approved) vironApprovals.value = vironApprovals.value.filter((candidate) => candidate.id !== item.id);
-  } catch (error) {
-    item.executing = false;
-    item.error = error instanceof Error ? error.message : tr("Viron Agent 工具审批失败");
-    ElMessage.error(item.error);
-  }
-}
-
-async function stopRun() {
-  if (!activeRunId.value) return;
-  await stopDesktopAgentChat(activeRunId.value).catch(() => undefined);
-}
-
-async function openSettings() {
-  if (agentHostState.routeName === "settings" && agentHostState.settingsSection === "ai-agent") return;
-  await performAgentHostAction({ type: "navigate-settings" });
-}
-
-function persistButtonPosition() {
-  localStorage.setItem(positionStorageKey, JSON.stringify(buttonPosition.value));
-}
-
-function persistEdgeState() {
-  localStorage.setItem(edgeCollapsedStorageKey, edgeCollapsed.value ? "1" : "0");
-  if (snappedEdge.value) localStorage.setItem(edgeStorageKey, snappedEdge.value);
-  else localStorage.removeItem(edgeStorageKey);
-}
-
-function collapseAtEdge(edge: AgentFloatingEdge) {
-  buttonPosition.value = snapAgentFloatingPosition(buttonPosition.value, edge, viewport.value);
-  snappedEdge.value = edge;
-  edgeCollapsed.value = true;
-  persistButtonPosition();
-  persistEdgeState();
-}
-
-function expandFromEdge() {
-  buttonPosition.value = clampAgentFloatingPosition(buttonPosition.value, viewport.value);
-  edgeCollapsed.value = false;
-  snappedEdge.value = null;
-  persistButtonPosition();
-  persistEdgeState();
-}
-
-function collapseToEdge() {
-  collapseAtEdge(nearestAgentFloatingEdge(buttonPosition.value, viewport.value).edge);
-  open.value = false;
-}
-
-function togglePanel() {
-  if (edgeCollapsed.value) {
-    expandFromEdge();
-    open.value = true;
-    return;
-  }
-  open.value = !open.value;
-}
-
-function settleButtonDrag() {
-  const edge = agentFloatingSnapEdge(buttonPosition.value, viewport.value);
-  if (edge) collapseAtEdge(edge);
-  else {
-    edgeCollapsed.value = false;
-    snappedEdge.value = null;
-    persistButtonPosition();
-    persistEdgeState();
-  }
-}
-
-function handleDesktopLauncherAction(action: AgentFloatingOverlayAction) {
-  if (action.type === "toggle") return void togglePanel();
-  if (action.type === "expand") return void expandFromEdge();
-  if (action.type === "drag-start") {
-    if (edgeCollapsed.value) return;
-    overlayDragState = { startX: action.screenX, startY: action.screenY, origin: { ...buttonPosition.value } };
-    dragging.value = true;
-    open.value = false;
-    return;
-  }
-  if (!overlayDragState) return;
-  if (action.type === "drag-move") {
-    buttonPosition.value = clampAgentFloatingPosition({
-      x: overlayDragState.origin.x + action.screenX - overlayDragState.startX,
-      y: overlayDragState.origin.y + action.screenY - overlayDragState.startY,
-    }, viewport.value);
-    return;
-  }
-  overlayDragState = null;
-  dragging.value = false;
-  settleButtonDrag();
-}
-
-function syncDesktopLauncherOverlay() {
-  if (!desktop) return;
-  if (!floatingVisible.value) {
-    void updateDesktopAgentLauncher(null);
-    return;
-  }
-  const edge = edgeCollapsed.value ? snappedEdge.value : null;
-  const layout = agentFloatingOverlayLayout(buttonPosition.value, viewport.value, edge);
-  void updateDesktopAgentLauncher({
-    ...layout,
-    open: open.value,
-    running: running.value,
-    dragging: dragging.value,
-    edgeCollapsed: edgeCollapsed.value,
-    snappedEdge: edge,
-    label: floatingButtonLabel.value,
-  });
-}
-
-function handleViewportResize() {
-  viewport.value = currentViewport();
-  if (edgeCollapsed.value && snappedEdge.value) {
-    buttonPosition.value = snapAgentFloatingPosition(buttonPosition.value, snappedEdge.value, viewport.value);
-  } else {
-    buttonPosition.value = clampAgentFloatingPosition(buttonPosition.value, viewport.value);
-  }
-  persistButtonPosition();
-}
-
-function isDialogOverlayTarget(target: EventTarget | null): boolean {
-  return target instanceof Element && Boolean(target.closest(".el-overlay, .el-popper, .el-message-box, .el-message"));
-}
-
-function dialogOverlayOpen(): boolean {
-  return Boolean(document.querySelector(".el-overlay.is-message-box, .el-message-box"));
-}
-
-function handleDocumentPointerDown(event: PointerEvent) {
-  if (isDialogOverlayTarget(event.target)) return;
-  if (quickComposerVisible.value) {
-    const composer = document.querySelector<HTMLElement>('[data-agent-overlay="quick-composer"]');
-    if (event.target instanceof Node && (!composer || !composer.contains(event.target))) {
-      quickComposerVisible.value = false;
-    }
-  }
-  if (quickHistoryTiled.value) {
-    const bubbles = document.querySelector<HTMLElement>('[data-agent-overlay="quick-bubbles"]');
-    if (event.target instanceof Node && (!bubbles || !bubbles.contains(event.target))) {
-      collapseQuickHistoryStack();
-    }
-  }
-  if (!open.value || !agentRoot.value) return;
-  if (event.target instanceof Node && !agentRoot.value.contains(event.target)) open.value = false;
-}
-
-function handleNativeViewPointerDown() {
-  if (dialogOverlayOpen()) return;
-  quickComposerVisible.value = false;
-  collapseQuickHistoryStack();
-}
-
-function handlePointerOutside() {
-  if (dialogOverlayOpen()) return;
-  quickComposerVisible.value = false;
-  collapseQuickHistoryStack();
-  open.value = false;
-}
-
-function isAgentHitTarget(target: EventTarget | null): boolean {
-  return target instanceof Element && Boolean(target.closest([
-    ".agent-window",
-    ".agent-quick-composer",
-    ".agent-quick-bubble",
-    ".agent-quick-bubbles",
-    ".agent-quick-history",
-    ".el-overlay",
-    ".el-popper",
-    ".el-message-box",
-    ".el-message",
-    "[data-agent-hit]",
-  ].join(", ")));
-}
-
-function syncIgnoreMouse(ignore: boolean) {
-  if (ignoreMouse === ignore) return;
-  ignoreMouse = ignore;
-  void setDesktopAgentChatIgnoreMouse(ignore);
-}
-
-function handleOverlayMouseMove(event: MouseEvent) {
-  if (!chromeVisible.value) return;
-  syncIgnoreMouse(!isAgentHitTarget(document.elementFromPoint(event.clientX, event.clientY)));
-}
-
-watch(open, (value) => {
-  if (value) {
-    void loadSettings();
-    void ensureLaunchConversation();
-  } else {
-    composerExpanded.value = false;
-  }
-});
-
-watch(input, () => {
-  if (composerExpanded.value) void nextTick(resizeComposerInput);
-});
-
-watch([() => agentHostState.userId, () => desktopAppState.value?.endpoint], () => {
-  stopActiveDiagnostic();
-  settings.value = null;
-  settingsError.value = "";
-  composerExpanded.value = false;
-  messages.value = [];
-  currentSessionId.value = "";
-  sessionItems.value = [];
-  contextCards.value = [];
-  resetRunArtifacts();
-  quickComposerVisible.value = false;
-  quickBubbleIds.value = [];
-  quickBubblePrompts.value = {};
-  quickExpandedBubbleId.value = "";
-  quickHistoryTiled.value = false;
-  quickBubblesHidden.value = false;
-  pendingQuickPrompt = "";
-  launchConversationReady = false;
-  if (agentHostState.userId) {
-    void loadSettings();
-    void loadSessions();
-  }
-});
-
-watch([() => agentHostState.workspaceType, () => agentHostState.workspaceId], () => {
-  stopActiveDiagnostic();
-  contextCards.value = [];
-  resetRunArtifacts();
-});
-
-watch(entryMode, (mode) => {
-  if (mode === "disabled") stopActiveDiagnostic();
-  open.value = false;
-  composerExpanded.value = false;
-  quickComposerVisible.value = false;
-  quickExpandedBubbleId.value = "";
-  quickHistoryTiled.value = false;
-  if (mode === "quick") {
-    edgeCollapsed.value = false;
-    snappedEdge.value = null;
-    if (launchConversationReady && !quickBubblesHidden.value) restoreQuickBubblesFromHistory(messages.value);
-  } else {
-    quickBubblesHidden.value = false;
-  }
-});
-
-watch(() => desktopAppState.value?.executionMode, () => {
-  if (!contextCards.value.some((card) => card.kind === "ssh")) return;
-  stopActiveDiagnostic();
-  const sshContextIds = new Set(contextCards.value.filter((card) => card.kind === "ssh").map((card) => card.id));
-  contextCards.value = contextCards.value.filter((card) => card.kind !== "ssh");
-  sshSuggestions.value = sshSuggestions.value.filter((item) => !sshContextIds.has(item.contextId));
-  sshScriptSuggestions.value = sshScriptSuggestions.value.filter((item) => !sshContextIds.has(item.contextId));
-});
-
-watch(
-  [floatingVisible, open, running, dragging, edgeCollapsed, snappedEdge, buttonPosition, viewport],
-  syncDesktopLauncherOverlay,
-  { immediate: true },
-);
-
-watch(chromeVisible, (value) => {
-  if (!desktop) return;
-  if (!value) syncIgnoreMouse(true);
-  void updateDesktopAgentChatChrome(value);
-}, { immediate: true });
-
-watch([open, quickComposerVisible], ([panelOpen, composerVisible]) => {
-  if (panelOpen || composerVisible) void focusDesktopAgentChat();
-});
 
 onMounted(() => {
   if (!desktop) return;
