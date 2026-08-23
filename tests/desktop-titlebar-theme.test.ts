@@ -25,6 +25,7 @@ describe("desktop title bar theme", () => {
   it("connects live renderer changes through the isolated preload", () => {
     expect(source("src/client/App.vue")).toContain('setDesktopTitleBarTheme(!routeName || routeName === "login" ? "login" : currentTheme)');
     expect(source("src/desktop/preload.cts")).toContain('ipcRenderer.invoke("viron:titlebar-theme:set", appearance)');
-    expect(source("src/desktop/main.ts")).toContain('ipcMain.handle("viron:titlebar-theme:set"');
+    // contract unchanged; implementation moved from src/desktop/main.ts
+    expect(source("src/desktop/ipc/register-core-ipc.ts")).toContain('ipcMain.handle("viron:titlebar-theme:set"');
   });
 });

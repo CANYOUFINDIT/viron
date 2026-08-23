@@ -267,6 +267,8 @@ describe("active environment picture-in-picture", () => {
     const desktopBrowser = source("src/client/components/DesktopWebAccountBrowser.vue");
     const desktopMain = source("src/desktop/main.ts");
     // contract unchanged; implementation moved from src/desktop/main.ts
+    const desktopCoreIpc = source("src/desktop/ipc/register-core-ipc.ts");
+    // contract unchanged; implementation moved from src/desktop/main.ts
     const desktopDockOverlay = source("src/desktop/overlays/active-environment-dock-window.ts");
     // contract unchanged; implementation moved from src/desktop/main.ts
     const desktopWebRuntime = source("src/desktop/web-view-runtime.ts");
@@ -358,23 +360,23 @@ describe("active environment picture-in-picture", () => {
     expect(desktopWebRuntime).toContain("captureDesktopWebViewPreview");
     expect(desktopWebRuntime).toContain("captureWebContentsPreview");
     expect(desktopWebRuntime).toContain("captureDesktopRendererPreview");
-    expect(desktopMain).toContain('ipcMain.handle("viron:renderer-preview:capture"');
+    expect(desktopCoreIpc).toContain('ipcMain.handle("viron:renderer-preview:capture"');
     expect(desktopMain).toContain("webContents.capturePage()");
     expect(desktopWebRuntime).toContain("if (!view.visible) return");
     expect(desktopWebRuntime).toContain(".toJPEG(72)");
     expect(desktopWebRuntime).not.toContain("x: -16_384");
     expect(desktopWebRuntime).toContain("layoutDesktopWebViewPages");
-    expect(desktopMain).toContain("if (view.previewing) view.visible = false;");
+    expect(desktopCoreIpc).toContain("if (view.previewing) view.visible = false;");
     expect(desktopWebRuntime).toContain("setBackgroundThrottling(!view.previewing)");
     expect(desktopMain).toContain("previewFrameChanged");
     expect(desktopMain).toContain("retainedPreviewPixels");
     expect(desktopMain).toContain("dragPositionDelivered");
     expect(desktopDockOverlay).toContain("handleActiveEnvironmentDockDrag");
-    expect(desktopMain).toContain('ipcMain.on("viron:active-environment-dock:drag"');
-    expect(desktopMain).toContain('ipcMain.handle("viron:active-environment-dock:layout"');
+    expect(desktopCoreIpc).toContain('ipcMain.on("viron:active-environment-dock:drag"');
+    expect(desktopCoreIpc).toContain('ipcMain.handle("viron:active-environment-dock:layout"');
     expect(desktopDockOverlay).toContain("publishActiveEnvironmentDockLayout");
     expect(desktopDockOverlay).toContain("if (activeEnvironmentDockDrag) return");
-    expect(desktopMain).toContain("dockBounds.x - contentBounds.x + action.origin.x");
+    expect(desktopCoreIpc).toContain("dockBounds.x - contentBounds.x + action.origin.x");
     expect(desktopMain).toContain("cardDragMovedWindow");
     expect(desktopMain).toContain("closeActionDelivered");
     expect(desktopMain).toContain("closeStateRemoved");
