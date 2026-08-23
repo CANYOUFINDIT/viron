@@ -80,7 +80,7 @@ describe("connection quality monitor", () => {
     const controller = readFileSync(new URL("../src/client/components/ConnectionQualityWindow.vue", import.meta.url), "utf8");
     const card = readFileSync(new URL("../src/client/components/ConnectionQualityCard.vue", import.meta.url), "utf8");
     const desktopMain = readFileSync(new URL("../src/desktop/main.ts", import.meta.url), "utf8");
-    // Contract: native connection-quality window ownership moved in desktop refactor PR 7.
+    // contract unchanged; implementation moved from src/desktop/main.ts
     const desktopOverlay = readFileSync(new URL("../src/desktop/overlays/connection-quality-window.ts", import.meta.url), "utf8");
     expect(controller).toContain("updateDesktopConnectionQuality");
     expect(overlay).toContain("state.interactionLayer");

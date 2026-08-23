@@ -266,7 +266,7 @@ describe("active environment picture-in-picture", () => {
     const overlayPreload = source("src/desktop/active-environment-dock-preload.cts");
     const desktopBrowser = source("src/client/components/DesktopWebAccountBrowser.vue");
     const desktopMain = source("src/desktop/main.ts");
-    // Contract: native dock window ownership moved in desktop refactor PR 7.
+    // contract unchanged; implementation moved from src/desktop/main.ts
     const desktopDockOverlay = source("src/desktop/overlays/active-environment-dock-window.ts");
     const transition = source("src/client/environment-workspace-transition.ts");
     const windowsPackage = source("scripts/package-windows.mjs");

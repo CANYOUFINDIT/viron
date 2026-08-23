@@ -10,7 +10,7 @@ describe("AI Agent native overlay layout", () => {
     const floatingWindow = readFileSync(new URL("../src/client/components/AgentFloatingWindow.vue", import.meta.url), "utf8");
     const nativeOverlay = readFileSync(new URL("../src/client/components/AgentFloatingOverlay.vue", import.meta.url), "utf8");
     const webBrowser = readFileSync(new URL("../src/client/components/DesktopWebAccountBrowser.vue", import.meta.url), "utf8");
-    // Contract: launcher ownership moved out of main.ts in desktop refactor PR 7.
+    // contract unchanged; implementation moved from src/desktop/main.ts
     const launcherOverlay = readFileSync(new URL("../src/desktop/overlays/agent-launcher-window.ts", import.meta.url), "utf8");
     const desktopMain = readFileSync(new URL("../src/desktop/main.ts", import.meta.url), "utf8");
     expect(floatingWindow).not.toContain("desktopWebAgentLauncherVisible");

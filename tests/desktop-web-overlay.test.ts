@@ -65,7 +65,7 @@ describe("desktop Web renderer overlays", () => {
   it("keeps the native Web view full-size and only lifts Agent chrome above it", () => {
     const webBrowser = readFileSync(new URL("../src/client/components/DesktopWebAccountBrowser.vue", import.meta.url), "utf8");
     const appShell = readFileSync(new URL("../src/client/components/AppShell.vue", import.meta.url), "utf8");
-    // Contract: Agent chat overlay ownership moved in desktop refactor PR 7.
+    // contract unchanged; implementation moved from src/desktop/main.ts
     const desktopChatOverlay = readFileSync(new URL("../src/desktop/overlays/agent-chat-window.ts", import.meta.url), "utf8");
     expect(webBrowser).not.toContain("desktopWebBoundsAboveOverlay");
     expect(webBrowser).not.toContain("desktopWebBoundsBesideOverlay");

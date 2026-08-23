@@ -8,6 +8,8 @@ const desktopClient = readFileSync(new URL("../src/client/desktop.ts", import.me
 const desktopPreload = readFileSync(new URL("../src/desktop/preload.cts", import.meta.url), "utf8");
 const desktopMain = readFileSync(new URL("../src/desktop/main.ts", import.meta.url), "utf8");
 const desktopAgentChat = readFileSync(new URL("../src/desktop/overlays/agent-chat-window.ts", import.meta.url), "utf8");
+// contract unchanged; implementation moved from src/desktop/main.ts
+const desktopExecutionRouter = readFileSync(new URL("../src/desktop/execution-router.ts", import.meta.url), "utf8");
 const desktopSshRuntime = readFileSync(new URL("../src/desktop/ssh-runtime.ts", import.meta.url), "utf8");
 const agentRuntime = readFileSync(new URL("../src/desktop/agent-runtime.ts", import.meta.url), "utf8");
 const sshTerminalPane = readFileSync(new URL("../src/client/components/SshTerminalPane.vue", import.meta.url), "utf8");
@@ -368,7 +370,7 @@ describe("AI Agent floating window layout", () => {
   });
 
   it("uses one resumable Pi loop with a bounded 64-call safety budget", () => {
-    expect(desktopMain).toContain("currentAgentRuntimeScope()");
+    expect(desktopExecutionRouter).toContain("currentAgentRuntimeScope()");
     expect(desktopMain).toContain("executeSshDiagnostic: async");
     expect(desktopMain).toContain("executeDatabaseRead: async");
     expect(floatingWindow).toContain('event.type === "run-pause"');

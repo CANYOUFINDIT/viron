@@ -4,12 +4,11 @@ import {
   setDesktopLanguage,
   translate as tr,
 } from "./i18n.js";
-import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import { WebSocket as NodeWebSocket, type RawData } from "ws";
+import { WebSocket as NodeWebSocket } from "ws";
 import {
   app,
   BrowserWindow,
@@ -27,18 +26,7 @@ import {
   type Session,
 } from "electron";
 import {
-  openDatabaseCredentialEnvelope,
-  openCredentialEnvelope,
-  openRedisCredentialEnvelope,
-  openSshCredentialEnvelope,
-  signDeviceReport,
-  solveDeviceChallenge,
-  type CredentialEnvelope,
-  type DesktopDatabaseCredential,
-  type DesktopRedisCredential,
   type DesktopWebCredential,
-  type DesktopSshCredential,
-  type DeviceIdentity,
 } from "./device-identity.js";
 import { EndpointValidationError, normalizeEndpoint, validateEndpoint } from "./endpoint.js";
 import {
@@ -70,12 +58,10 @@ import { DesktopLogRuntime } from "./log-runtime.js";
 import {
   DesktopDatabaseRuntime,
   isDesktopDatabaseExecutionPath,
-  type DesktopDatabaseExecutionReport,
 } from "./database-runtime.js";
 import {
   DesktopRedisRuntime,
   isDesktopRedisExecutionPath,
-  type DesktopRedisExecutionReport,
 } from "./redis-runtime.js";
 import {
   DesktopDatabaseOperationRuntime,
@@ -87,7 +73,6 @@ import {
   DesktopConnectionInspectionRuntime,
   isDesktopConnectionInspectionPath,
   type DesktopInspectionConnection,
-  type DesktopInspectionReportPayload,
 } from "./connection-inspection-runtime.js";
 import {
   DesktopSshCommandAbortedError,
@@ -100,7 +85,6 @@ import {
 } from "./ssh-runtime.js";
 import { sshCommandRiskLevel } from "../shared/ssh-command-risk.js";
 import type { DesktopExecutionMode } from "../shared/execution-mode.js";
-import type { ActiveConnectionType } from "../shared/active-connection.js";
 import {
   desktopTitleBarOverlay,
   isDesktopTitleBarAppearance,
@@ -166,7 +150,7 @@ import {
   type ActiveEnvironmentDockState,
 } from "../shared/active-environment-dock.js";
 import { DesktopAgentAuditStore } from "./agent-audit.js";
-import { DesktopAgentSettingsStore, type AgentSettingsScope } from "./agent-settings.js";
+import { DesktopAgentSettingsStore } from "./agent-settings.js";
 import { DesktopAgentSessionStore } from "./agent-session-store.js";
 import { listAgentModels } from "./agent-models.js";
 import { DesktopAgentRuntime } from "./agent-runtime.js";
@@ -180,7 +164,6 @@ import {
   mcpApprovalMode,
   VIRON_MCP_APPROVAL_MODE_HEADER,
   type DesktopMcpStatus,
-  type McpApprovalMode,
 } from "../shared/mcp-settings.js";
 import {
   currentAgentEntryMode,
@@ -193,21 +176,15 @@ import {
   activeEndpoint,
   currentExecutionMode,
   endpointStateKey,
-  executionModeForEndpoint,
   executionScopeForEndpoint,
   setActiveEndpoint,
 } from "./endpoint-context.js";
 import {
-  confirmSystemKeyAccess,
-  deviceIdentity,
   endpointSession,
-  forgetSystemKeyAccessConsent,
-  rememberSystemKeyAccessConsent,
 } from "./device-session.js";
 import { mainWindow, setMainWindow } from "./window-host.js";
 import { installApplicationMenu } from "./app-menu.js";
 import {
-  isTrustedAppSender,
   trustedAgentChatSender,
   trustedMainWindowSender,
   trustedSender,
@@ -257,6 +234,59 @@ import {
   sendImmersiveNavigationAction,
   updateImmersiveNavigationWindow,
 } from "./overlays/immersive-navigation-window.js";
+import {
+  desktopAgentRuntime,
+  desktopAuditSourceContext,
+  desktopConnectionInspectionRuntime,
+  desktopDatabaseOperationRuntime,
+  desktopDatabaseRuntime,
+  desktopDeviceAuthorizationContext,
+  desktopLogRuntime,
+  desktopMcpApprovalModeContext,
+  desktopRedisRuntime,
+  desktopSftpRuntime,
+  desktopSshRuntime,
+  initializeDesktopRuntimeContext,
+  pendingCredentialRequests,
+  setDesktopAgentRuntime,
+  type DesktopAuthContext,
+} from "./desktop-runtime-context.js";
+import {
+  agentRuntimeScope,
+  closeAllServiceSockets,
+  closeDesktopExecution,
+  closeServerForwardingRuntime,
+  currentAgentRuntimeScope,
+  currentAgentSettingsScope,
+  currentDesktopSshContext,
+  currentDeviceAuthorization,
+  emptyExecutionActivity,
+  executionRuntimeApiMissing,
+  localDatabaseCredential,
+  localRedisCredential,
+  localSshCredential,
+  localWebCredential,
+  openServiceSocket,
+  releaseDesktopRuntimeReservation,
+  reportDesktopConnectionInspection,
+  reportDesktopDatabaseExecution,
+  reportDesktopRedisExecution,
+  reportDesktopSshExecution,
+  reserveDesktopRuntime,
+  serviceSockets,
+  signedDesktopOperation,
+  syncDesktopRuntimeConnections,
+  touchDesktopDatabaseRequest,
+  touchDesktopRedisRequest,
+  trackDesktopRuntime,
+  type ExecutionActivity,
+} from "./execution-router.js";
+import {
+  endpointFetch,
+  endpointJson,
+  suggestedFilename,
+  type DesktopRequest,
+} from "./http-proxy.js";
 
 if (process.platform === "darwin") app.commandLine.appendSwitch("use-mock-keychain");
 
@@ -269,42 +299,12 @@ function developmentApplicationIcon(): string | undefined {
   return existsSync(icon) ? icon : undefined;
 }
 
-interface DesktopRequestBody {
-  kind: "text" | "form";
-  value?: string;
-  entries?: Array<{
-    name: string;
-    value?: string;
-    file?: { name: string; type: string; data: ArrayBuffer };
-  }>;
-}
-
-interface DesktopRequest {
-  path: string;
-  method?: string;
-  headers?: Array<[string, string]>;
-  body?: DesktopRequestBody;
-}
-
-interface DesktopAuthContext {
-  user: { id: string; username: string };
-  workspace: { type: "personal" | "organization"; id: string };
-}
-
 interface DesktopEnvironmentLog {
   id: string;
   sshConnectionId: string;
   name: string;
   filePaths: string[];
   connectionAvailable: boolean;
-}
-
-interface DesktopSshExecutionReport {
-  operationId: string;
-  connectionId: string;
-  action: "commands_read_batch";
-  summary: string;
-  details: Record<string, unknown>;
 }
 
 interface DesktopWebViewBounds {
@@ -376,29 +376,6 @@ interface ManagedDesktopWebView {
   downloadListener: (event: Electron.Event, item: Electron.DownloadItem, webContents: Electron.WebContents) => void;
 }
 
-interface ManagedServiceSocket {
-  id: string;
-  socket: NodeWebSocket;
-}
-
-interface ExecutionActivity {
-  total: number;
-  counts: { web: number; ssh: number; sftp: number; logs: number; database: number; redis: number };
-}
-
-interface DesktopRuntimeRegistration {
-  id: string;
-  localId: string;
-  activity: () => number | null;
-  close: (reason: string) => Promise<void> | void;
-}
-
-class DesktopApiError extends Error {
-  constructor(public status: number, public code: string, message: string) {
-    super(message);
-  }
-}
-
 if (gotTheLock) {
   app.on("second-instance", () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -409,20 +386,9 @@ if (gotTheLock) {
 }
 const desktopWebViews = new Map<string, ManagedDesktopWebView>();
 const trackedWebPartitions = new WeakSet<Session>();
-const serviceSockets = new Map<string, ManagedServiceSocket>();
-const desktopRuntimeRegistrations = new Map<string, DesktopRuntimeRegistration>();
-const pendingCredentialRequests = new Set<string>();
-let desktopSshRuntime: DesktopSshRuntime;
-let desktopSftpRuntime: DesktopSftpRuntime;
-let desktopLogRuntime: DesktopLogRuntime;
-let desktopDatabaseRuntime: DesktopDatabaseRuntime;
-let desktopDatabaseOperationRuntime: DesktopDatabaseOperationRuntime;
-let desktopRedisRuntime: DesktopRedisRuntime;
-let desktopConnectionInspectionRuntime: DesktopConnectionInspectionRuntime;
 let desktopUpdater: DesktopUpdater;
 let desktopAgentSettingsStore: DesktopAgentSettingsStore;
 let desktopAgentSessionStore: DesktopAgentSessionStore;
-let desktopAgentRuntime: DesktopAgentRuntime;
 let desktopAgentAuditStore: DesktopAgentAuditStore;
 const pendingAgentWorkbenchExecutions = new Map<string, {
   request: AgentWorkbenchExecutionRequest;
@@ -437,22 +403,12 @@ let desktopMcpLastError: string | null = null;
 const desktopMcpOperationWindows = new Set<BrowserWindow>();
 const desktopMcpOperationIds = new Set<string>();
 const desktopMonitorNotifications = new Set<Electron.Notification>();
-const desktopAuditSourceContext = new AsyncLocalStorage<"manual" | "mcp">();
-const desktopMcpApprovalModeContext = new AsyncLocalStorage<McpApprovalMode>();
-const desktopDeviceAuthorizationContext = new AsyncLocalStorage<{
-  auth: DesktopAuthContext;
-  identity: DeviceIdentity;
-  endpoint: string;
-}>();
 const desktopMcpPendingOperations = new Map<string, {
   lease: string;
   request: McpApiRequest;
   response?: McpApiResponse;
   running?: Promise<McpApiResponse>;
 }>();
-let desktopRuntimeContext: DesktopSshContext | null = null;
-let desktopAuthContext: DesktopAuthContext | null = null;
-let desktopAuthEndpoint: string | null = null;
 let desktopRuntimeHeartbeat: NodeJS.Timeout | null = null;
 let shortcutCaptureActive = false;
 
@@ -529,61 +485,9 @@ function publicState() {
   };
 }
 
-function requestUrl(path: string): string {
-  if (!activeEndpoint) throw new Error(tr("请先验证 Viron Endpoint"));
-  if (!path.startsWith("/api/") && path !== "/healthz") throw new Error(tr("App 只允许访问 Viron API"));
-  const url = new URL(path, activeEndpoint.endpoint);
-  if (url.origin !== activeEndpoint.endpoint) throw new Error(tr("请求不能离开当前 Endpoint"));
-  return url.href;
-}
-
-function requestBody(body: DesktopRequestBody | undefined): BodyInit | undefined {
-  if (!body) return undefined;
-  if (body.kind === "text") return body.value ?? "";
-  const form = new FormData();
-  for (const entry of body.entries ?? []) {
-    if (entry.file) {
-      form.append(entry.name, new Blob([new Uint8Array(entry.file.data)], { type: entry.file.type }), entry.file.name);
-    } else {
-      form.append(entry.name, entry.value ?? "");
-    }
-  }
-  return form;
-}
-
-async function endpointFetch(request: DesktopRequest, signal?: AbortSignal): Promise<Response> {
-  if (!activeEndpoint) throw new Error(tr("请先验证 Viron Endpoint"));
-  const headers = new Headers(request.headers ?? []);
-  headers.set("X-Viron-API-Protocol", String(activeEndpoint.protocolVersion));
-  headers.set("X-Viron-Execution-Scope", executionScopeForEndpoint(activeEndpoint.endpoint));
-  headers.set("X-Viron-Execution-Mode", currentExecutionMode());
-  return activeEndpoint.partition.fetch(requestUrl(request.path), {
-    method: request.method ?? "GET",
-    headers,
-    body: requestBody(request.body),
-    credentials: "include",
-    redirect: "error",
-    signal,
-  });
-}
-
-async function endpointJson<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
-  const response = await endpointFetch({
-    path,
-    method: init.method,
-    headers: init.body === undefined ? undefined : [["content-type", "application/json"]],
-    body: init.body === undefined ? undefined : { kind: "text", value: JSON.stringify(init.body) },
-  });
-  const text = await response.text();
-  const body = text ? JSON.parse(text) as T & { error?: string; message?: string } : {} as T & { error?: string; message?: string };
-  if (!response.ok) throw new DesktopApiError(response.status, body.error ?? "API_ERROR", body.message ?? tr("请求失败（HTTP {{0}}）", [response.status]));
-  return body;
-}
-
 async function openDesktopMcpOperationWindow(actionUrl: string): Promise<void> {
   if (!activeEndpoint) throw new Error(tr("请先验证 Viron Endpoint"));
   const target = new URL(actionUrl);
-  const endpointOrigin = new URL(activeEndpoint.endpoint).origin;
   if (!desktopMcpOperationUrlAllowed(activeEndpoint.endpoint, target.href)) {
     throw new Error(tr("Viron MCP Operation 页面地址无效"));
   }
@@ -1130,130 +1034,6 @@ async function environmentIdForLog(logId: string): Promise<string> {
   throw new Error(tr("日志配置不存在或无权访问"));
 }
 
-async function reserveDesktopRuntime(type: Exclude<ActiveConnectionType, "database" | "redis">, resourceId: string, relatedResourceId?: string, originEnvironmentId?: string): Promise<string> {
-  const id = randomUUID();
-  const response = await endpointJson<{ idleMinutes: number }>("/api/v1/active-connections/desktop", {
-    method: "POST",
-    body: { id, type, resourceId, relatedResourceId, originEnvironmentId },
-  });
-  desktopSshRuntime.setIdleMinutes(response.idleMinutes);
-  return id;
-}
-
-async function releaseDesktopRuntimeReservation(id: string): Promise<void> {
-  desktopRuntimeRegistrations.delete(id);
-  await endpointJson(`/api/v1/active-connections/desktop/${id}`, { method: "DELETE" }).catch(() => undefined);
-}
-
-function trackDesktopRuntime(registration: DesktopRuntimeRegistration): void {
-  desktopRuntimeRegistrations.set(registration.id, registration);
-}
-
-async function syncDesktopRuntimeConnections(): Promise<void> {
-  if (!activeEndpoint) return;
-  const items: Array<{ id: string; lastActivityAt: number }> = [];
-  for (const [id, registration] of desktopRuntimeRegistrations) {
-    const lastActivityAt = registration.activity();
-    if (lastActivityAt === null) {
-      desktopRuntimeRegistrations.delete(id);
-      continue;
-    }
-    items.push({ id, lastActivityAt });
-  }
-  try {
-    const response = await endpointJson<{ close: Array<{ id: string; reason: string }> }>("/api/v1/active-connections/desktop", {
-      method: "PUT",
-      body: { items },
-    });
-    for (const request of response.close) {
-      const registration = desktopRuntimeRegistrations.get(request.id);
-      if (!registration) continue;
-      await registration.close(request.reason);
-      desktopRuntimeRegistrations.delete(request.id);
-    }
-    if (response.close.length) {
-      const remaining = [...desktopRuntimeRegistrations.values()].flatMap((registration) => {
-        const lastActivityAt = registration.activity();
-        return lastActivityAt === null ? [] : [{ id: registration.id, lastActivityAt }];
-      });
-      await endpointJson("/api/v1/active-connections/desktop", { method: "PUT", body: { items: remaining } });
-    }
-  } catch {
-    // The next heartbeat reconciles after transient endpoint or authentication failures.
-  }
-}
-
-function sendServiceSocketEvent(payload: Record<string, unknown>): void {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send("viron:service-socket-event", payload);
-}
-
-function serviceSocketBytes(data: RawData): ArrayBuffer {
-  const buffer = Array.isArray(data)
-    ? Buffer.concat(data)
-    : data instanceof ArrayBuffer
-      ? Buffer.from(data)
-      : Buffer.from(data.buffer, data.byteOffset, data.byteLength);
-  return Uint8Array.from(buffer).buffer;
-}
-
-async function openServiceSocket(path: string, params: Record<string, string>): Promise<{ id: string }> {
-  if (!activeEndpoint) throw new Error(tr("请先验证 Viron Endpoint"));
-  if (currentExecutionMode() !== "server") throw new Error(tr("当前连接模式不是服务端转发"));
-  if (!["/ws/ssh", "/ws/ssh-logs", "/ws/web-account-view"].includes(path)) throw new Error(tr("不支持的服务端实时通道"));
-  const url = new URL(path, activeEndpoint.endpoint);
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
-  const cookies = await activeEndpoint.partition.cookies.get({ url: activeEndpoint.endpoint });
-  const id = randomUUID();
-  const socket = new NodeWebSocket(url, {
-    headers: {
-      Cookie: cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("; "),
-      "X-Viron-API-Protocol": String(activeEndpoint.protocolVersion),
-      "X-Viron-Execution-Scope": executionScopeForEndpoint(activeEndpoint.endpoint),
-    },
-  });
-  serviceSockets.set(id, { id, socket });
-  socket.once("open", () => sendServiceSocketEvent({ socketId: id, type: "open" }));
-  socket.on("message", (data, isBinary) => sendServiceSocketEvent({
-    socketId: id,
-    type: "message",
-    data: isBinary ? serviceSocketBytes(data) : data.toString(),
-  }));
-  socket.once("error", (error) => sendServiceSocketEvent({ socketId: id, type: "error", message: error.message }));
-  socket.once("close", (code, reason) => {
-    serviceSockets.delete(id);
-    sendServiceSocketEvent({ socketId: id, type: "close", code, reason: reason.toString() });
-  });
-  return { id };
-}
-
-function closeAllServiceSockets(reason: string): void {
-  for (const { id, socket } of serviceSockets.values()) {
-    sendServiceSocketEvent({ socketId: id, type: "close", code: 1000, reason });
-    socket.terminate();
-  }
-  serviceSockets.clear();
-}
-
-function emptyExecutionActivity(): ExecutionActivity {
-  return { total: 0, counts: { web: 0, ssh: 0, sftp: 0, logs: 0, database: 0, redis: 0 } };
-}
-
-function executionRuntimeApiMissing(error: unknown): boolean {
-  return error instanceof DesktopApiError && error.status === 404;
-}
-
-async function closeServerForwardingRuntime(reason: string): Promise<void> {
-  if (!activeEndpoint || currentExecutionMode() !== "server") return;
-  closeAllServiceSockets(reason);
-  try {
-    await endpointJson("/api/v1/auth/execution-runtime/close", { method: "POST" });
-  } catch (error) {
-    if (!executionRuntimeApiMissing(error)) throw error;
-  }
-}
-
 async function currentExecutionActivity(): Promise<ExecutionActivity> {
   if (!activeEndpoint) return emptyExecutionActivity();
   if (currentExecutionMode() === "server") {
@@ -1280,290 +1060,6 @@ async function currentExecutionActivity(): Promise<ExecutionActivity> {
     redis: desktopRedisRuntime.activeCount(),
   };
   return { counts, total: Object.values(counts).reduce((sum, count) => sum + count, 0) };
-}
-
-async function ensureDeviceRegistration(identity: DeviceIdentity): Promise<void> {
-  try {
-    const current = await endpointJson<{ keyId: string; status: string }>(`/api/v1/desktop/devices/${identity.deviceId}`);
-    if (current.status !== "active") throw new Error(tr("当前设备已被撤销"));
-    if (current.keyId !== identity.keyId) throw new Error(tr("中心服务记录的设备密钥与本机不一致"));
-    return;
-  } catch (error) {
-    if (!(error instanceof DesktopApiError) || error.status !== 404 || error.code !== "DEVICE_NOT_FOUND") throw error;
-  }
-  const challenge = await endpointJson<{ challengeId: string; encryptedChallenge: string; keyId: string }>(
-    "/api/v1/desktop/devices/registration-challenges",
-    { method: "POST", body: { deviceId: identity.deviceId, publicKey: identity.publicKey } },
-  );
-  if (challenge.keyId !== identity.keyId) throw new Error(tr("中心服务返回的设备密钥标识不一致"));
-  const proof = solveDeviceChallenge(identity, challenge.encryptedChallenge);
-  await endpointJson(`/api/v1/desktop/devices/registration-challenges/${challenge.challengeId}/complete`, {
-    method: "POST",
-    body: { proof },
-  });
-}
-
-async function currentDeviceAuthorization(): Promise<{
-  auth: DesktopAuthContext;
-  identity: DeviceIdentity;
-  endpoint: string;
-}> {
-  if (!activeEndpoint) throw new Error(tr("请先验证 Viron Endpoint"));
-  const endpoint = activeEndpoint.endpoint;
-  const scoped = desktopDeviceAuthorizationContext.getStore();
-  if (scoped?.endpoint === endpoint) return scoped;
-  const auth = await currentDesktopAuthContext();
-  await confirmSystemKeyAccess(endpoint, auth.user.id);
-  let identity: DeviceIdentity;
-  try {
-    identity = deviceIdentity(endpoint, auth.user.id);
-    rememberSystemKeyAccessConsent();
-  } catch (error) {
-    forgetSystemKeyAccessConsent();
-    throw error;
-  }
-  try {
-    await ensureDeviceRegistration(identity);
-  } catch (error) {
-    if ((error instanceof DesktopApiError && [401, 403].includes(error.status)) || /设备已被撤销/.test(error instanceof Error ? error.message : String(error))) {
-      await closeDesktopExecution(tr("本机设备授权已失效"));
-    }
-    throw error;
-  }
-  return { auth, identity, endpoint };
-}
-
-async function localWebCredential(credentialId: string): Promise<{
-  auth: DesktopAuthContext;
-  credential: DesktopWebCredential;
-}> {
-  if (currentExecutionMode() === "server"
-    && activeEndpoint?.capabilities.serverForwarding.enabled
-    && activeEndpoint.capabilities.serverForwarding.web) {
-    throw new Error(tr("当前 Web 账号使用服务端转发"));
-  }
-  const { auth, identity, endpoint } = await currentDeviceAuthorization();
-  const requestId = randomUUID();
-  pendingCredentialRequests.add(requestId);
-  try {
-    const envelope = await endpointJson<CredentialEnvelope>(`/api/v1/desktop/web-credentials/${credentialId}/envelope`, {
-      method: "POST",
-      body: { deviceId: identity.deviceId, requestId, endpoint, auditSource: desktopAuditSourceContext.getStore() ?? "manual" },
-    });
-    if (!pendingCredentialRequests.has(requestId)) throw new Error(tr("凭据请求已经结束"));
-    const opened = openCredentialEnvelope(identity, envelope, {
-      requestId,
-      userId: auth.user.id,
-      workspaceType: auth.workspace.type,
-      workspaceId: auth.workspace.id,
-      credentialId,
-      endpoint,
-    });
-    return { auth, credential: opened.credential };
-  } finally {
-    pendingCredentialRequests.delete(requestId);
-  }
-}
-
-async function localSshCredential(connectionId: string): Promise<{ context: DesktopSshContext; credential: DesktopSshCredential }> {
-  if (currentExecutionMode() !== "local") throw new Error(tr("当前 SSH 连接使用服务端转发"));
-  if (!activeEndpoint?.capabilities.desktopLocal?.ssh) throw new Error(tr("当前 Endpoint 未声明桌面 App 本机 SSH 能力"));
-  const { auth, identity, endpoint } = await currentDeviceAuthorization();
-  const requestId = randomUUID();
-  pendingCredentialRequests.add(requestId);
-  try {
-    const envelope = await endpointJson<CredentialEnvelope>(`/api/v1/desktop/ssh-connections/${connectionId}/envelope`, {
-      method: "POST",
-      body: { deviceId: identity.deviceId, requestId, endpoint, auditSource: desktopAuditSourceContext.getStore() ?? "manual" },
-    });
-    if (!pendingCredentialRequests.has(requestId)) throw new Error(tr("SSH 凭据请求已经结束"));
-    const opened = openSshCredentialEnvelope(identity, envelope, {
-      requestId,
-      userId: auth.user.id,
-      workspaceType: auth.workspace.type,
-      workspaceId: auth.workspace.id,
-      connectionId,
-      endpoint,
-    });
-    const context = { endpoint, userId: auth.user.id, workspaceType: auth.workspace.type, workspaceId: auth.workspace.id };
-    desktopRuntimeContext = context;
-    return { context, credential: opened.credential };
-  } finally {
-    pendingCredentialRequests.delete(requestId);
-  }
-}
-
-async function localDatabaseCredential(connectionId: string): Promise<{ context: DesktopSshContext; credential: DesktopDatabaseCredential }> {
-  if (currentExecutionMode() !== "local") throw new Error(tr("当前数据库连接使用服务端转发"));
-  if (!activeEndpoint?.capabilities.desktopLocal?.database) throw new Error(tr("当前 Endpoint 未声明桌面 App 本机数据库能力"));
-  const { auth, identity, endpoint } = await currentDeviceAuthorization();
-  const requestId = randomUUID();
-  pendingCredentialRequests.add(requestId);
-  try {
-    const envelope = await endpointJson<CredentialEnvelope>(`/api/v1/desktop/database-connections/${connectionId}/envelope`, {
-      method: "POST",
-      body: { deviceId: identity.deviceId, requestId, endpoint, auditSource: desktopAuditSourceContext.getStore() ?? "manual" },
-    });
-    if (!pendingCredentialRequests.has(requestId)) throw new Error(tr("数据库凭据请求已经结束"));
-    const opened = openDatabaseCredentialEnvelope(identity, envelope, {
-      requestId,
-      userId: auth.user.id,
-      workspaceType: auth.workspace.type,
-      workspaceId: auth.workspace.id,
-      connectionId,
-      endpoint,
-    });
-    const context = { endpoint, userId: auth.user.id, workspaceType: auth.workspace.type, workspaceId: auth.workspace.id };
-    desktopRuntimeContext = context;
-    return { context, credential: opened.credential };
-  } finally {
-    pendingCredentialRequests.delete(requestId);
-  }
-}
-
-async function localRedisCredential(connectionId: string): Promise<{ context: DesktopSshContext; credential: DesktopRedisCredential }> {
-  if (currentExecutionMode() !== "local") throw new Error(tr("当前 Redis 连接使用服务端转发"));
-  if (!activeEndpoint?.capabilities.desktopLocal?.redis) throw new Error(tr("当前 Endpoint 未声明桌面 App 本机 Redis 能力"));
-  const { auth, identity, endpoint } = await currentDeviceAuthorization();
-  const requestId = randomUUID();
-  pendingCredentialRequests.add(requestId);
-  try {
-    const envelope = await endpointJson<CredentialEnvelope>(`/api/v1/desktop/redis-connections/${connectionId}/envelope`, {
-      method: "POST",
-      body: { deviceId: identity.deviceId, requestId, endpoint, auditSource: desktopAuditSourceContext.getStore() ?? "manual" },
-    });
-    if (!pendingCredentialRequests.has(requestId)) throw new Error(tr("Redis 凭据请求已经结束"));
-    const opened = openRedisCredentialEnvelope(identity, envelope, {
-      requestId,
-      userId: auth.user.id,
-      workspaceType: auth.workspace.type,
-      workspaceId: auth.workspace.id,
-      connectionId,
-      endpoint,
-    });
-    const context = { endpoint, userId: auth.user.id, workspaceType: auth.workspace.type, workspaceId: auth.workspace.id };
-    desktopRuntimeContext = context;
-    return { context, credential: opened.credential };
-  } finally {
-    pendingCredentialRequests.delete(requestId);
-  }
-}
-
-async function signedDesktopOperation<T extends { operationId: string }>(
-  payload: T,
-  expectedContext?: DesktopSshContext,
-): Promise<{ protected: string; signature: string }> {
-  const { auth, identity, endpoint } = await currentDeviceAuthorization();
-  if (expectedContext && (
-    expectedContext.endpoint !== endpoint
-    || expectedContext.userId !== auth.user.id
-    || expectedContext.workspaceType !== auth.workspace.type
-    || expectedContext.workspaceId !== auth.workspace.id
-  )) {
-    throw new Error(tr("本机执行报告所属用户或工作空间已经切换"));
-  }
-  const issuedAt = new Date();
-  const protectedBytes = Buffer.from(JSON.stringify({
-    version: 1,
-    algorithm: "RSA-PSS-SHA256",
-    keyId: identity.keyId,
-    deviceId: identity.deviceId,
-    operationId: payload.operationId,
-    userId: auth.user.id,
-    workspaceType: auth.workspace.type,
-    workspaceId: auth.workspace.id,
-    issuedAt: issuedAt.toISOString(),
-    expiresAt: new Date(issuedAt.getTime() + 60_000).toISOString(),
-    payload,
-  }), "utf8");
-  return {
-    protected: protectedBytes.toString("base64url"),
-    signature: signDeviceReport(identity, protectedBytes),
-  };
-}
-
-async function reportSignedDesktopOperation<T extends { operationId: string }>(
-  path: string,
-  report: T,
-  expectedContext?: DesktopSshContext,
-): Promise<void> {
-  await endpointJson(path, {
-    method: "POST",
-    body: await signedDesktopOperation(
-      { ...report, auditSource: desktopAuditSourceContext.getStore() ?? "manual" },
-      expectedContext,
-    ),
-  });
-}
-
-async function reportDesktopDatabaseExecution(report: DesktopDatabaseExecutionReport, context?: DesktopSshContext): Promise<void> {
-  await reportSignedDesktopOperation("/api/v1/desktop/database-executions", report, context);
-}
-
-async function reportDesktopSshExecution(report: DesktopSshExecutionReport, context?: DesktopSshContext): Promise<void> {
-  await reportSignedDesktopOperation("/api/v1/desktop/ssh-executions", report, context);
-}
-
-async function reportDesktopRedisExecution(report: DesktopRedisExecutionReport, context?: DesktopSshContext): Promise<void> {
-  await reportSignedDesktopOperation("/api/v1/desktop/redis-executions", report, context);
-}
-
-async function reportDesktopConnectionInspection(report: DesktopInspectionReportPayload, context: DesktopSshContext): Promise<void> {
-  await reportSignedDesktopOperation("/api/v1/desktop/connection-inspections", report, context);
-}
-
-async function currentDesktopSshContext(): Promise<DesktopSshContext> {
-  if (!activeEndpoint) throw new Error(tr("请先验证 Viron Endpoint"));
-  if (desktopRuntimeContext?.endpoint === activeEndpoint.endpoint) return desktopRuntimeContext;
-  const auth = await currentDesktopAuthContext();
-  desktopRuntimeContext = {
-    endpoint: activeEndpoint.endpoint,
-    userId: auth.user.id,
-    workspaceType: auth.workspace.type,
-    workspaceId: auth.workspace.id,
-  };
-  return desktopRuntimeContext;
-}
-
-async function currentDesktopAuthContext(): Promise<DesktopAuthContext> {
-  if (!activeEndpoint) throw new Error(tr("请先验证 Viron Endpoint"));
-  if (desktopAuthContext && desktopAuthEndpoint === activeEndpoint.endpoint) return desktopAuthContext;
-  desktopAuthContext = await endpointJson<DesktopAuthContext>("/api/v1/auth/me");
-  desktopAuthEndpoint = activeEndpoint.endpoint;
-  return desktopAuthContext;
-}
-
-async function currentAgentSettingsScope(): Promise<AgentSettingsScope> {
-  const context = await currentDesktopSshContext();
-  return { vironEndpoint: context.endpoint, vironUserId: context.userId };
-}
-
-function agentRuntimeScope(context: DesktopSshContext): AgentRuntimeScope {
-  return {
-    vironEndpoint: context.endpoint,
-    vironUserId: context.userId,
-    workspaceType: context.workspaceType,
-    workspaceId: context.workspaceId,
-  };
-}
-
-async function currentAgentRuntimeScope(): Promise<AgentRuntimeScope> {
-  return agentRuntimeScope(await currentDesktopSshContext());
-}
-
-async function touchDesktopDatabaseRequest(path: string, context: DesktopSshContext): Promise<void> {
-  const pathname = new URL(path, "http://desktop.local").pathname;
-  const connectionRoute = pathname.match(/^\/api\/v1\/database-connections\/([0-9a-f-]+)\//i);
-  const queryRoute = pathname.match(/^\/api\/v1\/database-queries\/([0-9a-f-]+)$/i);
-  const connectionId = connectionRoute?.[1] ?? (queryRoute ? desktopDatabaseRuntime.connectionIdForQuery(queryRoute[1], context) : null);
-  if (!connectionId) return;
-  await endpointJson("/api/v1/database-sessions/activity", { method: "POST", body: { connectionId } });
-}
-
-async function touchDesktopRedisRequest(path: string): Promise<void> {
-  const connectionId = new URL(path, "http://desktop.local").pathname.match(/^\/api\/v1\/redis-connections\/([0-9a-f-]+)\//i)?.[1];
-  if (!connectionId) return;
-  await endpointJson("/api/v1/redis-sessions/activity", { method: "POST", body: { connectionId } });
 }
 
 function webViewBounds(input: DesktopWebViewBounds): Rectangle {
@@ -2418,14 +1914,6 @@ async function reconcileDesktopWebMutation(context: DesktopWebMutationContext | 
   }
 }
 
-function suggestedFilename(response: Response, path: string): string {
-  const disposition = response.headers.get("content-disposition") ?? "";
-  const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
-  const plain = disposition.match(/filename="?([^";]+)"?/i)?.[1];
-  const value = encoded ? decodeURIComponent(encoded) : plain;
-  return basename(value || new URL(path, "https://local.invalid").pathname || "viron-download");
-}
-
 function requireDesktopString(value: unknown, label: string): string {
   if (typeof value !== "string" || !value.trim()) throw new Error(tr("{{0}}无效", [label]));
   return value;
@@ -2525,23 +2013,6 @@ function agentDatabaseContextInput(value: unknown): AgentDatabaseContextInput {
     selectedSql: typeof input.selectedSql === "string" ? input.selectedSql : "",
     resultPreview: Array.isArray(input.resultPreview) ? input.resultPreview.filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row)) : [],
   };
-}
-
-async function closeDesktopExecution(reason: string): Promise<void> {
-  desktopAgentRuntime?.stopAll(reason);
-  await Promise.all([
-    desktopSshRuntime.closeAllSessions(reason),
-    desktopSftpRuntime.closeAll(),
-    desktopDatabaseRuntime.closeAll(reason),
-    desktopRedisRuntime.closeAll(),
-    closeDesktopSshConnectionPool(),
-  ]);
-  desktopLogRuntime.closeAll(reason);
-  await desktopDatabaseOperationRuntime.closeAll(reason);
-  desktopRuntimeContext = null;
-  desktopAuthContext = null;
-  desktopAuthEndpoint = null;
-  pendingCredentialRequests.clear();
 }
 
 function registerDesktopSshIpc(): void {
@@ -2753,7 +2224,8 @@ function registerDesktopSshIpc(): void {
     const [resourceId, relatedResourceId] = desktopSftpRemoteConnectionIds(sourceConnectionId, targetConnectionId);
     const registrationId = await reserveDesktopRuntime("sftp", resourceId, relatedResourceId, input.originEnvironmentId);
     try {
-      const task = await desktopSftpRuntime.create(await currentDesktopSshContext(), {
+      const context = await currentDesktopSshContext();
+      const task = await desktopSftpRuntime.create(context, {
       sourceConnectionId,
       targetConnectionId,
       sourcePath: typeof input?.sourcePath === "string" ? requireDesktopString(input.sourcePath, tr("来源路径")) : undefined,
@@ -2767,8 +2239,7 @@ function registerDesktopSshIpc(): void {
         localId: task.id,
         activity: () => desktopSftpRuntime.activity(task.id),
         close: () => {
-          const context = desktopRuntimeContext;
-          if (context && desktopSftpRuntime.activity(task.id) !== null) desktopSftpRuntime.cancelTransfer(task.id, context);
+          if (desktopSftpRuntime.activity(task.id) !== null) desktopSftpRuntime.cancelTransfer(task.id, context);
         },
       });
       return { task, activeConnectionId: registrationId };
@@ -5302,31 +4773,40 @@ app.whenReady().then(async () => {
   }
   const icon = developmentApplicationIcon();
   if (process.platform === "darwin" && icon) app.dock?.setIcon(icon);
-  desktopSshRuntime = new DesktopSshRuntime(
+  const sshRuntime = new DesktopSshRuntime(
     join(app.getPath("userData"), "ssh-recordings"),
     (event) => {
       if (event.type === "closed") desktopAgentRuntime?.stopForSource(`desktop-ssh:${event.sessionId}`, event.reason);
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("viron:ssh-session-event", event);
     },
   );
-  desktopSftpRuntime = new DesktopSftpRuntime(localSshCredential, currentDesktopSshContext);
-  desktopLogRuntime = new DesktopLogRuntime(localSshCredential, currentDesktopSshContext, (event) => {
+  const sftpRuntime = new DesktopSftpRuntime(localSshCredential, currentDesktopSshContext);
+  const logRuntime = new DesktopLogRuntime(localSshCredential, currentDesktopSshContext, (event) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("viron:log-stream-event", event);
   });
-  desktopDatabaseRuntime = new DesktopDatabaseRuntime(localDatabaseCredential, reportDesktopDatabaseExecution);
-  desktopRedisRuntime = new DesktopRedisRuntime(localRedisCredential, reportDesktopRedisExecution);
-  desktopDatabaseOperationRuntime = new DesktopDatabaseOperationRuntime(
+  const databaseRuntime = new DesktopDatabaseRuntime(localDatabaseCredential, reportDesktopDatabaseExecution);
+  const redisRuntime = new DesktopRedisRuntime(localRedisCredential, reportDesktopRedisExecution);
+  const databaseOperationRuntime = new DesktopDatabaseOperationRuntime(
     app.getPath("userData"),
     localDatabaseCredential,
     reportDesktopDatabaseExecution,
   );
-  desktopConnectionInspectionRuntime = new DesktopConnectionInspectionRuntime(
+  const connectionInspectionRuntime = new DesktopConnectionInspectionRuntime(
     () => endpointJson<{ items: DesktopInspectionConnection[] }>("/api/v1/connections?assignment=all&type=all"),
     localSshCredential,
     localDatabaseCredential,
     localRedisCredential,
     reportDesktopConnectionInspection,
   );
+  initializeDesktopRuntimeContext({
+    ssh: sshRuntime,
+    sftp: sftpRuntime,
+    log: logRuntime,
+    database: databaseRuntime,
+    databaseOperation: databaseOperationRuntime,
+    redis: redisRuntime,
+    connectionInspection: connectionInspectionRuntime,
+  });
   desktopAgentSettingsStore = new DesktopAgentSettingsStore(app.getPath("userData"));
   desktopAgentSessionStore = new DesktopAgentSessionStore(app.getPath("userData"));
   desktopAgentAuditStore = new DesktopAgentAuditStore(app.getPath("userData"));
@@ -5336,7 +4816,7 @@ app.whenReady().then(async () => {
       () => desktopAuditSourceContext.run("mcp", () => invokeDesktopMcpTool(toolName, arguments_)),
     ),
   });
-  desktopAgentRuntime = new DesktopAgentRuntime(
+  const agentRuntime = new DesktopAgentRuntime(
     desktopAgentSettingsStore,
     desktopAgentSessionStore,
     (event) => {
@@ -5450,6 +4930,7 @@ app.whenReady().then(async () => {
     },
     desktopAgentGateway.tools,
   );
+  setDesktopAgentRuntime(agentRuntime);
   desktopMcpBroker = new DesktopMcpBroker(app.getPath("userData"), app.getVersion(), invokeDesktopMcpTool);
   if (readState().localMcpEnabled === true) {
     try {
