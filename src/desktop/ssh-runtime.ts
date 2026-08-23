@@ -10,13 +10,9 @@ import { normalizeAgentSshCommand, type AgentSshContextSnapshot, type AgentSshDi
 import { sshCommandRiskLevel } from "../shared/ssh-command-risk.js";
 import type { DesktopSshConnection, DesktopSshCredential } from "./device-identity.js";
 import { agentSshContextSnapshot, summarizeAgentSshOutput } from "./agent-ssh-context.js";
+import { contextKey, type DesktopSshContext } from "./ssh-context.js";
 
-export interface DesktopSshContext {
-  endpoint: string;
-  userId: string;
-  workspaceType: "personal" | "organization";
-  workspaceId: string;
-}
+export type { DesktopSshContext };
 
 export interface DesktopSshSessionState {
   id: string;
@@ -124,10 +120,6 @@ export function desktopSshErrorMessage(error: unknown): string {
   if (/ENOTFOUND|EAI_AGAIN/i.test(value)) return tr("无法解析 SSH 主机地址");
   if (/Host key/i.test(value)) return tr("SSH 主机指纹不匹配");
   return value;
-}
-
-function contextKey(context: DesktopSshContext): string {
-  return `${context.endpoint}\0${context.userId}\0${context.workspaceType}\0${context.workspaceId}`;
 }
 
 function hostVerifier(expected: string | undefined): ConnectConfig["hostVerifier"] {

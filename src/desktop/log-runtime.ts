@@ -4,6 +4,7 @@ import { StringDecoder } from "node:string_decoder";
 import type { ClientChannel } from "ssh2";
 import { buildSshLogSnapshotCommand, buildSshLogTailCommand } from "../shared/environment-log.js";
 import type { DesktopSshCredential } from "./device-identity.js";
+import { contextKey } from "./ssh-context.js";
 import {
   connectDesktopSshConnection,
   desktopSshErrorMessage,
@@ -51,10 +52,6 @@ interface ManagedDesktopLogStream {
 }
 
 const DESKTOP_LOG_STREAM_LIMIT = 3;
-
-function contextKey(context: DesktopSshContext): string {
-  return `${context.endpoint}\0${context.userId}\0${context.workspaceType}\0${context.workspaceId}`;
-}
 
 function normalizedLoginScript(script: string): string {
   const normalized = script.replace(/\r\n?/g, "\n");
