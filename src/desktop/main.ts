@@ -6,7 +6,7 @@ import {
 } from "./i18n.js";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { WebSocket as NodeWebSocket } from "ws";
 import {
@@ -15,40 +15,13 @@ import {
   clipboard,
   dialog,
   ipcMain,
-  Menu,
   Notification as ElectronNotification,
   screen as electronScreen,
-  session,
   shell,
   WebContentsView,
-  type NativeImage,
   type Rectangle,
-  type Session,
 } from "electron";
-import {
-  type DesktopWebCredential,
-} from "./device-identity.js";
 import { EndpointValidationError, normalizeEndpoint, validateEndpoint } from "./endpoint.js";
-import {
-  DESKTOP_WEB_PAGE_LIMIT,
-  cacheableDesktopWebUrl,
-  desktopWebContextMenuGroups,
-  desktopWebLastUrlKey,
-  desktopWebPartitionName,
-  pageAfterClose,
-  restorableDesktopWebUrl,
-  shouldAttemptDesktopWebAutofill,
-  supportedDesktopPopupUrl,
-  supportedDesktopWebUrl,
-  type DesktopWebContextMenuAction,
-} from "./web-page-policy.js";
-import { normalizeWebAddress } from "../shared/web-address.js";
-import { reorderMap } from "../shared/tab-order.js";
-import {
-  buildWebCredentialAutofillScript,
-  WEB_CREDENTIAL_AUTOFILL_DELAYS_MS,
-  type WebCredentialAutofillResult,
-} from "../shared/web-credential-autofill.js";
 import {
   DesktopSftpRuntime,
   desktopSftpRemoteConnectionIds,
@@ -90,11 +63,7 @@ import {
   isDesktopTitleBarAppearance,
 } from "../shared/desktop-titlebar.js";
 import { DesktopUpdater, shouldBlockLaunchForActiveUpdate } from "./updater.js";
-import {
-  immersiveNavigationEscapeAction,
-  type ImmersiveNavigationAction,
-  type ImmersiveNavigationState,
-} from "../shared/immersive-navigation.js";
+import type { ImmersiveNavigationAction, ImmersiveNavigationState } from "../shared/immersive-navigation.js";
 import {
   effectiveShortcutBindings,
   sanitizeShortcutOverrides,
@@ -227,7 +196,6 @@ import {
 } from "./overlays/connection-quality-window.js";
 import {
   handleImmersiveNavigationDrag,
-  immersiveNavigationState,
   immersiveNavigationWindow,
   immersiveNavigationViewport,
   layoutImmersiveNavigationWindow,
@@ -247,9 +215,7 @@ import {
   desktopSftpRuntime,
   desktopSshRuntime,
   initializeDesktopRuntimeContext,
-  pendingCredentialRequests,
   setDesktopAgentRuntime,
-  type DesktopAuthContext,
 } from "./desktop-runtime-context.js";
 import {
   agentRuntimeScope,
@@ -265,7 +231,6 @@ import {
   localDatabaseCredential,
   localRedisCredential,
   localSshCredential,
-  localWebCredential,
   openServiceSocket,
   releaseDesktopRuntimeReservation,
   reportDesktopConnectionInspection,
@@ -287,6 +252,35 @@ import {
   suggestedFilename,
   type DesktopRequest,
 } from "./http-proxy.js";
+import {
+  actOnDesktopWebCredential,
+  activeDesktopWebPage,
+  captureDesktopRendererPreview,
+  captureDesktopWebViewPreview,
+  captureWebContentsPreview,
+  closeAllDesktopWebViews,
+  closeDesktopWebView,
+  controlDesktopWebCredential,
+  desktopWebMutationContext,
+  desktopWebViews,
+  handleDesktopWebViewAction,
+  inspectDesktopWebElement,
+  layoutDesktopWebViewPages,
+  localWebView,
+  openDesktopWebView,
+  reconcileDesktopWebMutation,
+  resetDesktopWebView,
+  resetDesktopWebViews,
+  snapshotDesktopWebCredential,
+  uploadDesktopWebCredential,
+  webViewBounds,
+  webViewState,
+  type DesktopMcpWebAction,
+  type DesktopMcpWebControl,
+  type DesktopWebInitialPage,
+  type DesktopWebViewBounds,
+  type ManagedDesktopWebView,
+} from "./web-view-runtime.js";
 
 if (process.platform === "darwin") app.commandLine.appendSwitch("use-mock-keychain");
 
@@ -307,75 +301,6 @@ interface DesktopEnvironmentLog {
   connectionAvailable: boolean;
 }
 
-interface DesktopWebViewBounds {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-type DesktopWebInitialPage = "entry" | "blank";
-
-interface DesktopWebViewState {
-  id: string;
-  credentialId: string;
-  activePageId: string;
-  pages: Array<{
-    id: string;
-    url: string;
-    title: string;
-    loading: boolean;
-  }>;
-  url: string;
-  title: string;
-  loading: boolean;
-  canGoBack: boolean;
-  canGoForward: boolean;
-  autofillMessage: string;
-  error: string;
-  closedReason: string;
-  notice: {
-    id: string;
-    type: "success" | "info" | "error";
-    message: string;
-  } | null;
-}
-
-interface ManagedDesktopWebPage {
-  id: string;
-  view: WebContentsView;
-  allowAutofill: boolean;
-  pendingUrl: string;
-  autofillSignature: string;
-  autofillMessage: string;
-  error: string;
-  closing: boolean;
-}
-
-interface ManagedDesktopWebView {
-  id: string;
-  registrationId: string;
-  credentialId: string;
-  entryId: string;
-  entryUrl: string;
-  entryOrigin: string;
-  username: string;
-  password: string;
-  pages: Map<string, ManagedDesktopWebPage>;
-  activePageId: string;
-  bounds: Rectangle;
-  visible: boolean;
-  previewing: boolean;
-  closing: boolean;
-  lastActivityAt: number;
-  closedReason: string;
-  partition: Session;
-  lastUrlKey: string;
-  lastUrl: string;
-  notice: DesktopWebViewState["notice"];
-  downloadListener: (event: Electron.Event, item: Electron.DownloadItem, webContents: Electron.WebContents) => void;
-}
-
 if (gotTheLock) {
   app.on("second-instance", () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -384,8 +309,6 @@ if (gotTheLock) {
     mainWindow.focus();
   });
 }
-const desktopWebViews = new Map<string, ManagedDesktopWebView>();
-const trackedWebPartitions = new WeakSet<Session>();
 let desktopUpdater: DesktopUpdater;
 let desktopAgentSettingsStore: DesktopAgentSettingsStore;
 let desktopAgentSessionStore: DesktopAgentSessionStore;
@@ -412,32 +335,6 @@ const desktopMcpPendingOperations = new Map<string, {
 let desktopRuntimeHeartbeat: NodeJS.Timeout | null = null;
 let shortcutCaptureActive = false;
 
-function cachedDesktopWebUrl(entryUrl: string, key: string): string {
-  return restorableDesktopWebUrl(entryUrl, readState().webLastUrls?.[key]);
-}
-
-function rememberDesktopWebLastUrl(view: ManagedDesktopWebView, value: string): void {
-  const url = cacheableDesktopWebUrl(view.entryUrl, value);
-  if (!url || view.lastUrl === url) return;
-  view.lastUrl = url;
-  const state = readState();
-  if (state.webLastUrls?.[view.lastUrlKey] === url) return;
-  writeState({
-    ...state,
-    webLastUrls: { ...state.webLastUrls, [view.lastUrlKey]: url },
-  });
-}
-
-function forgetDesktopWebLastUrl(key: string): void {
-  const state = readState();
-  if (!state.webLastUrls || !(key in state.webLastUrls)) return;
-  const webLastUrls = { ...state.webLastUrls };
-  delete webLastUrls[key];
-  if (Object.keys(webLastUrls).length) state.webLastUrls = webLastUrls;
-  else delete state.webLastUrls;
-  writeState(state);
-}
-
 function localMcpLauncherPath(): string {
   return process.platform === "win32"
     ? join(dirname(process.execPath), "viron-mcp.cmd")
@@ -456,13 +353,6 @@ function localMcpStatus(): DesktopMcpStatus {
     clients: broker.clients,
     lastError: desktopMcpLastError,
   };
-}
-
-function desktopWebSession(endpoint: string, userId: string, credentialId: string): Session {
-  const webPartition = session.fromPartition(desktopWebPartitionName(endpoint, userId, credentialId));
-  webPartition.setPermissionCheckHandler(() => false);
-  webPartition.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
-  return webPartition;
 }
 
 function publishDesktopAppState(next = publicState()): typeof next {
@@ -1060,858 +950,6 @@ async function currentExecutionActivity(): Promise<ExecutionActivity> {
     redis: desktopRedisRuntime.activeCount(),
   };
   return { counts, total: Object.values(counts).reduce((sum, count) => sum + count, 0) };
-}
-
-function webViewBounds(input: DesktopWebViewBounds): Rectangle {
-  if (!mainWindow) throw new Error(tr("主窗口不可用"));
-  const content = mainWindow.getContentBounds();
-  const x = Math.max(0, Math.min(content.width - 1, Math.round(input.x)));
-  const y = Math.max(0, Math.min(content.height - 1, Math.round(input.y)));
-  const width = Math.max(1, Math.min(content.width - x, Math.round(input.width)));
-  const height = Math.max(1, Math.min(content.height - y, Math.round(input.height)));
-  if (![x, y, width, height].every(Number.isFinite)) throw new Error(tr("本机页面区域无效"));
-  return { x, y, width, height };
-}
-
-function webViewState(view: ManagedDesktopWebView): DesktopWebViewState {
-  const active = view.pages.get(view.activePageId);
-  if (!active) throw new Error(tr("本机账号当前没有可用页面"));
-  const navigation = active.view.webContents.navigationHistory;
-  return {
-    id: view.id,
-    credentialId: view.credentialId,
-    activePageId: active.id,
-    pages: [...view.pages.values()].map((page) => ({
-      id: page.id,
-      url: page.pendingUrl || page.view.webContents.getURL() || (page.allowAutofill ? view.entryUrl : "about:blank"),
-      title: page.view.webContents.getTitle() || (page.allowAutofill ? view.username : tr("新页面")),
-      loading: page.view.webContents.isLoading(),
-    })),
-    url: active.pendingUrl || active.view.webContents.getURL() || (active.allowAutofill ? view.entryUrl : "about:blank"),
-    title: active.view.webContents.getTitle() || (active.allowAutofill ? view.username : tr("新页面")),
-    loading: active.view.webContents.isLoading(),
-    canGoBack: navigation.canGoBack(),
-    canGoForward: navigation.canGoForward(),
-    autofillMessage: active.autofillMessage,
-    error: active.error,
-    closedReason: view.closedReason,
-    notice: view.notice,
-  };
-}
-
-function previewImageDataUrl(image: NativeImage): string {
-  const size = image.getSize();
-  if (size.width < 2 || size.height < 2) return "";
-  const targetRatio = 16 / 9;
-  const ratio = size.width / size.height;
-  const cropped = ratio > targetRatio
-    ? image.crop({ x: Math.round((size.width - size.height * targetRatio) / 2), y: 0, width: Math.round(size.height * targetRatio), height: size.height })
-    : ratio < targetRatio
-      ? image.crop({ x: 0, y: Math.round((size.height - size.width / targetRatio) / 2), width: size.width, height: Math.round(size.width / targetRatio) })
-      : image;
-  const jpeg = cropped.resize({ width: 640, height: 360, quality: "good" }).toJPEG(72);
-  return `data:image/jpeg;base64,${jpeg.toString("base64")}`;
-}
-
-async function captureWebContentsPreview(webContents: Electron.WebContents, bounds?: Rectangle): Promise<string> {
-  if (webContents.isDestroyed()) return "";
-  const image = await webContents.capturePage(bounds);
-  if (image.isEmpty()) return "";
-  return previewImageDataUrl(image);
-}
-
-async function captureDesktopWebViewPreview(view: ManagedDesktopWebView): Promise<string> {
-  if (!view.visible) return "";
-  return await captureWebContentsPreview(activeDesktopWebPage(view).view.webContents);
-}
-
-function desktopRendererPreviewBounds(value: unknown): Rectangle {
-  if (!mainWindow || mainWindow.isDestroyed()) throw new Error(tr("主窗口不可用"));
-  if (!value || typeof value !== "object") throw new Error(tr("画中画截图区域无效"));
-  const input = value as Partial<Rectangle>;
-  if (![input.x, input.y, input.width, input.height].every(Number.isFinite)) throw new Error(tr("画中画截图区域无效"));
-  const [viewportWidth, viewportHeight] = mainWindow.getContentSize();
-  const left = Math.max(0, Math.floor(input.x!));
-  const top = Math.max(0, Math.floor(input.y!));
-  const right = Math.min(viewportWidth, Math.ceil(input.x! + input.width!));
-  const bottom = Math.min(viewportHeight, Math.ceil(input.y! + input.height!));
-  if (right - left < 2 || bottom - top < 2) throw new Error(tr("画中画截图区域无效"));
-  return { x: left, y: top, width: right - left, height: bottom - top };
-}
-
-async function captureDesktopRendererPreview(value: unknown): Promise<string> {
-  if (!mainWindow || mainWindow.isDestroyed()) return "";
-  return await captureWebContentsPreview(mainWindow.webContents, desktopRendererPreviewBounds(value));
-}
-
-function touchDesktopWebView(view: ManagedDesktopWebView): void {
-  view.lastActivityAt = Date.now();
-}
-
-function trackDesktopWebPartition(partition: Session): void {
-  if (trackedWebPartitions.has(partition)) return;
-  trackedWebPartitions.add(partition);
-  partition.webRequest.onBeforeRequest((_details, callback) => {
-    for (const view of desktopWebViews.values()) {
-      if (view.partition === partition && !view.closing) touchDesktopWebView(view);
-    }
-    callback({});
-  });
-}
-
-function sendWebViewState(view: ManagedDesktopWebView): void {
-  if (!mainWindow || mainWindow.isDestroyed() || view.closing || !desktopWebViews.has(view.id) || !view.pages.has(view.activePageId)) return;
-  mainWindow.webContents.send("viron:web-view-state", webViewState(view));
-}
-
-function notifyWebView(view: ManagedDesktopWebView, type: "success" | "info" | "error", message: string): void {
-  view.notice = { id: randomUUID(), type, message };
-  sendWebViewState(view);
-}
-
-async function autoFillWebPage(view: ManagedDesktopWebView, page: ManagedDesktopWebPage, force = false): Promise<void> {
-  if (page.view.webContents.isDestroyed()) return;
-  if (!shouldAttemptDesktopWebAutofill(page.allowAutofill, force)) return;
-  try {
-    const currentUrl = page.view.webContents.getURL();
-    if (!currentUrl || new URL(currentUrl).origin !== view.entryOrigin) {
-      page.autofillMessage = force ? tr("当前页面不在入口原始域名，未填充账号密码") : "";
-      sendWebViewState(view);
-      return;
-    }
-    const result = await page.view.webContents.executeJavaScript(
-      buildWebCredentialAutofillScript({
-        username: view.username,
-        password: view.password,
-        previousSignature: force ? "" : page.autofillSignature,
-        autoSubmit: false,
-        messages: {
-          duplicate: tr("登录表单未变化"),
-          ambiguousPasswords: tr("检测到多个密码框，未识别到唯一登录密码框"),
-          noReliableForm: tr("未识别到可靠的登录表单"),
-          filled: tr("已在当前页面填充账号密码"),
-          filledAndSubmitted: tr("已在当前页面填充账号密码"),
-        },
-      }),
-      true,
-    ) as WebCredentialAutofillResult;
-    page.autofillSignature = result.signature;
-    page.autofillMessage = result.status === "duplicate" ? "" : result.message;
-    sendWebViewState(view);
-  } catch (error) {
-    page.error = error instanceof Error ? error.message : tr("自动填充失败");
-    sendWebViewState(view);
-  }
-}
-
-function activeDesktopWebPage(view: ManagedDesktopWebView): ManagedDesktopWebPage {
-  const page = view.pages.get(view.activePageId);
-  if (!page) throw new Error(tr("本机账号当前没有可用页面"));
-  return page;
-}
-
-function layoutDesktopWebViewPages(view: ManagedDesktopWebView, focus = false): void {
-  for (const page of view.pages.values()) {
-    const active = page.id === view.activePageId;
-    if (active) page.view.setBounds(view.bounds);
-    page.view.setVisible(active && view.visible);
-  }
-  if (focus && view.visible) activeDesktopWebPage(view).view.webContents.focus();
-}
-
-function activateDesktopWebPage(view: ManagedDesktopWebView, pageId: string): void {
-  const page = view.pages.get(pageId);
-  if (!page) throw new Error(tr("本机子页面不存在或已经关闭"));
-  view.activePageId = pageId;
-  touchDesktopWebView(view);
-  layoutDesktopWebViewPages(view, true);
-  const pendingUrl = page.pendingUrl;
-  rememberDesktopWebLastUrl(view, pendingUrl || page.view.webContents.getURL());
-  if (pendingUrl) {
-    page.pendingUrl = "";
-    void page.view.webContents.loadURL(pendingUrl).catch((error) => {
-      page.error = error instanceof Error ? error.message : tr("本机页面加载失败");
-      sendWebViewState(view);
-    });
-  }
-  sendWebViewState(view);
-}
-
-function removeDesktopWebPage(view: ManagedDesktopWebView, pageId: string, closeContents: boolean): void {
-  const page = view.pages.get(pageId);
-  if (!page) return;
-  const nextPageId = pageAfterClose([...view.pages.keys()], view.activePageId, pageId);
-  page.closing = closeContents;
-  view.pages.delete(pageId);
-  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.contentView.removeChildView(page.view);
-  if (closeContents && !page.view.webContents.isDestroyed()) page.view.webContents.close();
-  if (view.closing) return;
-  if (nextPageId) {
-    activateDesktopWebPage(view, nextPageId);
-    return;
-  }
-  const replacement = createDesktopWebPage(view, true);
-  activateDesktopWebPage(view, replacement.id);
-  void replacement.view.webContents.loadURL(view.entryUrl).catch((error) => {
-    replacement.error = error instanceof Error ? error.message : tr("本机页面加载失败");
-    sendWebViewState(view);
-  });
-}
-
-function destroyDesktopWebPages(view: ManagedDesktopWebView): void {
-  for (const page of view.pages.values()) {
-    page.closing = true;
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.contentView.removeChildView(page.view);
-    if (!page.view.webContents.isDestroyed()) page.view.webContents.close();
-  }
-  view.pages.clear();
-  view.activePageId = "";
-}
-
-function desktopWebPreferences(partition: Session): Electron.WebPreferences {
-  return {
-    session: partition,
-    contextIsolation: true,
-    nodeIntegration: false,
-    nodeIntegrationInSubFrames: false,
-    nodeIntegrationInWorker: false,
-    sandbox: true,
-    webSecurity: true,
-    webviewTag: false,
-    allowRunningInsecureContent: false,
-    experimentalFeatures: false,
-  };
-}
-
-function inspectDesktopWebElement(webContents: Electron.WebContents, x: number, y: number): void {
-  if (webContents.isDestroyed()) return;
-  webContents.openDevTools({ mode: "detach", title: tr("Viron 网页检查器") });
-  webContents.inspectElement(x, y);
-}
-
-function openDesktopWebLinkInNewPage(view: ManagedDesktopWebView, url: string): void {
-  if (!supportedDesktopWebUrl(url)) return;
-  if (view.pages.size >= DESKTOP_WEB_PAGE_LIMIT) {
-    notifyWebView(view, "error", tr("同一账号最多打开 {{0}} 个页面", [DESKTOP_WEB_PAGE_LIMIT]));
-    return;
-  }
-  const page = createDesktopWebPage(view, false);
-  page.pendingUrl = url;
-  activateDesktopWebPage(view, page.id);
-}
-
-function desktopWebContextMenuItem(
-  view: ManagedDesktopWebView,
-  webContents: Electron.WebContents,
-  params: Electron.ContextMenuParams,
-  action: DesktopWebContextMenuAction,
-): Electron.MenuItemConstructorOptions {
-  const navigation = webContents.navigationHistory;
-  switch (action) {
-    case "open-link-new-page": return { label: tr("在新标签页中打开链接"), click: () => openDesktopWebLinkInNewPage(view, params.linkURL) };
-    case "copy-link": return { label: tr("复制链接地址"), click: () => clipboard.writeText(params.linkURL) };
-    case "undo": return { label: tr("撤销"), accelerator: "CommandOrControl+Z", enabled: params.editFlags.canUndo, click: () => webContents.undo() };
-    case "redo": return { label: tr("重做"), accelerator: "CommandOrControl+Shift+Z", enabled: params.editFlags.canRedo, click: () => webContents.redo() };
-    case "cut": return { label: tr("剪切"), accelerator: "CommandOrControl+X", enabled: params.editFlags.canCut, click: () => webContents.cut() };
-    case "copy": return { label: tr("复制"), accelerator: "CommandOrControl+C", enabled: params.editFlags.canCopy, click: () => webContents.copy() };
-    case "paste": return { label: tr("粘贴"), accelerator: "CommandOrControl+V", enabled: params.editFlags.canPaste, click: () => webContents.paste() };
-    case "select-all": return { label: tr("全选"), accelerator: "CommandOrControl+A", enabled: params.editFlags.canSelectAll, click: () => webContents.selectAll() };
-    case "back": return { label: tr("后退"), enabled: navigation.canGoBack(), click: () => navigation.goBack() };
-    case "forward": return { label: tr("前进"), enabled: navigation.canGoForward(), click: () => navigation.goForward() };
-    case "reload": return { label: tr("重新加载"), accelerator: "CommandOrControl+R", click: () => webContents.reload() };
-    case "inspect": return { label: tr("检查元素"), click: () => inspectDesktopWebElement(webContents, params.x, params.y) };
-  }
-}
-
-function createDesktopWebPage(
-  view: ManagedDesktopWebView,
-  allowAutofill: boolean,
-  adoptedWebContents?: Electron.WebContents,
-): ManagedDesktopWebPage {
-  if (!mainWindow) throw new Error(tr("主窗口不可用"));
-  const nativeView = new WebContentsView(adoptedWebContents
-    ? { webContents: adoptedWebContents }
-    : { webPreferences: desktopWebPreferences(view.partition) });
-  nativeView.setBackgroundColor("#ffffff");
-  nativeView.webContents.setBackgroundThrottling(!view.previewing);
-  nativeView.setBounds(view.bounds);
-  nativeView.setVisible(false);
-  const page: ManagedDesktopWebPage = {
-    id: randomUUID(),
-    view: nativeView,
-    allowAutofill,
-    pendingUrl: "",
-    autofillSignature: "",
-    autofillMessage: "",
-    error: "",
-    closing: false,
-  };
-  view.pages.set(page.id, page);
-  mainWindow.contentView.addChildView(nativeView);
-  nativeView.webContents.on("before-mouse-event", (_event, mouse) => {
-    if (mouse.type !== "mouseDown") return;
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    mainWindow.webContents.send("viron:native-view-pointer-down");
-    sendToAgentChat("viron:native-view-pointer-down");
-  });
-  nativeView.webContents.on("context-menu", (_event, params) => {
-    if (!mainWindow || mainWindow.isDestroyed() || nativeView.webContents.isDestroyed()) return;
-    const groups = desktopWebContextMenuGroups({
-      linkUrl: params.linkURL,
-      isEditable: params.isEditable,
-      hasSelection: Boolean(params.selectionText),
-    });
-    const template = groups.flatMap((group, index) => [
-      ...(index > 0 ? [{ type: "separator" as const }] : []),
-      ...group.map((action) => desktopWebContextMenuItem(view, nativeView.webContents, params, action)),
-    ]);
-    Menu.buildFromTemplate(template).popup({ window: mainWindow });
-  });
-  nativeView.webContents.on("before-input-event", (event, input) => {
-    if (input.type !== "keyDown" || input.isAutoRepeat) return;
-    if (input.key === "Escape") {
-      const action = immersiveNavigationEscapeAction(immersiveNavigationState);
-      if (!action) return;
-      event.preventDefault();
-      sendImmersiveNavigationAction(action);
-      return;
-    }
-    const shortcutAction = shortcutActionForInput(shortcutPreferences().bindings, {
-      key: input.key,
-      meta: input.meta,
-      control: input.control,
-      alt: input.alt,
-      shift: input.shift,
-    }, process.platform);
-    if (shortcutAction !== "app.agentQuickInput" || currentAgentEntryMode() !== "quick") return;
-    event.preventDefault();
-    sendShortcutAction(shortcutAction);
-  });
-  nativeView.webContents.setWindowOpenHandler(({ url }) => {
-    if (!supportedDesktopPopupUrl(url)) {
-      page.autofillMessage = tr("已阻止非 HTTP(S) 弹窗");
-      sendWebViewState(view);
-      return { action: "deny" };
-    }
-    if (view.pages.size >= DESKTOP_WEB_PAGE_LIMIT) {
-      page.autofillMessage = tr("同一账号最多打开 {{0}} 个页面", [DESKTOP_WEB_PAGE_LIMIT]);
-      sendWebViewState(view);
-      return { action: "deny" };
-    }
-    return {
-      action: "allow",
-      outlivesOpener: true,
-      overrideBrowserWindowOptions: { webPreferences: desktopWebPreferences(view.partition) },
-      createWindow: (options) => {
-        const popup = createDesktopWebPage(
-          view,
-          false,
-          (options as Electron.WebContentsViewConstructorOptions).webContents,
-        );
-        activateDesktopWebPage(view, popup.id);
-        return popup.view.webContents;
-      },
-    };
-  });
-  nativeView.webContents.on("will-navigate", (event, url) => {
-    if (!supportedDesktopPopupUrl(url)) event.preventDefault();
-  });
-  nativeView.webContents.on("did-start-loading", () => { touchDesktopWebView(view); sendWebViewState(view); });
-  nativeView.webContents.on("did-stop-loading", () => { touchDesktopWebView(view); sendWebViewState(view); });
-  nativeView.webContents.on("page-title-updated", () => sendWebViewState(view));
-  nativeView.webContents.on("did-navigate", (_event, url) => {
-    if (view.activePageId === page.id) rememberDesktopWebLastUrl(view, url);
-    sendWebViewState(view);
-  });
-  nativeView.webContents.on("did-navigate-in-page", (_event, url) => {
-    if (view.activePageId === page.id) rememberDesktopWebLastUrl(view, url);
-    sendWebViewState(view);
-  });
-  nativeView.webContents.on("dom-ready", () => {
-    if (!page.allowAutofill) return;
-    for (const delay of WEB_CREDENTIAL_AUTOFILL_DELAYS_MS) {
-      const timer = setTimeout(() => void autoFillWebPage(view, page), delay);
-      timer.unref();
-    }
-  });
-  nativeView.webContents.on("render-process-gone", (_event, details) => {
-    page.error = tr("本机页面进程已退出（{{0}}）", [details.reason]);
-    sendWebViewState(view);
-  });
-  nativeView.webContents.on("destroyed", () => {
-    if (!view.closing && !page.closing) removeDesktopWebPage(view, page.id, false);
-  });
-  return page;
-}
-
-async function clearDesktopWebSession(partition: Session): Promise<void> {
-  await partition.closeAllConnections();
-  await partition.clearData();
-}
-
-async function latestDesktopWebCredential(credentialId: string): Promise<DesktopWebCredential> {
-  const { credential } = await localWebCredential(credentialId);
-  if (!supportedDesktopWebUrl(credential.entryUrl)) throw new Error(tr("Web 入口地址只支持 HTTP 或 HTTPS"));
-  return credential;
-}
-
-function applyDesktopWebCredential(view: ManagedDesktopWebView, credential: DesktopWebCredential): void {
-  view.entryId = credential.entryId;
-  view.entryUrl = credential.entryUrl;
-  view.entryOrigin = new URL(credential.entryUrl).origin;
-  view.username = credential.username;
-  view.password = credential.password;
-  view.lastUrl = cacheableDesktopWebUrl(view.entryUrl, view.lastUrl) ?? "";
-}
-
-async function reopenDesktopWebViews(views: ManagedDesktopWebView[], credential: DesktopWebCredential): Promise<void> {
-  await Promise.all(views.map(async (view) => {
-    applyDesktopWebCredential(view, credential);
-    destroyDesktopWebPages(view);
-    const page = createDesktopWebPage(view, true);
-    activateDesktopWebPage(view, page.id);
-    await page.view.webContents.loadURL(view.entryUrl);
-  }));
-}
-
-async function refreshDesktopWebViews(views: ManagedDesktopWebView[], reopen: boolean): Promise<void> {
-  const first = views[0];
-  if (!first) return;
-  const credential = await latestDesktopWebCredential(first.credentialId);
-  if (reopen) await reopenDesktopWebViews(views, credential);
-  else for (const view of views) applyDesktopWebCredential(view, credential);
-}
-
-async function resetDesktopWebViews(views: ManagedDesktopWebView[]): Promise<void> {
-  const first = views[0];
-  if (!first) return;
-  const credential = await latestDesktopWebCredential(first.credentialId);
-  forgetDesktopWebLastUrl(first.lastUrlKey);
-  for (const view of views) view.lastUrl = "";
-  for (const view of views) destroyDesktopWebPages(view);
-  try {
-    await clearDesktopWebSession(first.partition);
-  } catch (error) {
-    await reopenDesktopWebViews(views, credential);
-    throw error;
-  }
-  await reopenDesktopWebViews(views, credential);
-  for (const view of views) notifyWebView(view, "success", tr("已清除本机登录状态并重新打开账号页面"));
-}
-
-async function resetDesktopWebView(view: ManagedDesktopWebView): Promise<DesktopWebViewState> {
-  await resetDesktopWebViews([...desktopWebViews.values()].filter((candidate) => candidate.credentialId === view.credentialId));
-  return webViewState(view);
-}
-
-async function openDesktopWebView(
-  credentialId: string,
-  bounds: DesktopWebViewBounds,
-  initialPage: DesktopWebInitialPage = "entry",
-  visible = true,
-  originEnvironmentId?: string,
-): Promise<DesktopWebViewState> {
-  if (!mainWindow) throw new Error(tr("主窗口不可用"));
-  if (desktopWebViews.size >= 8) throw new Error(tr("本机最多同时打开 8 个账号页面，请先关闭一个页面"));
-  const { auth, credential } = await localWebCredential(credentialId);
-  if (!supportedDesktopWebUrl(credential.entryUrl)) throw new Error(tr("Web 入口地址只支持 HTTP 或 HTTPS"));
-  const endpoint = activeEndpoint?.endpoint;
-  if (!endpoint) throw new Error(tr("请先验证 Viron Endpoint"));
-  const registrationId = await reserveDesktopRuntime("web", credentialId, undefined, originEnvironmentId);
-  const id = randomUUID();
-  const webPartition = desktopWebSession(endpoint, auth.user.id, credential.credentialId);
-  const lastUrlKey = desktopWebLastUrlKey(endpoint, auth.user.id, credential.credentialId);
-  const initialUrl = cachedDesktopWebUrl(credential.entryUrl, lastUrlKey);
-  const managed: ManagedDesktopWebView = {
-    id,
-    registrationId,
-    credentialId,
-    entryId: credential.entryId,
-    entryUrl: credential.entryUrl,
-    entryOrigin: new URL(credential.entryUrl).origin,
-    username: credential.username,
-    password: credential.password,
-    pages: new Map(),
-    activePageId: "",
-    bounds: webViewBounds(bounds),
-    visible,
-    previewing: false,
-    closing: false,
-    lastActivityAt: Date.now(),
-    closedReason: "",
-    partition: webPartition,
-    lastUrlKey,
-    lastUrl: "",
-    notice: null,
-    downloadListener: (_event, item, webContents) => {
-      const page = [...managed.pages.values()].find((item) => item.view.webContents.id === webContents.id);
-      if (!page) return;
-      const filename = basename(item.getFilename()) || "download";
-      const smokeDownloadPath = process.argv.includes("--smoke-test") ? process.env.VIRON_DESKTOP_SMOKE_DOWNLOAD_PATH?.trim() : "";
-      if (smokeDownloadPath) item.setSavePath(smokeDownloadPath);
-      else item.setSaveDialogOptions({ title: tr("保存网页下载"), defaultPath: join(app.getPath("downloads"), filename) });
-      notifyWebView(managed, "info", tr("准备下载 {{0}}", [filename]));
-      item.once("done", (_downloadEvent, state) => {
-        if (state === "completed") notifyWebView(managed, "success", tr("{{0}} 已保存", [filename]));
-        else if (state === "cancelled") notifyWebView(managed, "info", tr("已取消下载 {{0}}", [filename]));
-        else notifyWebView(managed, "error", tr("{{0}} 下载失败", [filename]));
-      });
-    },
-  };
-  try {
-    desktopWebViews.set(id, managed);
-    trackDesktopWebPartition(webPartition);
-    webPartition.on("will-download", managed.downloadListener);
-    const page = createDesktopWebPage(managed, true);
-    activateDesktopWebPage(managed, page.id);
-    trackDesktopRuntime({
-      id: registrationId,
-      localId: id,
-      activity: () => desktopWebViews.get(id)?.lastActivityAt ?? null,
-      close: (reason) => closeDesktopWebView(id, reason),
-    });
-    if (initialPage === "entry") {
-      void page.view.webContents.loadURL(initialUrl).catch((error) => {
-        page.error = error instanceof Error ? error.message : tr("本机页面加载失败");
-        sendWebViewState(managed);
-      });
-    } else {
-      page.pendingUrl = initialUrl;
-      const blankPage = createDesktopWebPage(managed, false);
-      activateDesktopWebPage(managed, blankPage.id);
-    }
-    return webViewState(managed);
-  } catch (error) {
-    desktopWebViews.delete(id);
-    await releaseDesktopRuntimeReservation(registrationId);
-    throw error;
-  }
-}
-
-async function snapshotDesktopWebCredential(credentialId: string, width: number, height: number, maxTextChars: number) {
-  const existing = [...desktopWebViews.values()].find((view) => view.credentialId === credentialId && !view.closing);
-  let managed = existing;
-  let createdId: string | null = null;
-  if (!managed) {
-    const state = await openDesktopWebView(credentialId, { x: 0, y: 0, width, height }, "entry", false);
-    createdId = state.id;
-    managed = desktopWebViews.get(state.id);
-  }
-  if (!managed) throw new Error(tr("本机 Web 页面未能启动"));
-  try {
-    const page = activeDesktopWebPage(managed);
-    const deadline = Date.now() + 20_000;
-    while (page.view.webContents.isLoading() && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    await new Promise((resolve) => setTimeout(resolve, 750));
-    const semantic = await page.view.webContents.executeJavaScript(`(() => {
-      const visible = (element) => {
-        const style = window.getComputedStyle(element);
-        const rect = element.getBoundingClientRect();
-        return style.display !== "none" && style.visibility !== "hidden" && rect.width > 1 && rect.height > 1;
-      };
-      const nameFor = (element) => (element.getAttribute("aria-label") || element.getAttribute("title") || element.getAttribute("placeholder") || element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 500);
-      return {
-        text: (document.body?.innerText || "").replace(/\\u0000/g, ""),
-        interactive: [...document.querySelectorAll("a,button,input,select,textarea,[role=button],[role=link],[tabindex]")]
-          .filter(visible)
-          .slice(0, 200)
-          .map((element, index) => ({
-            index,
-            tag: element.tagName.toLowerCase(),
-            role: element.getAttribute("role") || "",
-            name: nameFor(element),
-            href: element instanceof HTMLAnchorElement ? element.href : "",
-            disabled: Boolean(element.disabled || element.getAttribute("aria-disabled") === "true"),
-          })),
-      };
-    })()`, true) as {
-      text: string;
-      interactive: Array<{ index: number; tag: string; role: string; name: string; href: string; disabled: boolean }>;
-    };
-    const limit = Math.max(1_000, Math.min(200_000, Math.round(maxTextChars)));
-    touchDesktopWebView(managed);
-    return {
-      view: webViewState(managed),
-      text: semantic.text.slice(0, limit),
-      textTruncated: semantic.text.length > limit,
-      interactive: semantic.interactive,
-    };
-  } finally {
-    if (createdId) await closeDesktopWebView(createdId, tr("MCP Web 快照已完成"));
-  }
-}
-
-interface DesktopMcpWebAction {
-  action: "click" | "fill" | "select" | "submit";
-  elementIndex: number;
-  value?: string;
-  expectedName?: string;
-}
-
-interface DesktopMcpWebControl {
-  action: "navigate" | "back" | "forward" | "reload";
-  url?: string;
-}
-
-async function actOnDesktopWebCredential(credentialId: string, input: DesktopMcpWebAction) {
-  let managed = [...desktopWebViews.values()].find((view) => view.credentialId === credentialId && !view.closing);
-  if (!managed) {
-    const state = await openDesktopWebView(credentialId, { x: 0, y: 0, width: 1280, height: 720 }, "entry", false);
-    managed = desktopWebViews.get(state.id);
-  }
-  if (!managed) throw new Error(tr("本机 Web 页面未能启动"));
-  const page = activeDesktopWebPage(managed);
-  const deadline = Date.now() + 20_000;
-  while (page.view.webContents.isLoading() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
-  const payload = Buffer.from(JSON.stringify(input), "utf8").toString("base64");
-  const element = await page.view.webContents.executeJavaScript(`(async () => {
-    const bytes = Uint8Array.from(atob(${JSON.stringify(payload)}), (character) => character.charCodeAt(0));
-    const input = JSON.parse(new TextDecoder().decode(bytes));
-    const visible = (element) => {
-      const style = window.getComputedStyle(element);
-      const rect = element.getBoundingClientRect();
-      return style.display !== "none" && style.visibility !== "hidden" && rect.width > 1 && rect.height > 1;
-    };
-    const nameFor = (element) => (element.getAttribute("aria-label") || element.getAttribute("title") || element.getAttribute("placeholder") || element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 500);
-    const elements = [...document.querySelectorAll("a,button,input,select,textarea,[role=button],[role=link],[tabindex]")].filter(visible).slice(0, 200);
-    const element = elements[input.elementIndex];
-    if (!element) throw new Error("交互元素序号已失效，请重新读取页面快照");
-    const name = nameFor(element);
-    if (input.expectedName && name !== input.expectedName) throw new Error("交互元素名称已变化，请重新读取页面快照");
-    if (element.disabled || element.getAttribute("aria-disabled") === "true") throw new Error("交互元素当前不可用");
-    const setValue = (target, value) => {
-      const prototype = target instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-      const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
-      if (setter) setter.call(target, value); else target.value = value;
-      target.dispatchEvent(new Event("input", { bubbles: true }));
-      target.dispatchEvent(new Event("change", { bubbles: true }));
-    };
-    if (input.action === "fill") {
-      if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) throw new Error("目标元素不支持文本填写");
-      if (element instanceof HTMLInputElement && ["password", "file", "hidden"].includes(element.type.toLowerCase())) throw new Error("MCP 不允许填写密码、文件或隐藏输入框");
-      setValue(element, input.value || "");
-    } else if (input.action === "select") {
-      if (!(element instanceof HTMLSelectElement)) throw new Error("目标元素不是下拉选择框");
-      if (![...element.options].some((option) => option.value === input.value)) throw new Error("下拉选项不存在");
-      element.value = input.value;
-      element.dispatchEvent(new Event("input", { bubbles: true }));
-      element.dispatchEvent(new Event("change", { bubbles: true }));
-    } else if (input.action === "submit") {
-      const form = element.closest("form");
-      if (form?.requestSubmit) form.requestSubmit(element instanceof HTMLButtonElement || (element instanceof HTMLInputElement && ["submit", "image"].includes(element.type)) ? element : undefined);
-      else element.click();
-    } else {
-      element.click();
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
-    return { index: input.elementIndex, tag: element.tagName.toLowerCase(), name };
-  })()`, true) as { index: number; tag: string; name: string };
-  touchDesktopWebView(managed);
-  return {
-    view: webViewState(managed),
-    action: input.action,
-    element,
-    url: activeDesktopWebPage(managed).view.webContents.getURL(),
-    title: activeDesktopWebPage(managed).view.webContents.getTitle(),
-  };
-}
-
-async function controlDesktopWebCredential(credentialId: string, input: DesktopMcpWebControl) {
-  let managed = [...desktopWebViews.values()].find((view) => view.credentialId === credentialId && !view.closing);
-  if (!managed) {
-    const state = await openDesktopWebView(credentialId, { x: 0, y: 0, width: 1280, height: 720 }, "entry", false);
-    managed = desktopWebViews.get(state.id);
-  }
-  if (!managed) throw new Error(tr("本机 Web 页面未能启动"));
-  const page = activeDesktopWebPage(managed);
-  const webContents = page.view.webContents;
-  const navigation = webContents.navigationHistory;
-  if (input.action === "navigate") {
-    if (!input.url || !supportedDesktopWebUrl(input.url)) throw new Error(tr("页面地址只支持 HTTP 或 HTTPS URL"));
-    page.pendingUrl = "";
-    page.error = "";
-    await webContents.loadURL(input.url);
-  } else if (input.action === "back") {
-    if (navigation.canGoBack()) navigation.goBack();
-  } else if (input.action === "forward") {
-    if (navigation.canGoForward()) navigation.goForward();
-  } else {
-    webContents.reload();
-  }
-  const deadline = Date.now() + 30_000;
-  while (webContents.isLoading() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
-  touchDesktopWebView(managed);
-  return {
-    view: webViewState(managed),
-    action: input.action,
-    url: webContents.getURL(),
-    title: webContents.getTitle(),
-  };
-}
-
-async function uploadDesktopWebCredential(credentialId: string, filenameValue: string, data: Buffer) {
-  let managed = [...desktopWebViews.values()].find((view) => view.credentialId === credentialId && !view.closing);
-  if (!managed) {
-    const state = await openDesktopWebView(credentialId, { x: 0, y: 0, width: 1280, height: 720 }, "entry", false);
-    managed = desktopWebViews.get(state.id);
-  }
-  if (!managed) throw new Error(tr("本机 Web 页面未能启动"));
-  const page = activeDesktopWebPage(managed).view.webContents;
-  const deadline = Date.now() + 20_000;
-  while (page.isLoading() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
-  const directory = join(app.getPath("temp"), "viron-mcp-web-upload", randomUUID());
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  const filename = basename(filenameValue.replaceAll("\0", "")) || "upload";
-  const path = join(directory, filename);
-  await writeFile(path, data, { mode: 0o600, flag: "wx" });
-  try {
-    page.debugger.attach("1.3");
-    const document = await page.debugger.sendCommand("DOM.getDocument") as { root: { nodeId: number } };
-    const input = await page.debugger.sendCommand("DOM.querySelector", {
-      nodeId: document.root.nodeId,
-      selector: "input[type=file]:not([disabled])",
-    }) as { nodeId: number };
-    if (!input.nodeId) throw new Error(tr("当前页面没有可用的文件输入框"));
-    await page.debugger.sendCommand("DOM.setFileInputFiles", { nodeId: input.nodeId, files: [path] });
-    touchDesktopWebView(managed);
-    return { ok: true, filename, view: webViewState(managed) };
-  } finally {
-    if (page.debugger.isAttached()) page.debugger.detach();
-    const timer = setTimeout(() => { void rm(directory, { recursive: true, force: true }); }, 30_000);
-    timer.unref();
-  }
-}
-
-async function closeDesktopWebView(id: string, reason = tr("用户主动关闭连接")): Promise<void> {
-  const managed = desktopWebViews.get(id);
-  if (!managed) return;
-  managed.closedReason = reason;
-  sendWebViewState(managed);
-  managed.closing = true;
-  desktopWebViews.delete(id);
-  managed.partition.off("will-download", managed.downloadListener);
-  const releaseReservation = releaseDesktopRuntimeReservation(managed.registrationId);
-  try {
-    managed.partition.flushStorageData();
-    await managed.partition.cookies.flushStore();
-  } finally {
-    destroyDesktopWebPages(managed);
-    managed.password = "";
-    await releaseReservation;
-  }
-}
-
-async function closeAllDesktopWebViews(): Promise<void> {
-  const views = [...desktopWebViews.values()];
-  await Promise.all(views.map((view) => closeDesktopWebView(view.id)));
-  pendingCredentialRequests.clear();
-}
-
-function localWebView(id: string): ManagedDesktopWebView {
-  const view = desktopWebViews.get(id);
-  if (!view) throw new Error(tr("本机账号页面不存在或已经关闭"));
-  return view;
-}
-
-async function handleDesktopWebViewAction(id: string, action: { type: string; url?: string; pageId?: string; orderedPageIds?: string[] }): Promise<DesktopWebViewState> {
-  const managed = localWebView(id);
-  touchDesktopWebView(managed);
-  if (action.type === "activate-page") {
-    if (!action.pageId) throw new Error(tr("请选择要激活的本机页面"));
-    activateDesktopWebPage(managed, action.pageId);
-    return webViewState(managed);
-  }
-  if (action.type === "close-page") {
-    if (!action.pageId || !managed.pages.has(action.pageId)) throw new Error(tr("要关闭的本机页面不存在"));
-    if (managed.pages.size <= 1) throw new Error(tr("账号至少需要保留一个页面"));
-    removeDesktopWebPage(managed, action.pageId, true);
-    return webViewState(managed);
-  }
-  if (action.type === "new-page") {
-    if (managed.pages.size >= DESKTOP_WEB_PAGE_LIMIT) throw new Error(tr("同一账号最多打开 {{0}} 个页面", [DESKTOP_WEB_PAGE_LIMIT]));
-    const blankPage = createDesktopWebPage(managed, false);
-    activateDesktopWebPage(managed, blankPage.id);
-    return webViewState(managed);
-  }
-  if (action.type === "reorder-pages") {
-    const reordered = Array.isArray(action.orderedPageIds) ? reorderMap(managed.pages, action.orderedPageIds) : null;
-    if (!reordered) throw new Error(tr("页面标签排序必须包含当前账号的全部页面"));
-    managed.pages = reordered;
-    sendWebViewState(managed);
-    return webViewState(managed);
-  }
-  if (action.type === "reset") return await resetDesktopWebView(managed);
-  const page = activeDesktopWebPage(managed);
-  const navigation = page.view.webContents.navigationHistory;
-  if (action.type === "back" && navigation.canGoBack()) navigation.goBack();
-  else if (action.type === "forward" && navigation.canGoForward()) navigation.goForward();
-  else if (action.type === "reload") page.view.webContents.reload();
-  else if (action.type === "navigate") {
-    const url = typeof action.url === "string" ? normalizeWebAddress(action.url) : null;
-    if (!url || !supportedDesktopWebUrl(url)) throw new Error(tr("页面地址只支持 HTTP 或 HTTPS URL"));
-    page.pendingUrl = "";
-    page.error = "";
-    void page.view.webContents.loadURL(url).catch((error) => {
-      page.error = error instanceof Error ? error.message : tr("页面导航失败");
-      sendWebViewState(managed);
-    });
-  } else if (action.type === "refill") {
-    await autoFillWebPage(managed, page, true);
-  } else if (!["back", "forward"].includes(action.type)) throw new Error(tr("不支持的本机页面操作"));
-  return webViewState(managed);
-}
-
-interface DesktopWebMutationContext {
-  endpoint: string;
-  userId: string;
-  credentialIds: string[];
-  resource: "credential" | "entry" | "environment";
-}
-
-async function desktopWebMutationContext(path: string, method: string): Promise<DesktopWebMutationContext | null> {
-  if (!activeEndpoint || !["PUT", "DELETE"].includes(method)) return null;
-  const endpoint = activeEndpoint.endpoint;
-  const credential = path.match(/^\/api\/v1\/web-credentials\/([0-9a-f-]+)$/i);
-  if (credential) {
-    const auth = await endpointJson<DesktopAuthContext>("/api/v1/auth/me");
-    return { endpoint, userId: auth.user.id, credentialIds: [credential[1]], resource: "credential" };
-  }
-  const entry = path.match(/^\/api\/v1\/web-entries\/([0-9a-f-]+)$/i);
-  if (entry) {
-    const credentialIds = method === "PUT"
-      ? [...desktopWebViews.values()].filter((view) => view.entryId === entry[1]).map((view) => view.credentialId)
-      : (await endpointJson<{ items: Array<{ id: string }> }>(`/api/v1/web-entries/${entry[1]}/credentials`)).items.map((item) => item.id);
-    if (!credentialIds.length) return null;
-    const auth = await endpointJson<DesktopAuthContext>("/api/v1/auth/me");
-    return { endpoint, userId: auth.user.id, credentialIds: [...new Set(credentialIds)], resource: "entry" };
-  }
-  const environment = method === "DELETE" ? path.match(/^\/api\/v1\/environments\/([0-9a-f-]+)$/i) : null;
-  if (environment) {
-    const entries = await endpointJson<{ items: Array<{ id: string }> }>(`/api/v1/environments/${environment[1]}/web-entries`);
-    const credentials = await Promise.all(entries.items.map((item) => endpointJson<{ items: Array<{ id: string }> }>(`/api/v1/web-entries/${item.id}/credentials`)));
-    const credentialIds = credentials.flatMap((response) => response.items.map((item) => item.id));
-    if (!credentialIds.length) return null;
-    const auth = await endpointJson<DesktopAuthContext>("/api/v1/auth/me");
-    return { endpoint, userId: auth.user.id, credentialIds: [...new Set(credentialIds)], resource: "environment" };
-  }
-  return null;
-}
-
-async function reconcileDesktopWebMutation(context: DesktopWebMutationContext | null, method: string, response: Response): Promise<void> {
-  if (!response.ok || !context) return;
-  for (const credentialId of context.credentialIds) {
-    const lastUrlKey = desktopWebLastUrlKey(context.endpoint, context.userId, credentialId);
-    const activeViews = [...desktopWebViews.values()].filter((view) => view.credentialId === credentialId);
-    if (method === "PUT" && activeViews.length) {
-      await refreshDesktopWebViews(activeViews, context.resource === "entry");
-      continue;
-    }
-    await Promise.all(activeViews.map((view) => closeDesktopWebView(view.id)));
-    if (method === "DELETE") forgetDesktopWebLastUrl(lastUrlKey);
-    await clearDesktopWebSession(desktopWebSession(context.endpoint, context.userId, credentialId));
-  }
 }
 
 function requireDesktopString(value: unknown, label: string): string {

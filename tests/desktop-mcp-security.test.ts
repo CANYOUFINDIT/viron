@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { desktopMcpOperationUrlAllowed, desktopMcpWorkspaceKey } from "../src/desktop/mcp-security.js";
 
 const desktopMain = readFileSync(new URL("../src/desktop/main.ts", import.meta.url), "utf8");
+// contract unchanged; implementation moved from src/desktop/main.ts
+const desktopWebRuntime = readFileSync(new URL("../src/desktop/web-view-runtime.ts", import.meta.url), "utf8");
 
 describe("desktop MCP security", () => {
   it("limits the safety window to the current Endpoint and exact Operation routes", () => {
@@ -51,9 +53,9 @@ describe("desktop MCP security", () => {
   });
 
   it("routes confirmed local Web navigation through the managed desktop Web runtime", () => {
-    expect(desktopMain).toContain("interface DesktopMcpWebControl");
+    expect(desktopWebRuntime).toContain("interface DesktopMcpWebControl");
     expect(desktopMain).toContain("controlDesktopWebCredential(webControl[1], input.body as DesktopMcpWebControl)");
-    expect(desktopMain).toContain('if (!input.url || !supportedDesktopWebUrl(input.url))');
-    expect(desktopMain).toContain("webContents.navigationHistory");
+    expect(desktopWebRuntime).toContain('if (!input.url || !supportedDesktopWebUrl(input.url))');
+    expect(desktopWebRuntime).toContain("webContents.navigationHistory");
   });
 });

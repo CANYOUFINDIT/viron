@@ -268,6 +268,8 @@ describe("active environment picture-in-picture", () => {
     const desktopMain = source("src/desktop/main.ts");
     // contract unchanged; implementation moved from src/desktop/main.ts
     const desktopDockOverlay = source("src/desktop/overlays/active-environment-dock-window.ts");
+    // contract unchanged; implementation moved from src/desktop/main.ts
+    const desktopWebRuntime = source("src/desktop/web-view-runtime.ts");
     const transition = source("src/client/environment-workspace-transition.ts");
     const windowsPackage = source("scripts/package-windows.mjs");
 
@@ -353,17 +355,17 @@ describe("active environment picture-in-picture", () => {
     expect(desktopBrowser).toContain("schedulePreviewCapture(120)");
     expect(desktopBrowser).toContain("await refreshPreviewFrame();");
     expect(desktopBrowser.indexOf("await refreshPreviewFrame();")).toBeLessThan(desktopBrowser.indexOf("await setDesktopWebViewPreviewing(id, previewing)"));
-    expect(desktopMain).toContain("captureDesktopWebViewPreview");
-    expect(desktopMain).toContain("captureWebContentsPreview");
-    expect(desktopMain).toContain("captureDesktopRendererPreview");
+    expect(desktopWebRuntime).toContain("captureDesktopWebViewPreview");
+    expect(desktopWebRuntime).toContain("captureWebContentsPreview");
+    expect(desktopWebRuntime).toContain("captureDesktopRendererPreview");
     expect(desktopMain).toContain('ipcMain.handle("viron:renderer-preview:capture"');
     expect(desktopMain).toContain("webContents.capturePage()");
-    expect(desktopMain).toContain("if (!view.visible) return");
-    expect(desktopMain).toContain(".toJPEG(72)");
-    expect(desktopMain).not.toContain("x: -16_384");
-    expect(desktopMain).toContain("layoutDesktopWebViewPages");
+    expect(desktopWebRuntime).toContain("if (!view.visible) return");
+    expect(desktopWebRuntime).toContain(".toJPEG(72)");
+    expect(desktopWebRuntime).not.toContain("x: -16_384");
+    expect(desktopWebRuntime).toContain("layoutDesktopWebViewPages");
     expect(desktopMain).toContain("if (view.previewing) view.visible = false;");
-    expect(desktopMain).toContain("setBackgroundThrottling(!view.previewing)");
+    expect(desktopWebRuntime).toContain("setBackgroundThrottling(!view.previewing)");
     expect(desktopMain).toContain("previewFrameChanged");
     expect(desktopMain).toContain("retainedPreviewPixels");
     expect(desktopMain).toContain("dragPositionDelivered");
