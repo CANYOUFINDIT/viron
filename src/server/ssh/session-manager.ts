@@ -9,6 +9,7 @@ import { writeAudit } from "../audit.js";
 import { agentSshContextSnapshot, summarizeAgentSshOutput } from "../../shared/agent-ssh-context.js";
 import { normalizeAgentSshCommand, type AgentSshContextSnapshot, type AgentSshDiagnosticResult } from "../../shared/agent.js";
 import { sshCommandRiskLevel } from "../../shared/ssh-command-risk.js";
+import { sshErrorMessage } from "../../shared/ssh-error.js";
 import { connectSsh, type ConnectedSsh } from "./connector.js";
 import { executeSshCommandOnConnection, SshCommandAbortedError } from "./command.js";
 import { normalizeSshLoginScript } from "./options.js";
@@ -53,16 +54,6 @@ export interface PublicSshSession {
 }
 
 const OUTPUT_BUFFER_LIMIT = 512 * 1024;
-
-function errorMessage(error: unknown): string {
-  const value = error instanceof Error ? error.message : String(error);
-  if (/authentication/i.test(value)) return "SSH 认证失败，请检查用户名和凭据";
-  if (/timed out/i.test(value)) return "SSH 连接超时";
-  if (/ECONNREFUSED/i.test(value)) return "SSH 端口拒绝连接";
-  if (/ENOTFOUND|EAI_AGAIN/i.test(value)) return "无法解析 SSH 主机地址";
-  if (/Host key/i.test(value)) return "SSH 主机指纹不匹配";
-  return value;
-}
 
 export class SshSessionManager {
   private readonly sessions = new Map<string, ManagedSession>();
@@ -142,7 +133,7 @@ export class SshSessionManager {
       shell.on("data", (chunk: Buffer | string) => this.onOutput(session, chunk));
       shell.stderr.on("data", (chunk: Buffer | string) => this.onOutput(session, chunk));
       shell.once("close", () => { void this.close(id, "远程 Shell 已关闭"); });
-      current.client.once("error", (error) => { void this.close(id, errorMessage(error)); });
+      current.client.once("error", (error) => { void this.close(id, sshErrorMessage(error)); });
       current.client.once("end", () => { void this.close(id, "SSH 连接已结束"); });
       const loginScript = current.connection.options.loginScript ?? "";
       if (current.connection.options.loginScriptEnabled && loginScript.trim()) {

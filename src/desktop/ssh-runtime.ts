@@ -3,11 +3,14 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createWriteStream, existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync, type WriteStream } from "node:fs";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
-import { Client, type ClientChannel, type ConnectConfig, type SFTPWrapper } from "ssh2";
+import { Client, type ClientChannel, type SFTPWrapper } from "ssh2";
 import { connectSshClient } from "../shared/ssh-client.js";
 import { IdleResourcePool } from "../shared/idle-resource-pool.js";
 import { normalizeAgentSshCommand, type AgentSshContextSnapshot, type AgentSshDiagnosticResult } from "../shared/agent.js";
 import { sshCommandRiskLevel } from "../shared/ssh-command-risk.js";
+import { buildSshConnectConfig } from "../shared/ssh-connect.js";
+import { sshErrorMessage } from "../shared/ssh-error.js";
+import { normalizeSshLoginScript } from "../shared/ssh-login-script.js";
 import type { DesktopSshConnection, DesktopSshCredential } from "./device-identity.js";
 import { agentSshContextSnapshot, summarizeAgentSshOutput } from "./agent-ssh-context.js";
 import { contextKey, type DesktopSshContext } from "./ssh-context.js";
@@ -113,49 +116,14 @@ const OUTPUT_BUFFER_LIMIT = 512 * 1024;
 const SESSION_LIMIT = 20;
 
 export function desktopSshErrorMessage(error: unknown): string {
-  const value = error instanceof Error ? error.message : String(error);
-  if (/authentication/i.test(value)) return tr("SSH 认证失败，请检查用户名和凭据");
-  if (/timed out/i.test(value)) return tr("SSH 连接超时");
-  if (/ECONNREFUSED/i.test(value)) return tr("SSH 端口拒绝连接");
-  if (/ENOTFOUND|EAI_AGAIN/i.test(value)) return tr("无法解析 SSH 主机地址");
-  if (/Host key/i.test(value)) return tr("SSH 主机指纹不匹配");
-  return value;
-}
-
-function hostVerifier(expected: string | undefined): ConnectConfig["hostVerifier"] {
-  if (!expected) return undefined;
-  const normalizedExpected = expected.replace(/^SHA256:/i, "").replace(/=+$/, "");
-  return (key: Buffer) => createHash("sha256").update(key).digest("base64").replace(/=+$/, "") === normalizedExpected;
-}
-
-function connectConfig(connection: DesktopSshConnection, sock?: Readable): ConnectConfig {
-  const config: ConnectConfig = {
-    host: connection.host,
-    port: connection.port,
-    username: connection.username,
-    readyTimeout: 15_000,
-    keepaliveInterval: Math.max(0, Number(connection.options.keepAliveSeconds ?? 30)) * 1000,
-    keepaliveCountMax: 3,
-    hostVerifier: hostVerifier(connection.options.hostKeySha256),
-    sock,
-  };
-  if (connection.authType === "privateKey") {
-    if (!connection.credential.privateKey) throw new Error(tr("该连接没有保存私钥"));
-    config.privateKey = connection.credential.privateKey;
-    if (connection.credential.passphrase) config.passphrase = connection.credential.passphrase;
-  } else {
-    if (!connection.credential.password) throw new Error(tr("该连接没有保存密码"));
-    config.password = connection.credential.password;
-    if (connection.authType === "keyboardInteractive") config.tryKeyboard = true;
-  }
-  return config;
+  return tr(sshErrorMessage(error));
 }
 
 function connectClient(connection: DesktopSshConnection, sock?: Readable): Promise<Client> {
   const keyboardInteractivePassword = connection.authType === "keyboardInteractive"
     ? connection.credential.password
     : undefined;
-  return connectSshClient(new Client(), connectConfig(connection, sock), keyboardInteractivePassword);
+  return connectSshClient(new Client(), buildSshConnectConfig(connection, sock, tr), keyboardInteractivePassword);
 }
 
 function connectionMetadata(connection: DesktopSshConnection): Omit<DesktopSshConnection, "credential"> {
@@ -347,11 +315,6 @@ export function openDesktopSftp(client: Client): Promise<SFTPWrapper> {
   });
 }
 
-function normalizedLoginScript(script: string): string {
-  const normalized = script.replace(/\r\n?/g, "\n");
-  return normalized.endsWith("\n") ? normalized : `${normalized}\n`;
-}
-
 export class DesktopSshRuntime {
   private readonly sessions = new Map<string, ManagedSession>();
   private readonly agentDiagnostics = new Map<string, { sessionId: string; contextKey: string; controller: AbortController }>();
@@ -441,7 +404,7 @@ export class DesktopSshRuntime {
       connected.client.once("error", (error) => { void this.close(id, desktopSshErrorMessage(error)); });
       connected.client.once("end", () => { void this.close(id, tr("SSH 连接已结束")); });
       const loginScript = connected.connection.options.loginScript ?? "";
-      if (connected.connection.options.loginScriptEnabled && loginScript.trim()) shell.write(normalizedLoginScript(loginScript));
+      if (connected.connection.options.loginScriptEnabled && loginScript.trim()) shell.write(normalizeSshLoginScript(loginScript));
       return { session: state, ticket: this.issueTicket(managed) };
     } catch (error) {
       connected.close();

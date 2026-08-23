@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { StringDecoder } from "node:string_decoder";
 import type { ClientChannel } from "ssh2";
 import { buildSshLogSnapshotCommand, buildSshLogTailCommand } from "../shared/environment-log.js";
+import { normalizeSshLoginScript } from "../shared/ssh-login-script.js";
 import type { DesktopSshCredential } from "./device-identity.js";
 import { contextKey } from "./ssh-context.js";
 import {
@@ -52,11 +53,6 @@ interface ManagedDesktopLogStream {
 }
 
 const DESKTOP_LOG_STREAM_LIMIT = 3;
-
-function normalizedLoginScript(script: string): string {
-  const normalized = script.replace(/\r\n?/g, "\n");
-  return normalized.endsWith("\n") ? normalized : `${normalized}\n`;
-}
 
 export class DesktopLogRuntime {
   private readonly streams = new Map<string, ManagedDesktopLogStream>();
@@ -124,7 +120,7 @@ export class DesktopLogRuntime {
       connected.client.once("error", (error) => this.fail(managed, desktopSshErrorMessage(error)));
       connected.client.once("end", () => this.close(id, undefined, tr("SSH 连接已结束")));
       if (useLoginScript) {
-        channel.write(normalizedLoginScript(loginScript));
+        channel.write(normalizeSshLoginScript(loginScript));
         channel.write(`${command}\n`);
       }
       this.emit({ streamId: id, logId: state.logId, type: "ready", stream: state });
