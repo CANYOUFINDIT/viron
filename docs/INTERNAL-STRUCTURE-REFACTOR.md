@@ -32,6 +32,88 @@
 9. **提交粒度**：一个 PR 只做该工作项。不要引入 ESLint/Prettier 工作流或 Pinia/Vuex。
 10. **i18n**：中文字面量当 key。共享 helper 返回中文源串；桌面展示路径再 `tr()`。不要改 `src/shared/i18n-messages.ts`。
 11. **机械搬函数，禁止为拆而重写 DI。** Overlay / IPC 抽出时保持**现有函数名**为 `export function`。不要引入 `OverlayHost` class，不要把 `layoutAgentLauncherWindow` 改名为 class method（除非同时 `export function layoutAgentLauncherWindow` 作为别名且测试改读新文件后仍能 grep 到原名）。窗口 `let` 留在拥有它的 overlay 模块内，`main.ts` 不重新 `new BrowserWindow` 那些 overlay。
+12. **闭包归属铁律（否则该提交无法同时满足原样搬迁 / 无环 / 可编译）。** 函数只能在 PR *n* 搬走，当且仅当它读取的每个模块级 `let` 已经由**不 import 目标文件**的模块 `export`。禁止 `new-module.ts` import `main.ts`。跨两个未来模块的函数**留在 `main.ts`**，不要用回调注册表或 host 对象硬拆。Vue composable **禁止**兄弟文件互相 import：只从 `.vue` 壳注入一份 ctx。
+
+---
+
+## 模块依赖铁律
+
+外部只读评审指出：按旧 F0 把 `ipc-guards` / `sendShortcutAction` / `installApplicationMenu` / `publicState` 放进 PR 6，无法在该提交同时满足「原样搬迁、无循环依赖、可编译」。下列图是实施合同，不是示意。
+
+今日 `main.ts` 里这些函数的真实闭包（核对过 HEAD）：
+
+| 函数 | 读取的模块级 `let` / 其它尚未独立的函数 | 最早可搬家的 PR |
+| --- | --- | --- |
+| `readState` / `writeState` / `shortcutPreferences` / `currentAgentEntryMode` / `electronAccelerator` | 无窗口；只 `app.getPath` + 文件 | **PR 6** |
+| `deviceIdentity` 等 device 文件函数 | 无窗口 | **PR 6** |
+| `confirmSystemKeyAccess` | `mainWindow`、`systemKeyAccessConfirmedThisLaunch`、`systemKeyAccessConsentPrompt` | **PR 6**（consent `let` 随 `device-session.ts`；`mainWindow` 来自 `window-host.ts`） |
+| `endpointSession` | 无 | **PR 6** |
+| `endpointStateKey` / `executionModeForEndpoint` / `currentExecutionMode` / `executionScopeForEndpoint` | `activeEndpoint` + `readState` | **PR 6**（叶子 `endpoint-context.ts`，解开 PR 10 的 http↔execution 环） |
+| `publicState` | `activeEndpoint`、`currentExecutionMode()`、`readState`、`app.getVersion` | **留 `main.ts`**（避免 `app-state` ↔ `endpoint-context` 环；它也不是 CSS-lock 目标） |
+| `sendShortcutAction` | `mainWindow`、`agentChatWindow`、`agentChatLoaded` | **PR 7**（chat overlay 已 `export let`） |
+| `installApplicationMenu` | `sendShortcutAction`、`mainWindow` | **PR 7** |
+| `isTrustedAppSender` / `trustedSender` / `trustedAgentChatSender` | `mainWindow`、`agentChatWindow` | **PR 7** |
+| `trustedMainWindowSender` | 仅 `mainWindow` | 可 PR 6，但 **整组 ipc-guards 必须同文件同 PR** → 跟 chat 守卫一起 **PR 7** |
+| `requestUrl` / `endpointFetch` / `endpointJson` | `activeEndpoint`、`currentExecutionMode`、`executionScopeForEndpoint` | **PR 10** `http-proxy.ts` → import `endpoint-context.ts`（**禁止** import `execution-router.ts`） |
+| `currentDesktopAuthContext` / `reserveDesktopRuntime` / `touchDesktop*` | `endpointJson`、`activeEndpoint`、runtime 实例 | **PR 10** `execution-router.ts` → import `http-proxy.ts`（单向） |
+| `openServiceSocket` / `sendServiceSocketEvent` | `activeEndpoint`、`currentExecutionMode`、`mainWindow` | **PR 10**；`mainWindow` 从 `window-host.ts` 读 |
+| `currentExecutionActivity` | `activeEndpoint`、`currentExecutionMode`、**`desktopWebViews.size`** | **留 `main.ts`**（跨 execution + web-view 两域；web-view 已 import `reserveDesktopRuntime`，再反向 import 会成环） |
+| `closeDesktopExecution` | runtime 实例，不读 `desktopWebViews` | **PR 10** |
+
+允许的 desktop import DAG（箭头 = import；禁止反向）：
+
+```mermaid
+flowchart BT
+  WH["window-host.ts\nexport let mainWindow"]
+  EC["endpoint-context.ts\nexport let activeEndpoint\n+ executionMode*"]
+  AS["app-state.ts\nreadState/writeState only"]
+  DS["device-session.ts"]
+  Chat["overlays/agent-chat-window.ts\nexport let agentChatWindow"]
+  Launch["overlays/agent-launcher-window.ts"]
+  Guards["ipc-guards.ts"]
+  Menu["app-menu.ts"]
+  Web["web-view-runtime.ts"]
+  HTTP["http-proxy.ts"]
+  Exec["execution-router.ts"]
+  MCP["mcp-desktop-bridge.ts"]
+  Main["main.ts"]
+  EC --> AS
+  DS --> WH
+  DS --> AS
+  Chat --> Launch
+  Guards --> WH
+  Guards --> Chat
+  Menu --> Guards
+  Menu --> AS
+  Menu --> WH
+  HTTP --> EC
+  Exec --> HTTP
+  Exec --> EC
+  Exec --> WH
+  MCP --> HTTP
+  MCP --> EC
+  Web --> Exec
+  Web --> WH
+  Main --> WH
+  Main --> EC
+  Main --> AS
+  Main --> DS
+  Main --> Chat
+  Main --> Web
+  Main --> Exec
+  Main --> MCP
+  Main --> Menu
+```
+
+硬禁止：
+
+- `overlays/agent-chat-window.ts` import `app-state.ts` 或 `ipc-guards.ts` 或 `app-menu.ts`
+- `http-proxy.ts` import `execution-router.ts` 或 `web-view-runtime.ts`
+- `execution-router.ts` import `web-view-runtime.ts`
+- `web-view-runtime.ts` import `http-proxy.ts` 以外的「再绕回 web-view」模块（它 **可以** import `execution-router.ts` 的 `reserveDesktopRuntime`）
+- 任何抽出模块 `import ... from "./main.js"`
+
+**Electron 集成测试边界：** `tests/desktop-local-*.integration.test.ts` 用 `describe.skipIf(!process.env.VIRON_DESKTOP_*_TEST)` **spawn 真 Electron**。默认 `npm test` **会 skip**，不算回归网。PR 4 内环用 `tests/desktop-ssh-runtime.test.ts`（进程内 ssh2 mock）。不要为了跑绿去设那些 env；也不要把 skip 的集成测试写成「必须通过」。
 
 ---
 
@@ -97,15 +179,16 @@ KeepAlive 有两条路径，都要保留：
 2. **双运行时保留。** 只抽无状态 helper。
 3. **中文 i18n key 不变。** desktop 边界才 `tr()`。
 4. **无 Pinia、无 ESLint 工作流、无 MCP catalog 重写。**
-5. **第一波顺序（PR Plan 必须与此一致，禁止 Vue 与 `main.ts` 拆分并行）：** 死代码 → desktop `contextKey`/`jsonResponse` → 共享 SSH / login-script / error-map / SFTP-plan / Redis-options → `main.ts` 拆分（**state/menu/guards → overlay 函数搬迁 → web-view → IPC → HTTP/MCP/execution → smoke**）→ Vue（DatabaseWorkbench → ServiceMaintenance → AgentFloatingWindow → Settings → Organization）→ 可选 schema 文件剪切。
+5. **第一波顺序（PR Plan 必须与此一致，禁止 Vue 与 `main.ts` 拆分并行）：** 死代码 → desktop `contextKey`/`jsonResponse` → 共享 SSH / login-script / error-map / SFTP-plan / Redis-options → `main.ts` 拆分（**state + `endpoint-context` + window-host（PR 6）→ overlay 函数 + 依赖 `agentChatWindow` 的 menu/guards（PR 7）→ web-view → IPC → HTTP/MCP/execution → smoke**）→ Vue（DatabaseWorkbench → ServiceMaintenance → AgentFloatingWindow → Settings → Organization）→ 可选 schema 文件剪切。
 6. **CSS-lock 测试保留，不新增。** 同 PR 改读取路径。被 grep 的标识符名不得改。
 7. **体积：** 新模块 `< ~800`。`main.ts` / `DatabaseWorkbench.vue` / `SettingsView.vue` / `OrganizationView.vue` 硬检查点 `< 1200`。`ServiceMaintenancePanel.vue` 与 `AgentFloatingWindow.vue` 硬门 = script+template，CSS 留在 `.vue`。
 8. **Overlay = 机械搬 `export function`，保留 CSS-lock 标识符。** 不引入 `OverlayHost` class。`raiseAgentOverlayWindows` 放在 `overlays/agent-chat-window.ts`（唯一调用方 `applyAgentChatChromeVisibility` 旁边），单向 import launcher 的窗口 `let`；`moveTop` 顺序锁定为 chat → visual launcher → interaction launcher，并在函数上用注释冻结。Dock 使用 `electronScreen.getCursorScreenPoint()`；launcher **禁止**使用。chat 模块禁止 import `app-state.ts`。
-9. **Vue：** 工作台只 composable；`DatabaseWorkbenchView.vue` 不动。Settings/Organization 可拆子 Vue。
+9. **Vue：** 工作台只 composable；`DatabaseWorkbenchView.vue` 不动。Settings/Organization 可拆子 Vue。工作台 composable **禁止兄弟互相 import**：由 `.vue` 壳 `create*Context()` 一次，各文件只接收 ctx。
 10. **具名导出，禁止 `export *`。**
 11. **兼容：** `envman_session`、`envman-theme`、`envman-language`、`envman:route-reload:`、`SELECT 1 AS envman_connection_check`、`/data/envman.db`、`-- ENVMAN_STATEMENT_BOUNDARY`。
 12. **Monitor Go 模型不去重**（两个 `go.mod`，1.25.0 vs 1.26.0）。
 13. **Schema migrator = Phase 2。** 第一波只剪切字符串；`openDatabase` / `ensureAdmin` 调用**与 HEAD 相同的函数名、相同顺序**。`claimLegacyResources` 只从 `ensureAdmin` 调用，不要塞进 `openDatabase`。
+14. **叶子模块解开环，而不是 host/DI。** PR 6 抽出 `endpoint-context.ts`（`activeEndpoint` + 四个 execution-mode helper）和 `window-host.ts`（仅 `mainWindow`）。`app-state.ts` 禁止 import `endpoint-context.ts`。PR 10 的 `http-proxy.ts` 只依赖 `endpoint-context.ts`，不依赖 `execution-router.ts`。`publicState` 与 `currentExecutionActivity` 留在 `main.ts`。ipc-guards / 菜单 / `sendShortcutAction` 推迟到 PR 7。
 
 ---
 
@@ -160,19 +243,24 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-  Main["main.ts：lock / whenReady / createWindow / shutdown"]
-  State["app-state.ts + app-menu.ts + device-session.ts + ipc-guards.ts"]
-  Overlays["overlays/*.ts：同名 export function\nraiseAgentOverlayWindows 在 chat 模块"]
+  Main["main.ts：lock / whenReady / createWindow / shutdown / currentExecutionActivity"]
+  Leaf["window-host.ts + endpoint-context.ts"]
+  State["app-state.ts + device-session.ts"]
+  Overlays["overlays/*.ts + ipc-guards.ts + app-menu.ts"]
   WebView["web-view-runtime.ts"]
   IPC["ipc/register-*.ts"]
-  Exec["execution-router.ts + http-proxy.ts + mcp-desktop-bridge.ts"]
+  Exec["http-proxy.ts → execution-router.ts + mcp-desktop-bridge.ts"]
   Smoke["smoke/*.ts"]
+  Main --> Leaf
   Main --> State
   Main --> Overlays
   Main --> WebView
   Main --> IPC
   Main --> Exec
   Main --> Smoke
+  State --> Leaf
+  Overlays --> Leaf
+  Exec --> Leaf
 ```
 
 ---
@@ -529,7 +617,9 @@ npm run typecheck
 npm test
 ```
 
-内环必须含：`tests/sftp-transfer.test.ts tests/sftp.test.ts tests/sftp-selection.test.ts tests/desktop-ssh-runtime.test.ts tests/desktop-local-ssh.integration.test.ts`。
+内环必须含：`tests/sftp-transfer.test.ts tests/sftp.test.ts tests/sftp-selection.test.ts tests/desktop-ssh-runtime.test.ts`。
+
+**不要**把 `tests/desktop-local-ssh.integration.test.ts` 当成必过项：它 `describe.skipIf(!process.env.VIRON_DESKTOP_SSH_TEST)` 且 **spawn 真 Electron**。默认 `npm test` skip。未设置该 env 时失败或超时都不是本 PR 的回归信号。
 
 #### 6. 验收
 
@@ -597,29 +687,41 @@ npm test
 - `process.argv.includes("--smoke-test") || app.requestSingleInstanceLock()`（`desktop-updater.test.ts`）
 - `shouldBlockLaunchForActiveUpdate` + 「正在安装更新」
 - `createWindow`（装配 overlay `layout*` 调用、`titleBarOverlay: desktopTitleBarOverlay("login")`）
+- **`publicState`**（跨 app-state 与 endpoint-context）
 - `developmentApplicationIcon`（仅 `createWindow` / dock icon 使用，留 main.ts）
 - `app.whenReady` 里 `DesktopAgentRuntime` 装配字面量 **`executeSshDiagnostic: async`、`executeDatabaseRead: async`**（`tests/agent-floating-window.test.ts` ~371–372；**F0–F5 都不搬这两段**）。同装配的 `currentScope: currentAgentRuntimeScope,`（~6492，**无 `()`**）也留在 `main.ts`，但那**不是**测试锁定串
+- **`currentExecutionActivity`**（跨 `activeEndpoint` 与 `desktopWebViews.size`）
 - **`async function currentAgentRuntimeScope()`** 定义（今日 ~2597）归 F4 `execution-router.ts`。测试 `toContain("currentAgentRuntimeScope()")` 命中的是该签名以及 F3 将搬走的 `await currentAgentRuntimeScope()` 调用，**不是** whenReady 的无括号属性。PR 9 后定义仍在 `main.ts`（断言继续读 `main.ts`）；**PR 10 必须把该断言改读 `execution-router.ts`**，且锁定串保持带 `()`，禁止弱化成无括号的 `currentAgentRuntimeScope`（会误匹配 `currentScope: currentAgentRuntimeScope`）
 - `before-quit` / `window-all-closed` / `second-instance`
 - `--smoke-test` 分支调用 smoke 函数（函数体在 F5 搬走）
 
 #### F0 目标文件符号（PR 6）
 
-`window-host.ts`：`getMainWindow` / `setMainWindow`（或 `export let mainWindow`，若导出则保持名字 `mainWindow`）。`preload`/`app.getAppPath()` helper 可放这里。
+**本 PR 只搬不依赖 `agentChatWindow` 的叶子。** `sendShortcutAction`、`installApplicationMenu`、整组 `ipc-guards` **留在 `main.ts`，到 PR 7。**
 
-`app-state.ts`：`DesktopStateFile`、`statePath`、`readState`、`writeState`、`shortcutPreferences`、`currentAgentEntryMode`、`electronAccelerator`、`sendShortcutAction`、`publicState`。**不要**放 web-url helpers。`publishDesktopAppState` 等 F1。
+`window-host.ts`：`export let mainWindow`（名字锁定）。可选 `getMainWindow` / `setMainWindow` 包装，但 `let` 名必须是 `mainWindow`。`preload`/`app.getAppPath()` helper 可放这里。本文件 **零** desktop 内部 import。
 
-`device-session.ts`：`devicePath`、`readDeviceFile`、`writeDeviceFile`、`identityKey`、`rememberSystemKeyAccessConsent`、`forgetSystemKeyAccessConsent`、`hasStoredDeviceIdentity`、`systemKeyAccessCopy`、`deviceIdentity`、`confirmSystemKeyAccess`、`endpointSession`。**不要**放 `desktopWebSession`。
+`app-state.ts`（真正的文件 I/O 叶子，**禁止** import `endpoint-context.ts`）：`DesktopStateFile`、`statePath`、`readState`、`writeState`、`shortcutPreferences`、`currentAgentEntryMode`、`electronAccelerator`。**不要**放 `publicState`、`sendShortcutAction`、web-url helpers。`publishDesktopAppState` 仍等 F1/PR 7。本文件禁止 import overlays / endpoint-context。
 
-`ipc-guards.ts`：`isTrustedAppSender`、`trustedSender`、`trustedMainWindowSender`、`trustedAgentChatSender`。
+`endpoint-context.ts`（解开 PR 10 环）：`export let activeEndpoint`、`endpointStateKey`、`executionModeForEndpoint`、`currentExecutionMode`、`executionScopeForEndpoint`。import `app-state.ts` 的 `readState`/`writeState`。**禁止** import http-proxy / execution-router / web-view / overlays / `publicState`。
 
-`app-menu.ts`：`installApplicationMenu`。调用点：`createWindow`、以及 titlebar/language IPC 里重建菜单处——F0 只搬函数，调用点仍在 main，F3 再随 IPC 走。
+`publicState` **留 `main.ts`**：它同时读 `readState`、`activeEndpoint`、`currentExecutionMode`。放进 `app-state.ts` 会立刻与 `endpoint-context.ts` 成环。
+
+`device-session.ts`：`devicePath`、`readDeviceFile`、`writeDeviceFile`、`identityKey`、`rememberSystemKeyAccessConsent`、`forgetSystemKeyAccessConsent`、`hasStoredDeviceIdentity`、`systemKeyAccessCopy`、`deviceIdentity`、`confirmSystemKeyAccess`（consent 两个 `let` 放本文件；`mainWindow` 从 `window-host.ts` 读）、`endpointSession`。**不要**放 `desktopWebSession`。
+
+PR 6 验收加一条：`tsc` 后 `ipc-guards.ts` / `app-menu.ts` **还不存在**；`rg "function trustedAgentChatSender|function sendShortcutAction|function installApplicationMenu" src/desktop/main.ts` 仍命中。
 
 #### F1 overlay（PR 7）— 同名函数，模块级 `let` 留在该文件
 
 `overlays/agent-launcher-window.ts` 拥有并 **`export let`**：`agentLauncherWindow`、`agentLauncherVisualWindow`（供 chat 单向 import）；另有 `agentLauncherState`、`agentLauncherLoaded`、`agentLauncherVisualLoaded`。函数：`layoutAgentLauncherWindow`、`publishAgentLauncherState`、`createAgentLauncherWindow`、`ensureAgentLauncherWindow`、`updateAgentLauncherWindow`。保持 `focusable: false`、`interaction.moveAbove(agentLauncherVisualWindow.getMediaSourceId())`。**禁止** `screen.getCursorScreenPoint()` / `agentLauncherHitTestTimer`。本文件禁止 import `agent-chat-window.ts` 或 `app-state.ts`。
 
-`overlays/agent-chat-window.ts`：`agentChatWindow`、`agentChatHostState`、`agentChatChromeVisible`、`agentChatIgnoreMouse`、`agentChatNativeOverlay`、`pendingAgentHostActions`。函数：`sendToAgentChat`（供 `app-state.ts` 单向 import）、`layoutAgentChatWindow`、`publishAgentHostState`、`applyAgentChatIgnoreMouse`、`applyAgentChatChromeVisibility`、`raiseAgentOverlayWindows`、`setAgentChatNativeOverlay`、`ensureAgentChatWindow`、`updateAgentChatHost`、`settleAgentHostAction`、`requestAgentHostAction`。
+`overlays/agent-chat-window.ts`：`export let agentChatWindow`、`export let agentChatLoaded`、`agentChatHostState`、`agentChatChromeVisible`、`agentChatIgnoreMouse`、`agentChatNativeOverlay`、`pendingAgentHostActions`。函数：`sendToAgentChat`（供 `app-state.ts` 单向 import）、`layoutAgentChatWindow`、`publishAgentHostState`、`applyAgentChatIgnoreMouse`、`applyAgentChatChromeVisibility`、`raiseAgentOverlayWindows`、`setAgentChatNativeOverlay`、`ensureAgentChatWindow`、`updateAgentChatHost`、`settleAgentHostAction`、`requestAgentHostAction`。
+
+**同一 PR 7 再搬（因为它们闭包 `agentChatWindow`）：**
+
+- `ipc-guards.ts`：`isTrustedAppSender`、`trustedSender`、`trustedMainWindowSender`、`trustedAgentChatSender`。import `window-host.ts` 的 `mainWindow` 与本 chat 文件的 `agentChatWindow`。chat **禁止** import `ipc-guards.ts`。
+- `app-state.ts` 追加 `sendShortcutAction`（读 `mainWindow` + `agentChatWindow` / `agentChatLoaded`）。若这会让 `app-state.ts` import chat、同时 `publishDesktopAppState` 也 import `sendToAgentChat`：允许 **仅这一条** app-state → chat 单向依赖；chat 仍禁止 import app-state。
+- `app-menu.ts`：`installApplicationMenu`。调用点仍在 `createWindow` / language IPC（函数搬走，调用改 import）。`app-menu.ts` import `sendShortcutAction` 与 `window-host.ts`，**禁止** import chat。
 
 `raiseAgentOverlayWindows` **写在本文件**（紧挨唯一调用方 `applyAgentChatChromeVisibility`），不要第三文件。函数顶部注释冻结顺序：
 
@@ -666,9 +768,11 @@ export function raiseAgentOverlayWindows(): void {
 
 #### F4 HTTP / MCP / execution（PR 10）
 
-`http-proxy.ts`：`requestUrl`、`requestBody`、`endpointFetch`、`endpointJson`、`suggestedFilename`。
-`mcp-desktop-bridge.ts`：`localMcpLauncherPath`、`localMcpStatus`、`openDesktopMcpOperationWindow`、`closeDesktopMcpOperations`、`mcpRequestPath`、`mcpDesktopRequest`、`mcpFormFile`、`isDesktopLocalMcpExecutionPath`、`boundedDesktopSshBatchResult`、`executeDesktopMcpApprovedRequest`、`completeDesktopMcpOperation`、`handleDesktopMcpOperationResponse`、`invokeDesktopMcpTool`、`mcpJsonResponse`、`desktopResponseToMcp`、`environmentIdForLog`。**禁止**把 `mcpJsonResponse` 改成 `jsonResponse`。
-`execution-router.ts`：execution-mode helpers、`reserveDesktopRuntime`、`releaseDesktopRuntimeReservation`、`trackDesktopRuntime`、`syncDesktopRuntimeConnections`、**具名 service-socket 四函数** `sendServiceSocketEvent`、`serviceSocketBytes`、`openServiceSocket`、`closeAllServiceSockets`（及 `serviceSockets` Map；它们依赖 `currentExecutionMode` / `activeEndpoint` / `executionScopeForEndpoint`）、`emptyExecutionActivity`、`executionRuntimeApiMissing`、`closeServerForwardingRuntime`、`currentExecutionActivity`、`ensureDeviceRegistration`、`currentDeviceAuthorization`、`localWebCredential`、`localSshCredential`、`localDatabaseCredential`、`localRedisCredential`、`signedDesktopOperation`、`reportSignedDesktopOperation`、四份 `reportDesktop*`、`currentDesktopSshContext`、`currentDesktopAuthContext`、`currentAgentSettingsScope`、`agentRuntimeScope`、`currentAgentRuntimeScope`、`touchDesktopDatabaseRequest`、`touchDesktopRedisRequest`、`closeDesktopExecution`。
+`http-proxy.ts`：`requestUrl`、`requestBody`、`endpointFetch`、`endpointJson`、`suggestedFilename`。**只** import `endpoint-context.ts`（`activeEndpoint` / `currentExecutionMode` / `executionScopeForEndpoint`）。**禁止** import `execution-router.ts`、`web-view-runtime.ts`。
+`mcp-desktop-bridge.ts`：`localMcpLauncherPath`、`localMcpStatus`、`openDesktopMcpOperationWindow`、`closeDesktopMcpOperations`、`mcpRequestPath`、`mcpDesktopRequest`、`mcpFormFile`、`isDesktopLocalMcpExecutionPath`、`boundedDesktopSshBatchResult`、`executeDesktopMcpApprovedRequest`、`completeDesktopMcpOperation`、`handleDesktopMcpOperationResponse`、`invokeDesktopMcpTool`、`mcpJsonResponse`、`desktopResponseToMcp`、`environmentIdForLog`。**禁止**把 `mcpJsonResponse` 改成 `jsonResponse`。import `http-proxy.ts` + `endpoint-context.ts`，禁止 import `execution-router.ts`。
+`execution-router.ts`：`reserveDesktopRuntime`、`releaseDesktopRuntimeReservation`、`trackDesktopRuntime`、`syncDesktopRuntimeConnections`、**具名 service-socket 四函数** `sendServiceSocketEvent`、`serviceSocketBytes`、`openServiceSocket`、`closeAllServiceSockets`（及 `serviceSockets` Map）、`emptyExecutionActivity`、`executionRuntimeApiMissing`、`closeServerForwardingRuntime`、`ensureDeviceRegistration`、`currentDeviceAuthorization`、`localWebCredential`、`localSshCredential`、`localDatabaseCredential`、`localRedisCredential`、`signedDesktopOperation`、`reportSignedDesktopOperation`、四份 `reportDesktop*`、`currentDesktopSshContext`、`currentDesktopAuthContext`、`currentAgentSettingsScope`、`agentRuntimeScope`、`currentAgentRuntimeScope`、`touchDesktopDatabaseRequest`、`touchDesktopRedisRequest`、`closeDesktopExecution`。execution-mode helpers **已在 PR 6 的 `endpoint-context.ts`，不要再搬一份。** import `http-proxy.ts` + `endpoint-context.ts` + `window-host.ts`。**禁止** import `web-view-runtime.ts`。
+
+**`currentExecutionActivity` 留在 `main.ts`。** 它读 `desktopWebViews.size`（PR 8 的 web-view）同时又走 `endpointJson`/`currentExecutionMode`。web-view 已经要 import `reserveDesktopRuntime`；若 execution-router 再 import web-view 即环。不要为它发明 count provider。
 
 然后把 `viron:execution-mode:set`、`viron:mcp:*`、`viron:endpoint:*`、`viron:api`、`viron:execution-activity`、**`viron:service-socket:open|send|close`** 搬进 `ipc/register-execution-ipc.ts`（不要拆到 F3 `register-core-ipc.ts`：handlers 必须与四函数同一 PR，否则无法编译）。**锁定的 Promise.all 字符串不变**。
 
@@ -749,6 +853,10 @@ onBeforeUnmount(() => { /* remove providers; drain pendingAgentDatabaseExecution
 
 #### 2. 目标：function → 文件（禁止猜）
 
+**状态所有权（禁止兄弟 composable 互相 import）：**
+
+`context.ts` 导出 `DatabaseWorkbenchContext`（所有 ref/computed/reactive 的字段类型）和 `createDatabaseWorkbenchContext()`（在 `.vue` `setup` **调用一次**）。各 `use-*.ts` 的函数签名为 `(ctx: DatabaseWorkbenchContext, ...)` 或 `useX(ctx)`，内部只读 `ctx.connections` / `ctx.newTab` 等。**`use-database-navigator.ts` 不得 `import` `use-database-query-tabs.ts`。** 跨域调用（如 `handleNavigatorMenuAction` → `closeConnection` / `newTab` / `openTaskPanel`）全部走 ctx 上的函数字段；在 `.vue` 壳里把各 `use*` 返回值赋给 ctx 后再调用。若发现必须兄弟 import 才能编译 → 停，不要改成 Pinia、不要做成模块单例。
+
 `types.ts`：所有 interface/type（`DatabaseConnection`、`QueryTab`、`QueryJob`、…）。
 
 `format.ts`：`formatBytes`、`textSize`、`sqlIdentifier`。
@@ -806,7 +914,7 @@ npm test -- tests/database-navicat-toolbar-order.test.ts tests/database-navigato
 
 ### 工作项 H — `ServiceMaintenancePanel.vue`
 
-Script 抽到 `service-maintenance/*.ts`。**scoped CSS 留在 vue。** 硬门 = script+template `< 800`，不是 `wc -l` 整个 vue。
+Script 抽到 `service-maintenance/*.ts`。**scoped CSS 留在 vue。** 硬门 = script+template `< 800`，不是 `wc -l` 整个 vue。同样使用 **一份 `createMaintenanceContext()`**，composable 文件禁止兄弟 import。
 
 函数归属：
 
@@ -824,7 +932,7 @@ KeepAlive：`onActivated`/`onDeactivated` **留在 vue** 并调用 composable �
 
 ### 工作项 I — `AgentFloatingWindow.vue`
 
-CSS+template 留 vue。硬门 = script+template。
+CSS+template 留 vue。硬门 = script+template。同样 **一份 `createAgentFloatingContext()`**，`use-agent-chat.ts` 不得 import `use-agent-sessions.ts`（通过 ctx）。
 
 #### function → 文件
 
@@ -941,7 +1049,7 @@ smoke stdout/stage 不变。不把 `mcpJsonResponse` 与 HTTP `jsonResponse` 混
 
 ## Open Questions
 
-无阻塞项。SFTP 两端若测试冲突：停（规则 4），不要选边。
+无阻塞项。SFTP 两端若测试冲突：停（规则 4），不要选边。模块环：停，按「模块依赖铁律」把函数留在 `main.ts` 或改叶子归属，不要发明 DI。
 
 ---
 
@@ -958,10 +1066,12 @@ smoke stdout/stage 不变。不把 `mcpJsonResponse` 与 HTTP `jsonResponse` 混
 | `shared/ssh-login-script.ts` | `normalizeSshLoginScript` |
 | `shared/sftp-transfer-plan.ts` | `buildSftpPlan`、`copySftpEntry`、`existingSftpStats`、`isMissingFile` 注入 |
 | `shared/redis-options.ts` | `buildRedisOptions` |
-| `app-state.ts` | `readState`、`publishDesktopAppState` |
-| `app-menu.ts` | `installApplicationMenu` |
+| `window-host.ts` | `export let mainWindow` |
+| `endpoint-context.ts` | `export let activeEndpoint`、`currentExecutionMode` 等四 helper |
+| `app-state.ts` | `readState`/`writeState`；PR 7 追加 `publishDesktopAppState`、`sendShortcutAction`。**不含** `publicState` |
+| `app-menu.ts` | `installApplicationMenu`（**PR 7**，不是 PR 6） |
 | `device-session.ts` | `deviceIdentity`、`confirmSystemKeyAccess` |
-| `ipc-guards.ts` | `trustedSender*` |
+| `ipc-guards.ts` | `trustedSender*`（**PR 7**） |
 | `overlays/*` | 同名 `layout*`/`ensure*`/`update*` + 窗口 `let` |
 | `overlays/agent-chat-window.ts` | overlay chat 函数 + `raiseAgentOverlayWindows` + `sendToAgentChat`（app-state 单向 import） |
 | `web-view-runtime.ts` | web-url helpers、`openDesktopWebView`、captures |
@@ -1006,6 +1116,9 @@ wc -l src/desktop/main.ts src/client/components/DatabaseWorkbench.vue src/client
 
 | 风险 | 严重度 | 缓解 |
 | --- | --- | --- |
+| PR 6 搬走仍闭包 `agentChatWindow` 的函数 | 高 | 菜单/guards/`sendShortcutAction` 推迟到 PR 7 |
+| `http-proxy` ↔ `execution-router` 环 | 高 | `endpoint-context.ts` 叶子；http 禁止 import execution-router |
+| Vue composable 兄弟 import 成环 | 高 | 单 ctx，禁止兄弟 import |
 | 按行号切错域 | 高 | 只用符号清单 |
 | Overlay class 改名导致 lock 失败 | 高 | 同名 `export function` |
 | `tryKeyboard` 丢失 | 高 | 粘贴完整 `buildSshConnectConfig` |
@@ -1062,19 +1175,19 @@ wc -l src/desktop/main.ts src/client/components/DatabaseWorkbench.vue src/client
 - **Dependencies:** PR 4（串行；共享 `redis-runtime.ts`）
 - **Description:** 不抽 tunnel；不改 `isDesktopRedisExecutionPath` 的 URL 解析；全量 `npm test`
 
-### PR 6 — main.ts state / menu / guards
+### PR 6 — main.ts 叶子：window-host / endpoint-context / state / device
 
-- **Title:** `refactor(desktop): extract app-state, device-session, ipc-guards, and app-menu from main.ts`
-- **Files:** 新增 `window-host.ts`、`app-state.ts`、`device-session.ts`、`ipc-guards.ts`、`app-menu.ts`；改 `main.ts`
+- **Title:** `refactor(desktop): extract window-host, endpoint-context, app-state, and device-session from main.ts`
+- **Files:** 新增 `window-host.ts`、`endpoint-context.ts`、`app-state.ts`、`device-session.ts`；改 `main.ts`
 - **Dependencies:** PR 5
-- **Description:** 符号见 F0。不含 overlay、不含 web-url helpers、不含 `publishDesktopAppState`（等 PR 7）
+- **Description:** 符号见 F0。**不**建 `ipc-guards.ts` / `app-menu.ts`。不含 overlay、web-url、`publishDesktopAppState`、`sendShortcutAction`、`publicState`（`publicState` 留 `main.ts`）。验收：`trustedAgentChatSender` / `sendShortcutAction` / `installApplicationMenu` / `publicState` 仍在 `main.ts`
 
-### PR 7 — overlay 函数搬迁
+### PR 7 — overlay 函数搬迁 + 依赖 chat 窗口的 guards/菜单
 
-- **Title:** `refactor(desktop): move overlay window functions out of main.ts`
-- **Files:** `overlays/*.ts`（**无** `raise-agent-overlays.ts`；`raiseAgentOverlayWindows` 在 `agent-chat-window.ts`）；`app-state.ts` 增加 `publishDesktopAppState`；改 `main.ts`；`tests/agent-floating-window.test.ts` **只**把 `desktop-agent-chat.html` / `setAgentChatNativeOverlay` 两条改读 chat overlay，**整份 `desktopMain` 仍指向 `main.ts`**
+- **Title:** `refactor(desktop): move overlay window functions, ipc-guards, and app-menu out of main.ts`
+- **Files:** `overlays/*.ts`（**无** `raise-agent-overlays.ts`；`raiseAgentOverlayWindows` 在 `agent-chat-window.ts`）；新增 `ipc-guards.ts`、`app-menu.ts`；`app-state.ts` 增加 `publishDesktopAppState` 与 `sendShortcutAction`；改 `main.ts`；`tests/agent-floating-window.test.ts` **只**把 `desktop-agent-chat.html` / `setAgentChatNativeOverlay` 两条改读 chat overlay，**整份 `desktopMain` 仍指向 `main.ts`**
 - **Dependencies:** PR 6
-- **Description:** 同名 `export function`；chat 单向 import launcher `let`；chat 禁止 import `app-state.ts`；smoke 函数仍在 main
+- **Description:** 同名 `export function`；chat `export let agentChatWindow` / `agentChatLoaded`；guards import chat 窗口（单向）；chat 禁止 import app-state / guards / menu；smoke 函数仍在 main
 
 ### PR 8 — web-view
 
@@ -1093,9 +1206,9 @@ wc -l src/desktop/main.ts src/client/components/DatabaseWorkbench.vue src/client
 ### PR 10 — HTTP / MCP / execution
 
 - **Title:** `refactor(desktop): extract HTTP proxy, MCP bridge, and execution router`
-- **Files:** `http-proxy.ts`、`mcp-desktop-bridge.ts`、`execution-router.ts`（含 `openServiceSocket` / `sendServiceSocketEvent` / `serviceSocketBytes` / `closeAllServiceSockets`、**以及 `async function currentAgentRuntimeScope()` 定义**）、`ipc/register-execution-ipc.ts`（含 `viron:service-socket:*`）；`desktop-mcp-security.test.ts` 改读取路径；`tests/agent-floating-window.test.ts` 改两条独立 `readFileSync`：① `agent-(?:context|diagnostics)` → `viron:api` 所在文件；② **`currentAgentRuntimeScope()` → `execution-router.ts`**（保持带 `()`；不要改 `executeSshDiagnostic: async` / `executeDatabaseRead: async`，它们仍读 `main.ts`）
+- **Files:** `http-proxy.ts`、`mcp-desktop-bridge.ts`、`execution-router.ts`（含 `openServiceSocket` / `sendServiceSocketEvent` / `serviceSocketBytes` / `closeAllServiceSockets`、**以及 `async function currentAgentRuntimeScope()` 定义**；**不含** `currentExecutionActivity`）、`ipc/register-execution-ipc.ts`（含 `viron:service-socket:*`）；`desktop-mcp-security.test.ts` 改读取路径；`tests/agent-floating-window.test.ts` 改两条独立 `readFileSync`：① `agent-(?:context|diagnostics)` → `viron:api` 所在文件；② **`currentAgentRuntimeScope()` → `execution-router.ts`**（保持带 `()`；不要改 `executeSshDiagnostic: async` / `executeDatabaseRead: async`，它们仍读 `main.ts`）
 - **Dependencies:** PR 9
-- **Description:** MCP close 序列逐字；`mcpJsonResponse` 独立；service-socket helpers 与 IPC 同 PR；`currentAgentRuntimeScope()` 锁跟定义走，不跟 whenReady 无括号属性；**全量 `npm test`**
+- **Description:** `http-proxy.ts` 只 import `endpoint-context.ts`。`execution-router.ts` import http-proxy，禁止 import web-view。`currentExecutionActivity` 留 `main.ts`。MCP close 序列逐字；`mcpJsonResponse` 独立；service-socket helpers 与 IPC 同 PR；**全量 `npm test`**（默认 skip 的 Electron spawn 集成测试不算）
 
 ### PR 11 — smoke
 
