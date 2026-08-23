@@ -61,7 +61,7 @@ describe("knowledge base workspace availability", () => {
   });
 
   it("defines workspace ownership and environment associations for SQLite and MySQL", () => {
-    const sqlite = source("../src/server/database.ts");
+    const sqlite = source("../src/server/sqlite-schema.ts");
     const mysql = source("../src/server/mysql-schema.ts");
     for (const schema of [sqlite, mysql]) {
       expect(schema).toContain("workspace_type");
