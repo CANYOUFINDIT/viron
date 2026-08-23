@@ -22,7 +22,6 @@ import {
   session,
   shell,
   WebContentsView,
-  type IpcMainInvokeEvent,
   type NativeImage,
   type Rectangle,
   type Session,
@@ -109,9 +108,6 @@ import {
 import { DesktopUpdater, shouldBlockLaunchForActiveUpdate } from "./updater.js";
 import {
   immersiveNavigationEscapeAction,
-  immersiveNavigationBounds,
-  immersiveNavigationSize,
-  snapImmersiveDock,
   type ImmersiveNavigationAction,
   type ImmersiveNavigationState,
 } from "../shared/immersive-navigation.js";
@@ -146,7 +142,6 @@ import {
   isAgentHostAction,
   isAgentHostState,
   type AgentHostAction,
-  type AgentHostActionRequest,
   type AgentHostActionResult,
   type AgentHostState,
 } from "../shared/agent-host.js";
@@ -154,7 +149,6 @@ import {
   CONNECTION_QUALITY_PANEL_COLLAPSED_HEIGHT,
   CONNECTION_QUALITY_PANEL_EXPANDED_HEIGHT,
   CONNECTION_QUALITY_PANEL_WIDTH,
-  connectionQualityOverlayInteractionState,
   type ConnectionQualityOverlayAction,
   type ConnectionQualityOverlayState,
   type ConnectionQualityTargetAddress,
@@ -164,7 +158,6 @@ import {
   activeEnvironmentDockCardSize,
   activeEnvironmentDockLayoutSnapshot,
   activeEnvironmentDockPanelSize,
-  activeEnvironmentDockPointInsideBounds,
   ACTIVE_ENVIRONMENT_DOCK_COLLAPSE_DELAY_MS,
   ACTIVE_ENVIRONMENT_DOCK_TRANSITION_MS,
   type ActiveEnvironmentDockAction,
@@ -191,8 +184,8 @@ import {
 } from "../shared/mcp-settings.js";
 import {
   currentAgentEntryMode,
-  electronAccelerator,
   readState,
+  sendShortcutAction,
   shortcutPreferences,
   writeState,
 } from "./app-state.js";
@@ -212,6 +205,58 @@ import {
   rememberSystemKeyAccessConsent,
 } from "./device-session.js";
 import { mainWindow, setMainWindow } from "./window-host.js";
+import { installApplicationMenu } from "./app-menu.js";
+import {
+  isTrustedAppSender,
+  trustedAgentChatSender,
+  trustedMainWindowSender,
+  trustedSender,
+} from "./ipc-guards.js";
+import {
+  activeEnvironmentDockWindow,
+  activeEnvironmentDockPointerInside,
+  activeEnvironmentDockState,
+  handleActiveEnvironmentDockDrag,
+  keepActiveEnvironmentDockExpanded,
+  layoutActiveEnvironmentDockWindow,
+  scheduleActiveEnvironmentDockPointerTracking,
+  stopActiveEnvironmentDockPointerTracking,
+  updateActiveEnvironmentDockLayoutWindow,
+  updateActiveEnvironmentDockWindow,
+} from "./overlays/active-environment-dock-window.js";
+import {
+  agentChatWindow,
+  agentChatHostState,
+  requestAgentHostAction,
+  sendToAgentChat,
+  setAgentChatChromeVisible,
+  setAgentChatIgnoreMouse,
+  setAgentChatNativeOverlay,
+  settleAgentHostAction,
+  updateAgentChatHost,
+  layoutAgentChatWindow,
+} from "./overlays/agent-chat-window.js";
+import {
+  agentLauncherVisualWindow,
+  agentLauncherWindow,
+  layoutAgentLauncherWindow,
+  updateAgentLauncherWindow,
+} from "./overlays/agent-launcher-window.js";
+import {
+  connectionQualityVisualWindow,
+  connectionQualityWindow,
+  layoutConnectionQualityWindow,
+  updateConnectionQualityWindow,
+} from "./overlays/connection-quality-window.js";
+import {
+  handleImmersiveNavigationDrag,
+  immersiveNavigationState,
+  immersiveNavigationWindow,
+  immersiveNavigationViewport,
+  layoutImmersiveNavigationWindow,
+  sendImmersiveNavigationAction,
+  updateImmersiveNavigationWindow,
+} from "./overlays/immersive-navigation-window.js";
 
 if (process.platform === "darwin") app.commandLine.appendSwitch("use-mock-keychain");
 
@@ -362,42 +407,6 @@ if (gotTheLock) {
     mainWindow.focus();
   });
 }
-let immersiveNavigationWindow: BrowserWindow | null = null;
-let immersiveNavigationState: ImmersiveNavigationState | null = null;
-let immersiveNavigationLoaded = false;
-let immersiveNavigationDrag: { cursor: { x: number; y: number }; bounds: Rectangle } | null = null;
-let agentLauncherWindow: BrowserWindow | null = null;
-let agentLauncherVisualWindow: BrowserWindow | null = null;
-let agentLauncherState: AgentFloatingOverlayState | null = null;
-let agentLauncherLoaded = false;
-let agentLauncherVisualLoaded = false;
-let agentChatWindow: BrowserWindow | null = null;
-let agentChatLoaded = false;
-let agentChatHostState: AgentHostState | null = null;
-let agentChatChromeVisible = false;
-let agentChatIgnoreMouse = false;
-let agentChatNativeOverlay = false;
-const pendingAgentHostActions = new Map<string, {
-  resolve: (result: AgentHostActionResult) => void;
-  reject: (error: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
-}>();
-let connectionQualityWindow: BrowserWindow | null = null;
-let connectionQualityVisualWindow: BrowserWindow | null = null;
-let connectionQualityState: ConnectionQualityOverlayState | null = null;
-let connectionQualityLoaded = false;
-let connectionQualityVisualLoaded = false;
-let activeEnvironmentDockWindow: BrowserWindow | null = null;
-let activeEnvironmentDockState: ActiveEnvironmentDockState | null = null;
-let activeEnvironmentDockLoaded = false;
-let activeEnvironmentDockPointerTimer: NodeJS.Timeout | null = null;
-let activeEnvironmentDockPointerOutsideSince: number | null = null;
-let activeEnvironmentDockCollapseLayoutTimer: NodeJS.Timeout | null = null;
-let activeEnvironmentDockDrag: {
-  pointer: { x: number; y: number };
-  origin: { x: number; y: number };
-  moved: boolean;
-} | null = null;
 const desktopWebViews = new Map<string, ManagedDesktopWebView>();
 const trackedWebPartitions = new WeakSet<Session>();
 const serviceSockets = new Map<string, ManagedServiceSocket>();
@@ -493,71 +502,6 @@ function localMcpStatus(): DesktopMcpStatus {
   };
 }
 
-function sendShortcutAction(action: ShortcutActionId): void {
-  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("viron:shortcut", action);
-  if (agentChatWindow && !agentChatWindow.isDestroyed() && agentChatLoaded) {
-    agentChatWindow.webContents.send("viron:shortcut", action);
-  }
-}
-
-function installApplicationMenu(): void {
-  const bindings = shortcutPreferences().bindings;
-  const template: Electron.MenuItemConstructorOptions[] = [
-    ...(process.platform === "darwin" ? [{
-      label: app.name,
-      submenu: [
-        { role: "about" as const },
-        { type: "separator" as const },
-        { label: tr("设置…"), accelerator: electronAccelerator(bindings["app.settings"]), click: () => sendShortcutAction("app.settings") },
-        { type: "separator" as const },
-        { role: "services" as const },
-        { type: "separator" as const },
-        { role: "hide" as const },
-        { role: "hideOthers" as const },
-        { role: "unhide" as const },
-        { type: "separator" as const },
-        { role: "quit" as const },
-      ],
-    }] : []),
-    {
-      label: tr("文件"),
-      submenu: [
-        { label: tr("新建当前对象"), accelerator: electronAccelerator(bindings["workspace.new"]), click: () => sendShortcutAction("workspace.new") },
-        { label: tr("设计当前对象"), accelerator: electronAccelerator(bindings["workspace.design"]), click: () => sendShortcutAction("workspace.design") },
-        { label: tr("保存或提交"), accelerator: electronAccelerator(bindings["workspace.save"]), click: () => sendShortcutAction("workspace.save") },
-        { type: "separator" },
-        { label: tr("关闭当前页签"), accelerator: electronAccelerator(bindings["workspace.close"]), click: () => sendShortcutAction("workspace.close") },
-        { label: tr("关闭窗口"), accelerator: "CommandOrControl+Shift+W", click: () => mainWindow?.close() },
-      ],
-    },
-    {
-      label: tr("编辑"),
-      submenu: [
-        { role: "undo" }, { role: "redo" }, { type: "separator" },
-        { role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "selectAll" },
-      ],
-    },
-    {
-      label: tr("显示"),
-      submenu: [
-        { label: tr("搜索当前内容"), accelerator: electronAccelerator(bindings["workspace.search"]), click: () => sendShortcutAction("workspace.search") },
-        { label: tr("刷新当前内容"), accelerator: electronAccelerator(bindings["workspace.refresh"]), click: () => sendShortcutAction("workspace.refresh") },
-        { type: "separator" },
-        { role: "togglefullscreen" },
-      ],
-    },
-    {
-      label: tr("窗口"),
-      submenu: [
-        { role: "minimize" },
-        { role: "zoom" },
-        ...(process.platform === "darwin" ? [{ type: "separator" as const }, { role: "front" as const }] : []),
-      ],
-    },
-  ];
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
-}
-
 function desktopWebSession(endpoint: string, userId: string, credentialId: string): Session {
   const webPartition = session.fromPartition(desktopWebPartitionName(endpoint, userId, credentialId));
   webPartition.setPermissionCheckHandler(() => false);
@@ -565,789 +509,10 @@ function desktopWebSession(endpoint: string, userId: string, credentialId: strin
   return webPartition;
 }
 
-function isTrustedAppSender(event: IpcMainInvokeEvent): boolean {
-  return Boolean(
-    (mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents)
-    || (agentChatWindow && !agentChatWindow.isDestroyed() && event.sender === agentChatWindow.webContents),
-  );
-}
-
-function trustedSender(event: IpcMainInvokeEvent): void {
-  if (!isTrustedAppSender(event)) throw new Error(tr("拒绝来自非主窗口的请求"));
-}
-
-function trustedMainWindowSender(event: IpcMainInvokeEvent): void {
-  if (!mainWindow || event.sender !== mainWindow.webContents) throw new Error(tr("拒绝来自非主窗口的请求"));
-}
-
-function trustedAgentChatSender(event: IpcMainInvokeEvent): void {
-  if (!agentChatWindow || event.sender !== agentChatWindow.webContents) throw new Error(tr("拒绝来自非 Agent 对话窗口的请求"));
-}
-
-function sendImmersiveNavigationAction(action: ImmersiveNavigationAction): void {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send("viron:immersive-navigation-action", action);
-}
-
-function layoutAgentLauncherWindow(): void {
-  if (!mainWindow || !agentLauncherState) return;
-  const content = mainWindow.getContentBounds();
-  const layout = (window: BrowserWindow | null, state: AgentFloatingOverlayState) => {
-    if (!window || window.isDestroyed()) return;
-    const { bounds } = state;
-    window.setBounds({
-      x: content.x + Math.round(bounds.x),
-      y: content.y + Math.round(bounds.y),
-      width: Math.max(1, Math.round(bounds.width)),
-      height: Math.max(1, Math.round(bounds.height)),
-    }, false);
-  };
-  layout(agentLauncherVisualWindow, agentLauncherState);
-  layout(agentLauncherWindow, agentFloatingOverlayInteractionState(agentLauncherState));
-}
-
-function publishAgentLauncherState(): void {
-  if (agentLauncherVisualLoaded && agentLauncherVisualWindow && !agentLauncherVisualWindow.isDestroyed()) {
-    agentLauncherVisualWindow.webContents.send("viron:agent-launcher-state", agentLauncherState);
-  }
-  if (agentLauncherLoaded && agentLauncherWindow && !agentLauncherWindow.isDestroyed()) {
-    agentLauncherWindow.webContents.send(
-      "viron:agent-launcher-state",
-      agentLauncherState ? agentFloatingOverlayInteractionState(agentLauncherState) : null,
-    );
-  }
-}
-
-function createAgentLauncherWindow(): BrowserWindow {
-  if (!mainWindow) throw new Error(tr("主窗口不可用"));
-  const root = app.getAppPath();
-  const window = new BrowserWindow({
-    parent: mainWindow,
-    width: 1,
-    height: 1,
-    show: false,
-    focusable: false,
-    frame: false,
-    transparent: true,
-    backgroundColor: "#00000000",
-    hasShadow: false,
-    resizable: false,
-    movable: false,
-    minimizable: false,
-    maximizable: false,
-    fullscreenable: false,
-    skipTaskbar: true,
-    roundedCorners: false,
-    webPreferences: {
-      preload: join(root, "dist", "desktop", "agent-launcher-preload.cjs"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      webSecurity: true,
-    },
-  });
-  window.setMenuBarVisibility(false);
-  window.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
-  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  window.webContents.on("will-navigate", (event, url) => {
-    if (url !== window.webContents.getURL()) event.preventDefault();
-  });
-  return window;
-}
-
-async function ensureAgentLauncherWindow(): Promise<BrowserWindow> {
-  if (agentLauncherWindow && !agentLauncherWindow.isDestroyed()
-    && agentLauncherVisualWindow && !agentLauncherVisualWindow.isDestroyed()) return agentLauncherWindow;
-  agentLauncherWindow?.close();
-  agentLauncherVisualWindow?.close();
-
-  const root = app.getAppPath();
-  const visual = createAgentLauncherWindow();
-  const interaction = createAgentLauncherWindow();
-  agentLauncherVisualWindow = visual;
-  agentLauncherWindow = interaction;
-  agentLauncherVisualLoaded = false;
-  agentLauncherLoaded = false;
-  visual.setIgnoreMouseEvents(true);
-  visual.webContents.once("did-finish-load", () => {
-    agentLauncherVisualLoaded = true;
-    publishAgentLauncherState();
-  });
-  interaction.webContents.once("did-finish-load", () => {
-    agentLauncherLoaded = true;
-    publishAgentLauncherState();
-  });
-  visual.on("closed", () => {
-    if (agentLauncherVisualWindow === visual) {
-      agentLauncherVisualWindow = null;
-      agentLauncherVisualLoaded = false;
-    }
-  });
-  interaction.on("closed", () => {
-    if (agentLauncherWindow === interaction) {
-      agentLauncherWindow = null;
-      agentLauncherLoaded = false;
-    }
-  });
-  await Promise.all([
-    visual.loadFile(join(root, "dist", "desktop-renderer", "desktop-agent-launcher.html")),
-    interaction.loadFile(join(root, "dist", "desktop-renderer", "desktop-agent-launcher.html")),
-  ]);
-  return interaction;
-}
-
-async function updateAgentLauncherWindow(state: AgentFloatingOverlayState | null): Promise<void> {
-  agentLauncherState = state;
-  if (!state) {
-    publishAgentLauncherState();
-    agentLauncherWindow?.hide();
-    agentLauncherVisualWindow?.hide();
-    return;
-  }
-  const interaction = await ensureAgentLauncherWindow();
-  if (agentLauncherState !== state) return;
-  layoutAgentLauncherWindow();
-  publishAgentLauncherState();
-  if (agentLauncherVisualWindow && !agentLauncherVisualWindow.isVisible()) agentLauncherVisualWindow.showInactive();
-  if (!interaction.isVisible()) interaction.showInactive();
-  if (agentLauncherVisualWindow) interaction.moveAbove(agentLauncherVisualWindow.getMediaSourceId());
-}
-
-function sendToAgentChat(channel: string, ...args: unknown[]): void {
-  if (!agentChatWindow || agentChatWindow.isDestroyed() || !agentChatLoaded) return;
-  agentChatWindow.webContents.send(channel, ...args);
-}
-
 function publishDesktopAppState(next = publicState()): typeof next {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("viron:state-changed", next);
   sendToAgentChat("viron:state-changed", next);
   return next;
-}
-
-function raiseAgentOverlayWindows(): void {
-  if (agentChatWindow && !agentChatWindow.isDestroyed() && agentChatWindow.isVisible()) agentChatWindow.moveTop();
-  if (agentLauncherVisualWindow && !agentLauncherVisualWindow.isDestroyed() && agentLauncherVisualWindow.isVisible()) {
-    agentLauncherVisualWindow.moveTop();
-  }
-  if (agentLauncherWindow && !agentLauncherWindow.isDestroyed() && agentLauncherWindow.isVisible()) {
-    agentLauncherWindow.moveTop();
-  }
-}
-
-function layoutAgentChatWindow(): void {
-  if (!mainWindow || !agentChatWindow || agentChatWindow.isDestroyed()) return;
-  const content = mainWindow.getContentBounds();
-  agentChatWindow.setBounds({
-    x: content.x,
-    y: content.y,
-    width: Math.max(1, content.width),
-    height: Math.max(1, content.height),
-  }, false);
-}
-
-function publishAgentHostState(): void {
-  sendToAgentChat("viron:agent-host-state", agentChatHostState);
-}
-
-function applyAgentChatIgnoreMouse(): void {
-  if (!agentChatWindow || agentChatWindow.isDestroyed()) return;
-  if (agentChatIgnoreMouse) agentChatWindow.setIgnoreMouseEvents(true, { forward: true });
-  else agentChatWindow.setIgnoreMouseEvents(false);
-}
-
-function applyAgentChatChromeVisibility(): void {
-  if (!agentChatWindow || agentChatWindow.isDestroyed()) return;
-  if (agentChatNativeOverlay && agentChatHostState && agentChatChromeVisible) {
-    agentChatIgnoreMouse = false;
-    layoutAgentChatWindow();
-    applyAgentChatIgnoreMouse();
-    if (!agentChatWindow.isVisible()) agentChatWindow.showInactive();
-    raiseAgentOverlayWindows();
-    return;
-  }
-  if (agentChatWindow.isVisible()) agentChatWindow.hide();
-}
-
-async function setAgentChatNativeOverlay(active: boolean): Promise<void> {
-  agentChatNativeOverlay = active;
-  if (!active) {
-    agentChatChromeVisible = false;
-    if (agentChatWindow && !agentChatWindow.isDestroyed()) {
-      agentChatWindow.close();
-      agentChatWindow = null;
-      agentChatLoaded = false;
-    }
-    return;
-  }
-  await ensureAgentChatWindow();
-  applyAgentChatChromeVisibility();
-}
-
-async function ensureAgentChatWindow(): Promise<BrowserWindow> {
-  if (agentChatWindow && !agentChatWindow.isDestroyed()) return agentChatWindow;
-  if (!mainWindow) throw new Error(tr("主窗口不可用"));
-  const root = app.getAppPath();
-  const overlay = new BrowserWindow({
-    parent: mainWindow,
-    width: 1,
-    height: 1,
-    show: false,
-    focusable: true,
-    frame: false,
-    transparent: true,
-    backgroundColor: "#00000000",
-    hasShadow: false,
-    resizable: false,
-    movable: false,
-    minimizable: false,
-    maximizable: false,
-    fullscreenable: false,
-    skipTaskbar: true,
-    roundedCorners: false,
-    webPreferences: {
-      preload: join(root, "dist", "desktop", "preload.cjs"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      webSecurity: true,
-    },
-  });
-  agentChatWindow = overlay;
-  agentChatLoaded = false;
-  overlay.setMenuBarVisibility(false);
-  overlay.setIgnoreMouseEvents(false);
-  overlay.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
-  overlay.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  overlay.webContents.on("will-navigate", (event, url) => {
-    if (url !== overlay.webContents.getURL()) event.preventDefault();
-  });
-  overlay.webContents.once("did-finish-load", () => {
-    agentChatLoaded = true;
-    publishAgentHostState();
-    applyAgentChatChromeVisibility();
-  });
-  overlay.on("closed", () => {
-    if (agentChatWindow === overlay) {
-      agentChatWindow = null;
-      agentChatLoaded = false;
-    }
-  });
-  await overlay.loadFile(join(root, "dist", "desktop-renderer", "desktop-agent-chat.html"));
-  return overlay;
-}
-
-async function updateAgentChatHost(state: AgentHostState | null): Promise<void> {
-  agentChatHostState = state;
-  if (!state || !agentChatNativeOverlay) {
-    if (!state) agentChatChromeVisible = false;
-    publishAgentHostState();
-    applyAgentChatChromeVisibility();
-    return;
-  }
-  await ensureAgentChatWindow();
-  if (agentChatHostState !== state) return;
-  publishAgentHostState();
-  applyAgentChatChromeVisibility();
-}
-
-function settleAgentHostAction(id: string, result: AgentHostActionResult | Error): boolean {
-  const pending = pendingAgentHostActions.get(id);
-  if (!pending) return false;
-  pendingAgentHostActions.delete(id);
-  clearTimeout(pending.timer);
-  if (result instanceof Error) pending.reject(result);
-  else pending.resolve(result);
-  return true;
-}
-
-function requestAgentHostAction(action: AgentHostAction): Promise<AgentHostActionResult> {
-  if (!mainWindow || mainWindow.isDestroyed()) return Promise.reject(new Error(tr("Viron 主窗口不可用")));
-  const id = randomUUID();
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      settleAgentHostAction(id, new Error(tr("Viron Agent 宿主操作超时")));
-    }, 15_000);
-    timer.unref?.();
-    pendingAgentHostActions.set(id, { resolve, reject, timer });
-    const request: AgentHostActionRequest = { id, action };
-    mainWindow!.webContents.send("viron:agent-host-request", request);
-  });
-}
-
-function layoutConnectionQualityWindow(): void {
-  if (!mainWindow || !connectionQualityState) return;
-  const content = mainWindow.getContentBounds();
-  const layout = (window: BrowserWindow | null, state: ConnectionQualityOverlayState) => {
-    if (!window || window.isDestroyed()) return;
-    window.setBounds({
-      x: content.x + Math.round(state.bounds.x),
-      y: content.y + Math.round(state.bounds.y),
-      width: Math.max(1, Math.round(state.bounds.width)),
-      height: Math.max(1, Math.round(state.bounds.height)),
-    }, false);
-  };
-  layout(connectionQualityVisualWindow, connectionQualityState);
-  layout(connectionQualityWindow, connectionQualityOverlayInteractionState(connectionQualityState));
-}
-
-function publishConnectionQualityState(): void {
-  if (connectionQualityVisualLoaded && connectionQualityVisualWindow && !connectionQualityVisualWindow.isDestroyed()) {
-    connectionQualityVisualWindow.webContents.send("viron:connection-quality-state", connectionQualityState);
-  }
-  if (connectionQualityLoaded && connectionQualityWindow && !connectionQualityWindow.isDestroyed()) {
-    connectionQualityWindow.webContents.send(
-      "viron:connection-quality-state",
-      connectionQualityState ? connectionQualityOverlayInteractionState(connectionQualityState) : null,
-    );
-  }
-}
-
-function createConnectionQualityWindow(): BrowserWindow {
-  if (!mainWindow) throw new Error(tr("主窗口不可用"));
-  const root = app.getAppPath();
-  const overlay = new BrowserWindow({
-    parent: mainWindow,
-    width: 1,
-    height: 1,
-    show: false,
-    focusable: false,
-    frame: false,
-    transparent: true,
-    backgroundColor: "#00000000",
-    hasShadow: false,
-    resizable: false,
-    movable: false,
-    minimizable: false,
-    maximizable: false,
-    fullscreenable: false,
-    skipTaskbar: true,
-    roundedCorners: false,
-    webPreferences: {
-      preload: join(root, "dist", "desktop", "connection-quality-preload.cjs"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      webSecurity: true,
-    },
-  });
-  overlay.setMenuBarVisibility(false);
-  overlay.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
-  overlay.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  overlay.webContents.on("will-navigate", (event, url) => {
-    if (url !== overlay.webContents.getURL()) event.preventDefault();
-  });
-  return overlay;
-}
-
-async function ensureConnectionQualityWindow(): Promise<BrowserWindow> {
-  if (connectionQualityWindow && !connectionQualityWindow.isDestroyed()
-    && connectionQualityVisualWindow && !connectionQualityVisualWindow.isDestroyed()) return connectionQualityWindow;
-  connectionQualityWindow?.close();
-  connectionQualityVisualWindow?.close();
-  const root = app.getAppPath();
-  const visual = createConnectionQualityWindow();
-  const interaction = createConnectionQualityWindow();
-  connectionQualityVisualWindow = visual;
-  connectionQualityWindow = interaction;
-  connectionQualityVisualLoaded = false;
-  connectionQualityLoaded = false;
-  visual.setIgnoreMouseEvents(true);
-  visual.webContents.once("did-finish-load", () => {
-    connectionQualityVisualLoaded = true;
-    publishConnectionQualityState();
-  });
-  interaction.webContents.once("did-finish-load", () => {
-    connectionQualityLoaded = true;
-    publishConnectionQualityState();
-  });
-  visual.on("closed", () => {
-    if (connectionQualityVisualWindow === visual) {
-      connectionQualityVisualWindow = null;
-      connectionQualityVisualLoaded = false;
-    }
-  });
-  interaction.on("closed", () => {
-    if (connectionQualityWindow === interaction) {
-      connectionQualityWindow = null;
-      connectionQualityLoaded = false;
-    }
-  });
-  await Promise.all([
-    visual.loadFile(join(root, "dist", "desktop-renderer", "desktop-connection-quality.html")),
-    interaction.loadFile(join(root, "dist", "desktop-renderer", "desktop-connection-quality.html")),
-  ]);
-  return interaction;
-}
-
-async function updateConnectionQualityWindow(state: ConnectionQualityOverlayState | null): Promise<void> {
-  connectionQualityState = state;
-  if (!state) {
-    publishConnectionQualityState();
-    connectionQualityWindow?.hide();
-    connectionQualityVisualWindow?.hide();
-    return;
-  }
-  const interaction = await ensureConnectionQualityWindow();
-  if (connectionQualityState !== state) return;
-  layoutConnectionQualityWindow();
-  publishConnectionQualityState();
-  if (connectionQualityVisualWindow && !connectionQualityVisualWindow.isVisible()) connectionQualityVisualWindow.showInactive();
-  if (!interaction.isVisible()) interaction.showInactive();
-  if (connectionQualityVisualWindow) interaction.moveAbove(connectionQualityVisualWindow.getMediaSourceId());
-}
-
-function layoutActiveEnvironmentDockWindow(): void {
-  if (activeEnvironmentDockDrag || activeEnvironmentDockCollapseLayoutTimer
-    || !mainWindow || !activeEnvironmentDockWindow || activeEnvironmentDockWindow.isDestroyed() || !activeEnvironmentDockState) return;
-  const content = mainWindow.getContentBounds();
-  activeEnvironmentDockWindow.setBounds({
-    x: content.x + Math.round(activeEnvironmentDockState.bounds.x),
-    y: content.y + Math.round(activeEnvironmentDockState.bounds.y),
-    width: Math.max(1, Math.round(activeEnvironmentDockState.bounds.width)),
-    height: Math.max(1, Math.round(activeEnvironmentDockState.bounds.height)),
-  }, false);
-}
-
-function stopActiveEnvironmentDockCollapseLayout(): void {
-  if (activeEnvironmentDockCollapseLayoutTimer) clearTimeout(activeEnvironmentDockCollapseLayoutTimer);
-  activeEnvironmentDockCollapseLayoutTimer = null;
-}
-
-function scheduleActiveEnvironmentDockCollapseLayout(): void {
-  if (activeEnvironmentDockCollapseLayoutTimer) return;
-  activeEnvironmentDockCollapseLayoutTimer = setTimeout(() => {
-    activeEnvironmentDockCollapseLayoutTimer = null;
-    layoutActiveEnvironmentDockWindow();
-  }, ACTIVE_ENVIRONMENT_DOCK_TRANSITION_MS + 34);
-  activeEnvironmentDockCollapseLayoutTimer.unref();
-}
-
-function publishActiveEnvironmentDockState(): void {
-  if (!activeEnvironmentDockLoaded || !activeEnvironmentDockWindow || activeEnvironmentDockWindow.isDestroyed()) return;
-  activeEnvironmentDockWindow.webContents.send("viron:active-environment-dock-state", activeEnvironmentDockState);
-}
-
-function publishActiveEnvironmentDockLayout(): void {
-  if (!activeEnvironmentDockLoaded || !activeEnvironmentDockWindow || activeEnvironmentDockWindow.isDestroyed() || !activeEnvironmentDockState) return;
-  activeEnvironmentDockWindow.webContents.send("viron:active-environment-dock-layout", {
-    bounds: { ...activeEnvironmentDockState.bounds },
-    card: { ...activeEnvironmentDockState.card },
-    expanded: activeEnvironmentDockState.expanded,
-    growUp: activeEnvironmentDockState.growUp,
-    dragging: activeEnvironmentDockState.dragging,
-  } satisfies ActiveEnvironmentDockLayoutState);
-}
-
-function stopActiveEnvironmentDockPointerTracking(): void {
-  if (activeEnvironmentDockPointerTimer) clearTimeout(activeEnvironmentDockPointerTimer);
-  activeEnvironmentDockPointerTimer = null;
-  activeEnvironmentDockPointerOutsideSince = null;
-}
-
-function activeEnvironmentDockPointerInside(): boolean {
-  if (!activeEnvironmentDockWindow || activeEnvironmentDockWindow.isDestroyed()) return false;
-  return activeEnvironmentDockPointInsideBounds(
-    electronScreen.getCursorScreenPoint(),
-    activeEnvironmentDockWindow.getBounds(),
-  );
-}
-
-function scheduleActiveEnvironmentDockPointerTracking(): void {
-  if (activeEnvironmentDockPointerTimer || !activeEnvironmentDockState?.expanded
-    || !activeEnvironmentDockWindow || activeEnvironmentDockWindow.isDestroyed()) return;
-  const inspect = () => {
-    activeEnvironmentDockPointerTimer = null;
-    if (!activeEnvironmentDockState?.expanded || !activeEnvironmentDockWindow || activeEnvironmentDockWindow.isDestroyed()) {
-      stopActiveEnvironmentDockPointerTracking();
-      return;
-    }
-    if (activeEnvironmentDockDrag || activeEnvironmentDockPointerInside()) {
-      activeEnvironmentDockPointerOutsideSince = null;
-    } else {
-      const now = Date.now();
-      activeEnvironmentDockPointerOutsideSince ??= now;
-      if (now - activeEnvironmentDockPointerOutsideSince >= ACTIVE_ENVIRONMENT_DOCK_COLLAPSE_DELAY_MS) {
-        activeEnvironmentDockPointerOutsideSince = null;
-        mainWindow?.webContents.send("viron:active-environment-dock-action", { type: "collapse" } satisfies ActiveEnvironmentDockAction);
-        return;
-      }
-    }
-    activeEnvironmentDockPointerTimer = setTimeout(inspect, 80);
-    activeEnvironmentDockPointerTimer.unref();
-  };
-  activeEnvironmentDockPointerTimer = setTimeout(inspect, 80);
-  activeEnvironmentDockPointerTimer.unref();
-}
-
-function activeEnvironmentDockPosition(): { x: number; y: number } | null {
-  if (!mainWindow || !activeEnvironmentDockWindow || activeEnvironmentDockWindow.isDestroyed()) return null;
-  const content = mainWindow.getContentBounds();
-  const bounds = activeEnvironmentDockWindow.getBounds();
-  return { x: bounds.x - content.x, y: bounds.y - content.y };
-}
-
-function sendActiveEnvironmentDockPosition(): void {
-  const position = activeEnvironmentDockPosition();
-  if (!position || !mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send("viron:active-environment-dock-action", {
-    type: "position",
-    ...position,
-  } satisfies ActiveEnvironmentDockAction);
-}
-
-function handleActiveEnvironmentDockDrag(action: ActiveEnvironmentDockDragAction): void {
-  if (!mainWindow || !activeEnvironmentDockWindow || activeEnvironmentDockWindow.isDestroyed()) return;
-  if (action.type === "drag-start") {
-    const bounds = activeEnvironmentDockWindow.getBounds();
-    activeEnvironmentDockDrag = {
-      pointer: { x: action.screenX, y: action.screenY },
-      origin: { x: bounds.x, y: bounds.y },
-      moved: false,
-    };
-    mainWindow.webContents.send("viron:active-environment-dock-action", action);
-    return;
-  }
-  if (!activeEnvironmentDockDrag) return;
-  if (action.type === "drag-move") {
-    const deltaX = action.screenX - activeEnvironmentDockDrag.pointer.x;
-    const deltaY = action.screenY - activeEnvironmentDockDrag.pointer.y;
-    if (!activeEnvironmentDockDrag.moved && Math.hypot(deltaX, deltaY) < 7) return;
-    activeEnvironmentDockDrag.moved = true;
-    const content = mainWindow.getContentBounds();
-    const bounds = activeEnvironmentDockWindow.getBounds();
-    const x = Math.min(
-      Math.max(content.x, activeEnvironmentDockDrag.origin.x + deltaX),
-      Math.max(content.x, content.x + content.width - bounds.width),
-    );
-    const y = Math.min(
-      Math.max(content.y, activeEnvironmentDockDrag.origin.y + deltaY),
-      Math.max(content.y, content.y + content.height - bounds.height),
-    );
-    activeEnvironmentDockWindow.setPosition(Math.round(x), Math.round(y), false);
-    return;
-  }
-  const moved = activeEnvironmentDockDrag.moved;
-  activeEnvironmentDockDrag = null;
-  if (moved) sendActiveEnvironmentDockPosition();
-  else mainWindow.webContents.send("viron:active-environment-dock-action", action);
-}
-
-async function ensureActiveEnvironmentDockWindow(): Promise<BrowserWindow> {
-  if (activeEnvironmentDockWindow && !activeEnvironmentDockWindow.isDestroyed()) return activeEnvironmentDockWindow;
-  if (!mainWindow) throw new Error(tr("主窗口不可用"));
-  const root = app.getAppPath();
-  const overlay = new BrowserWindow({
-    parent: mainWindow,
-    width: 1,
-    height: 1,
-    show: false,
-    frame: false,
-    transparent: true,
-    backgroundColor: "#00000000",
-    hasShadow: true,
-    resizable: false,
-    movable: true,
-    minimizable: false,
-    maximizable: false,
-    fullscreenable: false,
-    focusable: false,
-    skipTaskbar: true,
-    roundedCorners: true,
-    webPreferences: {
-      preload: join(root, "dist", "desktop", "active-environment-dock-preload.cjs"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      webSecurity: true,
-    },
-  });
-  activeEnvironmentDockWindow = overlay;
-  activeEnvironmentDockLoaded = false;
-  overlay.setMenuBarVisibility(false);
-  overlay.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
-  overlay.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  overlay.webContents.on("will-navigate", (event, url) => {
-    if (url !== overlay.webContents.getURL()) event.preventDefault();
-  });
-  overlay.webContents.once("did-finish-load", () => {
-    activeEnvironmentDockLoaded = true;
-    publishActiveEnvironmentDockState();
-  });
-  overlay.on("closed", () => {
-    stopActiveEnvironmentDockCollapseLayout();
-    stopActiveEnvironmentDockPointerTracking();
-    if (activeEnvironmentDockDrag) {
-      mainWindow?.webContents.send("viron:active-environment-dock-action", {
-        type: "drag-end",
-        screenX: activeEnvironmentDockDrag.pointer.x,
-        screenY: activeEnvironmentDockDrag.pointer.y,
-      } satisfies ActiveEnvironmentDockAction);
-    }
-    activeEnvironmentDockDrag = null;
-    activeEnvironmentDockWindow = null;
-    activeEnvironmentDockLoaded = false;
-  });
-  await overlay.loadFile(join(root, "dist", "desktop-renderer", "desktop-active-environment-dock.html"));
-  return overlay;
-}
-
-async function updateActiveEnvironmentDockWindow(state: ActiveEnvironmentDockState | null): Promise<void> {
-  const previousState = activeEnvironmentDockState;
-  activeEnvironmentDockState = state;
-  if (!state) {
-    stopActiveEnvironmentDockCollapseLayout();
-    stopActiveEnvironmentDockPointerTracking();
-    publishActiveEnvironmentDockState();
-    activeEnvironmentDockWindow?.hide();
-    return;
-  }
-  const overlay = await ensureActiveEnvironmentDockWindow();
-  if (activeEnvironmentDockState !== state) return;
-  if (activeEnvironmentDockDrag) return;
-  if (state.expanded) stopActiveEnvironmentDockCollapseLayout();
-  else if (previousState?.expanded) scheduleActiveEnvironmentDockCollapseLayout();
-  layoutActiveEnvironmentDockWindow();
-  publishActiveEnvironmentDockState();
-  if (!overlay.isVisible()) overlay.showInactive();
-  if (state.expanded) scheduleActiveEnvironmentDockPointerTracking();
-  else stopActiveEnvironmentDockPointerTracking();
-}
-
-async function updateActiveEnvironmentDockLayoutWindow(layout: ActiveEnvironmentDockLayoutState): Promise<void> {
-  if (!activeEnvironmentDockState) return;
-  const previousState = activeEnvironmentDockState;
-  const state: ActiveEnvironmentDockState = {
-    ...activeEnvironmentDockState,
-    ...layout,
-    bounds: { ...layout.bounds },
-    card: { ...layout.card },
-  };
-  activeEnvironmentDockState = state;
-  const overlay = await ensureActiveEnvironmentDockWindow();
-  if (activeEnvironmentDockState !== state) return;
-  if (state.expanded) stopActiveEnvironmentDockCollapseLayout();
-  else if (previousState.expanded) scheduleActiveEnvironmentDockCollapseLayout();
-  layoutActiveEnvironmentDockWindow();
-  publishActiveEnvironmentDockLayout();
-  if (!overlay.isVisible()) overlay.showInactive();
-  if (state.expanded) scheduleActiveEnvironmentDockPointerTracking();
-  else stopActiveEnvironmentDockPointerTracking();
-}
-
-function immersiveNavigationViewport(): Rectangle {
-  if (!mainWindow) throw new Error(tr("主窗口不可用"));
-  return mainWindow.getBounds();
-}
-
-function layoutImmersiveNavigationWindow(): void {
-  if (!immersiveNavigationWindow || immersiveNavigationWindow.isDestroyed() || !immersiveNavigationState?.visible) return;
-  const viewport = immersiveNavigationViewport();
-  const size = immersiveNavigationSize(immersiveNavigationState.dock, immersiveNavigationState.expanded, viewport);
-  const bounds = immersiveNavigationBounds(immersiveNavigationState.dock, size, viewport);
-  immersiveNavigationWindow.setBounds(bounds, false);
-}
-
-function publishImmersiveNavigationState(): void {
-  if (!immersiveNavigationLoaded || !immersiveNavigationWindow || immersiveNavigationWindow.isDestroyed() || !immersiveNavigationState) return;
-  immersiveNavigationWindow.webContents.send("viron:immersive-navigation-state", immersiveNavigationState);
-}
-
-async function ensureImmersiveNavigationWindow(): Promise<BrowserWindow> {
-  if (immersiveNavigationWindow && !immersiveNavigationWindow.isDestroyed()) return immersiveNavigationWindow;
-  if (!mainWindow) throw new Error(tr("主窗口不可用"));
-  const root = app.getAppPath();
-  const overlay = new BrowserWindow({
-    parent: mainWindow,
-    width: 34,
-    height: 48,
-    show: false,
-    frame: false,
-    transparent: true,
-    backgroundColor: "#00000000",
-    hasShadow: false,
-    resizable: false,
-    movable: false,
-    minimizable: false,
-    maximizable: false,
-    fullscreenable: false,
-    skipTaskbar: true,
-    roundedCorners: false,
-    webPreferences: {
-      preload: join(root, "dist", "desktop", "immersive-navigation-preload.cjs"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      webSecurity: true,
-    },
-  });
-  immersiveNavigationWindow = overlay;
-  immersiveNavigationLoaded = false;
-  overlay.setMenuBarVisibility(false);
-  overlay.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
-  overlay.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  overlay.webContents.on("will-navigate", (event, url) => {
-    if (url !== overlay.webContents.getURL()) event.preventDefault();
-  });
-  overlay.webContents.once("did-finish-load", () => {
-    immersiveNavigationLoaded = true;
-    publishImmersiveNavigationState();
-  });
-  overlay.on("blur", () => {
-    if (immersiveNavigationState?.expanded && !immersiveNavigationDrag) sendImmersiveNavigationAction({ type: "collapse" });
-  });
-  overlay.on("closed", () => {
-    immersiveNavigationWindow = null;
-    immersiveNavigationLoaded = false;
-    immersiveNavigationDrag = null;
-  });
-  await overlay.loadFile(join(root, "dist", "desktop-renderer", "desktop-immersive-navigation.html"));
-  return overlay;
-}
-
-async function updateImmersiveNavigationWindow(state: ImmersiveNavigationState | null): Promise<void> {
-  const wasExpanded = immersiveNavigationState?.expanded ?? false;
-  immersiveNavigationState = state;
-  if (!state?.visible) {
-    if (immersiveNavigationLoaded && immersiveNavigationWindow && !immersiveNavigationWindow.isDestroyed()) {
-      immersiveNavigationWindow.webContents.send("viron:immersive-navigation-state", null);
-    }
-    immersiveNavigationWindow?.hide();
-    return;
-  }
-  const overlay = await ensureImmersiveNavigationWindow();
-  if (immersiveNavigationState !== state) return;
-  layoutImmersiveNavigationWindow();
-  publishImmersiveNavigationState();
-  if (state.expanded && !wasExpanded) {
-    overlay.show();
-    overlay.focus();
-  } else if (!overlay.isVisible()) overlay.showInactive();
-}
-
-function handleImmersiveNavigationDrag(action: Extract<ImmersiveNavigationAction, { type: "drag-start" | "drag-move" | "drag-end" }>): void {
-  if (!immersiveNavigationWindow || !immersiveNavigationState || immersiveNavigationState.expanded || !mainWindow) return;
-  if (action.type === "drag-start") {
-    immersiveNavigationDrag = {
-      cursor: { x: action.screenX, y: action.screenY },
-      bounds: immersiveNavigationWindow.getBounds(),
-    };
-    return;
-  }
-  if (!immersiveNavigationDrag) return;
-  if (action.type === "drag-move") {
-    immersiveNavigationWindow.setPosition(
-      Math.round(immersiveNavigationDrag.bounds.x + action.screenX - immersiveNavigationDrag.cursor.x),
-      Math.round(immersiveNavigationDrag.bounds.y + action.screenY - immersiveNavigationDrag.cursor.y),
-      false,
-    );
-    return;
-  }
-  const dock = snapImmersiveDock({ x: action.screenX, y: action.screenY }, immersiveNavigationViewport());
-  immersiveNavigationDrag = null;
-  immersiveNavigationState = { ...immersiveNavigationState, dock };
-  layoutImmersiveNavigationWindow();
-  publishImmersiveNavigationState();
-  sendImmersiveNavigationAction({ type: "dock", dock });
 }
 
 function publicState() {
@@ -4210,14 +3375,12 @@ function registerIpc(): void {
   ipcMain.handle("viron:agent-chat:chrome", (event, visible: unknown) => {
     trustedAgentChatSender(event);
     if (typeof visible !== "boolean") throw new Error(tr("Viron Agent 对话层状态无效"));
-    agentChatChromeVisible = visible;
-    applyAgentChatChromeVisibility();
+    setAgentChatChromeVisible(visible);
   });
   ipcMain.handle("viron:agent-chat:ignore-mouse", (event, ignore: unknown) => {
     trustedAgentChatSender(event);
     if (typeof ignore !== "boolean") throw new Error(tr("Viron Agent 鼠标穿透状态无效"));
-    agentChatIgnoreMouse = ignore;
-    applyAgentChatIgnoreMouse();
+    setAgentChatIgnoreMouse(ignore);
   });
   ipcMain.handle("viron:agent-chat:focus", (event) => {
     trustedAgentChatSender(event);
@@ -4347,8 +3510,7 @@ function registerIpc(): void {
       };
     }
     if (action.type === "collapse" && activeEnvironmentDockState?.expanded && activeEnvironmentDockPointerInside()) {
-      activeEnvironmentDockPointerOutsideSince = null;
-      scheduleActiveEnvironmentDockPointerTracking();
+      keepActiveEnvironmentDockExpanded();
       return;
     }
     if (action.type === "collapse") stopActiveEnvironmentDockPointerTracking();
@@ -5998,19 +5160,18 @@ async function createWindow(): Promise<void> {
   });
   createdMainWindow.on("closed", () => {
     void closeAllDesktopWebViews();
+    void updateImmersiveNavigationWindow(null);
     immersiveNavigationWindow?.close();
-    immersiveNavigationState = null;
-    agentChatWindow?.close();
-    agentChatHostState = null;
-    agentChatChromeVisible = false;
+    void updateAgentChatHost(null);
+    void setAgentChatNativeOverlay(false);
+    void updateAgentLauncherWindow(null);
     agentLauncherWindow?.close();
     agentLauncherVisualWindow?.close();
-    agentLauncherState = null;
+    void updateConnectionQualityWindow(null);
     connectionQualityWindow?.close();
     connectionQualityVisualWindow?.close();
-    connectionQualityState = null;
+    void updateActiveEnvironmentDockWindow(null);
     activeEnvironmentDockWindow?.close();
-    activeEnvironmentDockState = null;
     shortcutCaptureActive = false;
     setMainWindow(null);
   });

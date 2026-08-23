@@ -65,7 +65,8 @@ describe("desktop Web renderer overlays", () => {
   it("keeps the native Web view full-size and only lifts Agent chrome above it", () => {
     const webBrowser = readFileSync(new URL("../src/client/components/DesktopWebAccountBrowser.vue", import.meta.url), "utf8");
     const appShell = readFileSync(new URL("../src/client/components/AppShell.vue", import.meta.url), "utf8");
-    const desktopMain = readFileSync(new URL("../src/desktop/main.ts", import.meta.url), "utf8");
+    // Contract: Agent chat overlay ownership moved in desktop refactor PR 7.
+    const desktopChatOverlay = readFileSync(new URL("../src/desktop/overlays/agent-chat-window.ts", import.meta.url), "utf8");
     expect(webBrowser).not.toContain("desktopWebBoundsAboveOverlay");
     expect(webBrowser).not.toContain("desktopWebBoundsBesideOverlay");
     expect(webBrowser).toContain("retainAgentNativeOverlay");
@@ -73,9 +74,9 @@ describe("desktop Web renderer overlays", () => {
     expect(webBrowser).toContain("elementBounds(surface.value)");
     expect(appShell).toContain("AgentHostBridge");
     expect(appShell).toContain("<AgentFloatingWindow v-if=\"desktop && !agentNativeOverlayActive\" />");
-    expect(desktopMain).toContain("ensureAgentChatWindow");
-    expect(desktopMain).toContain("setAgentChatNativeOverlay");
-    expect(desktopMain).toContain("desktop-agent-chat.html");
+    expect(desktopChatOverlay).toContain("ensureAgentChatWindow");
+    expect(desktopChatOverlay).toContain("setAgentChatNativeOverlay");
+    expect(desktopChatOverlay).toContain("desktop-agent-chat.html");
   });
 
   it("hides the native page while its cached environment page is deactivated", () => {

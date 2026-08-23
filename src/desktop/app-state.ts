@@ -8,9 +8,12 @@ import {
   effectiveShortcutBindings,
   parseShortcutBinding,
   sanitizeShortcutOverrides,
+  type ShortcutActionId,
   type ShortcutOverrides,
 } from "../shared/keyboard-shortcuts.js";
 import type { McpApprovalMode } from "../shared/mcp-settings.js";
+import { agentChatLoaded, agentChatWindow } from "./overlays/agent-chat-window.js";
+import { mainWindow } from "./window-host.js";
 
 export interface DesktopStateFile {
   language?: Language;
@@ -56,4 +59,11 @@ export function electronAccelerator(binding: string): string | undefined {
   if (!parsed) return undefined;
   const modifiers = parsed.modifiers.map((modifier) => modifier === "Mod" ? "CommandOrControl" : modifier);
   return [...modifiers, parsed.key].join("+");
+}
+
+export function sendShortcutAction(action: ShortcutActionId): void {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("viron:shortcut", action);
+  if (agentChatWindow && !agentChatWindow.isDestroyed() && agentChatLoaded) {
+    agentChatWindow.webContents.send("viron:shortcut", action);
+  }
 }
