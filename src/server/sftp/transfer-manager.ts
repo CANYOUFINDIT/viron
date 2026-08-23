@@ -1,14 +1,24 @@
 import { randomUUID } from "node:crypto";
 import { posix } from "node:path";
-import { Transform, type Readable, type Writable } from "node:stream";
-import { pipeline } from "node:stream/promises";
+import type { Readable, Writable } from "node:stream";
 import type { FastifyInstance } from "fastify";
 import type { FileEntryWithStats, SFTPWrapper, Stats } from "ssh2";
+import {
+  buildSftpPlan,
+  collectSftpConflicts,
+  copySftpEntry,
+  isSftpMissingFileCode,
+  type SftpConflict,
+  type SftpPlanFileSystem,
+  type SftpTransferConflictItem as SharedSftpTransferConflictItem,
+  type SftpTransferPlan,
+  type SftpTransferProgress,
+} from "../../shared/sftp-transfer-plan.js";
 import type { AuthenticatedUser, WorkspaceType } from "../access-control.js";
 import { writeAudit } from "../audit.js";
 import { connectSsh, loadSshConnection, type ConnectedSsh } from "../ssh/connector.js";
 
-export type SftpTransferConflict = "overwrite" | "skip";
+export type SftpTransferConflict = SftpConflict;
 export type SftpTransferStatus = "pending" | "running" | "success" | "error" | "cancelled";
 
 export interface SftpTransferOptions {
@@ -63,12 +73,7 @@ export interface SftpTransferPreview {
   conflicts: SftpTransferConflictItem[];
 }
 
-export interface SftpTransferConflictItem {
-  sourcePath: string;
-  targetPath: string;
-  sourceType: "file" | "directory";
-  targetType: "file" | "directory" | "symlink";
-}
+export type SftpTransferConflictItem = SharedSftpTransferConflictItem;
 
 interface TransferTask extends PublicSftpTransferTask {
   ownerId: string;
@@ -81,17 +86,8 @@ interface TransferTask extends PublicSftpTransferTask {
   runPromise: Promise<void> | null;
 }
 
-interface TransferPlan {
-  sourceType: "file" | "directory";
-  totalBytes: number;
-  totalFiles: number;
-}
-
-interface TransferProgress {
-  transferredBytes: number;
-  completedFiles: number;
-  skippedFiles: number;
-}
+type TransferPlan = SftpTransferPlan;
+type TransferProgress = SftpTransferProgress;
 
 export interface TransferSftp {
   lstat(path: string, callback: (error: Error | undefined, attributes: Stats) => void): void;
@@ -146,179 +142,25 @@ function action(run: (callback: (error?: Error | null) => void) => void): Promis
   });
 }
 
-async function existingStats(sftp: TransferSftp, path: string): Promise<Stats | null> {
-  try {
-    return await lstat(sftp, path);
-  } catch (error) {
-    const code = (error as { code?: string | number }).code;
-    if (code === 2 || code === "ENOENT" || code === "NO_SUCH_FILE" || /no such file/i.test(errorMessage(error))) return null;
-    throw error;
-  }
+function sftpPlanFileSystem(sftp: TransferSftp): SftpPlanFileSystem {
+  return {
+    lstat: (path) => lstat(sftp, path),
+    readdir: (path) => readdir(sftp, path),
+    mkdir: (path) => action((callback) => sftp.mkdir(path, callback)),
+    rmdir: (path) => action((callback) => sftp.rmdir(path, callback)),
+    unlink: (path) => action((callback) => sftp.unlink(path, callback)),
+    chmod: (path, mode) => action((callback) => sftp.chmod(path, mode, callback)),
+    createReadStream: (path) => sftp.createReadStream(path),
+    createWriteStream: (path, options) => sftp.createWriteStream(path, options),
+  };
 }
 
-async function buildPlan(sftp: TransferSftp, path: string, signal?: AbortSignal): Promise<TransferPlan> {
-  if (signal?.aborted) throw signal.reason;
-  const attributes = await lstat(sftp, path);
-  if (attributes.isSymbolicLink()) throw new Error("暂不支持传输符号链接");
-  if (!attributes.isDirectory()) return { sourceType: "file", totalBytes: attributes.size, totalFiles: 1 };
-  let totalBytes = 0;
-  let totalFiles = 0;
-  for (const entry of await readdir(sftp, path)) {
-    if (entry.filename === "." || entry.filename === "..") continue;
-    const child = await buildPlan(sftp, posix.join(path, entry.filename), signal);
-    totalBytes += child.totalBytes;
-    totalFiles += child.totalFiles;
-  }
-  return { sourceType: "directory", totalBytes, totalFiles };
+function serverSftpMissingFile(error: unknown): boolean {
+  return isSftpMissingFileCode(error) || /no such file/i.test(errorMessage(error));
 }
 
-function entryType(attributes: Stats): SftpTransferConflictItem["targetType"] {
-  if (attributes.isSymbolicLink()) return "symlink";
-  return attributes.isDirectory() ? "directory" : "file";
-}
-
-async function collectConflicts(
-  source: TransferSftp,
-  target: TransferSftp,
-  sourcePath: string,
-  targetPath: string,
-  conflicts: SftpTransferConflictItem[],
-  signal?: AbortSignal,
-): Promise<void> {
-  if (signal?.aborted) throw signal.reason;
-  const sourceAttributes = await lstat(source, sourcePath);
-  if (sourceAttributes.isSymbolicLink()) throw new Error(`暂不支持传输符号链接：${sourcePath}`);
-  const existing = await existingStats(target, targetPath);
-  if (!sourceAttributes.isDirectory()) {
-    if (existing) conflicts.push({ sourcePath, targetPath, sourceType: "file", targetType: entryType(existing) });
-    return;
-  }
-  if (!existing) return;
-  if (!existing.isDirectory() || existing.isSymbolicLink()) {
-    conflicts.push({ sourcePath, targetPath, sourceType: "directory", targetType: entryType(existing) });
-    return;
-  }
-  for (const child of await readdir(source, sourcePath)) {
-    if (child.filename === "." || child.filename === "..") continue;
-    await collectConflicts(source, target, posix.join(sourcePath, child.filename), posix.join(targetPath, child.filename), conflicts, signal);
-  }
-}
-
-async function removeEntry(sftp: TransferSftp, path: string, attributes: Stats): Promise<void> {
-  if (!attributes.isDirectory() || attributes.isSymbolicLink()) {
-    await action((callback) => sftp.unlink(path, callback));
-    return;
-  }
-  for (const child of await readdir(sftp, path)) {
-    if (child.filename === "." || child.filename === "..") continue;
-    const childPath = posix.join(path, child.filename);
-    await removeEntry(sftp, childPath, await lstat(sftp, childPath));
-  }
-  await action((callback) => sftp.rmdir(path, callback));
-}
-
-function conflictDecision(
-  targetPath: string,
-  fallback: SftpTransferConflict,
-  decisions: Readonly<Record<string, SftpTransferConflict>> | undefined,
-): SftpTransferConflict {
-  return decisions?.[targetPath] ?? fallback;
-}
-
-async function ensureDirectory(
-  sftp: TransferSftp,
-  path: string,
-  conflict: SftpTransferConflict,
-  decisions?: Readonly<Record<string, SftpTransferConflict>>,
-): Promise<boolean> {
-  const existing = await existingStats(sftp, path);
-  if (!existing) {
-    await action((callback) => sftp.mkdir(path, callback));
-    return true;
-  }
-  if (existing.isDirectory() && !existing.isSymbolicLink()) return true;
-  if (conflictDecision(path, conflict, decisions) === "skip") return false;
-  await removeEntry(sftp, path, existing);
-  await action((callback) => sftp.mkdir(path, callback));
-  return true;
-}
-
-async function copyFile(
-  source: TransferSftp,
-  target: TransferSftp,
-  sourcePath: string,
-  targetPath: string,
-  attributes: Stats,
-  conflict: SftpTransferConflict,
-  decisions: Readonly<Record<string, SftpTransferConflict>> | undefined,
-  progress: TransferProgress,
-  onProgress: (progress: TransferProgress) => void,
-  signal?: AbortSignal,
-): Promise<void> {
-  const existing = await existingStats(target, targetPath);
-  if (existing && conflictDecision(targetPath, conflict, decisions) === "skip") {
-    progress.skippedFiles += 1;
-    onProgress(progress);
-    return;
-  }
-  if (existing?.isDirectory() || existing?.isSymbolicLink()) await removeEntry(target, targetPath, existing);
-  const counter = new Transform({
-    transform(chunk: Buffer, _encoding, callback) {
-      progress.transferredBytes += chunk.length;
-      onProgress(progress);
-      callback(null, chunk);
-    },
-  });
-  await pipeline(
-    source.createReadStream(sourcePath),
-    counter,
-    target.createWriteStream(targetPath, { flags: "w", mode: attributes.mode & 0o777 }),
-    { signal },
-  );
-  await action((callback) => target.chmod(targetPath, attributes.mode & 0o777, callback));
-  progress.completedFiles += 1;
-  onProgress(progress);
-}
-
-async function copyEntry(
-  source: TransferSftp,
-  target: TransferSftp,
-  sourcePath: string,
-  targetPath: string,
-  conflict: SftpTransferConflict,
-  decisions: Readonly<Record<string, SftpTransferConflict>> | undefined,
-  progress: TransferProgress,
-  onProgress: (progress: TransferProgress) => void,
-  signal?: AbortSignal,
-): Promise<void> {
-  if (signal?.aborted) throw signal.reason;
-  const attributes = await lstat(source, sourcePath);
-  if (attributes.isSymbolicLink()) throw new Error(`暂不支持传输符号链接：${sourcePath}`);
-  if (!attributes.isDirectory()) {
-    await copyFile(source, target, sourcePath, targetPath, attributes, conflict, decisions, progress, onProgress, signal);
-    return;
-  }
-  if (!await ensureDirectory(target, targetPath, conflict, decisions)) {
-    const skipped = await buildPlan(source, sourcePath, signal);
-    progress.skippedFiles += skipped.totalFiles;
-    onProgress(progress);
-    return;
-  }
-  for (const entry of await readdir(source, sourcePath)) {
-    if (entry.filename === "." || entry.filename === "..") continue;
-    await copyEntry(
-      source,
-      target,
-      posix.join(sourcePath, entry.filename),
-      posix.join(targetPath, entry.filename),
-      conflict,
-      decisions,
-      progress,
-      onProgress,
-      signal,
-    );
-  }
-  await action((callback) => target.chmod(targetPath, attributes.mode & 0o777, callback));
+function serverSftpTranslate(key: string, values: readonly unknown[] = []): string {
+  return key.replace(/\{\{(\d+)\}\}/g, (_match, index: string) => String(values[Number(index)] ?? ""));
 }
 
 export async function transferSftpEntry(
@@ -330,9 +172,23 @@ export async function transferSftpEntry(
   onProgress: (progress: TransferProgress) => void = () => undefined,
   signal?: AbortSignal,
 ): Promise<TransferPlan & TransferProgress> {
-  const plan = await buildPlan(source, sourcePath, signal);
+  const sourceFileSystem = sftpPlanFileSystem(source);
+  const targetFileSystem = sftpPlanFileSystem(target);
+  const plan = await buildSftpPlan(sourceFileSystem, sourcePath, signal, serverSftpTranslate);
   const progress: TransferProgress = { transferredBytes: 0, completedFiles: 0, skippedFiles: 0 };
-  await copyEntry(source, target, sourcePath, targetPath, conflict, undefined, progress, onProgress, signal);
+  await copySftpEntry(
+    sourceFileSystem,
+    targetFileSystem,
+    sourcePath,
+    targetPath,
+    conflict,
+    undefined,
+    progress,
+    onProgress,
+    signal,
+    serverSftpTranslate,
+    serverSftpMissingFile,
+  );
   return { ...plan, ...progress };
 }
 
@@ -350,12 +206,14 @@ export class SftpTransferManager {
     const target = await connectSsh(this.app, options.targetConnectionId);
     try {
       const [sourceSftp, targetSftp] = await Promise.all([openSftp(source.client), openSftp(target.client)]);
-      const plans = await Promise.all(sourcePaths.map((sourcePath) => buildPlan(sourceSftp as TransferSftp, sourcePath)));
+      const sourceFileSystem = sftpPlanFileSystem(sourceSftp as TransferSftp);
+      const targetFileSystem = sftpPlanFileSystem(targetSftp as TransferSftp);
+      const plans = await Promise.all(sourcePaths.map((sourcePath) => buildSftpPlan(sourceFileSystem, sourcePath, undefined, serverSftpTranslate)));
       const conflicts: SftpTransferConflictItem[] = [];
       for (const [index, sourcePath] of sourcePaths.entries()) {
         const targetPath = posix.join(targetDirectory, posix.basename(sourcePath));
         this.assertSafeDestination(options.sourceConnectionId, options.targetConnectionId, sourcePath, targetPath, plans[index].sourceType);
-        await collectConflicts(sourceSftp as TransferSftp, targetSftp as TransferSftp, sourcePath, targetPath, conflicts);
+        await collectSftpConflicts(sourceFileSystem, targetFileSystem, sourcePath, targetPath, conflicts, undefined, serverSftpTranslate, serverSftpMissingFile);
       }
       const sourcePath = sourcePaths[0];
       const plan = plans[0];
@@ -515,7 +373,9 @@ export class SftpTransferManager {
       task.activeConnections.add(source);
       task.activeConnections.add(target);
       const [sourceSftp, targetSftp] = await Promise.all([openSftp(source.client), openSftp(target.client)]);
-      const plans = await Promise.all(task.sourcePaths.map((sourcePath) => buildPlan(sourceSftp as TransferSftp, sourcePath, task.abortController.signal)));
+      const sourceFileSystem = sftpPlanFileSystem(sourceSftp as TransferSftp);
+      const targetFileSystem = sftpPlanFileSystem(targetSftp as TransferSftp);
+      const plans = await Promise.all(task.sourcePaths.map((sourcePath) => buildSftpPlan(sourceFileSystem, sourcePath, task.abortController.signal, serverSftpTranslate)));
       for (const [index, sourcePath] of task.sourcePaths.entries()) {
         this.assertSafeDestination(task.sourceConnectionId, task.targetConnectionId, sourcePath, posix.join(task.options.targetDirectory, posix.basename(sourcePath)), plans[index].sourceType);
       }
@@ -537,9 +397,9 @@ export class SftpTransferManager {
           this.app.activeConnections.recordTraffic(task.id, { sentBytes: delta, receivedBytes: delta });
         };
       for (const sourcePath of task.sourcePaths) {
-        await copyEntry(
-          sourceSftp as TransferSftp,
-          targetSftp as TransferSftp,
+        await copySftpEntry(
+          sourceFileSystem,
+          targetFileSystem,
           sourcePath,
           posix.join(task.options.targetDirectory, posix.basename(sourcePath)),
           task.conflict,
@@ -547,6 +407,8 @@ export class SftpTransferManager {
           progress,
           onProgress,
           task.abortController.signal,
+          serverSftpTranslate,
+          serverSftpMissingFile,
         );
       }
       task.transferredBytes = progress.transferredBytes;
