@@ -8,7 +8,8 @@ const agentSessions = readFileSync(new URL("../src/client/components/agent-float
 const agentSuggestions = readFileSync(new URL("../src/client/components/agent-floating-window/use-agent-suggestions.ts", import.meta.url), "utf8");
 const agentLauncherChrome = readFileSync(new URL("../src/client/components/agent-floating-window/use-agent-launcher-chrome.ts", import.meta.url), "utf8");
 const quickSurface = readFileSync(new URL("../src/client/components/AgentQuickSurface.vue", import.meta.url), "utf8");
-const settingsView = readFileSync(new URL("../src/client/views/SettingsView.vue", import.meta.url), "utf8");
+const agentSettingsSection = readFileSync(new URL("../src/client/views/settings/AgentSettingsSection.vue", import.meta.url), "utf8");
+const settingsController = readFileSync(new URL("../src/client/views/settings/use-settings-controller.ts", import.meta.url), "utf8");
 const desktopClient = readFileSync(new URL("../src/client/desktop.ts", import.meta.url), "utf8");
 const desktopPreload = readFileSync(new URL("../src/desktop/preload.cts", import.meta.url), "utf8");
 const desktopMain = readFileSync(new URL("../src/desktop/main.ts", import.meta.url), "utf8");
@@ -263,25 +264,25 @@ describe("AI Agent floating window layout", () => {
   });
 
   it("supports disabling every Agent entry without clearing configuration", () => {
-    expect(settingsView).toContain("changeAgentEntryMode('disabled')");
-    expect(settingsView).toContain("隐藏所有 Viron Agent 入口，保留配置和当前会话");
-    expect(settingsView).toContain("repeat(3, minmax(0, 1fr))");
-    expect(settingsView).toContain('agentEntryMode ?? "disabled"');
+    expect(agentSettingsSection).toContain("changeAgentEntryMode('disabled')");
+    expect(agentSettingsSection).toContain("隐藏所有 Viron Agent 入口，保留配置和当前会话");
+    expect(agentSettingsSection).toContain("repeat(3, minmax(0, 1fr))");
+    expect(settingsController).toContain('agentEntryMode ?? "disabled"');
     expect(agentLauncherChrome).toContain('agentEntryMode ?? "disabled"');
   });
 
   it("lets Viron Agent settings fill the settings column", () => {
-    expect(settingsView).toContain(".agent-entry-settings { width: 100%;");
-    expect(settingsView).toContain(".agent-control-settings { width: 100%;");
-    expect(settingsView).toContain(".settings-form.agent-settings-form { width: 100%;");
-    expect(settingsView).not.toContain("width: min(720px, 100%)");
-    expect(settingsView).not.toContain("width: min(561px, 100%)");
+    expect(agentSettingsSection).toContain(".agent-entry-settings { width: 100%;");
+    expect(agentSettingsSection).toContain(".agent-control-settings { width: 100%;");
+    expect(agentSettingsSection).toContain(".settings-form.agent-settings-form { width: 100%;");
+    expect(agentSettingsSection).not.toContain("width: min(720px, 100%)");
+    expect(agentSettingsSection).not.toContain("width: min(561px, 100%)");
   });
 
   it("warns that Viron Agent is experimental and requires verification", () => {
-    expect(settingsView).toContain("实验性功能 · 使用有风险");
-    expect(settingsView).toContain("生成内容和操作建议可能不准确或不可靠");
-    expect(settingsView).toContain("执行命令、SQL 或其他操作前自行核验");
+    expect(agentSettingsSection).toContain("实验性功能 · 使用有风险");
+    expect(agentSettingsSection).toContain("生成内容和操作建议可能不准确或不可靠");
+    expect(agentSettingsSection).toContain("执行命令、SQL 或其他操作前自行核验");
   });
 
   it("uses 小 V as the user-facing assistant name", () => {
@@ -305,9 +306,9 @@ describe("AI Agent floating window layout", () => {
 
   it("uses Viron Agent as the feature name outside Chat", () => {
     expect(agentLauncherChrome).toContain('return open.value ? tr("关闭 Viron Agent") : tr("打开 Viron Agent");');
-    expect(settingsView).toContain('{ key: "ai-agent" as const, label: tr("Viron Agent"), icon: Bot }');
-    expect(settingsView).toContain("Viron Agent 仍在开发中");
-    expect(settingsView).not.toContain("小 V 入口");
+    expect(settingsController).toContain('{ key: "ai-agent" as const, label: tr("Viron Agent"), icon: Bot }');
+    expect(agentSettingsSection).toContain("Viron Agent 仍在开发中");
+    expect(agentSettingsSection).not.toContain("小 V 入口");
     expect(desktopStaticOverlaySmoke).toContain('label: tr("打开 Viron Agent")');
   });
 

@@ -100,11 +100,12 @@ describe("connection quality monitor", () => {
 
   it("is mounted globally but remains opt-in per device", () => {
     const preference = readFileSync(new URL("../src/client/connection-quality-preference.ts", import.meta.url), "utf8");
-    const settings = readFileSync(new URL("../src/client/views/SettingsView.vue", import.meta.url), "utf8");
+    const settingsController = readFileSync(new URL("../src/client/views/settings/use-settings-controller.ts", import.meta.url), "utf8");
+    const appearanceSettings = readFileSync(new URL("../src/client/views/settings/AppearanceSettingsSection.vue", import.meta.url), "utf8");
     const appShell = readFileSync(new URL("../src/client/components/AppShell.vue", import.meta.url), "utf8");
     expect(preference).toContain('getItem(CONNECTION_QUALITY_ENABLED_STORAGE_KEY) === "1"');
-    expect(settings).toContain("setConnectionQualityEnabled");
-    expect(settings).toContain("显示连接质量悬浮面板");
+    expect(settingsController).toContain("setConnectionQualityEnabled");
+    expect(appearanceSettings).toContain("显示连接质量悬浮面板");
     expect(appShell).toContain("<ConnectionQualityWindow />");
   });
 });

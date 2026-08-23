@@ -1,0 +1,18 @@
+.migration-groups { margin-top: 24px; display: grid; gap: 12px; }
+.migration-groups > article { padding: 16px; border: 1px solid var(--ink-100); border-radius: 10px; background: var(--ink-50); color: var(--teal-600); display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; }
+.migration-groups strong { color: var(--ink-700); font-size: 13px; }
+.migration-groups p { margin: 5px 0 12px; color: var(--ink-400); font-size: 11px; line-height: 1.6; }
+.migration-groups :deep(.el-input) { margin-bottom: 8px; }
+.migration-groups .restore-file { margin-bottom: 8px; }
+.migration-groups > article {
+  border-radius: var(--radius-panel);
+  box-shadow: none;
+}
+.migration-groups > article > div > header {
+  min-height: 28px;
+  margin-block-end: var(--space-xs);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xs);
+}
