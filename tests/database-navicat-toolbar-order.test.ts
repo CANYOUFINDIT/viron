@@ -22,7 +22,8 @@ describe("Navicat toolbar action order", () => {
   const layout = source("../src/client/components/database-workbench/use-database-layout.ts");
   // contract unchanged; implementation moved from DatabaseWorkbench.vue
   const connections = source("../src/client/components/database-workbench/use-database-connections.ts");
-  const navigator = source("../src/client/components/database-workbench/use-database-navigator.ts");
+  // contract unchanged; implementation moved from use-database-navigator.ts
+  const navigatorActions = source("../src/client/components/database-workbench/database-navigator-actions.ts");
   const queryTabs = source("../src/client/components/database-workbench/use-database-query-tabs.ts");
   const connectionEditor = source("../src/client/components/ConnectionEditDialog.vue");
   const designer = source("../src/client/components/TableDesigner.vue");
@@ -105,7 +106,7 @@ describe("Navicat toolbar action order", () => {
       "duplicate-profile",
       "delete-profile",
     ]);
-    const connectionMenu = region(navigator, "function openNavigatorContextMenu", "async function showDdl");
+    const connectionMenu = region(navigatorActions, "function openNavigatorContextMenu", "async function showDdl");
     expect(connectionMenu).not.toContain('action === "new-profile"');
   });
 
@@ -144,19 +145,19 @@ describe("Navicat toolbar action order", () => {
   });
 
   it("shares navigator table selection with global table actions", () => {
-    const navigatorSelection = region(navigator, "function selectNavigatorObject", "async function showNavigatorDdl");
+    const navigatorSelection = region(navigatorActions, "function selectNavigatorObject", "async function showNavigatorDdl");
     expect(navigatorSelection).toContain("selectedDatabase.value = database;");
-    expect(navigatorSelection).toContain("selectedObjects.value = { ...selectedObjects.value, [`${database}:${category.key}`]: item.name };");
+    expect(navigatorSelection).toContain("$navigator.selectedObjects.value = { ...$navigator.selectedObjects.value, [`${database}:${category.key}`]: item.name };");
     expect(navigatorSelection).toContain('const objectTab = $queryTabs.tabs.value.find((tab) => tab.kind === "objects");');
     expect(navigatorSelection).toContain("objectTab.database = database;");
     expect(navigatorSelection).toContain("objectTab.category = category.key;");
 
-    const selectedTable = region(navigator, "function selectedTableContext", "async function openSelectedObject");
+    const selectedTable = region(navigatorActions, "function selectedTableContext", "async function openSelectedObject");
     expect(selectedTable).toContain("const activeContext = selectedCategoryContext();");
     expect(selectedTable).toContain('activeContext?.tab.category === "tables"');
     expect(selectedTable).toContain('selectedObjectInCategory(database, "tables")');
 
-    const tableActions = region(navigator, "function handleGlobalTableCommand", "async function loadInformationDdl");
+    const tableActions = region(navigatorActions, "function handleGlobalTableCommand", "async function loadInformationDdl");
     expect(tableActions).toContain('else if (command === "import")');
     expect(tableActions).toContain('$queryTabs.triggerSelectedTableAction("import");');
     expect(tableActions).toContain('$queryTabs.triggerSelectedTableAction("export", command as "csv" | "xlsx" | "sql")');
@@ -164,7 +165,7 @@ describe("Navicat toolbar action order", () => {
   });
 
   it("opens the current table designer with the Navicat design shortcut", () => {
-    const tableContext = region(navigator, "function currentTableContext", "async function openSelectedObject");
+    const tableContext = region(navigatorActions, "function currentTableContext", "async function openSelectedObject");
     expect(tableContext).toContain('tab?.kind === "data" && tab.table && !tab.readOnly');
     expect(tableContext).toContain("return selectedTableContext();");
 
@@ -178,13 +179,13 @@ describe("Navicat toolbar action order", () => {
     expect(removeTabs).toContain("tabs.value = tabs.value.filter((tab) => tab.database !== database);");
     expect(removeTabs).toContain("activeTabId.value = tabs.value[0]?.id ?? \"\";");
 
-    const clearState = region(navigator, "function clearDatabaseLocalState", "async function openGlobalCategory");
-    expect(clearState).toContain("delete objects.value[database];");
-    expect(clearState).toContain("delete sqlCompletionCatalogs.value[database];");
-    expect(clearState).toContain("selectedObjects.value = Object.fromEntries");
-    expect(clearState).toContain("expandedCategories.value = new Set");
+    const clearState = region(navigatorActions, "function clearDatabaseLocalState", "async function openGlobalCategory");
+    expect(clearState).toContain("delete $navigator.objects.value[database];");
+    expect(clearState).toContain("delete $navigator.sqlCompletionCatalogs.value[database];");
+    expect(clearState).toContain("$navigator.selectedObjects.value = Object.fromEntries");
+    expect(clearState).toContain("$navigator.expandedCategories.value = new Set");
 
-    const closeDatabase = region(navigator, "function closeDatabase", "function editDatabaseTemplate");
+    const closeDatabase = region(navigatorActions, "function closeDatabase", "function editDatabaseTemplate");
     expect(closeDatabase).toContain("removeTabsForDatabase(database);");
     expect(closeDatabase).toContain("clearDatabaseLocalState(database);");
 
@@ -330,7 +331,7 @@ describe("Navicat toolbar action order", () => {
   });
 
   it("does not route Navicat actions to unrelated Viron workflows", () => {
-    const contextMenu = region(navigator, "function openNavigatorContextMenu", "async function showDdl");
+    const contextMenu = region(navigatorActions, "function openNavigatorContextMenu", "async function showDdl");
     expect(contextMenu).not.toContain("openCategory(");
     expect(contextMenu).not.toContain("newObjectTab(");
 

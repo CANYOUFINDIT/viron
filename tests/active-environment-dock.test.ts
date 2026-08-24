@@ -386,6 +386,9 @@ describe("active environment picture-in-picture", () => {
     expect(desktopDockSmoke).toContain("画中画关闭后卡片未移除");
     expect(desktopDockSmoke).toContain("nativeAboveWebView");
     expect(desktopDockSmoke).toContain("passiveHoverFocusStable");
+    expect(desktopDockSmoke).toContain("offscreen: true");
+    expect(desktopDockSmoke).toContain("mainWindow.webContents.isFocused() === mainFocusedBeforeHover");
+    expect(desktopDockSmoke).toContain("!activeEnvironmentDockWindow!.isFocused()");
     expect(desktopDockSmoke).toContain('app.focus({ steal: true })');
     expect(desktopDockSmoke).toContain("hoverIntentStable");
     expect(desktopDockSmoke).toContain("nativePointerTrackingStable");
