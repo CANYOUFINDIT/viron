@@ -69,6 +69,7 @@ flowchart BT
   AS["app-state.ts\nstate I/O + shortcut dispatch"]
   DS["device-session.ts"]
   Chat["overlays/agent-chat-window.ts\nexport let agentChatWindow"]
+  Immersive["overlays/immersive-navigation-window.ts"]
   Launch["overlays/agent-launcher-window.ts"]
   Guards["ipc-guards.ts"]
   Menu["app-menu.ts"]
@@ -105,6 +106,7 @@ flowchart BT
   Web --> Exec
   Web --> AS
   Web --> Chat
+  Web --> Immersive
   Web --> HTTP
   Web --> EC
   Web --> RTC
@@ -140,7 +142,8 @@ flowchart BT
 - `execution-router.ts` import `web-view-runtime.ts`
 - `desktop-runtime-context.ts` import `http-proxy.ts` / `execution-router.ts` / `web-view-runtime.ts` / `mcp-desktop-bridge.ts` / 任一 IPC registrar
 - `mcp-desktop-bridge.ts` 假装只依赖 HTTP：它必须显式 import 真实使用的 AppState / Window / Endpoint / HTTP / Execution / Web / RuntimeContext API，禁止通过 `main.ts` 偷渡
-- `web-view-runtime.ts` 的依赖超出 `window-host.ts` / `endpoint-context.ts` / `app-state.ts` / `overlays/agent-chat-window.ts` / `http-proxy.ts` / `execution-router.ts` / `desktop-runtime-context.ts`
+- `web-view-runtime.ts` 的跨域依赖超出 `window-host.ts` / `endpoint-context.ts` / `app-state.ts` / `overlays/agent-chat-window.ts` / `overlays/immersive-navigation-window.ts` / `http-proxy.ts` / `execution-router.ts` / `desktop-runtime-context.ts`；同域的 `web-view-support.ts`、`web-view-dom-script.ts`、`web-page-policy.ts` 允许
+- `overlays/immersive-navigation-window.ts` 直接或间接反向 import `web-view-runtime.ts`
 - 任何抽出模块 `import ... from "./main.js"`
 
 **Electron 集成测试边界：** `tests/desktop-local-*.integration.test.ts` 用 `describe.skipIf(!process.env.VIRON_DESKTOP_*_TEST)` **spawn 真 Electron**。默认 `npm test` **会 skip**，不算回归网。PR 4 内环用 `tests/desktop-ssh-runtime.test.ts`（进程内 ssh2 mock）。不要为了跑绿去设那些 env；也不要把 skip 的集成测试写成「必须通过」。PR 11 另加不依赖 Endpoint/凭据的 `verify:desktop-startup`：构建后用临时 user-data 启动 Electron `--smoke-test`，要求退出码 0 且 stdout 含 `VIRON_DESKTOP_SMOKE`。
@@ -303,6 +306,7 @@ flowchart TB
   WebView --> Runtime
   WebView --> Execution
   WebView --> HTTP
+  WebView --> Overlays
   MCP --> Runtime
   MCP --> Execution
   MCP --> WebView
@@ -829,7 +833,9 @@ PR 8 同步把 `tests/agent-floating-window.test.ts` 中仅针对 `currentAgentR
 
 `web-view-runtime.ts`：导出的 `desktopWebViews` Map、web-url 三函数、`desktopWebSession`、`ManagedDesktopWebView`/`ManagedDesktopWebPage` 类型、`webViewBounds`、`webViewState`、`previewImageDataUrl`、`captureWebContentsPreview`、`captureDesktopWebViewPreview`、`desktopRendererPreviewBounds`、`captureDesktopRendererPreview`、`touchDesktopWebView`、`trackDesktopWebPartition`、`sendWebViewState`、`notifyWebView`、`autoFillWebPage`、`activeDesktopWebPage`、`layoutDesktopWebViewPages`、`activateDesktopWebPage`、`removeDesktopWebPage`、`destroyDesktopWebPages`、`desktopWebPreferences`、`inspectDesktopWebElement`、`openDesktopWebLinkInNewPage`、`desktopWebContextMenuItem`、`createDesktopWebPage`（含 `nativeView.webContents.on("before-mouse-event"` / `mouse.type !== "mouseDown"` / `viron:native-view-pointer-down`）、`clearDesktopWebSession`、`latestDesktopWebCredential`、`applyDesktopWebCredential`、`reopenDesktopWebViews`、`refreshDesktopWebViews`、`resetDesktopWebViews`、`resetDesktopWebView`、`openDesktopWebView`、`snapshotDesktopWebCredential`、`actOnDesktopWebCredential`、`controlDesktopWebCredential`、`uploadDesktopWebCredential`、`closeDesktopWebView`、`closeAllDesktopWebViews`、`localWebView`、`handleDesktopWebViewAction`、`desktopWebMutationContext`、`reconcileDesktopWebMutation`。
 
-允许 import `window-host.ts`、`endpoint-context.ts`、`app-state.ts`（web URL state）、`overlays/agent-chat-window.ts`（`sendToAgentChat`）、`http-proxy.ts`、`execution-router.ts`、`desktop-runtime-context.ts`；禁止 import MCP、IPC 或 `main.ts`。`openDesktopWebView` 直接使用 PR 8 已存在的 `localWebCredential` / `reserveDesktopRuntime` / `trackDesktopRuntime`，`closeAllDesktopWebViews` 通过 runtime-context 清理共享 `pendingCredentialRequests`。
+原生 `WebContentsView` 会截获 `Escape`，因此 `web-view-runtime.ts` 允许单向 import `overlays/immersive-navigation-window.ts` 的 `immersiveNavigationState` 与 `sendImmersiveNavigationAction`。该边只用于把原生输入转交给沉浸导航，overlay 禁止直接或间接反向依赖 web-view；`tests/desktop-module-dependencies.test.ts` 锁定这条边与无反向路径合同。
+
+允许 import `window-host.ts`、`endpoint-context.ts`、`app-state.ts`（web URL state）、`overlays/agent-chat-window.ts`（`sendToAgentChat`）、`overlays/immersive-navigation-window.ts`（仅 Escape 转交）、`http-proxy.ts`、`execution-router.ts`、`desktop-runtime-context.ts`；禁止 import MCP、IPC 或 `main.ts`。`openDesktopWebView` 直接使用 PR 8 已存在的 `localWebCredential` / `reserveDesktopRuntime` / `trackDesktopRuntime`，`closeAllDesktopWebViews` 通过 runtime-context 清理共享 `pendingCredentialRequests`。
 
 **不要**搬 `requireDesktopString*`、`closeDesktopExecution`。本 PR 不搬任何 `ipcMain.handle`；`currentExecutionActivity` 在 `main.ts` 直接读导出的 `desktopWebViews.size`，不新增 count provider。
 
@@ -965,7 +971,9 @@ onBeforeUnmount(() => { /* remove providers; drain pendingAgentDatabaseExecution
 
 `use-database-connections.ts`：`toggleConnectionGroup`、`setConnectionCollapsed`、`connectionChildrenVisible`、`handleConnectionNodeClick`、`load`、`showConnectionError`、`selectConnection`、`closeConnection`、`editConnection`、`copyConnection`、`createConnection`、`createConnectionProfile`、`switchConnectionProfile`、`refreshConnectionProfileEditor`、`handleConnectionProfileAction`、`focusConnection`、`selectConnectionById`、`refreshConnections`、`updateConnectionPreference`、`connectionUpdateBody`、`moveConnectionToGroup`、`createConnectionGroup`、`openConnectionShare`、`grantSharedConnection`、`revokeSharedConnection`、`openConnectionContextMenu`、`deleteConnection`、`collapseAllNavigation`、`testConnection`、`pollDatabaseSession`、`focusInitialConnection`、`resetDatabaseWorkspace`、`handleGlobalConnectionCommand`。
 
-`use-database-navigator.ts`：`categoryKey`、`categoryDefinition`、`isObjectCategory`、`categoryItems`、`categoryCount`、`categorySelected`、`navigatorTargetKey`、`objectCategoryLabel`、`objectSelectionKey`、`selectedObject`、`selectedObjectInCategory`、`selectObject`、`visibleCategoryItems`、`refreshSchemas`、`loadDatabaseObjects`、`loadSqlCompletionCatalog`、`selectDatabaseNode`、`toggleDatabase`、`objectFavorite`、`loadObjectFavorites`、`loadObjectGroups`、`objectGroup`、`createObjectGroup`、`addNavigatorObjectToGroup`、`excludeNavigatorObjectFromGroup`、`toggleObjectFavorite`、`removeObjectFavorite`、`openObjectFavorite`、`openCategory`、`toggleCategory`、`openNavigatorObject`、`selectNavigatorObject`、`showNavigatorDdl`、`refreshObjectCategory`、`selectedCategoryContext`、`selectedTableContext`、`currentTableContext`、`openSelectedObject`、`designSelectedObject`、`designSelectedTable`、`designCurrentTable`、`createObjectTemplate`、`deleteObject`、`deleteSelectedObject`、`clearDatabaseLocalState`、`openGlobalCategory`、`handleGlobalTableCommand`、`loadInformationDdl`、`openDatabaseDictionary`、`openTableDictionary`、`closeDatabase`、`editDatabaseTemplate`、`createDatabaseTemplate`、`deleteDatabase`、`dumpTableStructure`、`reverseNavigatorTarget`、`createBiWorkspaceFromTarget`、`openObjectPrivileges`、`openDatabaseSearch`、`openDatabaseSearchResult`、`navigatorObject`、`chooseNavigatorObject`、`openTableWizard`、`duplicateObjectDraft`、`fetchObjectDdl`、`rewriteCreateObjectName`、`copyNavigatorObject`、`pasteNavigatorObject`、`duplicateTableDraft`、`tableMutationDraft`、`renameObjectDraft`、`openNavigatorContextMenu`、`showDdl`、`openObject`。
+`use-database-navigator.ts`：创建并唯一拥有 navigator 状态，包含 `categoryKey`、`categoryDefinition`、`isObjectCategory`、`categoryItems`、`categoryCount`、`categorySelected`、`navigatorTargetKey`、`objectCategoryLabel`、`objectSelectionKey`、`selectedObject`、`selectedObjectInCategory`、`selectObject`、`visibleCategoryItems`、`refreshSchemas`、`loadDatabaseObjects`、`loadSqlCompletionCatalog`、`selectDatabaseNode`、`toggleDatabase`、`objectFavorite`、`loadObjectFavorites`、`loadObjectGroups`、`objectGroup`、`createObjectGroup`、`addNavigatorObjectToGroup`、`excludeNavigatorObjectFromGroup`、`toggleObjectFavorite`、`removeObjectFavorite`、`openObjectFavorite`。
+
+`database-navigator-actions.ts`：`createDatabaseNavigatorActions(ctx)` 只在事件执行时经 deferred context 读取各 domain，不创建业务 ref，也不 import 任一 `use-*.ts`。包含 `openCategory`、`toggleCategory`、`openNavigatorObject`、`selectNavigatorObject`、`showNavigatorDdl`、`refreshObjectCategory`、`selectedCategoryContext`、`selectedTableContext`、`currentTableContext`、`openSelectedObject`、`designSelectedObject`、`designSelectedTable`、`designCurrentTable`、`createObjectTemplate`、`deleteObject`、`deleteSelectedObject`、`clearDatabaseLocalState`、`openGlobalCategory`、`handleGlobalTableCommand`、`loadInformationDdl`、`openDatabaseDictionary`、`openTableDictionary`、`closeDatabase`、`editDatabaseTemplate`、`createDatabaseTemplate`、`deleteDatabase`、`dumpTableStructure`、`reverseNavigatorTarget`、`createBiWorkspaceFromTarget`、`openObjectPrivileges`、`openDatabaseSearch`、`openDatabaseSearchResult`、`navigatorObject`、`chooseNavigatorObject`、`openTableWizard`、`duplicateObjectDraft`、`fetchObjectDdl`、`rewriteCreateObjectName`、`copyNavigatorObject`、`pasteNavigatorObject`、`duplicateTableDraft`、`tableMutationDraft`、`renameObjectDraft`、`openNavigatorContextMenu`、`showDdl`、`openObject`。
 
 `use-database-query-tabs.ts`：`newTab`、`queryTabDirty`、`newDataTab`、`newCommandLine`、`newTableDesigner`、`newObjectTab`、`newUtilityTab`、`newArtifactTab`、`closeTab`、`setTableDesignerDirty`、`handleTableDesignerSaved`、`waitForQueryJob`、`removeTabsForDatabase`、`triggerSelectedTableAction`、`clearTableAction`、`refreshUtilityTab`、`createFromUtilityTab`、`closeTaskPanelRequest`、`openTaskPanel`、`requireSelectedDatabase`、`handleGlobalQueryCommand`、`runQuery`、`pollJob`、`cancelQuery`、`formatSql`、`explainSql`、`handleQueryRunCommand`、`handleBuiltQuery`、`insertCodeSnippet`、`handleGeneratedData`、`executeDatabaseStatement`、`handleWorkbenchShortcut`、`handleWorkbenchKeydown`、`queryResult`、`resultSummary`。
 
@@ -1198,6 +1206,12 @@ npm run build:desktop
 npm run verify:desktop-startup
 wc -l src/desktop/main.ts src/client/components/DatabaseWorkbench.vue src/client/views/SettingsView.vue src/client/views/OrganizationView.vue
 ```
+
+### 补充：关键用户流集成测试
+
+`npm run verify:user-flow-integration` 会先构建生产 Web/Server，再用临时 SQLite 数据目录启动真实服务并驱动真实页面。登录、环境、服务维护、设置和组织路径使用真实 API；数据库外部服务与 Electron preload 边界使用确定性 fixture，因此它是**关键用户流集成测试**，不冒充真实数据库或完整 Electron E2E。`npm run verify:user-flows` 保留为兼容别名。
+
+测试按 `VIRON_FLOW_BROWSER` → Playwright 缓存 Chromium → macOS/Linux/Windows 常见 Chrome、Chromium、Edge 路径寻找浏览器。`npm run verify:full-regression` 显式包含该测试，缺少浏览器应明确失败而不是静默 skip；默认 `npm test` 不依赖浏览器。该测试补充但不替代 `build:desktop` 与 `verify:desktop-startup`。
 
 ---
 

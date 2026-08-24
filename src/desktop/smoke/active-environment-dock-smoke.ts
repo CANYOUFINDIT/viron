@@ -73,7 +73,7 @@ export async function runDesktopActiveEnvironmentDockSmoke(): Promise<{
   const rendererPreview = await captureDesktopRendererPreview(rendererPreviewBounds);
   await mainWindow.webContents.executeJavaScript("document.querySelector('#active-environment-renderer-preview-smoke')?.remove()", true);
   const rendererPreviewPixels = Boolean(rendererPreview);
-  const testView = new WebContentsView({ webPreferences: { contextIsolation: true, sandbox: true } });
+  const testView = new WebContentsView({ webPreferences: { contextIsolation: true, sandbox: true, offscreen: true } });
   const testViewBounds = { x: 180, y: 130, width: 520, height: 360 };
   testView.setBounds(testViewBounds);
   testView.setVisible(true);
@@ -168,14 +168,16 @@ export async function runDesktopActiveEnvironmentDockSmoke(): Promise<{
     })`) as { collapsedPanelSize: boolean; collapsedStacked: boolean; firstLeft: number; firstTop: number; previewPixels: boolean; nonInteractivePreview: boolean };
     if (process.platform === "darwin") app.focus({ steal: true });
     mainWindow.focus();
+    mainWindow.webContents.focus();
     const focusDeadline = Date.now() + 2_000;
-    while (!mainWindow.isFocused() && Date.now() < focusDeadline) {
+    while (!mainWindow.webContents.isFocused() && Date.now() < focusDeadline) {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    const focusedBeforeHover = mainWindow.isFocused();
+    const mainFocusedBeforeHover = mainWindow.webContents.isFocused();
     activeEnvironmentDockWindow!.webContents.sendInputEvent({ type: "mouseMove", x: 12, y: 12 });
     await new Promise((resolve) => setTimeout(resolve, 50));
-    const passiveHoverFocusStable = focusedBeforeHover && mainWindow.isFocused();
+    const passiveHoverFocusStable = mainWindow.webContents.isFocused() === mainFocusedBeforeHover
+      && !activeEnvironmentDockWindow!.isFocused();
     const nonFocusable = !activeEnvironmentDockWindow!.isFocusable();
     await mainWindow.webContents.executeJavaScript(`(() => {
       window.__activeEnvironmentDockHoverActions = [];
@@ -520,5 +522,3 @@ export async function runDesktopActiveEnvironmentDockSmoke(): Promise<{
     await updateActiveEnvironmentDockWindow(null);
   }
 }
-
-
