@@ -166,17 +166,24 @@ export async function runDesktopActiveEnvironmentDockSmoke(): Promise<{
       };
       inspect();
     })`) as { collapsedPanelSize: boolean; collapsedStacked: boolean; firstLeft: number; firstTop: number; previewPixels: boolean; nonInteractivePreview: boolean };
-    if (process.platform === "darwin") app.focus({ steal: true });
+    if (process.platform === "darwin") {
+      app.setActivationPolicy("regular");
+      await app.dock?.show();
+      app.focus({ steal: true });
+    }
+    mainWindow.show();
+    mainWindow.moveTop();
     mainWindow.focus();
     mainWindow.webContents.focus();
     const focusDeadline = Date.now() + 2_000;
     while (!mainWindow.webContents.isFocused() && Date.now() < focusDeadline) {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    const mainFocusedBeforeHover = mainWindow.webContents.isFocused();
+    const mainFocusAcquired = mainWindow.webContents.isFocused();
     activeEnvironmentDockWindow!.webContents.sendInputEvent({ type: "mouseMove", x: 12, y: 12 });
     await new Promise((resolve) => setTimeout(resolve, 50));
-    const passiveHoverFocusStable = mainWindow.webContents.isFocused() === mainFocusedBeforeHover
+    const passiveHoverFocusStable = mainFocusAcquired
+      && mainWindow.webContents.isFocused()
       && !activeEnvironmentDockWindow!.isFocused();
     const nonFocusable = !activeEnvironmentDockWindow!.isFocusable();
     await mainWindow.webContents.executeJavaScript(`(() => {
