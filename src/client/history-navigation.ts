@@ -32,13 +32,15 @@ let hideTimer: number | undefined;
 let controller: HistoryNavigationController | null = null;
 let lastNavigationAt = 0;
 let holdUntilRelease = false;
+let suppressWheelUntil = 0;
 const navigationCooldownMs = 420;
+const inertiaSuppressMs = 280;
 
 function overlayFromGesture(state: HistoryNavigationGestureState, available: boolean): HistoryNavigationOverlayView | null {
   if (!state.direction || state.status === "idle") return null;
   const progress = historyNavigationProgress(state);
-  if (progress < 0.02 && state.status === "pending") return null;
-  return { direction: state.direction, progress: state.status === "committed" ? 1 : Math.max(progress, 0.18), available };
+  if (progress < 0.04 && state.status === "pending") return null;
+  return { direction: state.direction, progress, available };
 }
 
 function clearIdleTimer() {
@@ -49,6 +51,10 @@ function clearIdleTimer() {
 function clearHideTimer() {
   window.clearTimeout(hideTimer);
   hideTimer = undefined;
+}
+
+function suppressInertia(time = performance.now()) {
+  suppressWheelUntil = time + inertiaSuppressMs;
 }
 
 function resetGesture(time = performance.now()) {
@@ -85,6 +91,8 @@ export function applyHistoryNavigationTouch(phase: "begin" | "end") {
     return;
   }
   holdUntilRelease = false;
+  historyNavigationOverlay.value = null;
+  suppressInertia();
   finishHeldGesture();
 }
 
@@ -97,20 +105,19 @@ export function flashHistoryNavigationOverlay(direction: HistoryNavigationDirect
   showHistoryNavigationOverlay({ direction, progress: 1, available });
   hideTimer = window.setTimeout(() => {
     if (historyNavigationOverlay.value?.direction === direction) historyNavigationOverlay.value = null;
-  }, 180);
+  }, 80);
 }
 
 function commitNavigation(direction: HistoryNavigationDirection) {
   const now = performance.now();
   const available = controller?.canNavigate(direction) ?? false;
-  showHistoryNavigationOverlay({ direction, progress: 1, available });
+  historyNavigationOverlay.value = null;
+  suppressInertia(now);
   if (available && now - lastNavigationAt >= navigationCooldownMs) {
     lastNavigationAt = now;
     controller?.navigate(direction);
   }
-  hideTimer = window.setTimeout(() => {
-    resetGesture(performance.now());
-  }, 180);
+  resetGesture(now);
 }
 
 export function applyHistoryNavigationWheel(
@@ -118,6 +125,7 @@ export function applyHistoryNavigationWheel(
   time = performance.now(),
   options?: { ignoreBlockedTargets?: boolean },
 ): HistoryNavigationGestureState {
+  if (time < suppressWheelUntil) return gesture;
   const next = reduceHistoryNavigationWheel(gesture, {
     deltaX: event.deltaX,
     deltaY: event.deltaY,
