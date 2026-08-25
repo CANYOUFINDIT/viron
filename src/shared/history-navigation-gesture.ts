@@ -11,7 +11,7 @@ export const defaultHistoryNavigationGestureConfig: HistoryNavigationGestureConf
   axisRatio: 1.75,
   armDistance: 40,
   commitDistance: 108,
-  idleMs: 140,
+  idleMs: 48,
 };
 
 export interface HistoryNavigationGestureState {

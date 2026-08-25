@@ -15,7 +15,6 @@ import {
 import {
   hideDesktopHistoryNavigationOverlay,
   closeDesktopHistoryNavigationOverlay,
-  scheduleDesktopHistoryNavigationOverlayHide,
   showDesktopHistoryNavigationOverlay,
 } from "./overlays/history-navigation-window.js";
 import { desktopWebViews } from "./web-view-support.js";
@@ -34,7 +33,9 @@ let historyNavigationScrollBlocked: boolean | null = null;
 let historyNavigationScrollProbe = 0;
 let historyNavigationAppliedAt = 0;
 let historyNavigationTouchHeld = false;
+let historyNavigationSuppressWheelUntil = 0;
 const HISTORY_NAVIGATION_COOLDOWN_MS = 420;
+const HISTORY_NAVIGATION_INERTIA_SUPPRESS_MS = 280;
 
 function visibleHistoryNavigationWebView(): HistoryNavigationSurfaceView | null {
   for (const view of desktopWebViews.values()) {
@@ -51,6 +52,7 @@ export function resetDesktopHistoryNavigationGesture(time = Date.now()): void {
   historyNavigationTouchHeld = false;
   historyNavigationGesture = idleHistoryNavigationGesture(time);
   historyNavigationScrollBlocked = null;
+  historyNavigationSuppressWheelUntil = time + HISTORY_NAVIGATION_INERTIA_SUPPRESS_MS;
   hideDesktopHistoryNavigationOverlay();
 }
 
@@ -78,26 +80,24 @@ function publishDesktopHistoryNavigationGesture(state: HistoryNavigationGestureS
     hideDesktopHistoryNavigationOverlay();
     return;
   }
-  const rawProgress = historyNavigationProgress(state);
-  if (rawProgress < 0.02 && state.status === "pending") return;
-  const progress = state.status === "committed" ? 1 : Math.max(rawProgress, 0.18);
+  const progress = historyNavigationProgress(state);
+  if (progress < 0.04 && state.status === "pending") return;
   if (!view) return;
   void showDesktopHistoryNavigationOverlay(state.direction, progress, view.bounds);
 }
 
-function commitDesktopHistoryNavigation(direction: HistoryNavigationDirection, view: HistoryNavigationSurfaceView | null): void {
+function commitDesktopHistoryNavigation(direction: HistoryNavigationDirection): void {
   applyDesktopHistoryNavigation(direction);
-  publishDesktopHistoryNavigationGesture(historyNavigationGesture, view);
-  scheduleDesktopHistoryNavigationOverlayHide(() => resetDesktopHistoryNavigationGesture(Date.now()), 180);
+  resetDesktopHistoryNavigationGesture(Date.now());
 }
 
 function finishDesktopHistoryNavigationGesture(): void {
   if (historyNavigationGesture.status === "committed") return;
-  const view = visibleHistoryNavigationWebView();
+  hideDesktopHistoryNavigationOverlay();
   const settled = settleHistoryNavigationGesture(historyNavigationGesture, Date.now());
   if (settled.status === "committed" && settled.direction && historyNavigationScrollBlocked !== true) {
     historyNavigationGesture = settled;
-    commitDesktopHistoryNavigation(settled.direction, view);
+    commitDesktopHistoryNavigation(settled.direction);
     return;
   }
   resetDesktopHistoryNavigationGesture(Date.now());
@@ -134,7 +134,7 @@ function scheduleDesktopHistoryNavigationIdle(time: number, view: HistoryNavigat
     const settled = settleHistoryNavigationGesture(historyNavigationGesture, Date.now());
     if (settled.status === "committed" && settled.direction && historyNavigationScrollBlocked !== true) {
       historyNavigationGesture = settled;
-      commitDesktopHistoryNavigation(settled.direction, view);
+      commitDesktopHistoryNavigation(settled.direction);
       return;
     }
     resetDesktopHistoryNavigationGesture(time);
@@ -142,16 +142,8 @@ function scheduleDesktopHistoryNavigationIdle(time: number, view: HistoryNavigat
 }
 
 export function handleDesktopHistoryNavigationCommand(direction: HistoryNavigationDirection): void {
-  const view = visibleHistoryNavigationWebView();
   applyDesktopHistoryNavigation(direction);
-  historyNavigationGesture = {
-    status: "committed",
-    direction,
-    distance: 108,
-    lastEventAt: Date.now(),
-  };
-  if (view) void showDesktopHistoryNavigationOverlay(direction, 1, view.bounds);
-  scheduleDesktopHistoryNavigationOverlayHide(() => resetDesktopHistoryNavigationGesture(Date.now()), 180);
+  resetDesktopHistoryNavigationGesture(Date.now());
 }
 
 function probeDesktopHistoryNavigationScroll(webContents: WebContents, direction: HistoryNavigationDirection): void {
@@ -176,8 +168,9 @@ export function handleDesktopHistoryNavigationWheel(
   webContents: WebContents,
 ): void {
   if (mouse.type !== "mouseWheel") return;
-  const wheel = mouse as Electron.MouseWheelInputEvent;
   const time = Date.now();
+  if (time < historyNavigationSuppressWheelUntil) return;
+  const wheel = mouse as Electron.MouseWheelInputEvent;
   const next = reduceHistoryNavigationWheel(historyNavigationGesture, {
     deltaX: Number(wheel.deltaX ?? 0) || Number(wheel.wheelTicksX ?? 0) * 40,
     deltaY: Number(wheel.deltaY ?? 0) || Number(wheel.wheelTicksY ?? 0) * 40,
