@@ -409,7 +409,7 @@ describe("monitor alerts", () => {
     }
   });
 
-  it("shares alerts with authorized environment members while keeping notification state per user", async () => {
+  it("aggregates authorized alerts across workspaces while keeping notification state per user", async () => {
     const directory = mkdtempSync(join(tmpdir(), "viron-monitor-alert-access-test-"));
     directories.push(directory);
     const config = testConfig(directory);
@@ -450,36 +450,68 @@ describe("monitor alerts", () => {
 
       const environment = await app.inject({ method: "POST", url: "/api/v1/environments", cookies: ownerCookies, payload: { name: "共享告警环境" } });
       const environmentId = environment.json().id as string;
+      const hiddenEnvironment = await app.inject({ method: "POST", url: "/api/v1/environments", cookies: ownerCookies, payload: { name: "未授权告警环境" } });
+      const hiddenEnvironmentId = hiddenEnvironment.json().id as string;
       await app.db.prepare(`
         INSERT INTO resource_grants (
           id, organization_id, grantee_type, grantee_id, resource_type, resource_id,
           created_by_user_id, created_at
         ) VALUES (?, ?, 'user', ?, 'environment', ?, ?, ?)
       `).run(randomUUID(), organizationId, memberId, environmentId, ownerLogin.json().user.id, now);
-      const alertId = randomUUID();
-      await app.db.prepare(`
-        INSERT INTO monitor_alerts (
-          id, environment_id, state_id, target_type, target_id, rule_type, rule_key,
-          ssh_connection_id, service_id, deployment_id, environment_name, target_name,
-          connection_name, service_name, status, details_json, triggered_at, recovered_at,
-          created_at, updated_at
-        ) VALUES (?, ?, NULL, 'host', ?, 'cpu', '', NULL, NULL, NULL, ?, ?, '', '', 'active', ?, ?, NULL, ?, ?)
-      `).run(alertId, environmentId, randomUUID(), "共享告警环境", "授权主机", JSON.stringify({ value: 95, threshold: 90 }), now, now, now);
+      const insertAlert = async (environmentId: string, environmentName: string, targetName: string) => {
+        const alertId = randomUUID();
+        await app.db.prepare(`
+          INSERT INTO monitor_alerts (
+            id, environment_id, state_id, target_type, target_id, rule_type, rule_key,
+            ssh_connection_id, service_id, deployment_id, environment_name, target_name,
+            connection_name, service_name, status, details_json, triggered_at, recovered_at,
+            created_at, updated_at
+          ) VALUES (?, ?, NULL, 'host', ?, 'cpu', '', NULL, NULL, NULL, ?, ?, '', '', 'active', ?, ?, NULL, ?, ?)
+        `).run(alertId, environmentId, randomUUID(), environmentName, targetName, JSON.stringify({ value: 95, threshold: 90 }), now, now, now);
+        return alertId;
+      };
+      const alertId = await insertAlert(environmentId, "共享告警环境", "授权主机");
+      const hiddenAlertId = await insertAlert(hiddenEnvironmentId, "未授权告警环境", "未授权主机");
 
-      const ownerAlerts = await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies: ownerCookies });
-      const memberAlerts = await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies: memberCookies });
-      expect(ownerAlerts.json()).toMatchObject({ unread: 1, items: [expect.objectContaining({ id: alertId, notificationPhase: "active" })] });
-      expect(memberAlerts.json()).toMatchObject({ unread: 1, items: [expect.objectContaining({ id: alertId, notificationPhase: "active" })] });
-
-      expect((await app.inject({ method: "POST", url: `/api/v1/monitor-alerts/${alertId}/notified`, cookies: ownerCookies, payload: { phase: "active" } })).statusCode).toBe(200);
-      expect((await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies: ownerCookies })).json().items[0].notificationPhase).toBeNull();
-      expect((await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies: memberCookies })).json().items[0].notificationPhase).toBe("active");
       expect((await app.inject({
         method: "PUT",
         url: `/api/v1/environments/${environmentId}/monitor-alert-settings`,
         cookies: memberCookies,
         payload: defaultMonitorAlertSettings,
       })).statusCode).toBe(403);
+
+      for (const cookies of [ownerCookies, memberCookies]) {
+        const switched = await app.inject({
+          method: "PUT",
+          url: "/api/v1/auth/workspace",
+          cookies,
+          payload: { type: "personal" },
+        });
+        expect(switched.statusCode).toBe(200);
+      }
+      const personalEnvironment = await app.inject({ method: "POST", url: "/api/v1/environments", cookies: ownerCookies, payload: { name: "个人告警环境" } });
+      const personalAlertId = await insertAlert(personalEnvironment.json().id as string, "个人告警环境", "个人主机");
+
+      const ownerAlerts = await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies: ownerCookies });
+      const memberAlerts = await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies: memberCookies });
+      expect(ownerAlerts.json()).toMatchObject({ unread: 3 });
+      expect(ownerAlerts.json().items).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: alertId, workspaceType: "organization", workspaceId: organizationId, workspaceName: "告警组织" }),
+        expect.objectContaining({ id: hiddenAlertId, workspaceType: "organization", workspaceId: organizationId, workspaceName: "告警组织" }),
+        expect.objectContaining({ id: personalAlertId, workspaceType: "personal", workspaceId: ownerLogin.json().user.id, workspaceName: "个人工作台" }),
+      ]));
+      expect(memberAlerts.json()).toMatchObject({
+        unread: 1,
+        items: [expect.objectContaining({ id: alertId, workspaceType: "organization", workspaceId: organizationId, workspaceName: "告警组织", notificationPhase: "active" })],
+      });
+
+      expect((await app.inject({ method: "POST", url: `/api/v1/monitor-alerts/${alertId}/notified`, cookies: ownerCookies, payload: { phase: "active" } })).statusCode).toBe(200);
+      const refreshedOwnerAlerts = await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies: ownerCookies });
+      expect(refreshedOwnerAlerts.json().items.find((item: { id: string }) => item.id === alertId).notificationPhase).toBeNull();
+      expect((await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies: memberCookies })).json().items[0].notificationPhase).toBe("active");
+      expect((await app.inject({ method: "POST", url: `/api/v1/monitor-alerts/${hiddenAlertId}/read`, cookies: memberCookies })).statusCode).toBe(404);
+      expect((await app.inject({ method: "POST", url: "/api/v1/monitor-alerts/read-all", cookies: memberCookies })).json()).toMatchObject({ updated: 1 });
+      expect((await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies: memberCookies })).json().unread).toBe(0);
     } finally {
       await app.close();
     }
