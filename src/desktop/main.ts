@@ -3550,10 +3550,16 @@ function monitorAlertNotificationInput(value: unknown): import("../shared/monito
   };
   const environmentId = required("environmentId", 64);
   if (!/^[0-9a-f-]{36}$/i.test(environmentId)) throw new Error(tr("监控告警通知无效"));
+  const workspaceType = input.workspaceType === "personal" || input.workspaceType === "organization" ? input.workspaceType : null;
+  const workspaceId = required("workspaceId", 64);
+  if (!workspaceType || !/^[0-9a-f-]{36}$/i.test(workspaceId)) throw new Error(tr("监控告警通知无效"));
   return {
     id: required("id", 128),
     title: required("title", 160),
     body: required("body", 500),
+    workspaceType,
+    workspaceId,
+    workspaceName: required("workspaceName", 160),
     environmentId,
     sshConnectionId: optionalId("sshConnectionId"),
     serviceId: optionalId("serviceId"),

@@ -11,7 +11,7 @@ import {
 } from "../desktop";
 import { translate as tr } from "../i18n";
 import { monitorAlertBody, monitorAlertRuleLabel, monitorAlertTitle } from "../monitor-alert-copy";
-import { session } from "../session";
+import { session, switchWorkspace } from "../session";
 import {
   monitorAlertNavigationQuery,
   type DesktopMonitorAlertNotification,
@@ -43,6 +43,11 @@ const notificationStatus = computed(() => {
   return tr("浏览器系统通知尚未授权");
 });
 
+type MonitorAlertNavigationTarget = Pick<
+  MonitorAlertItem,
+  "id" | "workspaceType" | "workspaceId" | "environmentId" | "sshConnectionId" | "serviceId" | "deploymentId"
+>;
+
 function navigationTarget(alert: Pick<MonitorAlertItem, "environmentId" | "sshConnectionId" | "serviceId" | "deploymentId">) {
   return { name: "environment" as const, params: { id: alert.environmentId }, query: monitorAlertNavigationQuery(alert) };
 }
@@ -56,10 +61,27 @@ async function markRead(alertId: string) {
   }
 }
 
-async function openAlert(alert: Pick<MonitorAlertItem, "id" | "environmentId" | "sshConnectionId" | "serviceId" | "deploymentId">) {
+async function openAlert(alert: MonitorAlertNavigationTarget) {
   drawerOpen.value = false;
-  await markRead(alert.id);
-  await router.push(navigationTarget(alert));
+  const currentWorkspace = session.workspace;
+  const changesWorkspace = !currentWorkspace || currentWorkspace.type !== alert.workspaceType || currentWorkspace.id !== alert.workspaceId;
+  const workspace = changesWorkspace
+    ? session.workspaces.find((item) => item.type === alert.workspaceType && item.id === alert.workspaceId)
+    : currentWorkspace;
+  if (!workspace) return ElMessage.error(tr("无法打开连接位置"));
+  try {
+    await markRead(alert.id);
+    const target = navigationTarget(alert);
+    if (!changesWorkspace) {
+      await router.push(target);
+      return;
+    }
+    const href = router.resolve(target).href;
+    await switchWorkspace(workspace);
+    window.location.assign(href);
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : tr("无法打开连接位置"));
+  }
 }
 
 function showBrowserSystemNotification(alert: MonitorAlertItem, phase: "active" | "recovered", title: string, body: string) {
@@ -82,6 +104,9 @@ async function showSystemNotification(alert: MonitorAlertItem, phase: "active" |
       id: alert.id,
       title,
       body,
+      workspaceType: alert.workspaceType,
+      workspaceId: alert.workspaceId,
+      workspaceName: alert.workspaceName,
       environmentId: alert.environmentId,
       sshConnectionId: alert.sshConnectionId,
       serviceId: alert.serviceId,
@@ -154,6 +179,8 @@ onMounted(() => {
   removeDesktopOpenListener = onDesktopMonitorAlertOpen((target: DesktopMonitorAlertNotification) => {
     void openAlert({
       id: target.id,
+      workspaceType: target.workspaceType,
+      workspaceId: target.workspaceId,
       environmentId: target.environmentId,
       sshConnectionId: target.sshConnectionId,
       serviceId: target.serviceId,
@@ -196,6 +223,7 @@ onBeforeUnmount(() => {
           <span class="monitor-alert-list__icon"><CircleX v-if="alert.status === 'active'" :size="17" /><CirclePlus v-else-if="alert.status === 'event'" :size="17" /><CircleCheck v-else :size="17" /></span>
           <span class="monitor-alert-list__copy">
             <strong>{{ monitorAlertRuleLabel(alert) }} · {{ alert.targetName || alert.connectionName }}</strong>
+            <small class="monitor-alert-list__location">{{ $t(alert.workspaceName) }} / {{ alert.environmentName }}</small>
             <small>{{ monitorAlertBody(alert, alert.status === 'recovered' ? 'recovered' : 'active') }}</small>
             <time>{{ new Date(alert.status === 'recovered' ? alert.recoveredAt || alert.triggeredAt : alert.triggeredAt).toLocaleString($locale()) }}</time>
           </span>
@@ -228,6 +256,7 @@ onBeforeUnmount(() => {
 .monitor-alert-list__copy { min-width: 0; }
 .monitor-alert-list__copy strong, .monitor-alert-list__copy small, .monitor-alert-list__copy time { display: block; }
 .monitor-alert-list__copy strong { color: var(--ink-800); font-size: 13px; }
+.monitor-alert-list__copy .monitor-alert-list__location { color: var(--teal-700); font-weight: 700; }
 .monitor-alert-list__copy small { margin-top: 4px; overflow-wrap: anywhere; color: var(--ink-500); font-size: 12px; line-height: 1.55; }
 .monitor-alert-list__copy time { margin-top: 6px; color: var(--ink-400); font-family: var(--font-mono); font-size: 10px; }
 .monitor-alert-list button > svg { margin-top: 7px; color: var(--ink-300); }

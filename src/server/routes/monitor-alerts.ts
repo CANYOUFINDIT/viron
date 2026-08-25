@@ -1,6 +1,13 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { canAccessEnvironment, canManageWorkspace, getWorkspaceAccess, workspaceParams } from "../access-control.js";
+import {
+  canAccessEnvironment,
+  canManageWorkspace,
+  getWorkspaceAccess,
+  type AuthenticatedUser,
+  type WorkspaceContext,
+} from "../access-control.js";
+import { hasBearerApiKey } from "../api-key-auth.js";
 import { writeAudit } from "../audit.js";
 import {
   monitorAlertSettingsForEnvironment,
@@ -49,9 +56,69 @@ async function alertEnvironmentId(app: FastifyInstance, alertId: string): Promis
   return row?.environment_id ?? null;
 }
 
+interface AlertWorkspaceScope extends WorkspaceContext {
+  canManage: boolean;
+  environmentIds: Set<string>;
+}
+
+async function alertWorkspaceAccess(app: FastifyInstance, user: AuthenticatedUser, workspace: WorkspaceContext): Promise<AlertWorkspaceScope> {
+  const canManage = workspace.role === "owner" || workspace.role === "admin";
+  if (canManage) return { ...workspace, canManage: true, environmentIds: new Set() };
+  const access = await getWorkspaceAccess(app.db, { ...user, workspace });
+  return { ...workspace, canManage: access.canManage, environmentIds: access.environmentIds };
+}
+
+async function alertWorkspaceScopes(app: FastifyInstance, request: FastifyRequest): Promise<AlertWorkspaceScope[]> {
+  const user = request.admin!;
+  const workspaces: WorkspaceContext[] = hasBearerApiKey(request)
+    ? [user.workspace]
+    : [
+        { type: "personal", id: user.id, name: "个人工作台", role: "owner" },
+        ...await app.db.prepare(`
+          SELECT 'organization' AS type, o.id, o.name, m.role
+          FROM organization_members m
+          JOIN organizations o ON o.id = m.organization_id
+          WHERE m.user_id = ?
+          ORDER BY o.name COLLATE NOCASE
+        `).all(user.id) as WorkspaceContext[],
+      ];
+  return Promise.all(workspaces.map((workspace) => alertWorkspaceAccess(app, user, workspace)));
+}
+
+function alertScopeWhere(scopes: AlertWorkspaceScope[]): { sql: string; parameters: unknown[] } {
+  const clauses: string[] = [];
+  const parameters: unknown[] = [];
+  for (const scope of scopes) {
+    if (!scope.canManage && scope.environmentIds.size === 0) continue;
+    const environmentIds = [...scope.environmentIds];
+    clauses.push(`(e.workspace_type = ? AND e.workspace_id = ?${scope.canManage ? "" : ` AND e.id IN (${environmentIds.map(() => "?").join(",")})`})`);
+    parameters.push(scope.type, scope.id, ...environmentIds);
+  }
+  return { sql: clauses.length ? `(${clauses.join(" OR ")})` : "0 = 1", parameters };
+}
+
 async function canAccessAlert(app: FastifyInstance, request: FastifyRequest, alertId: string): Promise<boolean> {
   const environmentId = await alertEnvironmentId(app, alertId);
-  return Boolean(environmentId && await canAccessEnvironment(app.db, request.admin!, environmentId));
+  if (!environmentId) return false;
+  const environment = await app.db.prepare("SELECT workspace_type, workspace_id FROM environments WHERE id = ?").get(environmentId) as
+    | { workspace_type: "personal" | "organization"; workspace_id: string }
+    | undefined;
+  if (!environment) return false;
+  const user = request.admin!;
+  let workspace: WorkspaceContext | undefined;
+  if (environment.workspace_type === "personal" && environment.workspace_id === user.id) {
+    workspace = { type: "personal", id: user.id, name: "个人工作台", role: "owner" };
+  } else if (environment.workspace_type === "organization" && !hasBearerApiKey(request)) {
+    workspace = await app.db.prepare(`
+      SELECT 'organization' AS type, o.id, o.name, m.role
+      FROM organization_members m
+      JOIN organizations o ON o.id = m.organization_id
+      WHERE m.user_id = ? AND o.id = ?
+    `).get(user.id, environment.workspace_id) as WorkspaceContext | undefined;
+  }
+  if (!workspace) return false;
+  const scope = await alertWorkspaceAccess(app, user, workspace);
+  return Boolean(scope && (scope.canManage || scope.environmentIds.has(environmentId)));
 }
 
 function mapAlert(row: Record<string, unknown>): MonitorAlertItem {
@@ -61,6 +128,9 @@ function mapAlert(row: Record<string, unknown>): MonitorAlertItem {
   const details = parseJson(row.details_json);
   return {
     id: String(row.id),
+    workspaceType: String(row.workspace_type) as "personal" | "organization",
+    workspaceId: String(row.workspace_id),
+    workspaceName: String(row.workspace_name),
     environmentId: String(row.environment_id),
     environmentName: String(row.environment_name),
     targetType: String(row.target_type) as MonitorAlertTargetType,
@@ -173,19 +243,17 @@ export async function registerMonitorAlertRoutes(app: FastifyInstance): Promise<
   );
 
   app.get("/api/v1/monitor-alerts", { preHandler: requireAdmin }, async (request) => {
-    const [workspaceType, workspaceId] = workspaceParams(request);
-    const access = await getWorkspaceAccess(app.db, request.admin!);
-    if (!access.canManage && access.environmentIds.size === 0) return { items: [], unread: 0 };
-    const environmentFilter = access.canManage
-      ? ""
-      : ` AND a.environment_id IN (${[...access.environmentIds].map(() => "?").join(",")})`;
-    const parameters = [request.admin!.id, workspaceType, workspaceId, ...access.environmentIds];
+    const scope = alertScopeWhere(await alertWorkspaceScopes(app, request));
+    const parameters = [request.admin!.id, ...scope.parameters];
     const rows = await app.db.prepare(`
-      SELECT a.*, u.active_notified_at, u.recovery_notified_at, u.read_at
+      SELECT a.*, e.workspace_type, e.workspace_id,
+        CASE WHEN e.workspace_type = 'personal' THEN '个人工作台' ELSE COALESCE(o.name, '') END AS workspace_name,
+        u.active_notified_at, u.recovery_notified_at, u.read_at
       FROM monitor_alerts a
       JOIN environments e ON e.id = a.environment_id
+      LEFT JOIN organizations o ON o.id = e.workspace_id AND e.workspace_type = 'organization'
       LEFT JOIN monitor_alert_user_states u ON u.alert_id = a.id AND u.user_id = ?
-      WHERE e.workspace_type = ? AND e.workspace_id = ?${environmentFilter}
+      WHERE ${scope.sql}
       ORDER BY CASE WHEN a.status = 'active' THEN 0 WHEN a.status = 'event' THEN 1 ELSE 2 END, a.triggered_at DESC
       LIMIT 100
     `).all(...parameters) as Record<string, unknown>[];
@@ -194,7 +262,7 @@ export async function registerMonitorAlertRoutes(app: FastifyInstance): Promise<
       FROM monitor_alerts a
       JOIN environments e ON e.id = a.environment_id
       LEFT JOIN monitor_alert_user_states u ON u.alert_id = a.id AND u.user_id = ?
-      WHERE e.workspace_type = ? AND e.workspace_id = ?${environmentFilter}
+      WHERE ${scope.sql}
         AND u.read_at IS NULL
     `).get(...parameters) as { count: number | string };
     return { items: rows.map(mapAlert), unread: Number(unreadRow.count) };
@@ -228,16 +296,11 @@ export async function registerMonitorAlertRoutes(app: FastifyInstance): Promise<
   });
 
   app.post("/api/v1/monitor-alerts/read-all", { preHandler: requireAdmin }, async (request) => {
-    const [workspaceType, workspaceId] = workspaceParams(request);
-    const access = await getWorkspaceAccess(app.db, request.admin!);
-    if (!access.canManage && access.environmentIds.size === 0) return { ok: true, updated: 0 };
-    const environmentFilter = access.canManage
-      ? ""
-      : ` AND a.environment_id IN (${[...access.environmentIds].map(() => "?").join(",")})`;
+    const scope = alertScopeWhere(await alertWorkspaceScopes(app, request));
     const rows = await app.db.prepare(`
       SELECT a.id FROM monitor_alerts a JOIN environments e ON e.id = a.environment_id
-      WHERE e.workspace_type = ? AND e.workspace_id = ?${environmentFilter}
-    `).all(workspaceType, workspaceId, ...access.environmentIds) as Array<{ id: string }>;
+      WHERE ${scope.sql}
+    `).all(...scope.parameters) as Array<{ id: string }>;
     const now = new Date().toISOString();
     await app.db.transaction(async () => {
       for (const row of rows) {

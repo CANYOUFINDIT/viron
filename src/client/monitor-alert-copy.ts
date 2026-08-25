@@ -22,10 +22,11 @@ function diskLabel(alert: MonitorAlertItem): string {
 }
 
 export function monitorAlertTitle(alert: MonitorAlertItem, phase: "active" | "recovered"): string {
-  if (alert.ruleType === "disk_added") return tr("监控事件 · {0}", [alert.environmentName]);
+  const location = `${tr(alert.workspaceName)} / ${alert.environmentName}`;
+  if (alert.ruleType === "disk_added") return tr("监控事件 · {0}", [location]);
   return phase === "active"
-    ? tr("监控告警 · {0}", [alert.environmentName])
-    : tr("监控已恢复 · {0}", [alert.environmentName]);
+    ? tr("监控告警 · {0}", [location])
+    : tr("监控已恢复 · {0}", [location]);
 }
 
 export function monitorAlertBody(alert: MonitorAlertItem, phase: "active" | "recovered"): string {
