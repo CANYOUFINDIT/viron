@@ -12,10 +12,16 @@ import {
 import { computed, ref, watch } from "vue";
 import { api } from "../api";
 import { translate as tr } from "../i18n";
+import {
+  DEFAULT_MONITOR_HISTORY_RANGE,
+  monitorHistoryLoadPlan,
+  QUICK_MONITOR_HISTORY_RANGE,
+  type MonitorHistoryRange,
+} from "../monitor-history-loading";
 import { providerLabel, type Provider } from "../service-candidate-tree";
 import MonitorTimeSeriesChart, { type MonitorChartSeries } from "./MonitorTimeSeriesChart.vue";
 
-type HistoryRange = "1h" | "6h" | "24h" | "7d" | "30d";
+type HistoryRange = MonitorHistoryRange;
 
 interface DeploymentTarget {
   id: string;
@@ -57,11 +63,15 @@ const props = defineProps<{
   deployments: DeploymentTarget[];
 }>();
 
-const range = ref<HistoryRange>("6h");
-const loading = ref(false);
+const range = ref<HistoryRange>(DEFAULT_MONITOR_HISTORY_RANGE);
+const loadingHosts = ref(new Set<string>());
+const loadingRangeByHost = ref<Record<string, HistoryRange>>({});
 const historyByHost = ref<Record<string, HistoryResponse>>({});
 const errorByHost = ref<Record<string, string>>({});
 let requestSequence = 0;
+let loadedEnvironmentId = "";
+
+const loading = computed(() => loadingHosts.value.size > 0);
 
 const ranges: Array<{ value: HistoryRange; label: string }> = [
   { value: "1h", label: tr("1 小时") },
@@ -70,6 +80,9 @@ const ranges: Array<{ value: HistoryRange; label: string }> = [
   { value: "7d", label: tr("7 天") },
   { value: "30d", label: tr("30 天") },
 ];
+function rangeLabel(value: HistoryRange): string {
+  return ranges.find((item) => item.value === value)?.label ?? value;
+}
 
 const deploymentSignature = computed(() => props.deployments.map((deployment) => [
   deployment.id,
@@ -81,32 +94,53 @@ const deploymentSignature = computed(() => props.deployments.map((deployment) =>
 
 async function loadHistory() {
   const sequence = ++requestSequence;
+  const targetRange = range.value;
   const hostIds = [...new Set(props.deployments
     .filter((deployment) => deployment.connectionAvailable && deployment.sshConnectionId)
     .map((deployment) => deployment.sshConnectionId!))];
-  loading.value = true;
+  if (loadedEnvironmentId !== props.environmentId) {
+    loadedEnvironmentId = props.environmentId;
+    historyByHost.value = {};
+    errorByHost.value = {};
+  }
+  const hostIdSet = new Set(hostIds);
+  historyByHost.value = Object.fromEntries(Object.entries(historyByHost.value).filter(([hostId]) => hostIdSet.has(hostId)));
+  errorByHost.value = {};
+  loadingHosts.value = new Set(hostIds);
+  loadingRangeByHost.value = {};
   if (!hostIds.length) {
     historyByHost.value = {};
     errorByHost.value = {};
-    loading.value = false;
     return;
   }
-  const results = await Promise.all(hostIds.map(async (hostId) => {
-    try {
-      const history = await api<HistoryResponse>(`/api/v1/environments/${props.environmentId}/monitor-hosts/${hostId}/history?range=${range.value}`);
-      return { hostId, history, error: "" };
-    } catch (caught) {
-      return {
-        hostId,
-        history: null,
-        error: caught instanceof Error ? caught.message : tr("监控历史加载失败"),
-      };
+  await Promise.all(hostIds.map(async (hostId) => {
+    const loadPlan = monitorHistoryLoadPlan(targetRange, Boolean(historyByHost.value[hostId]));
+    let lastError = "";
+    for (const requestedRange of loadPlan) {
+      if (sequence !== requestSequence) return;
+      loadingRangeByHost.value = { ...loadingRangeByHost.value, [hostId]: requestedRange };
+      try {
+        const history = await api<HistoryResponse>(`/api/v1/environments/${props.environmentId}/monitor-hosts/${hostId}/history?range=${requestedRange}`);
+        if (sequence !== requestSequence) return;
+        historyByHost.value = { ...historyByHost.value, [hostId]: history };
+        lastError = "";
+      } catch (caught) {
+        if (sequence !== requestSequence) return;
+        lastError = caught instanceof Error ? caught.message : tr("监控历史加载失败");
+      }
     }
+    if (sequence !== requestSequence) return;
+    const nextErrors = { ...errorByHost.value };
+    if (lastError) nextErrors[hostId] = lastError;
+    else delete nextErrors[hostId];
+    errorByHost.value = nextErrors;
+    const nextLoadingHosts = new Set(loadingHosts.value);
+    nextLoadingHosts.delete(hostId);
+    loadingHosts.value = nextLoadingHosts;
+    const nextLoadingRanges = { ...loadingRangeByHost.value };
+    delete nextLoadingRanges[hostId];
+    loadingRangeByHost.value = nextLoadingRanges;
   }));
-  if (sequence !== requestSequence) return;
-  historyByHost.value = Object.fromEntries(results.flatMap((result) => result.history ? [[result.hostId, result.history]] : []));
-  errorByHost.value = Object.fromEntries(results.flatMap((result) => result.error ? [[result.hostId, result.error]] : []));
-  loading.value = false;
 }
 
 watch(
@@ -126,6 +160,23 @@ function pointsFor(deployment: DeploymentTarget): HistoryPoint[] {
 function errorFor(deployment: DeploymentTarget): string {
   if (!deployment.connectionAvailable || !deployment.sshConnectionId) return tr("SSH 连接不可用，无法读取监控历史");
   return errorByHost.value[deployment.sshConnectionId] ?? "";
+}
+
+function isHostLoading(deployment: DeploymentTarget): boolean {
+  return Boolean(deployment.sshConnectionId && loadingHosts.value.has(deployment.sshConnectionId));
+}
+
+function loadingLabelFor(deployment: DeploymentTarget): string {
+  if (!deployment.sshConnectionId) return "";
+  const history = historyFor(deployment);
+  const requestedRange = loadingRangeByHost.value[deployment.sshConnectionId];
+  if (!history && requestedRange === QUICK_MONITOR_HISTORY_RANGE && range.value !== QUICK_MONITOR_HISTORY_RANGE) {
+    return tr("正在优先读取最近 1 小时的数据");
+  }
+  if (history && history.range === QUICK_MONITOR_HISTORY_RANGE && range.value !== QUICK_MONITOR_HISTORY_RANGE) {
+    return tr("已显示 {{0}}，正在补齐 {{1}}", [rangeLabel(history.range), rangeLabel(range.value)]);
+  }
+  return tr("正在后台更新监控数据");
 }
 
 function metricAt(point: HistoryPoint, deploymentId: string): DeploymentMetric | undefined {
@@ -203,11 +254,15 @@ function formatTime(value: string | null): string {
             <strong>{{ deploymentName(deployment) }}</strong>
             <small>{{ providerLabel(deployment.provider) }} · <Server :size="12" />{{ deployment.sshConnectionName }}</small>
           </div>
-          <time>{{ formatTime(deployment.lastCheckedAt) }}</time>
+          <div class="deployment-monitor__freshness">
+            <span v-if="isHostLoading(deployment) && historyFor(deployment)"><RefreshCw :size="12" class="is-spinning" />{{ loadingLabelFor(deployment) }}</span>
+            <button v-else-if="errorFor(deployment) && historyFor(deployment)" type="button" :title="errorFor(deployment)" @click="loadHistory"><CircleGauge :size="12" />{{ $t('后台更新失败，点击重试') }}</button>
+            <time>{{ formatTime(deployment.lastCheckedAt) }}</time>
+          </div>
         </header>
 
-        <div v-if="errorFor(deployment)" class="deployment-monitor__notice is-error"><CircleGauge :size="18" /><span>{{ errorFor(deployment) }}</span></div>
-        <div v-else-if="loading && !historyFor(deployment)" class="deployment-monitor__notice"><RefreshCw :size="18" class="is-spinning" /><span>{{ $t('正在读取监控历史') }}</span></div>
+        <div v-if="errorFor(deployment) && !historyFor(deployment)" class="deployment-monitor__notice is-error"><CircleGauge :size="18" /><span>{{ errorFor(deployment) }}</span></div>
+        <div v-else-if="isHostLoading(deployment) && !historyFor(deployment)" class="deployment-monitor__notice"><RefreshCw :size="18" class="is-spinning" /><span>{{ loadingLabelFor(deployment) }}</span></div>
         <div v-else-if="historyFor(deployment)" class="deployment-monitor__charts">
           <MonitorTimeSeriesChart
             :icon="Cpu"
@@ -267,7 +322,11 @@ function formatTime(value: string | null): string {
 .deployment-monitor__node > header > div { min-width: 0; display: grid; gap: 3px; }
 .deployment-monitor__node > header strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-display); font-size: var(--text-sm); }
 .deployment-monitor__node > header small { min-width: 0; display: flex; align-items: center; gap: 4px; overflow: hidden; color: var(--color-muted); font-size: var(--text-2xs); text-overflow: ellipsis; white-space: nowrap; }
-.deployment-monitor__node > header time { color: var(--color-muted); font-family: var(--font-mono); font-size: var(--text-2xs); white-space: nowrap; }
+.deployment-monitor__freshness { display: grid; justify-items: end; gap: 4px; }
+.deployment-monitor__freshness span,
+.deployment-monitor__freshness button { min-height: 1.4rem; padding: 0 var(--space-xs); border: 0; border-radius: 999px; display: inline-flex; align-items: center; gap: 5px; background: var(--color-info-soft); color: var(--color-info); font: inherit; font-size: var(--text-2xs); white-space: nowrap; }
+.deployment-monitor__freshness button { background: var(--color-danger-soft); color: var(--color-danger); cursor: pointer; }
+.deployment-monitor__freshness time { color: var(--color-muted); font-family: var(--font-mono); font-size: var(--text-2xs); white-space: nowrap; }
 .deployment-monitor__charts { min-width: 0; padding: var(--space-md); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-md); }
 .deployment-monitor__notice { min-height: 8rem; padding: var(--space-lg); display: flex; align-items: center; justify-content: center; gap: var(--space-sm); color: var(--color-muted); font-size: var(--text-sm); }
 .deployment-monitor__notice.is-error { color: var(--color-danger); }
