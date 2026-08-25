@@ -55,6 +55,7 @@ export async function openDatabase(config: AppConfig): Promise<EnvmanDatabase> {
     await addMysqlColumnIfMissing(db, "monitor_hosts", "installed_at", "VARCHAR(32) NULL");
     await addMysqlColumnIfMissing(db, "monitor_hosts", "latest_kubernetes_configs_json", "LONGTEXT NULL");
     await addMysqlColumnIfMissing(db, "monitor_alert_settings", "host_offline_enabled", "TINYINT NOT NULL DEFAULT 0");
+    await addMysqlColumnIfMissing(db, "monitor_alert_user_states", "cleared_at", "VARCHAR(32) NULL");
     await db.prepare("UPDATE monitor_hosts SET latest_kubernetes_configs_json = '[]' WHERE latest_kubernetes_configs_json IS NULL").run();
     const monitorAgentIndex = await db.prepare("SHOW INDEX FROM `monitor_samples` WHERE Key_name = 'monitor_samples_agent_collected_idx'").get();
     if (!monitorAgentIndex) await db.exec("ALTER TABLE `monitor_samples` ADD KEY `monitor_samples_agent_collected_idx` (`agent_id`, `collected_at`)");
@@ -105,6 +106,7 @@ export async function openDatabase(config: AppConfig): Promise<EnvmanDatabase> {
   addColumnIfMissing(raw, "monitor_hosts", "installed_at", "TEXT");
   addColumnIfMissing(raw, "monitor_hosts", "latest_kubernetes_configs_json", "TEXT NOT NULL DEFAULT '[]'");
   addColumnIfMissing(raw, "monitor_alert_settings", "host_offline_enabled", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(raw, "monitor_alert_user_states", "cleared_at", "TEXT");
   rebuildWorkspaceScopedUniqueTables(raw);
   rebuildRedisCompatibleConstraintTables(raw);
   raw.exec(`
@@ -298,11 +300,13 @@ function rebuildMonitorAlertRuleTables(db: Database.Database): void {
           active_notified_at TEXT,
           recovery_notified_at TEXT,
           read_at TEXT,
+          cleared_at TEXT,
           updated_at TEXT NOT NULL,
           PRIMARY KEY(alert_id, user_id)
         );
         INSERT INTO monitor_alert_user_states_host_offline_new
-          SELECT alert_id, user_id, active_notified_at, recovery_notified_at, read_at, updated_at
+          (alert_id, user_id, active_notified_at, recovery_notified_at, read_at, cleared_at, updated_at)
+          SELECT alert_id, user_id, active_notified_at, recovery_notified_at, read_at, NULL, updated_at
           FROM monitor_alert_user_states;
 
         DROP TABLE monitor_alert_user_states;

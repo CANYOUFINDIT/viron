@@ -724,6 +724,7 @@ CREATE TABLE IF NOT EXISTS monitor_alert_user_states (
   active_notified_at VARCHAR(32) NULL,
   recovery_notified_at VARCHAR(32) NULL,
   read_at VARCHAR(32) NULL,
+  cleared_at VARCHAR(32) NULL,
   updated_at VARCHAR(32) NOT NULL,
   PRIMARY KEY (alert_id, user_id),
   KEY monitor_alert_user_states_user_idx (user_id, read_at, updated_at),

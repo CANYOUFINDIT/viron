@@ -95,6 +95,8 @@ describe("monitor alert database migration", () => {
 
       const columns = await db.prepare("PRAGMA table_info(monitor_alert_settings)").all() as Array<{ name: string }>;
       expect(columns.some((column) => column.name === "host_offline_enabled")).toBe(true);
+      const userStateColumns = await db.prepare("PRAGMA table_info(monitor_alert_user_states)").all() as Array<{ name: string }>;
+      expect(userStateColumns.some((column) => column.name === "cleared_at")).toBe(true);
     } finally {
       await db.close();
     }

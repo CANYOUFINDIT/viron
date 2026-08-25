@@ -512,6 +512,21 @@ describe("monitor alerts", () => {
       expect((await app.inject({ method: "POST", url: `/api/v1/monitor-alerts/${hiddenAlertId}/read`, cookies: memberCookies })).statusCode).toBe(404);
       expect((await app.inject({ method: "POST", url: "/api/v1/monitor-alerts/read-all", cookies: memberCookies })).json()).toMatchObject({ updated: 1 });
       expect((await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies: memberCookies })).json().unread).toBe(0);
+      expect((await app.inject({ method: "POST", url: "/api/v1/monitor-alerts/clear-all", cookies: memberCookies })).json()).toMatchObject({ updated: 1 });
+      expect((await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies: memberCookies })).json()).toMatchObject({ unread: 0, items: [] });
+      expect((await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies: ownerCookies })).json()).toMatchObject({ unread: 3 });
+      const extraAlertId = await insertAlert(environmentId, "共享告警环境", "新告警主机");
+      expect((await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies: memberCookies })).json()).toMatchObject({
+        unread: 1,
+        items: [expect.objectContaining({ id: extraAlertId })],
+      });
+      expect((await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies: ownerCookies })).json().unread).toBe(4);
+      expect((await app.inject({ method: "POST", url: "/api/v1/monitor-alerts/clear-all", cookies: ownerCookies })).json().updated).toBe(4);
+      expect((await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies: ownerCookies })).json()).toMatchObject({ unread: 0, items: [] });
+      expect((await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies: memberCookies })).json()).toMatchObject({
+        unread: 1,
+        items: [expect.objectContaining({ id: extraAlertId })],
+      });
     } finally {
       await app.close();
     }
