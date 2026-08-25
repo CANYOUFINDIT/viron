@@ -688,6 +688,7 @@ CREATE TABLE IF NOT EXISTS monitor_alert_user_states (
   active_notified_at TEXT,
   recovery_notified_at TEXT,
   read_at TEXT,
+  cleared_at TEXT,
   updated_at TEXT NOT NULL,
   PRIMARY KEY(alert_id, user_id)
 );

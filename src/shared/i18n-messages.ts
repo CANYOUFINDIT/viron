@@ -4215,6 +4215,8 @@ const enOverrides: Record<string, string> = {
   "{0} 条活动告警": "{0} active alerts",
   "开启系统通知": "Enable System Notifications",
   "全部已读": "Mark All Read",
+  "全部清理": "Clear All",
+  "仅清理当前用户的告警记录": "Clears alert records for the current user only",
   "当前没有监控告警": "No monitor alerts",
   "{0} 的 CPU 使用率已恢复到阈值以内": "CPU usage on {0} has returned below the threshold",
   "{0} 的 CPU 使用率达到 {1}，阈值为 {2}": "CPU usage on {0} reached {1}; threshold: {2}",

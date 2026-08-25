@@ -97,6 +97,57 @@ function alertScopeWhere(scopes: AlertWorkspaceScope[]): { sql: string; paramete
   return { sql: clauses.length ? `(${clauses.join(" OR ")})` : "0 = 1", parameters };
 }
 
+async function touchAlertUserState(
+  app: FastifyInstance,
+  alertId: string,
+  userId: string,
+  now: string,
+  patch: {
+    activeNotifiedAt?: string | null;
+    recoveryNotifiedAt?: string | null;
+    readAt?: string | null;
+    clearedAt?: string | null;
+  },
+): Promise<void> {
+  const existing = await app.db.prepare("SELECT alert_id FROM monitor_alert_user_states WHERE alert_id = ? AND user_id = ?").get(alertId, userId);
+  if (!existing) {
+    await app.db.prepare(`
+      INSERT INTO monitor_alert_user_states (
+        alert_id, user_id, active_notified_at, recovery_notified_at, read_at, cleared_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      alertId,
+      userId,
+      patch.activeNotifiedAt ?? null,
+      patch.recoveryNotifiedAt ?? null,
+      patch.readAt ?? null,
+      patch.clearedAt ?? null,
+      now,
+    );
+    return;
+  }
+  const assignments = ["updated_at = ?"];
+  const params: unknown[] = [now];
+  if (patch.activeNotifiedAt !== undefined) {
+    assignments.push("active_notified_at = ?");
+    params.push(patch.activeNotifiedAt);
+  }
+  if (patch.recoveryNotifiedAt !== undefined) {
+    assignments.push("recovery_notified_at = ?");
+    params.push(patch.recoveryNotifiedAt);
+  }
+  if (patch.readAt !== undefined) {
+    assignments.push("read_at = ?");
+    params.push(patch.readAt);
+  }
+  if (patch.clearedAt !== undefined) {
+    assignments.push("cleared_at = ?");
+    params.push(patch.clearedAt);
+  }
+  params.push(alertId, userId);
+  await app.db.prepare(`UPDATE monitor_alert_user_states SET ${assignments.join(", ")} WHERE alert_id = ? AND user_id = ?`).run(...params);
+}
+
 async function canAccessAlert(app: FastifyInstance, request: FastifyRequest, alertId: string): Promise<boolean> {
   const environmentId = await alertEnvironmentId(app, alertId);
   if (!environmentId) return false;
@@ -254,6 +305,7 @@ export async function registerMonitorAlertRoutes(app: FastifyInstance): Promise<
       LEFT JOIN organizations o ON o.id = e.workspace_id AND e.workspace_type = 'organization'
       LEFT JOIN monitor_alert_user_states u ON u.alert_id = a.id AND u.user_id = ?
       WHERE ${scope.sql}
+        AND u.cleared_at IS NULL
       ORDER BY CASE WHEN a.status = 'active' THEN 0 WHEN a.status = 'event' THEN 1 ELSE 2 END, a.triggered_at DESC
       LIMIT 100
     `).all(...parameters) as Record<string, unknown>[];
@@ -263,6 +315,7 @@ export async function registerMonitorAlertRoutes(app: FastifyInstance): Promise<
       JOIN environments e ON e.id = a.environment_id
       LEFT JOIN monitor_alert_user_states u ON u.alert_id = a.id AND u.user_id = ?
       WHERE ${scope.sql}
+        AND u.cleared_at IS NULL
         AND u.read_at IS NULL
     `).get(...parameters) as { count: number | string };
     return { items: rows.map(mapAlert), unread: Number(unreadRow.count) };
@@ -273,25 +326,20 @@ export async function registerMonitorAlertRoutes(app: FastifyInstance): Promise<
     if (!body) return;
     if (!await canAccessAlert(app, request, request.params.id)) return reply.code(404).send({ error: "MONITOR_ALERT_NOT_FOUND", message: "监控告警不存在" });
     const now = new Date().toISOString();
-    const existing = await app.db.prepare("SELECT alert_id FROM monitor_alert_user_states WHERE alert_id = ? AND user_id = ?").get(request.params.id, request.admin!.id);
-    if (existing) {
-      await app.db.prepare(`UPDATE monitor_alert_user_states SET ${body.phase === "active" ? "active_notified_at" : "recovery_notified_at"} = ?, updated_at = ? WHERE alert_id = ? AND user_id = ?`)
-        .run(now, now, request.params.id, request.admin!.id);
-    } else {
-      await app.db.prepare(`
-        INSERT INTO monitor_alert_user_states (alert_id, user_id, active_notified_at, recovery_notified_at, read_at, updated_at)
-        VALUES (?, ?, ?, ?, NULL, ?)
-      `).run(request.params.id, request.admin!.id, body.phase === "active" ? now : null, body.phase === "recovered" ? now : null, now);
-    }
+    await touchAlertUserState(
+      app,
+      request.params.id,
+      request.admin!.id,
+      now,
+      body.phase === "active" ? { activeNotifiedAt: now } : { recoveryNotifiedAt: now },
+    );
     return { ok: true };
   });
 
   app.post<{ Params: { id: string } }>("/api/v1/monitor-alerts/:id/read", { preHandler: requireAdmin }, async (request, reply) => {
     if (!await canAccessAlert(app, request, request.params.id)) return reply.code(404).send({ error: "MONITOR_ALERT_NOT_FOUND", message: "监控告警不存在" });
     const now = new Date().toISOString();
-    const existing = await app.db.prepare("SELECT alert_id FROM monitor_alert_user_states WHERE alert_id = ? AND user_id = ?").get(request.params.id, request.admin!.id);
-    if (existing) await app.db.prepare("UPDATE monitor_alert_user_states SET read_at = ?, updated_at = ? WHERE alert_id = ? AND user_id = ?").run(now, now, request.params.id, request.admin!.id);
-    else await app.db.prepare("INSERT INTO monitor_alert_user_states (alert_id, user_id, read_at, updated_at) VALUES (?, ?, ?, ?)").run(request.params.id, request.admin!.id, now, now);
+    await touchAlertUserState(app, request.params.id, request.admin!.id, now, { readAt: now });
     return { ok: true };
   });
 
@@ -303,11 +351,25 @@ export async function registerMonitorAlertRoutes(app: FastifyInstance): Promise<
     `).all(...scope.parameters) as Array<{ id: string }>;
     const now = new Date().toISOString();
     await app.db.transaction(async () => {
-      for (const row of rows) {
-        const existing = await app.db.prepare("SELECT alert_id FROM monitor_alert_user_states WHERE alert_id = ? AND user_id = ?").get(row.id, request.admin!.id);
-        if (existing) await app.db.prepare("UPDATE monitor_alert_user_states SET read_at = ?, updated_at = ? WHERE alert_id = ? AND user_id = ?").run(now, now, row.id, request.admin!.id);
-        else await app.db.prepare("INSERT INTO monitor_alert_user_states (alert_id, user_id, read_at, updated_at) VALUES (?, ?, ?, ?)").run(row.id, request.admin!.id, now, now);
-      }
+      for (const row of rows) await touchAlertUserState(app, row.id, request.admin!.id, now, { readAt: now });
+    })();
+    return { ok: true, updated: rows.length };
+  });
+
+  app.post("/api/v1/monitor-alerts/clear-all", { preHandler: requireAdmin }, async (request) => {
+    const scope = alertScopeWhere(await alertWorkspaceScopes(app, request));
+    const parameters = [request.admin!.id, ...scope.parameters];
+    const rows = await app.db.prepare(`
+      SELECT a.id
+      FROM monitor_alerts a
+      JOIN environments e ON e.id = a.environment_id
+      LEFT JOIN monitor_alert_user_states u ON u.alert_id = a.id AND u.user_id = ?
+      WHERE ${scope.sql}
+        AND u.cleared_at IS NULL
+    `).all(...parameters) as Array<{ id: string }>;
+    const now = new Date().toISOString();
+    await app.db.transaction(async () => {
+      for (const row of rows) await touchAlertUserState(app, row.id, request.admin!.id, now, { readAt: now, clearedAt: now });
     })();
     return { ok: true, updated: rows.length };
   });

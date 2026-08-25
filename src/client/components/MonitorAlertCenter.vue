@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { BellRing, CheckCheck, CircleCheck, CirclePlus, CircleX, ExternalLink, MonitorCog, X } from "@lucide/vue";
+import { BellRing, CheckCheck, CircleCheck, CirclePlus, CircleX, Eraser, ExternalLink, MonitorCog, X } from "@lucide/vue";
 import { ElMessage, ElNotification } from "element-plus";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
@@ -12,12 +12,7 @@ import {
 import { translate as tr } from "../i18n";
 import { monitorAlertBody, monitorAlertRuleLabel, monitorAlertTitle } from "../monitor-alert-copy";
 import { session, switchWorkspace } from "../session";
-import {
-  MONITOR_ALERT_TOAST_DURATION_OPTIONS,
-  monitorAlertToastDurationMs,
-  persistMonitorAlertToastDurationSeconds,
-  readMonitorAlertToastDurationSeconds,
-} from "../monitor-alert-toasts";
+import { MONITOR_ALERT_TOAST_DURATION_MS } from "../monitor-alert-toasts";
 import {
   monitorAlertNavigationQuery,
   type DesktopMonitorAlertNotification,
@@ -37,7 +32,6 @@ const permission = ref<NotificationPermission | "unsupported">(
   desktop ? "granted" : typeof Notification === "undefined" ? "unsupported" : Notification.permission,
 );
 const displaying = new Set<string>();
-const toastDurationSeconds = ref(readMonitorAlertToastDurationSeconds());
 const openToastCount = ref(0);
 let pollTimer: number | undefined;
 let removeDesktopOpenListener: (() => void) | undefined;
@@ -136,7 +130,7 @@ async function presentAlert(alert: MonitorAlertItem, phase: "active" | "recovere
     title,
     message: body,
     type: alert.status === "event" ? "warning" : phase === "active" ? "error" : "success",
-    duration: monitorAlertToastDurationMs(toastDurationSeconds.value),
+    duration: MONITOR_ALERT_TOAST_DURATION_MS,
     offset: 52,
     position: "top-right",
     onClick: () => { void openAlert(alert); },
@@ -176,13 +170,12 @@ async function markAllRead() {
   unread.value = 0;
 }
 
-function setToastDurationSeconds(seconds: unknown) {
-  toastDurationSeconds.value = persistMonitorAlertToastDurationSeconds(seconds);
-}
-
-function onToastDurationChange(event: Event) {
-  const target = event.target;
-  if (target instanceof HTMLSelectElement) setToastDurationSeconds(target.value);
+async function clearAll() {
+  if (!alerts.value.length) return;
+  await api("/api/v1/monitor-alerts/clear-all", { method: "POST" });
+  alerts.value = [];
+  unread.value = 0;
+  ElNotification.closeAll();
 }
 
 function closeAllToasts() {
@@ -248,14 +241,9 @@ onBeforeUnmount(() => {
       <header>
         <div><strong>{{ activeCount }} {{ $t('条活动告警') }}</strong><small>{{ notificationStatus }}</small></div>
         <div>
-          <label class="monitor-alert-duration">
-            <span>{{ $t('自动消失') }}</span>
-            <el-select :model-value="toastDurationSeconds" size="small" @update:model-value="setToastDurationSeconds">
-              <el-option v-for="seconds in MONITOR_ALERT_TOAST_DURATION_OPTIONS" :key="seconds" :label="$t('{0} 秒', [seconds])" :value="seconds" />
-            </el-select>
-          </label>
           <el-button v-if="!desktop && permission === 'default'" size="small" plain @click="requestSystemPermission"><MonitorCog :size="14" />{{ $t('开启系统通知') }}</el-button>
           <el-button size="small" plain :disabled="!unread" @click="markAllRead"><CheckCheck :size="14" />{{ $t('全部已读') }}</el-button>
+          <el-button size="small" plain :disabled="!alerts.length" :title="$t('仅清理当前用户的告警记录')" @click="clearAll"><Eraser :size="14" />{{ $t('全部清理') }}</el-button>
         </div>
       </header>
       <div v-if="alerts.length" class="monitor-alert-list">
@@ -276,12 +264,6 @@ onBeforeUnmount(() => {
 
   <Teleport to="body">
     <div v-if="openToastCount > 0" class="monitor-alert-toast-toolbar" role="toolbar" :aria-label="$t('告警弹窗')">
-      <label class="monitor-alert-duration">
-        <span>{{ $t('自动消失') }}</span>
-        <select :value="toastDurationSeconds" @change="onToastDurationChange">
-          <option v-for="seconds in MONITOR_ALERT_TOAST_DURATION_OPTIONS" :key="seconds" :value="seconds">{{ $t('{0} 秒', [seconds]) }}</option>
-        </select>
-      </label>
       <button type="button" @click="closeAllToasts"><X :size="14" />{{ $t('全部关闭') }}</button>
     </div>
   </Teleport>
@@ -294,17 +276,6 @@ onBeforeUnmount(() => {
 .monitor-alert-center { min-height: 240px; }
 .monitor-alert-center > header { padding: 0 0 14px; border-bottom: 1px solid var(--ink-100); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .monitor-alert-center > header > div:last-child { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
-.monitor-alert-duration { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-500); font-size: 12px; }
-.monitor-alert-duration :deep(.el-select) { width: 92px; }
-.monitor-alert-duration select {
-  height: 28px;
-  padding: 0 6px;
-  border: 1px solid var(--ink-200);
-  border-radius: 7px;
-  background: var(--surface);
-  color: var(--ink-800);
-  font: inherit;
-}
 .monitor-alert-toast-toolbar {
   position: fixed;
   top: 10px;
