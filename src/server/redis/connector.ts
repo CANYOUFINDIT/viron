@@ -1,10 +1,11 @@
 import net from "node:net";
 import { createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { Redis, type RedisOptions } from "ioredis";
+import { Redis } from "ioredis";
 import type { WorkspaceType } from "../access-control.js";
 import { connectSsh, loadSshConnection, type ConnectedSsh } from "../ssh/connector.js";
 import { IdleResourcePool } from "../../shared/idle-resource-pool.js";
+import { buildRedisOptions } from "../../shared/redis-options.js";
 
 export interface RedisConnectionRecord {
   id: string;
@@ -154,39 +155,22 @@ async function createSshForward(app: FastifyInstance, record: RedisConnectionRec
   };
 }
 
-function redisOptions(record: RedisConnectionRecord, host: string, port: number, database: number): RedisOptions {
-  const tls = record.options.tls;
-  return {
-    host,
-    port,
-    username: record.username || undefined,
-    password: record.password || undefined,
-    db: database,
-    connectTimeout: record.options.connectTimeoutMs ?? 10_000,
-    commandTimeout: record.options.connectTimeoutMs ?? 10_000,
-    connectionName: `viron:${record.id}`,
-    lazyConnect: true,
-    enableOfflineQueue: false,
-    maxRetriesPerRequest: 0,
-    retryStrategy: () => null,
-    stringNumbers: true,
-    tls: tls?.enabled ? {
-      rejectUnauthorized: tls.rejectUnauthorized !== false,
-      servername: tls.serverName || record.host,
-      ca: tls.ca || undefined,
-      cert: tls.certificate || undefined,
-      key: tls.privateKey || undefined,
-      passphrase: tls.passphrase || undefined,
-    } : undefined,
-  };
-}
-
 async function createRedisConnection(app: FastifyInstance, record: RedisConnectionRecord, database?: number): Promise<ConnectedRedis> {
   let forward: SshForward | undefined;
   let client: Redis | undefined;
   try {
     if (record.connectionMode === "sshTunnel") forward = await createSshForward(app, record);
-    client = new Redis(redisOptions(record, forward?.host ?? record.host, forward?.port ?? record.port, database ?? record.defaultDatabase));
+    client = new Redis(buildRedisOptions({
+      host: forward?.host ?? record.host,
+      port: forward?.port ?? record.port,
+      username: record.username,
+      password: record.password,
+      database: database ?? record.defaultDatabase,
+      connectionName: `viron:${record.id}`,
+      connectTimeoutMs: record.options.connectTimeoutMs,
+      tls: record.options.tls,
+      tlsServerNameFallback: record.host,
+    }));
     await client.connect();
     return {
       client,

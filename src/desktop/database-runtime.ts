@@ -13,6 +13,10 @@ import type { DesktopDatabaseCredential } from "./device-identity.js";
 import { connectDesktopSsh, type ConnectedDesktopSsh, type DesktopSshContext } from "./ssh-runtime.js";
 import { IdleResourcePool } from "../shared/idle-resource-pool.js";
 import { assertMcpReadOnlySql } from "../shared/mcp-policy.js";
+import { contextKey } from "./ssh-context.js";
+import { jsonResponse, type DesktopDatabaseResponse } from "./json-response.js";
+
+export type { DesktopDatabaseResponse };
 
 export interface DesktopDatabaseRequest {
   path: string;
@@ -26,13 +30,6 @@ export interface DesktopDatabaseRequest {
       file?: { name: string; type: string; data: ArrayBuffer };
     }>;
   };
-}
-
-export interface DesktopDatabaseResponse {
-  status: number;
-  statusText: string;
-  headers: Array<[string, string]>;
-  body: string;
 }
 
 export type DesktopDatabaseExecutionReport =
@@ -137,10 +134,6 @@ class DesktopDatabaseError extends Error {
 const MAX_RESULT_ROWS = 10_000;
 const QUERY_LIMIT = 10;
 const MAX_BATCH_RESPONSE_BYTES = 2 * 1024 * 1024;
-
-function contextKey(context: DesktopSshContext): string {
-  return `${context.endpoint}\0${context.userId}\0${context.workspaceType}\0${context.workspaceId}`;
-}
 
 function identifier(value: string): string {
   return `\`${value.replaceAll("`", "``")}\``;
@@ -369,15 +362,6 @@ function normalizeResults(rows: unknown, fields: unknown): DesktopDatabaseQueryR
     return rows.map((item, index) => resultSet(item, Array.isArray(fields[index]) ? fields[index] as FieldPacket[] : undefined));
   }
   return [resultSet(rows, fields as FieldPacket[] | undefined)];
-}
-
-function jsonResponse(status: number, body?: unknown): DesktopDatabaseResponse {
-  return {
-    status,
-    statusText: status === 204 ? "No Content" : status >= 400 ? "Error" : "OK",
-    headers: body === undefined ? [] : [["content-type", "application/json; charset=utf-8"]],
-    body: body === undefined ? "" : JSON.stringify(body),
-  };
 }
 
 function parsedJson(request: DesktopDatabaseRequest): Record<string, unknown> {

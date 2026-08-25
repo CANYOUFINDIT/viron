@@ -4,6 +4,10 @@ import type { DesktopDatabaseCredential, DesktopRedisCredential, DesktopSshCrede
 import { connectDesktopDatabase, desktopDatabaseErrorMessage } from "./database-runtime.js";
 import { connectDesktopSsh, desktopSshErrorMessage, type DesktopSshContext } from "./ssh-runtime.js";
 import { connectDesktopRedis, desktopRedisErrorMessage } from "./redis-runtime.js";
+import { contextKey } from "./ssh-context.js";
+import { jsonResponse, type DesktopInspectionResponse } from "./json-response.js";
+
+export type { DesktopInspectionResponse };
 
 export type DesktopInspectionConnectionType = "ssh" | "database" | "redis";
 
@@ -27,13 +31,6 @@ export interface DesktopInspectionReportPayload {
   items: Array<Pick<DesktopInspectionResult, "type" | "id" | "status" | "latencyMs" | "message">>;
 }
 
-export interface DesktopInspectionResponse {
-  status: number;
-  statusText: string;
-  headers: Array<[string, string]>;
-  body: string;
-}
-
 interface InspectionRequest {
   method?: string;
   body?: { kind: string; value?: string };
@@ -54,19 +51,6 @@ class DesktopInspectionError extends Error {
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-function contextKey(context: DesktopSshContext): string {
-  return `${context.endpoint}\0${context.userId}\0${context.workspaceType}\0${context.workspaceId}`;
-}
-
-function jsonResponse(status: number, body: unknown): DesktopInspectionResponse {
-  return {
-    status,
-    statusText: status >= 400 ? "Error" : "OK",
-    headers: [["content-type", "application/json; charset=utf-8"]],
-    body: JSON.stringify(body),
-  };
-}
 
 function parseInput(request: InspectionRequest): InspectionInput {
   if ((request.method ?? "GET").toUpperCase() !== "POST" || request.body?.kind !== "text") {

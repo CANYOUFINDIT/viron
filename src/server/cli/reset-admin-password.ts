@@ -9,6 +9,7 @@ const username = process.argv[2];
 const password = process.argv[3];
 
 if (!username || !password) {
+  console.error("Usage: npm run admin:reset -- <username> <new-password>");
   console.error("Usage: node dist/server/cli/reset-admin-password.js <username> <new-password>");
   process.exit(1);
 }

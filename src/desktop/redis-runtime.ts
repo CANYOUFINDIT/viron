@@ -1,7 +1,7 @@
 import { translate as tr } from "./i18n.js";
 import { randomUUID } from "node:crypto";
 import net from "node:net";
-import { Redis, type RedisOptions } from "ioredis";
+import { Redis } from "ioredis";
 import {
   parseRedisInfo,
   redisBinaryValue,
@@ -13,18 +13,16 @@ import {
 import type { DesktopRedisCredential } from "./device-identity.js";
 import { connectDesktopSsh, type ConnectedDesktopSsh, type DesktopSshContext } from "./ssh-runtime.js";
 import { IdleResourcePool } from "../shared/idle-resource-pool.js";
+import { contextKey } from "./ssh-context.js";
+import { jsonResponse, type DesktopRedisResponse } from "./json-response.js";
+import { buildRedisOptions } from "../shared/redis-options.js";
+
+export type { DesktopRedisResponse };
 
 export interface DesktopRedisRequest {
   path: string;
   method?: string;
   body?: { kind: "text" | "form"; value?: string };
-}
-
-export interface DesktopRedisResponse {
-  status: number;
-  statusText: string;
-  headers: Array<[string, string]>;
-  body: string;
 }
 
 export interface DesktopRedisExecutionReport {
@@ -54,19 +52,6 @@ class DesktopRedisError extends Error {
 }
 
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
-
-function contextKey(context: DesktopSshContext): string {
-  return `${context.endpoint}\0${context.userId}\0${context.workspaceType}\0${context.workspaceId}`;
-}
-
-function jsonResponse(status: number, body?: unknown): DesktopRedisResponse {
-  return {
-    status,
-    statusText: status === 204 ? "No Content" : status >= 400 ? "Error" : "OK",
-    headers: body === undefined ? [] : [["content-type", "application/json; charset=utf-8"]],
-    body: body === undefined ? "" : JSON.stringify(body),
-  };
-}
 
 function parsedJson(request: DesktopRedisRequest): Record<string, unknown> {
   if (request.body?.kind !== "text") return {};
@@ -161,41 +146,23 @@ async function createSshForward(credential: DesktopRedisCredential): Promise<Loc
   };
 }
 
-function redisOptions(credential: DesktopRedisCredential, host: string, port: number, database: number): RedisOptions {
-  const connection = credential.connection;
-  const tls = connection.options.tls;
-  return {
-    host,
-    port,
-    username: connection.username || undefined,
-    password: connection.password || undefined,
-    db: database,
-    connectTimeout: connection.options.connectTimeoutMs ?? 10_000,
-    commandTimeout: connection.options.connectTimeoutMs ?? 10_000,
-    connectionName: `viron-desktop:${connection.connectionId}`,
-    lazyConnect: true,
-    enableOfflineQueue: false,
-    maxRetriesPerRequest: 0,
-    retryStrategy: () => null,
-    stringNumbers: true,
-    tls: tls?.enabled ? {
-      rejectUnauthorized: tls.rejectUnauthorized !== false,
-      servername: tls.serverName || connection.host,
-      ca: tls.ca || undefined,
-      cert: tls.certificate || undefined,
-      key: tls.privateKey || undefined,
-      passphrase: tls.passphrase || undefined,
-    } : undefined,
-  };
-}
-
 export async function connectDesktopRedis(credential: DesktopRedisCredential, database?: number): Promise<ConnectedDesktopRedis> {
   const connection = credential.connection;
   let forward: LocalForward | undefined;
   let client: Redis | undefined;
   try {
     if (connection.connectionMode === "sshTunnel") forward = await createSshForward(credential);
-    client = new Redis(redisOptions(credential, forward?.host ?? connection.host, forward?.port ?? connection.port, database ?? connection.defaultDatabase));
+    client = new Redis(buildRedisOptions({
+      host: forward?.host ?? connection.host,
+      port: forward?.port ?? connection.port,
+      username: connection.username,
+      password: connection.password,
+      database: database ?? connection.defaultDatabase,
+      connectionName: `viron-desktop:${connection.connectionId}`,
+      connectTimeoutMs: connection.options.connectTimeoutMs,
+      tls: connection.options.tls,
+      tlsServerNameFallback: connection.host,
+    }));
     await client.connect();
     return {
       client,

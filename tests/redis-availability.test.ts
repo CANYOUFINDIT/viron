@@ -33,7 +33,7 @@ describe("Redis product availability", () => {
   it("enables Redis setup, inspection and execution target reporting", () => {
     const connectionPool = source("../src/client/views/ConnectionPoolView.vue");
     const connectionTools = source("../src/client/views/ConnectionToolsView.vue");
-    const settings = source("../src/client/views/SettingsView.vue");
+    const settings = source("../src/client/views/settings/use-settings-controller.ts");
 
     expect(connectionPool).toContain('<el-dropdown-item @click="resetForm(\'redis\')"><MemoryStick :size="15" />{{ $t(\'Redis 连接\') }}</el-dropdown-item>');
     expect(connectionPool).toContain('<el-radio-button value="redis"><MemoryStick :size="15" />Redis</el-radio-button>');

@@ -6,7 +6,8 @@ import { monitorAlertNavigationQuery, type MonitorAlertItem } from "../src/share
 describe("desktop monitor alert notification", () => {
   it("exposes only a typed notification command and returns clicks through a structured navigation event", () => {
     const preload = readFileSync(new URL("../src/desktop/preload.cts", import.meta.url), "utf8");
-    const main = readFileSync(new URL("../src/desktop/main.ts", import.meta.url), "utf8");
+    // contract unchanged; implementation moved from src/desktop/main.ts
+    const main = readFileSync(new URL("../src/desktop/ipc/register-core-ipc.ts", import.meta.url), "utf8");
     expect(preload).toContain('ipcRenderer.invoke("viron:monitor-alert:notify", input)');
     expect(preload).toContain('ipcRenderer.on("viron:monitor-alert-open", handler)');
     expect(main).toContain('ipcMain.handle("viron:monitor-alert:notify"');

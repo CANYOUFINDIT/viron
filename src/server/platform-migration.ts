@@ -2,7 +2,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID, 
 import { createReadStream, renameSync, rmSync } from "node:fs";
 import { chmod } from "node:fs/promises";
 import Database from "better-sqlite3";
-import { SQLITE_SCHEMA } from "./database.js";
+import { SQLITE_SCHEMA } from "./sqlite-schema.js";
 import type { EnvmanDatabase } from "./database-client.js";
 import { createSecretBox } from "./crypto.js";
 import { ENCRYPTED_COLUMNS } from "./master-key.js";
