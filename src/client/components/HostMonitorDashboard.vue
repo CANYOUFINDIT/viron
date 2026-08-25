@@ -11,6 +11,7 @@ import { aggregateMonitorProcessesByIdentity, monitorProcessIdentity, monitorPro
 import { api } from "../api";
 import { translate as tr } from "../i18n";
 import {
+  DEFAULT_MONITOR_HISTORY_RANGE,
   monitorHistoryLoadPlan,
   QUICK_MONITOR_HISTORY_RANGE,
   type MonitorHistoryRange,
@@ -109,7 +110,7 @@ const props = withDefaults(defineProps<{
   diskThreshold: 80,
 });
 const emit = defineEmits<{ "update:focusMetric": [value: HostFocusMetric] }>();
-const range = ref<HistoryRange>("6h");
+const range = ref<HistoryRange>(DEFAULT_MONITOR_HISTORY_RANGE);
 const loading = ref(false);
 const loadingRange = ref<HistoryRange | null>(null);
 const error = ref("");
@@ -121,7 +122,7 @@ const ioView = ref<IoView>("process");
 const swapView = ref<SwapView>("percent");
 const showAllMetrics = ref(false);
 const history = ref<HistoryResponse>({
-  range: "6h", from: "", to: "", sourceSampleCount: 0, points: [], diagnostics: [], summary: emptySummary, gaps: [],
+  range: DEFAULT_MONITOR_HISTORY_RANGE, from: "", to: "", sourceSampleCount: 0, points: [], diagnostics: [], summary: emptySummary, gaps: [],
 });
 const selectedDisk = ref("");
 let requestSequence = 0;
@@ -166,7 +167,7 @@ async function loadHistory() {
   if (context !== loadedContext) {
     loadedContext = context;
     history.value = {
-      range: "6h", from: "", to: "", sourceSampleCount: 0, points: [], diagnostics: [], summary: emptySummary, gaps: [],
+      range: DEFAULT_MONITOR_HISTORY_RANGE, from: "", to: "", sourceSampleCount: 0, points: [], diagnostics: [], summary: emptySummary, gaps: [],
     };
   }
   const targetRange = range.value;

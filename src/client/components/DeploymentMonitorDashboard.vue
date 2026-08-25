@@ -13,6 +13,7 @@ import { computed, ref, watch } from "vue";
 import { api } from "../api";
 import { translate as tr } from "../i18n";
 import {
+  DEFAULT_MONITOR_HISTORY_RANGE,
   monitorHistoryLoadPlan,
   QUICK_MONITOR_HISTORY_RANGE,
   type MonitorHistoryRange,
@@ -62,7 +63,7 @@ const props = defineProps<{
   deployments: DeploymentTarget[];
 }>();
 
-const range = ref<HistoryRange>("6h");
+const range = ref<HistoryRange>(DEFAULT_MONITOR_HISTORY_RANGE);
 const loadingHosts = ref(new Set<string>());
 const loadingRangeByHost = ref<Record<string, HistoryRange>>({});
 const historyByHost = ref<Record<string, HistoryResponse>>({});
