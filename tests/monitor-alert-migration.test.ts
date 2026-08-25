@@ -5,7 +5,8 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AppConfig } from "../src/server/config.js";
-import { openDatabase, SQLITE_SCHEMA } from "../src/server/database.js";
+import { openDatabase } from "../src/server/database.js";
+import { SQLITE_SCHEMA } from "../src/server/sqlite-schema.js";
 
 const directories: string[] = [];
 

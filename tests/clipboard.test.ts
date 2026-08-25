@@ -74,7 +74,8 @@ describe("clipboard copy", () => {
 
   it("connects the desktop terminal to the trusted native clipboard bridge", () => {
     const preload = source("src/desktop/preload.cts");
-    const main = source("src/desktop/main.ts");
+    // contract unchanged; implementation moved from src/desktop/main.ts
+    const main = source("src/desktop/ipc/register-core-ipc.ts");
     const terminal = source("src/client/components/SshTerminalPane.vue");
 
     expect(preload).toContain('ipcRenderer.invoke("viron:clipboard:read-text")');

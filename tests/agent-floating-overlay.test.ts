@@ -10,7 +10,10 @@ describe("AI Agent native overlay layout", () => {
     const floatingWindow = readFileSync(new URL("../src/client/components/AgentFloatingWindow.vue", import.meta.url), "utf8");
     const nativeOverlay = readFileSync(new URL("../src/client/components/AgentFloatingOverlay.vue", import.meta.url), "utf8");
     const webBrowser = readFileSync(new URL("../src/client/components/DesktopWebAccountBrowser.vue", import.meta.url), "utf8");
-    const desktopMain = readFileSync(new URL("../src/desktop/main.ts", import.meta.url), "utf8");
+    // contract unchanged; implementation moved from src/desktop/main.ts
+    const launcherOverlay = readFileSync(new URL("../src/desktop/overlays/agent-launcher-window.ts", import.meta.url), "utf8");
+    // contract unchanged; implementation moved from src/desktop/main.ts
+    const desktopSmoke = readFileSync(new URL("../src/desktop/smoke/static-overlay-smoke.ts", import.meta.url), "utf8");
     expect(floatingWindow).not.toContain("desktopWebAgentLauncherVisible");
     expect(floatingWindow).not.toContain("<AgentFloatingLauncher");
     expect(nativeOverlay).toContain('import AgentFloatingLauncher from "./AgentFloatingLauncher.vue"');
@@ -20,13 +23,13 @@ describe("AI Agent native overlay layout", () => {
     expect(nativeOverlay).toContain('document.addEventListener("lostpointercapture", finishDrag)');
     expect(nativeOverlay).toContain("state.interactionLayer");
     expect(nativeOverlay).toContain("opacity: 0;");
-    expect(desktopMain).toContain("agentLauncherVisualWindow");
-    expect(desktopMain).toContain("agentFloatingOverlayInteractionState");
-    expect(desktopMain).toContain("interaction.moveAbove(agentLauncherVisualWindow.getMediaSourceId())");
-    expect(desktopMain).not.toContain("agentLauncherHitTestTimer");
-    expect(desktopMain).not.toContain("screen.getCursorScreenPoint()");
-    expect(desktopMain).toContain("focusable: false");
-    expect(desktopMain).toContain("!agentLauncherWindow!.isFocusable()");
+    expect(launcherOverlay).toContain("agentLauncherVisualWindow");
+    expect(launcherOverlay).toContain("agentFloatingOverlayInteractionState");
+    expect(launcherOverlay).toContain("interaction.moveAbove(agentLauncherVisualWindow.getMediaSourceId())");
+    expect(launcherOverlay).not.toContain("agentLauncherHitTestTimer");
+    expect(launcherOverlay).not.toContain("screen.getCursorScreenPoint()");
+    expect(launcherOverlay).toContain("focusable: false");
+    expect(desktopSmoke).toContain("!agentLauncherWindow!.isFocusable()");
   });
 
   it("uses an always-interactive window matching the visible button", () => {

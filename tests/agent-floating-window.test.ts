@@ -2,16 +2,35 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const floatingWindow = readFileSync(new URL("../src/client/components/AgentFloatingWindow.vue", import.meta.url), "utf8");
+// contract unchanged; behavior moved from AgentFloatingWindow.vue into composables
+const agentChat = readFileSync(new URL("../src/client/components/agent-floating-window/use-agent-chat.ts", import.meta.url), "utf8");
+const agentSessions = readFileSync(new URL("../src/client/components/agent-floating-window/use-agent-sessions.ts", import.meta.url), "utf8");
+const agentSuggestions = readFileSync(new URL("../src/client/components/agent-floating-window/use-agent-suggestions.ts", import.meta.url), "utf8");
+const agentLauncherChrome = readFileSync(new URL("../src/client/components/agent-floating-window/use-agent-launcher-chrome.ts", import.meta.url), "utf8");
 const quickSurface = readFileSync(new URL("../src/client/components/AgentQuickSurface.vue", import.meta.url), "utf8");
-const settingsView = readFileSync(new URL("../src/client/views/SettingsView.vue", import.meta.url), "utf8");
+const agentSettingsSection = readFileSync(new URL("../src/client/views/settings/AgentSettingsSection.vue", import.meta.url), "utf8");
+const settingsController = readFileSync(new URL("../src/client/views/settings/use-settings-controller.ts", import.meta.url), "utf8");
 const desktopClient = readFileSync(new URL("../src/client/desktop.ts", import.meta.url), "utf8");
 const desktopPreload = readFileSync(new URL("../src/desktop/preload.cts", import.meta.url), "utf8");
 const desktopMain = readFileSync(new URL("../src/desktop/main.ts", import.meta.url), "utf8");
+// contract unchanged; implementation moved from src/desktop/main.ts
+const desktopAgentIpc = readFileSync(new URL("../src/desktop/ipc/register-agent-ipc.ts", import.meta.url), "utf8");
+// contract unchanged; implementation moved from src/desktop/main.ts
+const desktopExecutionIpc = readFileSync(new URL("../src/desktop/ipc/register-execution-ipc.ts", import.meta.url), "utf8");
+// contract unchanged; implementation moved from src/desktop/main.ts
+const desktopStaticOverlaySmoke = readFileSync(new URL("../src/desktop/smoke/static-overlay-smoke.ts", import.meta.url), "utf8");
+const desktopAgentChat = readFileSync(new URL("../src/desktop/overlays/agent-chat-window.ts", import.meta.url), "utf8");
+// contract unchanged; implementation moved from src/desktop/main.ts
+const desktopExecutionRouter = readFileSync(new URL("../src/desktop/execution-router.ts", import.meta.url), "utf8");
+// contract unchanged; implementation moved from src/desktop/main.ts
+const desktopWebRuntime = readFileSync(new URL("../src/desktop/web-view-runtime.ts", import.meta.url), "utf8");
 const desktopSshRuntime = readFileSync(new URL("../src/desktop/ssh-runtime.ts", import.meta.url), "utf8");
 const agentRuntime = readFileSync(new URL("../src/desktop/agent-runtime.ts", import.meta.url), "utf8");
 const sshTerminalPane = readFileSync(new URL("../src/client/components/SshTerminalPane.vue", import.meta.url), "utf8");
 const sshWorkbench = readFileSync(new URL("../src/client/components/SshWorkbench.vue", import.meta.url), "utf8");
 const databaseWorkbench = readFileSync(new URL("../src/client/components/DatabaseWorkbench.vue", import.meta.url), "utf8");
+// contract unchanged; database Agent providers moved from DatabaseWorkbench.vue
+const databaseAgentScene = readFileSync(new URL("../src/client/components/database-workbench/use-database-agent-scene.ts", import.meta.url), "utf8");
 
 describe("AI Agent floating window layout", () => {
   it("keeps the composer collapsed until the user opens it", () => {
@@ -19,7 +38,7 @@ describe("AI Agent floating window layout", () => {
     expect(floatingWindow).toContain("@click=\"expandComposer\"");
     expect(floatingWindow).toContain('v-else class="agent-composer"');
     expect(floatingWindow).toContain('rows="2"');
-    expect(floatingWindow).toContain("composerExpanded.value = false;");
+    expect(agentChat).toContain("composerExpanded.value = false;");
   });
 
   it("gives the conversation body the flexible panel area", () => {
@@ -42,7 +61,7 @@ describe("AI Agent floating window layout", () => {
 
   it("shows a muted per-turn duration and token caption on both entry surfaces", () => {
     expect(floatingWindow).toContain("<AgentTurnStats");
-    expect(floatingWindow).toContain('applyTurnStats(');
+    expect(agentChat).toContain('applyTurnStats(');
     expect(quickSurface).toContain("<AgentTurnStats");
     expect(quickSurface).toContain('class="agent-quick-bubble__stats"');
     expect(floatingWindow).not.toContain("JSON.stringify(message.usage");
@@ -67,12 +86,12 @@ describe("AI Agent floating window layout", () => {
     const appShell = readFileSync(new URL("../src/client/components/AppShell.vue", import.meta.url), "utf8");
     expect(appShell).toContain("<AgentHostBridge v-if=\"desktop\" />");
     expect(appShell).toContain("<AgentFloatingWindow v-if=\"desktop && !agentNativeOverlayActive\" />");
-    expect(floatingWindow).toContain("agentHostState.routePath");
-    expect(floatingWindow).toContain("updateDesktopAgentChatChrome");
-    expect(floatingWindow).toContain("setDesktopAgentChatIgnoreMouse");
-    expect(floatingWindow).toContain('type: "scene-snapshot"');
-    expect(desktopMain).toContain("desktop-agent-chat.html");
-    expect(desktopMain).toContain("setAgentChatNativeOverlay");
+    expect(agentChat).toContain("agentHostState.routePath");
+    expect(agentLauncherChrome).toContain("updateDesktopAgentChatChrome");
+    expect(agentLauncherChrome).toContain("setDesktopAgentChatIgnoreMouse");
+    expect(agentChat).toContain('type: "scene-snapshot"');
+    expect(desktopAgentChat).toContain("desktop-agent-chat.html");
+    expect(desktopAgentChat).toContain("setAgentChatNativeOverlay");
     expect(readFileSync(new URL("../scripts/package-windows.mjs", import.meta.url), "utf8")).toContain("/dist/desktop-renderer/desktop-agent-chat.html");
     expect(readFileSync(new URL("../vite.config.ts", import.meta.url), "utf8")).toContain("desktop-agent-chat");
   });
@@ -80,25 +99,25 @@ describe("AI Agent floating window layout", () => {
   it("keeps the current Chatbox exclusive to floating mode", () => {
     expect(floatingWindow).toContain("v-if=\"entryMode === 'floating'\"");
     expect(floatingWindow).toContain("v-else-if=\"entryMode === 'quick'\"");
-    expect(floatingWindow).toContain('if (action === "app.agentQuickInput")');
-    expect(floatingWindow).toContain('return sendMessageFor("floating")');
-    expect(floatingWindow).toContain('return sendMessageFor("quick")');
-    expect(floatingWindow).toContain("quickExpandedBubbleId.value === quickActionBubbleId.value");
+    expect(agentChat).toContain('if (action === "app.agentQuickInput")');
+    expect(agentChat).toContain('return sendMessageFor("floating")');
+    expect(agentChat).toContain('return sendMessageFor("quick")');
+    expect(agentSuggestions).toContain("$chat.quickExpandedBubbleId.value === $chat.quickActionBubbleId.value");
   });
 
   it("captures the current scene only when a message is submitted", () => {
-    const openWatcher = floatingWindow.slice(
-      floatingWindow.indexOf("watch(open"),
-      floatingWindow.indexOf("watch(input"),
+    const openWatcher = agentChat.slice(
+      agentChat.indexOf("watch($launcherChrome.open"),
+      agentChat.indexOf("watch(input"),
     );
-    const quickComposerToggle = floatingWindow.slice(
-      floatingWindow.indexOf("async function toggleQuickComposer"),
-      floatingWindow.indexOf("function handleAppShortcut"),
+    const quickComposerToggle = agentChat.slice(
+      agentChat.indexOf("async function toggleQuickComposer"),
+      agentChat.indexOf("function handleAppShortcut"),
     );
 
-    const sendHandler = floatingWindow.slice(
-      floatingWindow.indexOf("async function sendMessageFor"),
-      floatingWindow.indexOf("function sendMessage()"),
+    const sendHandler = agentChat.slice(
+      agentChat.indexOf("async function sendMessageFor"),
+      agentChat.indexOf("function sendMessage()"),
     );
     expect(openWatcher).not.toContain("captureCurrentScene");
     expect(quickComposerToggle).not.toContain("captureCurrentScene");
@@ -109,11 +128,11 @@ describe("AI Agent floating window layout", () => {
   });
 
   it("manages historical sessions in both Chatbox modes", () => {
-    expect(floatingWindow).toContain("listDesktopAgentSessions");
-    expect(floatingWindow).toContain("createDesktopAgentSession");
-    expect(floatingWindow).toContain("selectDesktopAgentSession");
-    expect(floatingWindow).toContain("renameDesktopAgentSession");
-    expect(floatingWindow).toContain("deleteDesktopAgentSession");
+    expect(agentSessions).toContain("listDesktopAgentSessions");
+    expect(agentSessions).toContain("createDesktopAgentSession");
+    expect(agentSessions).toContain("selectDesktopAgentSession");
+    expect(agentSessions).toContain("renameDesktopAgentSession");
+    expect(agentSessions).toContain("deleteDesktopAgentSession");
     expect(floatingWindow).toContain('class="agent-session-history"');
     expect(quickSurface).toContain('class="agent-quick-history"');
     expect(quickSurface).toContain("recentAgentSessionItems");
@@ -122,68 +141,69 @@ describe("AI Agent floating window layout", () => {
     expect(quickSurface).toContain("emit('createSession')");
     expect(quickSurface).toContain("emit('selectSession', item.id)");
     expect(quickSurface).not.toContain("agent-quick-session-title");
-    expect(floatingWindow).toContain("ElMessageBox.prompt");
-    expect(floatingWindow).toContain("ElMessageBox.confirm");
-    expect(floatingWindow).not.toContain("window.prompt");
-    expect(floatingWindow).not.toContain("window.confirm");
+    expect(agentSessions).toContain("ElMessageBox.prompt");
+    expect(agentSessions).toContain("ElMessageBox.confirm");
+    expect(agentSessions).not.toContain("window.prompt");
+    expect(agentSessions).not.toContain("window.confirm");
   });
 
   it("keeps the chat window and session list open after deleting a conversation", () => {
-    const deleteHandler = floatingWindow.slice(
-      floatingWindow.indexOf("async function deleteConversation"),
-      floatingWindow.indexOf("function currentSceneCard"),
+    const deleteHandler = agentSessions.slice(agentSessions.indexOf("async function deleteConversation"));
+    const outsideHandler = agentLauncherChrome.slice(
+      agentLauncherChrome.indexOf("function handleDocumentPointerDown"),
+      agentLauncherChrome.indexOf("function startAgentLauncherChromeWatchers"),
     );
-    const outsideHandler = floatingWindow.slice(
-      floatingWindow.indexOf("function handleDocumentPointerDown"),
-      floatingWindow.indexOf("watch(open"),
-    );
-    expect(deleteHandler).toContain("const keepWindow = open.value;");
-    expect(deleteHandler).toContain("const keepComposer = quickComposerVisible.value;");
+    expect(deleteHandler).toContain("const keepWindow = $launcherChrome.open.value;");
+    expect(deleteHandler).toContain("const keepComposer = $chat.quickComposerVisible.value;");
     expect(deleteHandler).toContain("const keepHistory = historyOpen.value;");
-    expect(deleteHandler).toContain("if (keepWindow) open.value = true;");
-    expect(deleteHandler).toContain("if (keepComposer) quickComposerVisible.value = true;");
-    expect(deleteHandler).toContain("if (keepHistory) historyOpen.value = true;");
+    expect(deleteHandler).toContain("if (keepWindow)");
+    expect(deleteHandler).toContain("$launcherChrome.open.value = true;");
+    expect(deleteHandler).toContain("if (keepComposer)");
+    expect(deleteHandler).toContain("$chat.quickComposerVisible.value = true;");
+    expect(deleteHandler).toContain("if (keepHistory)");
+    expect(deleteHandler).toContain("historyOpen.value = true;");
     expect(deleteHandler).not.toContain("historyOpen.value = false");
-    expect(deleteHandler).not.toContain("open.value = false");
-    expect(deleteHandler).not.toContain("quickComposerVisible.value = false");
-    expect(outsideHandler).toContain("if (isDialogOverlayTarget(event.target)) return;");
-    expect(outsideHandler).toContain("if (dialogOverlayOpen()) return;");
+    expect(deleteHandler).not.toContain("$launcherChrome.open.value = false");
+    expect(deleteHandler).not.toContain("$chat.quickComposerVisible.value = false");
+    expect(outsideHandler).toContain("if (isDialogOverlayTarget(event.target))");
+    expect(outsideHandler).toContain("if (dialogOverlayOpen())");
     expect(outsideHandler).toContain("bubbles.contains(event.target)");
     expect(outsideHandler).toContain("collapseQuickHistoryStack");
     expect(floatingWindow).toContain("onDesktopNativeViewPointerDown(handleNativeViewPointerDown)");
-    expect(floatingWindow.slice(
-      floatingWindow.indexOf("function handleNativeViewPointerDown"),
-      floatingWindow.indexOf("function handlePointerOutside"),
+    expect(agentLauncherChrome.slice(
+      agentLauncherChrome.indexOf("function handleNativeViewPointerDown"),
+      agentLauncherChrome.indexOf("function handlePointerOutside"),
     )).toContain("collapseQuickHistoryStack");
-    expect(floatingWindow.slice(
-      floatingWindow.indexOf("function handlePointerOutside"),
-      floatingWindow.indexOf("function isAgentHitTarget"),
+    expect(agentLauncherChrome.slice(
+      agentLauncherChrome.indexOf("function handlePointerOutside"),
+      agentLauncherChrome.indexOf("function isAgentHitTarget"),
     )).toContain("collapseQuickHistoryStack");
   });
 
   it("starts a fresh conversation on launch and restores history only after the user switches sessions", () => {
-    const selectHandler = floatingWindow.slice(
-      floatingWindow.indexOf("async function selectConversation"),
-      floatingWindow.indexOf("async function renameConversation"),
+    const selectHandler = agentSessions.slice(
+      agentSessions.indexOf("async function selectConversation"),
+      agentSessions.indexOf("async function renameConversation"),
     );
-    const quickComposerToggle = floatingWindow.slice(
-      floatingWindow.indexOf("async function toggleQuickComposer"),
-      floatingWindow.indexOf("function handleAppShortcut"),
+    const quickComposerToggle = agentChat.slice(
+      agentChat.indexOf("async function toggleQuickComposer"),
+      agentChat.indexOf("function handleAppShortcut"),
     );
-    const openWatcher = floatingWindow.slice(
-      floatingWindow.indexOf("watch(open"),
-      floatingWindow.indexOf("watch(input"),
+    const openWatcher = agentChat.slice(
+      agentChat.indexOf("watch($launcherChrome.open"),
+      agentChat.indexOf("watch(input"),
     );
-    expect(floatingWindow).toContain("shouldStartFreshAgentConversation");
-    expect(floatingWindow).toContain("ensureLaunchConversation");
-    expect(floatingWindow).toContain("startFresh: true");
-    expect(floatingWindow).toContain("latestAgentQuickBubbleId");
+    expect(agentSessions).toContain("shouldStartFreshAgentConversation");
+    expect(agentSessions).toContain("ensureLaunchConversation");
+    expect(agentSessions).toContain("startFresh: true");
+    expect(agentChat).toContain("latestAgentQuickBubbleId");
     expect(selectHandler).toContain("applyConversation(conversation, { restoreQuick: true })");
-    expect(quickComposerToggle).toContain("await ensureLaunchConversation()");
-    expect(quickComposerToggle).not.toContain("await loadSessions()");
+    expect(quickComposerToggle).toContain("await $sessions.ensureLaunchConversation()");
+    expect(quickComposerToggle).not.toContain("await $sessions.loadSessions()");
     expect(openWatcher).toContain("ensureLaunchConversation");
     expect(openWatcher).not.toContain("loadSessions");
-    expect(floatingWindow).toContain("if (launchConversationReady && !quickBubblesHidden.value) restoreQuickBubblesFromHistory(messages.value)");
+    expect(agentChat).toContain("if ($sessions.launchConversationReady && !quickBubblesHidden.value)");
+    expect(agentChat).toContain("restoreQuickBubblesFromHistory(messages.value)");
     expect(quickSurface).toContain("bubble.id === latestBubbleId");
     expect(quickSurface).toContain("is-folded");
     expect(quickSurface).toContain("is-stacked-back");
@@ -200,16 +220,17 @@ describe("AI Agent floating window layout", () => {
     expect(quickSurface).toContain("emit('toggleHistoryStack')");
     expect(quickSurface).toContain("is-stacked");
     expect(quickSurface).toContain("is-tiled");
-    expect(floatingWindow).toContain("quickHistoryTiled");
-    expect(floatingWindow).toContain("collapseQuickHistoryStack");
-    expect(floatingWindow).toContain("toggleQuickHistoryStack");
-    expect(floatingWindow).toContain("if (presentation === \"quick\") quickHistoryTiled.value = false;");
-    expect(floatingWindow).toContain("if (!quickHistoryTiled.value && quickBubbleIds.value.length > 1 && messageId !== latestId)");
-    expect(floatingWindow).toContain("quickHistoryTiled.value = true;");
-    expect(floatingWindow).toContain("return;");
-    expect(floatingWindow.slice(
-      floatingWindow.indexOf("function toggleQuickBubble"),
-      floatingWindow.indexOf("function scrollToBottom"),
+    expect(agentChat).toContain("quickHistoryTiled");
+    expect(agentChat).toContain("collapseQuickHistoryStack");
+    expect(agentChat).toContain("toggleQuickHistoryStack");
+    expect(agentChat).toContain("if (presentation === \"quick\")");
+    expect(agentChat).toContain("quickHistoryTiled.value = false;");
+    expect(agentChat).toContain("if (!quickHistoryTiled.value && quickBubbleIds.value.length > 1 && messageId !== latestId)");
+    expect(agentChat).toContain("quickHistoryTiled.value = true;");
+    expect(agentChat).toContain("return;");
+    expect(agentChat.slice(
+      agentChat.indexOf("function toggleQuickBubble"),
+      agentChat.indexOf("function scrollToBottom"),
     )).not.toContain("quickExpandedBubbleId.value = messageId;");
   });
 
@@ -219,21 +240,22 @@ describe("AI Agent floating window layout", () => {
     expect(quickSurface).toContain("$t('隐藏全部回复')");
     expect(quickSurface).toContain("emit('showBubbles')");
     expect(quickSurface).toContain("bubblesHidden && canRestoreBubbles");
-    expect(floatingWindow).toContain("quickBubblesHidden");
-    expect(floatingWindow).toContain("displayedQuickBubbles");
-    expect(floatingWindow).toContain("function hideQuickBubbles");
-    expect(floatingWindow).toContain("function showQuickBubbles");
-    expect(floatingWindow).toContain("quickBubblesHidden.value = false;");
-    expect(floatingWindow).toContain("if (messages.value.length && !quickBubblesHidden.value) restoreQuickBubblesFromHistory(messages.value);");
+    expect(agentChat).toContain("quickBubblesHidden");
+    expect(agentChat).toContain("displayedQuickBubbles");
+    expect(agentChat).toContain("function hideQuickBubbles");
+    expect(agentChat).toContain("function showQuickBubbles");
+    expect(agentChat).toContain("quickBubblesHidden.value = false;");
+    expect(agentChat).toContain("if (messages.value.length && !quickBubblesHidden.value)");
+    expect(agentChat).toContain("restoreQuickBubblesFromHistory(messages.value)");
     expect(floatingWindow).toContain(":bubbles=\"displayedQuickBubbles\"");
     expect(floatingWindow).toContain("@hide-bubbles=\"hideQuickBubbles\"");
     expect(floatingWindow).toContain("@show-bubbles=\"showQuickBubbles\"");
   });
 
   it("keeps conversation history when only the workspace changes", () => {
-    const workspaceWatcher = floatingWindow.slice(
-      floatingWindow.indexOf("watch([() => agentHostState.workspaceType"),
-      floatingWindow.indexOf("watch(entryMode"),
+    const workspaceWatcher = agentChat.slice(
+      agentChat.indexOf("watch([() => agentHostState.workspaceType"),
+      agentChat.indexOf("watch($launcherChrome.entryMode"),
     );
     expect(workspaceWatcher).toContain("stopActiveDiagnostic();");
     expect(workspaceWatcher).toContain("contextCards.value = [];");
@@ -242,25 +264,25 @@ describe("AI Agent floating window layout", () => {
   });
 
   it("supports disabling every Agent entry without clearing configuration", () => {
-    expect(settingsView).toContain("changeAgentEntryMode('disabled')");
-    expect(settingsView).toContain("隐藏所有 Viron Agent 入口，保留配置和当前会话");
-    expect(settingsView).toContain("repeat(3, minmax(0, 1fr))");
-    expect(settingsView).toContain('agentEntryMode ?? "disabled"');
-    expect(floatingWindow).toContain('agentEntryMode ?? "disabled"');
+    expect(agentSettingsSection).toContain("changeAgentEntryMode('disabled')");
+    expect(agentSettingsSection).toContain("隐藏所有 Viron Agent 入口，保留配置和当前会话");
+    expect(agentSettingsSection).toContain("repeat(3, minmax(0, 1fr))");
+    expect(settingsController).toContain('agentEntryMode ?? "disabled"');
+    expect(agentLauncherChrome).toContain('agentEntryMode ?? "disabled"');
   });
 
   it("lets Viron Agent settings fill the settings column", () => {
-    expect(settingsView).toContain(".agent-entry-settings { width: 100%;");
-    expect(settingsView).toContain(".agent-control-settings { width: 100%;");
-    expect(settingsView).toContain(".settings-form.agent-settings-form { width: 100%;");
-    expect(settingsView).not.toContain("width: min(720px, 100%)");
-    expect(settingsView).not.toContain("width: min(561px, 100%)");
+    expect(agentSettingsSection).toContain(".agent-entry-settings { width: 100%;");
+    expect(agentSettingsSection).toContain(".agent-control-settings { width: 100%;");
+    expect(agentSettingsSection).toContain(".settings-form.agent-settings-form { width: 100%;");
+    expect(agentSettingsSection).not.toContain("width: min(720px, 100%)");
+    expect(agentSettingsSection).not.toContain("width: min(561px, 100%)");
   });
 
   it("warns that Viron Agent is experimental and requires verification", () => {
-    expect(settingsView).toContain("实验性功能 · 使用有风险");
-    expect(settingsView).toContain("生成内容和操作建议可能不准确或不可靠");
-    expect(settingsView).toContain("执行命令、SQL 或其他操作前自行核验");
+    expect(agentSettingsSection).toContain("实验性功能 · 使用有风险");
+    expect(agentSettingsSection).toContain("生成内容和操作建议可能不准确或不可靠");
+    expect(agentSettingsSection).toContain("执行命令、SQL 或其他操作前自行核验");
   });
 
   it("uses 小 V as the user-facing assistant name", () => {
@@ -283,11 +305,11 @@ describe("AI Agent floating window layout", () => {
   });
 
   it("uses Viron Agent as the feature name outside Chat", () => {
-    expect(floatingWindow).toContain('return open.value ? tr("关闭 Viron Agent") : tr("打开 Viron Agent");');
-    expect(settingsView).toContain('{ key: "ai-agent" as const, label: tr("Viron Agent"), icon: Bot }');
-    expect(settingsView).toContain("Viron Agent 仍在开发中");
-    expect(settingsView).not.toContain("小 V 入口");
-    expect(desktopMain).toContain('label: tr("打开 Viron Agent")');
+    expect(agentLauncherChrome).toContain('return open.value ? tr("关闭 Viron Agent") : tr("打开 Viron Agent");');
+    expect(settingsController).toContain('{ key: "ai-agent" as const, label: tr("Viron Agent"), icon: Bot }');
+    expect(agentSettingsSection).toContain("Viron Agent 仍在开发中");
+    expect(agentSettingsSection).not.toContain("小 V 入口");
+    expect(desktopStaticOverlaySmoke).toContain('label: tr("打开 Viron Agent")');
   });
 
   it("provides a bottom quick composer and stacked response bubbles", () => {
@@ -303,20 +325,19 @@ describe("AI Agent floating window layout", () => {
   });
 
   it("uses one inline approval surface and supports visible workbench execution", () => {
-    const approvalHandler = floatingWindow.slice(
-      floatingWindow.indexOf("async function respondVironApproval"),
-      floatingWindow.indexOf("async function stopRun"),
+    const approvalHandler = agentSuggestions.slice(
+      agentSuggestions.indexOf("async function respondVironApproval"),
     );
     expect(approvalHandler).not.toContain("ElMessageBox");
     expect(floatingWindow).not.toContain("sshApprovalCard");
     expect(floatingWindow).toContain('v-if="canFillSshSuggestion(suggestion)"');
     expect(quickSurface).toContain("suggestion.source.startsWith('desktop-ssh:')");
-    expect(floatingWindow).toContain("respondDesktopAgentApproval");
-    expect(floatingWindow).toContain("respondDesktopAgentWorkbenchExecution");
-    expect(floatingWindow).toContain('event.type === "workbench-execution-request"');
-    expect(floatingWindow).toContain("resourceId: snapshot.connectionId");
-    expect(floatingWindow).toContain("suggestion.approval.step");
-    expect(floatingWindow).toContain("suggestion.approval?.runId ?? suggestion.runId");
+    expect(agentSuggestions).toContain("respondDesktopAgentApproval");
+    expect(agentSuggestions).toContain("respondDesktopAgentWorkbenchExecution");
+    expect(agentChat).toContain('event.type === "workbench-execution-request"');
+    expect(agentChat).toContain("resourceId: snapshot.connectionId");
+    expect(agentSuggestions).toContain("suggestion.approval.step");
+    expect(agentSuggestions).toContain("suggestion.approval?.runId ?? suggestion.runId");
     expect(quickSurface).toContain("executeSsh");
     expect(quickSurface).toContain("cancelSsh");
     expect(quickSurface).toContain("cancelDatabase");
@@ -324,39 +345,39 @@ describe("AI Agent floating window layout", () => {
     expect(desktopPreload).toContain('ipcRenderer.invoke("viron:agent:workbench:respond", input)');
     expect(desktopPreload).not.toContain("viron:agent:ssh-diagnostic");
     expect(desktopSshRuntime).toContain('sshCommandRiskLevel(normalizedCommand) !== "low"');
-    expect(desktopMain).toContain('agent-(?:context|diagnostics)');
-    expect(floatingWindow).toContain("desktopAppState.value?.endpoint");
-    expect(floatingWindow).toContain("desktopAppState.value?.executionMode");
+    expect(desktopExecutionIpc).toContain('agent-(?:context|diagnostics)');
+    expect(agentChat).toContain("desktopAppState.value?.endpoint");
+    expect(agentSuggestions).toContain("desktopAppState.value?.executionMode");
     expect(sshTerminalPane).toContain('sendTransportText(`\\x01\\x0b${command}\\r`)');
     expect(sshTerminalPane).toContain('sendTransportText("\\x03")');
     expect(sshTerminalPane).toContain("!snapshot.reliable");
     expect(sshTerminalPane).toContain("Boolean(snapshot.value)");
     expect(sshWorkbench).toContain('domain: "ssh"');
-    expect(databaseWorkbench).toContain('domain: "database"');
-    expect(databaseWorkbench).toContain("pendingAgentDatabaseExecutions");
+    expect(databaseAgentScene).toContain('domain: "database"');
+    expect(databaseAgentScene).toContain("pendingAgentDatabaseExecutions");
   });
 
   it("persists policy changes before stopping sessions and settles invalid workbench responses", () => {
-    const saveHandler = desktopMain.slice(
-      desktopMain.indexOf('ipcMain.handle("viron:agent:settings:save"'),
-      desktopMain.indexOf('ipcMain.handle("viron:agent:models:list"'),
+    const saveHandler = desktopAgentIpc.slice(
+      desktopAgentIpc.indexOf('ipcMain.handle("viron:agent:settings:save"'),
+      desktopAgentIpc.indexOf('ipcMain.handle("viron:agent:models:list"'),
     );
     expect(saveHandler.indexOf("desktopAgentSettingsStore.save")).toBeGreaterThanOrEqual(0);
     expect(saveHandler.indexOf("desktopAgentSettingsStore.save")).toBeLessThan(saveHandler.indexOf("desktopAgentRuntime.stopAll"));
 
-    const workbenchHandler = desktopMain.slice(
-      desktopMain.indexOf('ipcMain.handle("viron:agent:workbench:respond"'),
-      desktopMain.indexOf('ipcMain.handle("viron:agent:chat:stop"'),
+    const workbenchHandler = desktopAgentIpc.slice(
+      desktopAgentIpc.indexOf('ipcMain.handle("viron:agent:workbench:respond"'),
+      desktopAgentIpc.indexOf('ipcMain.handle("viron:agent:chat:stop"'),
     );
     expect(workbenchHandler).toContain("if (requestId) settleAgentWorkbenchExecution");
     expect(workbenchHandler).toContain('if (!input.result) throw new Error(tr("Viron Agent 工作台执行结果无效"))');
   });
 
   it("previews Shell scripts and only fills them through terminal safe-paste mode", () => {
-    expect(floatingWindow).toContain("agentSshScriptSuggestion(event.output)");
+    expect(agentChat).toContain("agentSshScriptSuggestion(event.output)");
     expect(floatingWindow).toContain("安全填入，不执行");
-    expect(floatingWindow).toContain('type: "fill-ssh-script"');
-    expect(floatingWindow).toContain('action: "ssh_script_filled"');
+    expect(agentSuggestions).toContain('type: "fill-ssh-script"');
+    expect(agentSuggestions).toContain('action: "ssh_script_filled"');
     expect(quickSurface).toContain("sshScriptSuggestions");
     expect(quickSurface).toContain("fillSshScript");
     expect(agentRuntime).toContain('name: "ssh_propose_script"');
@@ -367,12 +388,12 @@ describe("AI Agent floating window layout", () => {
   });
 
   it("uses one resumable Pi loop with a bounded 64-call safety budget", () => {
-    expect(desktopMain).toContain("currentAgentRuntimeScope()");
+    expect(desktopExecutionRouter).toContain("currentAgentRuntimeScope()");
     expect(desktopMain).toContain("executeSshDiagnostic: async");
     expect(desktopMain).toContain("executeDatabaseRead: async");
-    expect(floatingWindow).toContain('event.type === "run-pause"');
-    expect(floatingWindow).toContain("agentSshDiagnosticResult(event.output)");
-    expect(floatingWindow).toContain("agentDatabaseReadResult(event.output)");
+    expect(agentChat).toContain('event.type === "run-pause"');
+    expect(agentChat).toContain("agentSshDiagnosticResult(event.output)");
+    expect(agentChat).toContain("agentDatabaseReadResult(event.output)");
     expect(agentRuntime).toContain("new Agent({");
     expect(agentRuntime).toContain('toolExecution: "sequential"');
     expect(agentRuntime).toContain("await this.waitForApproval");
@@ -468,9 +489,9 @@ describe("AI Agent floating window layout", () => {
   });
 
   it("keeps quick input open after sending so the same session can continue", () => {
-    const sendHandler = floatingWindow.slice(
-      floatingWindow.indexOf("async function sendMessageFor"),
-      floatingWindow.indexOf("function sendMessage()"),
+    const sendHandler = agentChat.slice(
+      agentChat.indexOf("async function sendMessageFor"),
+      agentChat.indexOf("function sendMessage()"),
     );
     expect(sendHandler).toContain('pendingQuickPrompt = presentation === "quick" ? content : "";');
     expect(sendHandler).not.toContain("quickComposerVisible.value = false");
@@ -478,9 +499,9 @@ describe("AI Agent floating window layout", () => {
   });
 
   it("dismisses quick input outside the glass while preserving an unsent draft", () => {
-    const outsideHandler = floatingWindow.slice(
-      floatingWindow.indexOf("function handleDocumentPointerDown"),
-      floatingWindow.indexOf("watch(open"),
+    const outsideHandler = agentLauncherChrome.slice(
+      agentLauncherChrome.indexOf("function handleDocumentPointerDown"),
+      agentLauncherChrome.indexOf("function handleNativeViewPointerDown"),
     );
     expect(outsideHandler).toContain("composer.contains(event.target)");
     expect(outsideHandler).toContain("quickComposerVisible.value = false;");
@@ -490,9 +511,9 @@ describe("AI Agent floating window layout", () => {
   });
 
   it("dismisses quick input when a native desktop page receives the click", () => {
-    expect(desktopMain).toContain('nativeView.webContents.on("before-mouse-event"');
-    expect(desktopMain).toContain('mouse.type !== "mouseDown"');
-    expect(desktopMain).toContain('mainWindow.webContents.send("viron:native-view-pointer-down")');
+    expect(desktopWebRuntime).toContain('nativeView.webContents.on("before-mouse-event"');
+    expect(desktopWebRuntime).toContain('mouse.type !== "mouseDown"');
+    expect(desktopWebRuntime).toContain('mainWindow.webContents.send("viron:native-view-pointer-down")');
     expect(desktopPreload).toContain('onNativeViewPointerDown: (listener: () => void)');
     expect(desktopClient).toContain("export function onDesktopNativeViewPointerDown");
     expect(floatingWindow).toContain("onDesktopNativeViewPointerDown(handleNativeViewPointerDown)");

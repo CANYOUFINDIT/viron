@@ -3,6 +3,7 @@ import { Readable, Writable } from "node:stream";
 import type { FileEntryWithStats, Stats } from "ssh2";
 import { describe, expect, it } from "vitest";
 import { transferSftpEntry, type TransferSftp } from "../src/server/sftp/transfer-manager.js";
+import { isSftpMissingFileCode } from "../src/shared/sftp-transfer-plan.js";
 
 type MemoryEntry =
   | { type: "directory"; mode: number }
@@ -145,6 +146,22 @@ class MemorySftp implements TransferSftp {
     } as Stats;
   }
 }
+
+describe("SFTP missing-file error detection", () => {
+  it.each([null, undefined, "ENOENT", 2, {}, { message: "No such file" }])(
+    "rejects non-code value %j",
+    (value) => {
+      expect(isSftpMissingFileCode(value)).toBe(false);
+    },
+  );
+
+  it.each([{ code: 2 }, { code: "ENOENT" }, { code: "NO_SUCH_FILE" }])(
+    "accepts missing-file code %j",
+    (value) => {
+      expect(isSftpMissingFileCode(value)).toBe(true);
+    },
+  );
+});
 
 describe("SFTP host-to-host transfer", () => {
   it("recursively copies a directory and overwrites same-name files", async () => {

@@ -20,9 +20,10 @@ import {
   type ConnectedDesktopDatabase,
   type DesktopDatabaseExecutionReport,
   type DesktopDatabaseRequest,
-  type DesktopDatabaseResponse,
 } from "./database-runtime.js";
 import type { DesktopSshContext } from "./ssh-runtime.js";
+import { contextKey } from "./ssh-context.js";
+import { jsonResponse, type DesktopDatabaseResponse } from "./json-response.js";
 
 export interface DesktopDatabaseDownload {
   filename: string;
@@ -92,10 +93,6 @@ const MAX_TABULAR_ROWS = 100_000;
 const TASK_LOG_LIMIT = 500;
 const TASK_LIMIT = 3;
 const BACKUP_BOUNDARY = "\n-- ENVMAN_STATEMENT_BOUNDARY\n";
-
-function contextKey(context: DesktopSshContext): string {
-  return `${context.endpoint}\0${context.userId}\0${context.workspaceType}\0${context.workspaceId}`;
-}
 
 function identifier(value: string): string {
   return `\`${value.replaceAll("`", "``")}\``;
@@ -186,15 +183,6 @@ function formValues(request: DesktopDatabaseRequest): {
     else fields[entry.name] = entry.value ?? "";
   }
   return { fields, file };
-}
-
-function jsonResponse(status: number, body?: unknown): DesktopDatabaseResponse {
-  return {
-    status,
-    statusText: status === 204 ? "No Content" : status >= 400 ? "Error" : "OK",
-    headers: body === undefined ? [] : [["content-type", "application/json; charset=utf-8"]],
-    body: body === undefined ? "" : JSON.stringify(body),
-  };
 }
 
 function csvCell(value: unknown): string {

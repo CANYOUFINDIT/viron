@@ -1,0 +1,93 @@
+.profile-summary { margin-top: 22px; padding: 17px; border: 1px solid var(--ink-100); border-radius: 12px; background: linear-gradient(135deg, var(--surface), color-mix(in srgb, var(--teal-50) 36%, var(--surface))); display: grid; grid-template-columns: 58px minmax(150px, .7fr) minmax(300px, 1.3fr); align-items: center; gap: 16px; }
+.profile-avatar { width: 58px; height: 58px; border-radius: 16px 16px 16px 6px; background: var(--teal-600); color: white; box-shadow: 0 10px 24px color-mix(in srgb, var(--teal-600) 22%, transparent); display: grid; place-items: center; font-family: var(--font-display); font-size: 25px; font-weight: 800; }
+.profile-identity { min-width: 0; }
+.profile-identity small, .profile-identity strong, .profile-identity em { display: block; }
+.profile-identity small { color: var(--teal-600); font-family: var(--font-mono); font-size: 9px; font-weight: 800; letter-spacing: .12em; }
+.profile-identity strong { margin-top: 4px; overflow: hidden; color: var(--ink-900); font-size: 18px; text-overflow: ellipsis; white-space: nowrap; }
+.profile-identity em { width: max-content; margin-top: 6px; padding: 3px 7px; border-radius: 999px; background: var(--teal-50); color: var(--teal-700); font-size: 10px; font-style: normal; font-weight: 700; }
+.profile-summary dl { min-width: 0; margin: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 11px 18px; }
+.profile-summary dl > div { min-width: 0; }
+.profile-summary dt { color: var(--ink-400); display: flex; align-items: center; gap: 5px; font-size: 10px; }
+.profile-summary dd { min-width: 0; margin: 4px 0 0; overflow: hidden; color: var(--ink-700); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.profile-summary dd code { font-family: var(--font-mono); font-size: 10px; }
+.profile-actions-grid { margin-top: 14px; display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(220px, .55fr); gap: 12px; }
+.profile-action-card { min-width: 0; padding: 16px; border: 1px solid var(--ink-100); border-radius: 11px; background: var(--surface); display: flex; flex-direction: column; }
+.profile-action-card > header { display: flex; align-items: center; gap: 9px; }
+.profile-action-card > header > span { width: 34px; height: 34px; border-radius: 8px 8px 8px 3px; background: var(--teal-50); color: var(--teal-600); display: grid; place-items: center; }
+.profile-action-card > header strong, .profile-action-card > header small { display: block; }
+.profile-action-card > header strong { color: var(--ink-800); font-size: 13px; }
+.profile-action-card > header small { margin-top: 3px; color: var(--ink-400); font-size: 10px; }
+.profile-password-form { width: 100%; margin-top: 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
+.profile-password-form :deep(.el-form-item:first-child) { grid-column: 1 / -1; }
+.profile-action-card > footer { margin-top: auto; padding-top: 3px; display: flex; justify-content: flex-end; }
+.profile-signout-card { border-color: color-mix(in srgb, var(--red-600) 18%, var(--ink-100)); background: color-mix(in srgb, var(--red-100) 28%, var(--surface)); }
+.profile-signout-card > header > span { background: var(--red-100); color: var(--red-600); }
+.profile-signout-card > p { margin: 18px 0; color: var(--ink-500); font-size: 11px; line-height: 1.65; }
+@media (max-width: 1100px) {
+  .profile-summary { grid-template-columns: 52px minmax(0, 1fr); }
+  .profile-avatar { width: 52px; height: 52px; }
+  .profile-summary dl { grid-column: 1 / -1; }
+  .profile-actions-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 900px) {
+  .profile-summary { grid-template-columns: 52px minmax(0, 1fr); }
+  .profile-avatar { width: 52px; height: 52px; }
+  .profile-summary dl { grid-column: 1 / -1; }
+  .profile-actions-grid { grid-template-columns: 1fr; }
+}
+.profile-summary {
+  margin-block-start: var(--space-md);
+  padding: var(--space-md);
+  border-radius: var(--radius-panel);
+  background: var(--color-paper-muted);
+  grid-template-columns: 52px minmax(140px, 0.6fr) minmax(320px, 1.4fr);
+  gap: var(--space-md);
+}
+.profile-avatar {
+  width: 52px;
+  height: 52px;
+  border-radius: var(--radius-control);
+  box-shadow: none;
+  font-size: var(--text-xl);
+}
+.profile-identity strong { margin-top: 0; }
+.profile-action-bar {
+  margin-block-start: var(--space-md);
+  padding-block-start: var(--space-md);
+  border-top: 1px solid var(--color-rule);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+.profile-password-trigger { display: flex; align-items: center; gap: var(--space-2xs); }
+.profile-password-trigger :deep(.el-button svg:last-child) { transition: transform var(--dur-short) var(--ease-out); }
+.profile-password-trigger :deep(.el-button.is-expanded svg:last-child) { transform: rotate(180deg); }
+.profile-password-panel {
+  margin-block-start: var(--space-sm);
+  padding: var(--space-md);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-panel);
+  background: var(--color-paper-muted);
+}
+.profile-password-panel .settings-form { width: 100%; margin: 0; }
+.profile-password-panel footer { display: flex; justify-content: flex-end; gap: var(--space-xs); }
+.settings-expand-enter-active, .settings-expand-leave-active { transition: opacity var(--dur-short) ease, transform var(--dur-short) var(--ease-out); }
+.settings-expand-enter-from, .settings-expand-leave-to { opacity: 0; transform: translateY(-4px); }
+@media (max-width: 42.5rem) {
+  .profile-action-bar { align-items: stretch; flex-direction: column; }
+  .profile-action-bar > .el-button { width: 100%; }
+}
+@media (max-width: 25.875rem) {
+  .profile-summary { grid-template-columns: 44px minmax(0, 1fr); }
+  .profile-avatar { width: 44px; height: 44px; }
+  .profile-summary dl { grid-column: 1 / -1; grid-template-columns: 1fr; }
+  .profile-password-form { grid-template-columns: 1fr; }
+  .profile-password-form :deep(.el-form-item:first-child) { grid-column: auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-expand-enter-active, .settings-expand-leave-active, .profile-password-trigger :deep(.el-button svg:last-child) {
+    transition-duration: 150ms;
+  }
+  .settings-expand-enter-from, .settings-expand-leave-to { transform: none; }
+}

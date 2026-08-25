@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { localizeMessage, translate as tr } from "../i18n";
-
+import { providerLabel } from "../service-candidate-tree";
 import {
   Activity,
   ArrowDown,
@@ -35,246 +35,19 @@ import {
   Wrench,
   Zap,
 } from "@lucide/vue";
-import { ElMessage, ElMessageBox } from "element-plus";
-import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, reactive, ref, watch, type Component } from "vue";
-import { api, ApiError } from "../api";
-import { createLatestDataLoader } from "../latest-data-loader";
-import { candidateKey, providerLabel, type CandidateStatus, type MonitorCandidate, type Provider } from "../service-candidate-tree";
-import { normalizeMaintenanceScriptActions } from "../service-maintenance-payload";
-import { reorderIds, sameOrder } from "../../shared/tab-order";
-import {
-  defaultMonitorAlertSettings,
-  monitorDiskKey,
-  type MonitorAlertSettings,
-} from "../../shared/monitor-alerts";
+import { ElMessage } from "element-plus";
+import { onActivated, onBeforeUnmount, onDeactivated, onMounted, watch } from "vue";
 import AnimatedCounter from "./AnimatedCounter.vue";
 import DeploymentMonitorDashboard from "./DeploymentMonitorDashboard.vue";
 import HostMonitorDashboard, { type HostFocusMetric } from "./HostMonitorDashboard.vue";
 import ServiceDiscoveryPanel from "./ServiceDiscoveryPanel.vue";
-
-type MaintenanceWorkspace = "service" | "host";
-type HostWorkspaceTab = "monitor" | "discovery";
-type MaintenanceDirectory = "service" | "host";
-type DirectoryMoveDirection = "up" | "down";
-type ScriptActionIcon = "terminal" | "rocket" | "refresh" | "database" | "package" | "shield" | "hammer" | "zap";
-
-interface DirectoryDropTarget {
-  id: string;
-  after: boolean;
-}
-
-interface ScriptAction {
-  id: string;
-  serviceId: string;
-  deploymentId: string | null;
-  name: string;
-  icon: ScriptActionIcon;
-  scriptBody?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-interface ScriptActionExecutionResult {
-  deploymentId: string;
-  targetName: string;
-  connectionId: string;
-  connectionName: string;
-  ok: boolean;
-  exitCode: number | null;
-  signal: string | null;
-  durationMs: number;
-  stdout: string;
-  stderr: string;
-  truncated: boolean;
-  message: string;
-}
-
-interface ScriptActionExecution {
-  ok: boolean;
-  action: Pick<ScriptAction, "id" | "name" | "icon" | "deploymentId">;
-  succeeded: number;
-  failed: number;
-  results: ScriptActionExecutionResult[];
-}
-
-const scriptActionIconComponents: Record<ScriptActionIcon, Component> = {
-  terminal: Terminal,
-  rocket: Rocket,
-  refresh: RefreshCw,
-  database: Database,
-  package: Package,
-  shield: ShieldCheck,
-  hammer: Hammer,
-  zap: Zap,
-};
-
-const scriptActionIconOptions = Object.keys(scriptActionIconComponents) as ScriptActionIcon[];
-
-interface HostSnapshot {
-  hostname: string;
-  collectorUser?: string;
-  operatingSystem?: string;
-  architecture?: string;
-  kernelVersion?: string;
-  cpuCount: number;
-  cpuUsedPercent: number;
-  load1: number;
-  load5: number;
-  load15: number;
-  memoryTotalBytes: number;
-  memoryUsedBytes: number;
-  memoryUsedPercent: number;
-  uptimeSeconds: number;
-  disks: Array<{ path: string; device?: string; filesystem?: string; totalBytes: number; freeBytes: number; usedBytes: number; usedPercent: number }>;
-  temperatures: Array<{ chip: string; feature?: string; celsius: number; maximum?: number; critical?: number }>;
-}
-
-interface KubernetesConfigDiscovery {
-  sourceId: string;
-  path?: string;
-  context?: string;
-  cluster?: string;
-  namespace?: string;
-  currentContext: boolean;
-  selected: boolean;
-  status: "discovered" | "connected" | "error" | "unreadable" | "invalid";
-  candidateCount: number;
-  error?: string;
-}
-
-interface MonitorHost {
-  sshConnectionId: string;
-  connectionName: string;
-  host: string;
-  port: number;
-  username: string;
-  connectionAvailable: boolean;
-  monitorStatus: "ready" | "missing" | "error" | "unknown";
-  monitorOffline: boolean;
-  agentId: string;
-  agentVersion: string;
-  monitorUpdateAvailable: boolean;
-  protocolVersion: number;
-  lastSequence: number;
-  snapshot: HostSnapshot | null;
-  candidates: MonitorCandidate[];
-  kubernetesConfigs: KubernetesConfigDiscovery[];
-  lastError: string;
-  lastCollectedAt: string | null;
-  lastPulledAt: string | null;
-  installPath: string;
-  installArchitecture: string;
-  installManaged: boolean;
-  installedAt: string | null;
-}
-
-interface MonitorInstallPreflight {
-  defaultInstallPath: string;
-  installPath: string;
-  operatingSystem: string;
-  machineArchitecture: string;
-  architecture: "amd64" | "arm64" | null;
-  systemdAvailable: boolean;
-  privilege: "root" | "passwordless_sudo" | "unavailable";
-  pathState: "available" | "upgrade" | "conflict" | "legacy";
-  existingMonitorPath: string;
-  existingInstallation: { product: "viron-monitor"; version: string; architecture: "amd64" | "arm64"; installPath: string; installedAt: string } | null;
-  packageVersion: string;
-  packageAvailable: boolean;
-  canInstall: boolean;
-  issues: Array<{ code: string; message: string }>;
-}
-
-type MonitorInstallTaskStatus = "pending" | "running" | "success" | "error";
-type MonitorInstallTaskPhase = "queued" | "preflight" | "package_validation" | "ssh_connect" | "staging" | "upload" | "remote_install" | "reconnect" | "initial_collect" | "persist" | "complete";
-
-interface MonitorInstallTask {
-  id: string;
-  environmentId: string;
-  connectionId: string;
-  connectionName: string;
-  installPath: string;
-  status: MonitorInstallTaskStatus;
-  phase: MonitorInstallTaskPhase;
-  progress: number;
-  currentMessage: string;
-  logs: Array<{ at: string; kind: "progress" | "output"; message: string }>;
-  error: string;
-  result: { monitorWarning?: string };
-  createdAt: string;
-  startedAt: string | null;
-  completedAt: string | null;
-  updatedAt: string;
-}
-
-interface Deployment {
-  id: string;
-  serviceId: string;
-  sshConnectionId: string | null;
-  sshConnectionName: string;
-  provider: Provider;
-  externalId: string;
-  displayName: string;
-  origin: "discovered" | "manual";
-  status: CandidateStatus | "disabled";
-  state: string;
-  metrics: Partial<MonitorCandidate>;
-  lastCheckedAt: string | null;
-  connectionAvailable: boolean;
-  host: string | null;
-  port: number | null;
-  username: string | null;
-  scriptActions: ScriptAction[];
-}
-
-interface ServiceItem {
-  id: string;
-  environmentId: string;
-  name: string;
-  description: string;
-  status: "active" | "disabled";
-  scriptActions: ScriptAction[];
-  deployments: Deployment[];
-  logIds: string[];
-  createdAt: string;
-  updatedAt: string;
-}
-
-interface EnvironmentLog {
-  id: string;
-  name: string;
-  sshConnectionId: string;
-  connectionName: string;
-  filePaths: string[];
-}
-
-interface MaintenancePayload {
-  canConfigure: boolean;
-  canOperate: boolean;
-  scriptActionsSupported: boolean;
-  alertSettings: MonitorAlertSettings;
-  services: ServiceItem[];
-  logs: EnvironmentLog[];
-  hosts: MonitorHost[];
-}
-
-interface MaintenanceDeploymentResponse extends Omit<Deployment, "scriptActions"> {
-  scriptActions?: ScriptAction[];
-}
-
-interface MaintenanceServiceResponse extends Omit<ServiceItem, "scriptActions" | "deployments"> {
-  scriptActions?: ScriptAction[];
-  deployments: MaintenanceDeploymentResponse[];
-}
-
-interface MaintenancePayloadResponse extends Omit<MaintenancePayload, "scriptActionsSupported" | "services"> {
-  services: MaintenanceServiceResponse[];
-}
-
-interface MaintenanceCounts {
-  services: number;
-  monitoredHosts: number;
-}
+import { createMaintenanceContext } from "./service-maintenance/context";
+import { useMaintenancePayload } from "./service-maintenance/use-maintenance-payload";
+import { useMaintenanceDirectory } from "./service-maintenance/use-maintenance-directory";
+import { useMonitorInstall } from "./service-maintenance/use-monitor-install";
+import { useScriptActions } from "./service-maintenance/use-script-actions";
+import { useAlertSettings } from "./service-maintenance/use-alert-settings";
+import type { MaintenanceCounts } from "./service-maintenance/types";
 
 const props = defineProps<{
   environmentId: string;
@@ -283,136 +56,188 @@ const props = defineProps<{
   focusDeploymentId?: string;
 }>();
 const emit = defineEmits<{ "count-change": [counts: MaintenanceCounts]; "open-log": [logId: string] }>();
+const maintenanceContext = createMaintenanceContext();
+const maintenancePayload = useMaintenancePayload(maintenanceContext, props, emit);
+maintenanceContext.payload = maintenancePayload;
+const maintenanceDirectory = useMaintenanceDirectory(maintenanceContext, props, emit);
+maintenanceContext.directory = maintenanceDirectory;
+const monitorInstall = useMonitorInstall(maintenanceContext, props, emit);
+maintenanceContext.monitorInstall = monitorInstall;
+const scriptActions = useScriptActions(maintenanceContext, props, emit);
+maintenanceContext.scriptActions = scriptActions;
+const alertSettings = useAlertSettings(maintenanceContext, props, emit);
+maintenanceContext.alertSettings = alertSettings;
+const maintenance = { ...maintenancePayload, ...maintenanceDirectory, ...monitorInstall, ...scriptActions, ...alertSettings };
 
-const loading = ref(true);
-const saving = ref(false);
-const payload = ref<MaintenancePayload>({
-  canConfigure: false,
-  canOperate: false,
-  scriptActionsSupported: false,
-  alertSettings: { ...defaultMonitorAlertSettings, excludedDisks: [] },
-  services: [],
-  logs: [],
-  hosts: [],
-});
-const selectedServiceId = ref("");
-const selectedHostId = ref("");
-const activeWorkspace = ref<MaintenanceWorkspace>("service");
-const hostWorkspaceTab = ref<HostWorkspaceTab>("monitor");
-const hostFocusMetric = ref<HostFocusMetric>("cpu");
-const discoveryTargetServiceId = ref("");
-const pendingDiscoveryCandidate = ref<MonitorCandidate | null>(null);
-const creatingServiceFromDiscovery = ref(false);
-const servicePickerDialog = ref(false);
-const refreshingHosts = ref(new Set<string>());
-const installingHosts = ref(new Set<string>());
-const clearingHosts = ref(new Set<string>());
-const draggingDirectory = ref<{ kind: MaintenanceDirectory; id: string } | null>(null);
-const serviceDropTarget = ref<DirectoryDropTarget | null>(null);
-const hostDropTarget = ref<DirectoryDropTarget | null>(null);
-const savingServiceOrder = ref(false);
-const savingHostOrder = ref(false);
-const installTask = ref<MonitorInstallTask | null>(null);
-const installTaskConnectionId = ref("");
-const installProgressDialog = ref(false);
-const runningAction = ref("");
-const runningScriptActionId = ref("");
-const serviceDialog = ref(false);
-const deploymentDialog = ref(false);
-const logDialog = ref(false);
-const kubernetesDialog = ref(false);
-const scriptActionManagerDialog = ref(false);
-const scriptActionEditorOpen = ref(false);
-const scriptActionResultDialog = ref(false);
-const alertSettingsDialog = ref(false);
-const savingAlertSettings = ref(false);
-const editingServiceId = ref("");
-const editingDeploymentId = ref("");
-const editingScriptActionId = ref("");
-const manualDeployment = ref(false);
-const savingKubernetes = ref(false);
-const scriptActionExecution = ref<ScriptActionExecution | null>(null);
-let refreshTimer: number | undefined;
-let installTaskTimer: number | undefined;
-const notifiedInstallTasks = new Set<string>();
-
-const serviceForm = reactive({ name: "", description: "", status: "active" as "active" | "disabled" });
-const deploymentForm = reactive({ sshConnectionId: "", candidateKey: "", provider: "systemd" as Provider, externalId: "", displayName: "", origin: "manual" as "discovered" | "manual" });
-const scriptActionScope = reactive({ serviceId: "", deploymentId: null as string | null, label: "" });
-const scriptActionForm = reactive({ name: "", icon: "terminal" as ScriptActionIcon, scriptBody: "" });
-const selectedLogIds = ref<string[]>([]);
-const selectedKubernetesContextKeys = ref<string[]>([]);
-const alertSettingsForm = reactive<MonitorAlertSettings>({ ...defaultMonitorAlertSettings, excludedDisks: [] });
-
-const selectedService = computed(() => payload.value.services.find((item) => item.id === selectedServiceId.value) ?? payload.value.services[0] ?? null);
-const selectedHost = computed(() => payload.value.hosts.find((item) => item.sshConnectionId === selectedHostId.value) ?? payload.value.hosts[0] ?? null);
-const selectedLogs = computed(() => payload.value.logs.filter((log) => selectedService.value?.logIds.includes(log.id)));
-const hostCandidates = computed(() => payload.value.hosts.find((host) => host.sshConnectionId === deploymentForm.sshConnectionId)?.candidates ?? []);
-const candidateOptions = computed(() => hostCandidates.value.map((candidate) => ({
-  ...candidate,
-  key: `${candidate.provider}:${candidate.externalId}`,
-  label: `${candidateLocationLabel(candidate)} · ${candidate.name} · ${statusLabel(candidate.status)}`,
-})));
-const serviceSummary = computed(() => summarizeService(selectedService.value));
-const runningDeployments = computed(() => payload.value.services.flatMap((service) => service.deployments).filter((deployment) => deployment.status === "running").length);
-const problemDeployments = computed(() => payload.value.services.flatMap((service) => service.deployments).filter((deployment) => ["stopped", "degraded", "unknown"].includes(deployment.status)).length);
-function countPhysicalMonitorHosts(hosts: MonitorHost[]) {
-  return new Set(hosts.map((host) => host.agentId || `connection:${host.sshConnectionId}`)).size;
-}
-
-const monitoredHosts = computed(() => countPhysicalMonitorHosts(payload.value.hosts.filter((host) => Boolean(host.agentId) || host.installManaged)));
-const offlineHosts = computed(() => payload.value.hosts.filter((host) => host.monitorOffline).length);
-const unmonitoredHosts = computed(() => payload.value.hosts.filter((host) => host.monitorStatus === "missing" && !host.monitorOffline).length);
-const attentionItems = computed(() => [
-  problemDeployments.value ? { key: "problems", value: problemDeployments.value, label: tr("待处理") } : null,
-  offlineHosts.value ? { key: "offline", value: offlineHosts.value, label: tr("离线主机") } : null,
-  unmonitoredHosts.value ? { key: "missing", value: unmonitoredHosts.value, label: tr("未监控") } : null,
-].filter((item): item is { key: string; value: number; label: string } => Boolean(item)));
-const selectedUnmanagedCount = computed(() => selectedHost.value ? hostUnmanagedCount(selectedHost.value) : 0);
-const selectedWorstDisk = computed(() => selectedHost.value ? worstDisk(selectedHost.value) : null);
-const cpuVisualThreshold = computed(() => visualThreshold(payload.value.alertSettings.cpuEnabled, payload.value.alertSettings.cpuThreshold, 80));
-const memoryVisualThreshold = computed(() => visualThreshold(payload.value.alertSettings.memoryEnabled, payload.value.alertSettings.memoryThreshold, 80));
-const diskVisualThreshold = computed(() => visualThreshold(payload.value.alertSettings.diskUsageEnabled, payload.value.alertSettings.diskUsageThreshold, 80));
-const canSortDirectory = computed(() => payload.value.canConfigure && !savingServiceOrder.value && !savingHostOrder.value);
-const selectableKubernetesConfigs = computed(() => (selectedHost.value?.kubernetesConfigs ?? []).filter((item) => item.context && !["invalid", "unreadable"].includes(item.status)));
-const discoveryManagedKeys = computed(() => {
-  const hostId = selectedHost.value?.sshConnectionId;
-  if (!hostId) return [];
-  return [...new Set(
-    payload.value.services.flatMap((service) => service.deployments)
-      .filter((deployment) => deployment.sshConnectionId === hostId)
-      .map(candidateKey),
-  )];
-});
-const selectedInstallTask = computed(() => installTaskConnectionId.value === selectedHost.value?.sshConnectionId ? installTask.value : null);
-const scopedScriptActions = computed(() => {
-  const service = payload.value.services.find((item) => item.id === scriptActionScope.serviceId);
-  if (!service) return [];
-  if (!scriptActionScope.deploymentId) return service.scriptActions;
-  return service.deployments.find((item) => item.id === scriptActionScope.deploymentId)?.scriptActions ?? [];
-});
-const installTaskSteps = computed(() => [
-  { phase: "preflight" as const, label: tr("目标预检"), description: tr("系统、架构、权限与目录") },
-  { phase: "package_validation" as const, label: tr("校验安装包"), description: tr("版本、架构与 SHA-256") },
-  { phase: "ssh_connect" as const, label: tr("建立 SSH 会话"), description: tr("使用已有连接及跳板链路") },
-  { phase: "staging" as const, label: tr("准备临时目录"), description: tr("在目标主机创建安全暂存区") },
-  { phase: "upload" as const, label: tr("上传安装文件"), description: tr("逐个传输并显示文件进度") },
-  { phase: "remote_install" as const, label: tr("安装并启动服务"), description: tr("写入配置和 systemd 单元") },
-  { phase: "reconnect" as const, label: tr("重新连接主机"), description: tr("刷新安装后的用户组权限") },
-  { phase: "initial_collect" as const, label: tr("首次采集指标"), description: tr("扫描服务并拉取宿主机状态") },
-  { phase: "persist" as const, label: tr("保存安装结果"), description: tr("写入 Viron 中心数据库") },
-]);
-const monitorDiskOptions = computed(() => {
-  const options = new Map<string, { key: string; label: string }>();
-  for (const host of payload.value.hosts) {
-    for (const disk of host.snapshot?.disks ?? []) {
-      const key = monitorDiskKey(disk);
-      const identity = [disk.device, disk.path].filter(Boolean).join(" · ");
-      options.set(key, { key, label: `${host.connectionName} · ${identity}` });
-    }
-  }
-  return [...options.values()];
-});
+const {
+  loading,
+  saving,
+  payload,
+  selectedServiceId,
+  selectedHostId,
+  activeWorkspace,
+  hostWorkspaceTab,
+  hostFocusMetric,
+  discoveryTargetServiceId,
+  pendingDiscoveryCandidate,
+  creatingServiceFromDiscovery,
+  servicePickerDialog,
+  refreshingHosts,
+  runningAction,
+  serviceDialog,
+  deploymentDialog,
+  logDialog,
+  kubernetesDialog,
+  editingServiceId,
+  editingDeploymentId,
+  manualDeployment,
+  savingKubernetes,
+  refreshTimer,
+  serviceForm,
+  deploymentForm,
+  selectedLogIds,
+  selectedKubernetesContextKeys,
+  selectedService,
+  selectedHost,
+  selectedLogs,
+  hostCandidates,
+  candidateOptions,
+  serviceSummary,
+  runningDeployments,
+  problemDeployments,
+  monitoredHosts,
+  offlineHosts,
+  unmonitoredHosts,
+  attentionItems,
+  selectedUnmanagedCount,
+  selectedWorstDisk,
+  selectableKubernetesConfigs,
+  discoveryManagedKeys,
+  load,
+  reload,
+  countPhysicalMonitorHosts,
+  fetchMaintenance,
+  applyFocusTarget,
+  stopAutoRefresh,
+  startAutoRefresh,
+  summarizeService,
+  statusLabel,
+  candidateLocationLabel,
+  supportsMaintenanceActions,
+  unsupportedMaintenanceActionReason,
+  deploymentIdentity,
+  kubernetesMetric,
+  kubernetesContextKey,
+  kubernetesConfigStatusLabel,
+  openKubernetesConfiguration,
+  saveKubernetesConfiguration,
+  formatPercent,
+  formatBytes,
+  formatDuration,
+  formatTime,
+  formatRelativeCollected,
+  hostPresence,
+  hostLiveCpu,
+  worstDisk,
+  metricTone,
+  hostUnmanagedCount,
+  visualThreshold,
+  selectService,
+  selectHost,
+  openServiceCreate,
+  openServiceEdit,
+  saveService,
+  removeService,
+  resetDeploymentForm,
+  openDeploymentCreate,
+  assignDiscoveryTarget,
+  beginCandidateEnrollment,
+  pickServiceForDiscovery,
+  createServiceFromDiscovery,
+  cancelServicePicker,
+  onServicePickerClosed,
+  discoveryPickerIntro,
+  openDeploymentEdit,
+  saveDeployment,
+  removeDeployment,
+  openLogLinks,
+  saveLogLinks,
+  refreshHost,
+  runMaintenanceAction,
+  draggingDirectory,
+  serviceDropTarget,
+  hostDropTarget,
+  savingServiceOrder,
+  savingHostOrder,
+  canSortDirectory,
+  directoryIds,
+  orderedDirectoryItems,
+  directoryDropTarget,
+  insertAfterDirectoryTarget,
+  startDirectoryDrag,
+  dragDirectoryOver,
+  leaveDirectoryDropTarget,
+  persistDirectoryOrder,
+  dropDirectoryItem,
+  endDirectoryDrag,
+  canMoveDirectoryItem,
+  moveDirectoryItem,
+  handleDirectoryMove,
+  installingHosts,
+  clearingHosts,
+  installTask,
+  installTaskConnectionId,
+  installProgressDialog,
+  installTaskTimer,
+  notifiedInstallTasks,
+  selectedInstallTask,
+  installTaskSteps,
+  isInstallTaskActive,
+  stopInstallTaskPolling,
+  startInstallTaskPolling,
+  switchInstallTaskHost,
+  refreshInstallTask,
+  openInstallProgress,
+  installTaskStepState,
+  installTaskStatusLabel,
+  formatInstallTaskElapsed,
+  formatInstallLogTime,
+  isMonitorInstalled,
+  validMonitorInstallPath,
+  promptMonitorInstallPath,
+  installMonitorOnHost,
+  clearMonitorData,
+  scriptActionIconComponents,
+  scriptActionIconOptions,
+  runningScriptActionId,
+  scriptActionManagerDialog,
+  scriptActionEditorOpen,
+  scriptActionResultDialog,
+  editingScriptActionId,
+  scriptActionExecution,
+  scriptActionScope,
+  scriptActionForm,
+  scopedScriptActions,
+  resolveScriptActionIcon,
+  resetScriptActionForm,
+  beginScriptActionCreate,
+  beginScriptActionEdit,
+  openScriptActionManager,
+  saveScriptAction,
+  removeScriptAction,
+  executeScriptAction,
+  formatScriptDuration,
+  scriptExecutionSummary,
+  alertSettingsDialog,
+  savingAlertSettings,
+  alertSettingsForm,
+  cpuVisualThreshold,
+  memoryVisualThreshold,
+  diskVisualThreshold,
+  monitorDiskOptions,
+  openAlertSettings,
+  saveAlertSettings,
+} = maintenance;
 
 watch(selectedService, (service) => {
   if (service && selectedServiceId.value !== service.id) selectedServiceId.value = service.id;
@@ -440,929 +265,6 @@ watch(() => deploymentForm.candidateKey, (key) => {
     origin: "discovered",
   });
 });
-
-async function fetchMaintenance(silent = false) {
-  if (silent && (savingServiceOrder.value || savingHostOrder.value)) return;
-  if (!silent) loading.value = true;
-  try {
-    const response = await api<MaintenancePayloadResponse>(`/api/v1/environments/${props.environmentId}/maintenance`);
-    payload.value = normalizeMaintenanceScriptActions(response) as MaintenancePayload;
-    if (!payload.value.services.some((item) => item.id === selectedServiceId.value)) selectedServiceId.value = payload.value.services[0]?.id ?? "";
-    if (!payload.value.services.some((item) => item.id === discoveryTargetServiceId.value)) discoveryTargetServiceId.value = "";
-    if (!payload.value.hosts.some((item) => item.sshConnectionId === selectedHostId.value)) selectedHostId.value = payload.value.hosts[0]?.sshConnectionId ?? "";
-    if (activeWorkspace.value === "service" && !payload.value.services.length && payload.value.hosts.length) activeWorkspace.value = "host";
-    if (activeWorkspace.value === "host" && !payload.value.hosts.length && payload.value.services.length) activeWorkspace.value = "service";
-    emit("count-change", { services: payload.value.services.length, monitoredHosts: monitoredHosts.value });
-    applyFocusTarget();
-  } finally {
-    if (!silent) loading.value = false;
-  }
-}
-
-function applyFocusTarget() {
-  const requestedServiceId = props.focusServiceId
-    || payload.value.services.find((service) => service.deployments.some((deployment) => deployment.id === props.focusDeploymentId))?.id;
-  if (requestedServiceId && payload.value.services.some((service) => service.id === requestedServiceId)) {
-    selectService(requestedServiceId);
-    return;
-  }
-  if (props.focusHostId && payload.value.hosts.some((host) => host.sshConnectionId === props.focusHostId)) selectHost(props.focusHostId);
-}
-
-watch(
-  () => [props.focusHostId, props.focusServiceId, props.focusDeploymentId],
-  applyFocusTarget,
-);
-
-function openAlertSettings() {
-  Object.assign(alertSettingsForm, payload.value.alertSettings, { excludedDisks: [...payload.value.alertSettings.excludedDisks] });
-  alertSettingsDialog.value = true;
-}
-
-async function saveAlertSettings() {
-  savingAlertSettings.value = true;
-  try {
-    const response = await api<{ item: MonitorAlertSettings }>(`/api/v1/environments/${props.environmentId}/monitor-alert-settings`, {
-      method: "PUT",
-      body: JSON.stringify({
-        enabled: alertSettingsForm.enabled,
-        hostOfflineEnabled: alertSettingsForm.hostOfflineEnabled,
-        cpuEnabled: alertSettingsForm.cpuEnabled,
-        cpuThreshold: alertSettingsForm.cpuThreshold,
-        memoryEnabled: alertSettingsForm.memoryEnabled,
-        memoryThreshold: alertSettingsForm.memoryThreshold,
-        diskUsageEnabled: alertSettingsForm.diskUsageEnabled,
-        diskUsageThreshold: alertSettingsForm.diskUsageThreshold,
-        temperatureEnabled: alertSettingsForm.temperatureEnabled,
-        temperatureThreshold: alertSettingsForm.temperatureThreshold,
-        deploymentStatusEnabled: alertSettingsForm.deploymentStatusEnabled,
-        diskMissingEnabled: alertSettingsForm.diskMissingEnabled,
-        excludedDisks: alertSettingsForm.excludedDisks,
-      }),
-    });
-    payload.value.alertSettings = response.item;
-    alertSettingsDialog.value = false;
-    ElMessage.success(response.item.enabled ? tr("监控告警已启用") : tr("监控告警已关闭"));
-  } finally {
-    savingAlertSettings.value = false;
-  }
-}
-
-const { load, reload } = createLatestDataLoader(fetchMaintenance);
-
-function stopAutoRefresh() {
-  if (refreshTimer === undefined) return;
-  window.clearInterval(refreshTimer);
-  refreshTimer = undefined;
-}
-
-function startAutoRefresh() {
-  if (refreshTimer !== undefined) return;
-  refreshTimer = window.setInterval(() => {
-    void load(true).catch(() => undefined);
-  }, 10_000);
-}
-
-function isInstallTaskActive(task: MonitorInstallTask | null | undefined) {
-  return task?.status === "pending" || task?.status === "running";
-}
-
-function stopInstallTaskPolling() {
-  if (installTaskTimer === undefined) return;
-  window.clearInterval(installTaskTimer);
-  installTaskTimer = undefined;
-}
-
-function startInstallTaskPolling(connectionId: string) {
-  if (installTaskTimer !== undefined) return;
-  installTaskTimer = window.setInterval(() => {
-    void refreshInstallTask(connectionId);
-  }, 1_000);
-}
-
-function switchInstallTaskHost(connectionId: string) {
-  stopInstallTaskPolling();
-  installTaskConnectionId.value = connectionId;
-  installTask.value = null;
-  void refreshInstallTask(connectionId, false);
-}
-
-async function refreshInstallTask(connectionId: string, notify = true) {
-  if (!connectionId) return;
-  const previous = installTaskConnectionId.value === connectionId ? installTask.value : null;
-  try {
-    const response = await api<{ item: MonitorInstallTask | null }>(
-      `/api/v1/environments/${props.environmentId}/monitor-hosts/${connectionId}/install-task`,
-    );
-    if (installTaskConnectionId.value !== connectionId) return;
-    installTask.value = response.item;
-    if (isInstallTaskActive(response.item)) {
-      startInstallTaskPolling(connectionId);
-      return;
-    }
-    stopInstallTaskPolling();
-    if (!notify || !response.item || !isInstallTaskActive(previous) || notifiedInstallTasks.has(response.item.id)) return;
-    notifiedInstallTasks.add(response.item.id);
-    await reload(true);
-    if (response.item.status === "success") {
-      const warning = response.item.result.monitorWarning;
-      if (warning) ElMessage.warning(tr("监控服务已安装，但首次采集失败：{{0}}", [localizeMessage(warning)]));
-      else ElMessage.success(tr("监控服务安装完成"));
-    } else {
-      ElMessage.error(tr("监控服务安装失败，请查看详细日志"));
-    }
-  } catch {
-    if (isInstallTaskActive(previous)) startInstallTaskPolling(connectionId);
-  }
-}
-
-async function openInstallProgress(host: MonitorHost) {
-  if (installTaskConnectionId.value !== host.sshConnectionId) switchInstallTaskHost(host.sshConnectionId);
-  await refreshInstallTask(host.sshConnectionId, false);
-  if (installTask.value) installProgressDialog.value = true;
-}
-
-function installTaskStepState(index: number) {
-  const task = selectedInstallTask.value;
-  if (!task) return "pending";
-  if (task.status === "success" || task.phase === "complete") return "complete";
-  const current = installTaskSteps.value.findIndex((step) => step.phase === task.phase);
-  if (current < 0) return index === 0 && isInstallTaskActive(task) ? "active" : "pending";
-  if (index < current) return "complete";
-  if (index > current) return "pending";
-  return task.status === "error" ? "error" : "active";
-}
-
-function installTaskStatusLabel(task: MonitorInstallTask) {
-  if (task.status === "success") return tr("安装完成");
-  if (task.status === "error") return tr("安装失败");
-  if (task.status === "pending") return tr("等待执行");
-  return tr("正在安装");
-}
-
-function formatInstallTaskElapsed(task: MonitorInstallTask) {
-  const start = task.startedAt ?? task.createdAt;
-  const end = task.completedAt ?? new Date().toISOString();
-  const seconds = Math.max(0, Math.floor((Date.parse(end) - Date.parse(start)) / 1000));
-  const minutes = Math.floor(seconds / 60);
-  return minutes ? tr("{{0}} 分 {{1}} 秒", [minutes, seconds % 60]) : tr("{{0}} 秒", [seconds]);
-}
-
-function formatInstallLogTime(value: string) {
-  return new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-}
-
-function summarizeService(service: ServiceItem | null) {
-  if (!service || service.status === "disabled") return { status: "disabled", label: tr("已停用") };
-  if (!service.deployments.length) return { status: "unknown", label: tr("尚未纳管节点") };
-  const statuses = service.deployments.map((item) => item.status);
-  if (statuses.every((status) => status === "running")) return { status: "running", label: tr("运行中") };
-  if (statuses.some((status) => status === "degraded" || status === "stopped")) return { status: "degraded", label: tr("存在异常节点") };
-  return { status: "unknown", label: tr("状态未确认") };
-}
-
-function statusLabel(status: string) {
-  return ({ running: tr("运行中"), stopped: tr("已停止"), degraded: tr("异常"), unknown: tr("未知"), disabled: tr("已停用") } as Record<string, string>)[status] ?? status;
-}
-
-function candidateLocationLabel(candidate: MonitorCandidate) {
-  if (candidate.provider !== "kubernetes") return providerLabel(candidate.provider);
-  const metadata = candidate.metadata ?? {};
-  return `Kubernetes · ${String(metadata.cluster ?? metadata.context ?? "")} / ${String(metadata.namespace ?? "default")} · ${String(metadata.resourceKind ?? "Workload")}`;
-}
-
-function supportsMaintenanceActions(provider: Provider) {
-  return ["systemd", "docker", "podman", "supervisor"].includes(provider);
-}
-
-function unsupportedMaintenanceActionReason(provider: Provider) {
-  if (provider === "kubernetes") return tr("Kubernetes 工作负载暂不提供通用启停");
-  if (provider === "process") return tr("普通进程只登记关系，不提供通用启停");
-  return "";
-}
-
-function deploymentIdentity(deployment: Deployment) {
-  if (deployment.provider !== "kubernetes") return deployment.externalId;
-  const metadata = deployment.metrics.metadata ?? {};
-  const context = String(metadata.context ?? "");
-  const namespace = String(metadata.namespace ?? "");
-  const resourceKind = String(metadata.resourceKind ?? "");
-  return context && namespace && resourceKind
-    ? `${context}/${namespace}/${resourceKind}/${deployment.displayName || deployment.externalId}`
-    : deployment.externalId;
-}
-
-function kubernetesMetric(deployment: Deployment, key: string) {
-  const value = deployment.metrics.metadata?.[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : "—";
-}
-
-function kubernetesContextKey(item: Pick<KubernetesConfigDiscovery, "sourceId" | "context">) {
-  return JSON.stringify([item.sourceId, item.context ?? ""]);
-}
-
-function kubernetesConfigStatusLabel(item: KubernetesConfigDiscovery) {
-  if (item.status === "connected") return tr("已连接");
-  if (item.status === "discovered") return tr("待选择");
-  if (item.status === "unreadable") return tr("无法读取");
-  if (item.status === "invalid") return tr("配置无效");
-  return tr("连接失败");
-}
-
-function openKubernetesConfiguration() {
-  selectedKubernetesContextKeys.value = (selectedHost.value?.kubernetesConfigs ?? [])
-    .filter((item) => item.selected && item.context)
-    .map(kubernetesContextKey);
-  kubernetesDialog.value = true;
-}
-
-async function saveKubernetesConfiguration() {
-  const host = selectedHost.value;
-  if (!host) return;
-  const selectedKeys = new Set(selectedKubernetesContextKeys.value);
-  const selections = selectableKubernetesConfigs.value
-    .filter((item) => selectedKeys.has(kubernetesContextKey(item)))
-    .map((item) => ({ sourceId: item.sourceId, context: item.context! }));
-  savingKubernetes.value = true;
-  try {
-    const response = await api<{ monitorWarning?: string }>(`/api/v1/environments/${props.environmentId}/monitor-hosts/${host.sshConnectionId}/kubernetes-contexts`, {
-      method: "PUT",
-      body: JSON.stringify({ selections }),
-    });
-    kubernetesDialog.value = false;
-    await reload(true);
-    if (response.monitorWarning) ElMessage.warning(tr("Kubernetes 扫描配置已保存，但立即扫描失败：{{0}}", [localizeMessage(response.monitorWarning)]));
-    else ElMessage.success(tr("Kubernetes 扫描配置已保存"));
-  } finally {
-    savingKubernetes.value = false;
-  }
-}
-
-function isMonitorInstalled(host: MonitorHost) {
-  return host.monitorStatus === "ready" || Boolean(host.agentId);
-}
-
-function formatPercent(value?: number) {
-  return Number.isFinite(value) ? `${Number(value).toFixed(1)}%` : "—";
-}
-
-function formatBytes(value?: number) {
-  if (!Number.isFinite(value) || !value) return value === 0 ? "0 B" : "—";
-  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
-  let current = Number(value);
-  let index = 0;
-  while (current >= 1024 && index < units.length - 1) {
-    current /= 1024;
-    index += 1;
-  }
-  return `${current >= 100 ? current.toFixed(0) : current.toFixed(1)} ${units[index]}`;
-}
-
-function formatDuration(seconds?: number) {
-  if (!Number.isFinite(seconds) || Number(seconds) < 0) return "—";
-  if (Number(seconds) < 60) return tr("不到 1 分钟");
-  const days = Math.floor(Number(seconds) / 86400);
-  const hours = Math.floor((Number(seconds) % 86400) / 3600);
-  const minutes = Math.floor((Number(seconds) % 3600) / 60);
-  if (days) return tr("{{0}} 天 {{1}} 小时", [days, hours]);
-  if (hours) return tr("{{0}} 小时", [hours]);
-  return tr("{{0}} 分钟", [minutes]);
-}
-
-function formatTime(value: string | null | undefined) {
-  return value ? new Date(value).toLocaleString() : tr("尚未采集");
-}
-
-function formatRelativeCollected(value: string | null | undefined) {
-  if (!value) return tr("尚未采集");
-  const then = Date.parse(value);
-  if (!Number.isFinite(then)) return tr("尚未采集");
-  const minutes = Math.max(0, Math.round((Date.now() - then) / 60_000));
-  if (minutes < 1) return tr("刚刚采集");
-  if (minutes < 60) return tr("{{0}} 分钟前采集", [minutes]);
-  const hours = Math.round(minutes / 60);
-  if (hours < 48) return tr("{{0}} 小时前采集", [hours]);
-  return formatTime(value);
-}
-
-function hostPresence(host: MonitorHost) {
-  if (host.monitorOffline) return { key: "offline", label: tr("离线") };
-  if (host.monitorStatus === "ready") return { key: "online", label: tr("在线") };
-  if (host.monitorStatus === "missing") return { key: "missing", label: tr("未监控") };
-  if (host.monitorStatus === "error") return { key: "error", label: tr("异常") };
-  return { key: "unknown", label: tr("未知") };
-}
-
-function hostLiveCpu(host: MonitorHost) {
-  return Number.isFinite(host.snapshot?.cpuUsedPercent) ? formatPercent(host.snapshot?.cpuUsedPercent) : "";
-}
-
-function worstDisk(host: MonitorHost) {
-  const disks = host.snapshot?.disks ?? [];
-  if (!disks.length) return null;
-  return disks.reduce((worst, disk) => disk.usedPercent > (worst?.usedPercent ?? -1) ? disk : worst);
-}
-
-function metricTone(value: number | undefined, threshold: number) {
-  if (!Number.isFinite(value)) return "unknown";
-  if (Number(value) >= threshold) return "critical";
-  if (Number(value) >= threshold * 0.8) return "warn";
-  return "ok";
-}
-
-function hostUnmanagedCount(host: MonitorHost) {
-  const managed = new Set(
-    payload.value.services.flatMap((service) => service.deployments)
-      .filter((deployment) => deployment.sshConnectionId === host.sshConnectionId)
-      .map(candidateKey),
-  );
-  return host.candidates.filter((candidate) => !managed.has(candidateKey(candidate))).length;
-}
-
-function visualThreshold(enabled: boolean, value: number, fallback: number) {
-  return enabled ? value : fallback;
-}
-
-function selectService(id: string) {
-  selectedServiceId.value = id;
-  discoveryTargetServiceId.value = id;
-  activeWorkspace.value = "service";
-}
-
-function selectHost(id: string) {
-  selectedHostId.value = id;
-  activeWorkspace.value = "host";
-}
-
-function directoryIds(kind: MaintenanceDirectory): string[] {
-  return kind === "service"
-    ? payload.value.services.map((item) => item.id)
-    : payload.value.hosts.map((item) => item.sshConnectionId);
-}
-
-function orderedDirectoryItems<T>(items: T[], orderedIds: string[], id: (item: T) => string): T[] {
-  const byId = new Map(items.map((item) => [id(item), item]));
-  return orderedIds.map((itemId) => byId.get(itemId)).filter((item): item is T => Boolean(item));
-}
-
-function directoryDropTarget(kind: MaintenanceDirectory) {
-  return kind === "service" ? serviceDropTarget : hostDropTarget;
-}
-
-function insertAfterDirectoryTarget(event: DragEvent): boolean {
-  const element = event.currentTarget;
-  if (!(element instanceof HTMLElement)) return false;
-  const bounds = element.getBoundingClientRect();
-  return event.clientY > bounds.top + bounds.height / 2;
-}
-
-function startDirectoryDrag(kind: MaintenanceDirectory, id: string, event: DragEvent) {
-  if (!canSortDirectory.value) {
-    event.preventDefault();
-    return;
-  }
-  draggingDirectory.value = { kind, id };
-  if (event.dataTransfer) {
-    event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData("text/plain", `maintenance-${kind}:${id}`);
-  }
-}
-
-function dragDirectoryOver(kind: MaintenanceDirectory, id: string, event: DragEvent) {
-  if (!draggingDirectory.value || draggingDirectory.value.kind !== kind || draggingDirectory.value.id === id) return;
-  event.preventDefault();
-  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-  directoryDropTarget(kind).value = { id, after: insertAfterDirectoryTarget(event) };
-}
-
-function leaveDirectoryDropTarget(kind: MaintenanceDirectory, event: DragEvent) {
-  const element = event.currentTarget;
-  const nextTarget = event.relatedTarget;
-  const target = directoryDropTarget(kind);
-  if (!(element instanceof HTMLElement) || target.value?.id !== element.dataset.directoryId) return;
-  if (!(nextTarget instanceof Node && element.contains(nextTarget))) target.value = null;
-}
-
-async function persistDirectoryOrder(kind: MaintenanceDirectory, orderedIds: string[]) {
-  const currentIds = directoryIds(kind);
-  if (sameOrder(currentIds, orderedIds)) return;
-  if (kind === "service") {
-    const original = [...payload.value.services];
-    payload.value.services = orderedDirectoryItems(original, orderedIds, (item) => item.id);
-    savingServiceOrder.value = true;
-    try {
-      await api(`/api/v1/environments/${props.environmentId}/services/order`, {
-        method: "PUT",
-        body: JSON.stringify({ orderedIds }),
-      });
-    } catch (error) {
-      payload.value.services = original;
-      ElMessage.error(error instanceof Error ? error.message : tr("保存服务清单顺序失败"));
-    } finally {
-      savingServiceOrder.value = false;
-    }
-    return;
-  }
-
-  const original = [...payload.value.hosts];
-  payload.value.hosts = orderedDirectoryItems(original, orderedIds, (item) => item.sshConnectionId);
-  savingHostOrder.value = true;
-  try {
-    await api(`/api/v1/environments/${props.environmentId}/maintenance-hosts/order`, {
-      method: "PUT",
-      body: JSON.stringify({ orderedIds }),
-    });
-  } catch (error) {
-    payload.value.hosts = original;
-    ElMessage.error(error instanceof Error ? error.message : tr("保存宿主机顺序失败"));
-  } finally {
-    savingHostOrder.value = false;
-  }
-}
-
-async function dropDirectoryItem(kind: MaintenanceDirectory, id: string, event: DragEvent) {
-  if (!draggingDirectory.value || draggingDirectory.value.kind !== kind) return;
-  event.preventDefault();
-  const orderedIds = reorderIds(directoryIds(kind), draggingDirectory.value.id, id, insertAfterDirectoryTarget(event));
-  endDirectoryDrag();
-  await persistDirectoryOrder(kind, orderedIds);
-}
-
-function endDirectoryDrag() {
-  draggingDirectory.value = null;
-  serviceDropTarget.value = null;
-  hostDropTarget.value = null;
-}
-
-function canMoveDirectoryItem(kind: MaintenanceDirectory, id: string, direction: DirectoryMoveDirection) {
-  const ids = directoryIds(kind);
-  const index = ids.indexOf(id);
-  return index >= 0 && (direction === "up" ? index > 0 : index < ids.length - 1);
-}
-
-async function moveDirectoryItem(kind: MaintenanceDirectory, id: string, direction: DirectoryMoveDirection) {
-  if (!canSortDirectory.value || !canMoveDirectoryItem(kind, id, direction)) return;
-  const orderedIds = directoryIds(kind);
-  const index = orderedIds.indexOf(id);
-  const target = direction === "up" ? index - 1 : index + 1;
-  [orderedIds[index], orderedIds[target]] = [orderedIds[target]!, orderedIds[index]!];
-  await persistDirectoryOrder(kind, orderedIds);
-}
-
-function handleDirectoryMove(kind: MaintenanceDirectory, id: string, command: string | number | object) {
-  if (command === "up" || command === "down") void moveDirectoryItem(kind, id, command);
-}
-
-function openServiceCreate(fromDiscovery = false) {
-  creatingServiceFromDiscovery.value = fromDiscovery === true;
-  editingServiceId.value = "";
-  Object.assign(serviceForm, { name: "", description: "", status: "active" });
-  serviceDialog.value = true;
-}
-
-function openServiceEdit() {
-  if (!selectedService.value) return;
-  editingServiceId.value = selectedService.value.id;
-  Object.assign(serviceForm, { name: selectedService.value.name, description: selectedService.value.description, status: selectedService.value.status });
-  serviceDialog.value = true;
-}
-
-async function saveService() {
-  if (!serviceForm.name.trim()) return ElMessage.warning(tr("请输入服务名称"));
-  saving.value = true;
-  try {
-    const body = JSON.stringify(serviceForm);
-    if (editingServiceId.value) await api(`/api/v1/services/${editingServiceId.value}`, { method: "PUT", body });
-    else {
-      const created = await api<{ id: string }>(`/api/v1/environments/${props.environmentId}/services`, { method: "POST", body });
-      selectedServiceId.value = created.id;
-      discoveryTargetServiceId.value = created.id;
-      if (creatingServiceFromDiscovery.value) {
-        activeWorkspace.value = "host";
-        hostWorkspaceTab.value = "discovery";
-      } else {
-        activeWorkspace.value = "service";
-      }
-    }
-    const continueDiscovery = creatingServiceFromDiscovery.value;
-    const pendingCandidate = pendingDiscoveryCandidate.value;
-    creatingServiceFromDiscovery.value = false;
-    serviceDialog.value = false;
-    await reload();
-    ElMessage.success(tr("服务已保存"));
-    if (continueDiscovery && pendingCandidate && selectedHost.value) {
-      pendingDiscoveryCandidate.value = null;
-      openDeploymentCreate(pendingCandidate, selectedHost.value);
-    }
-  } finally {
-    saving.value = false;
-  }
-}
-
-async function removeService() {
-  const service = selectedService.value;
-  if (!service) return;
-  await ElMessageBox.confirm(tr("删除服务“{{0}}”？部署节点关联会一并移除，SSH 连接和日志配置不会被删除。", [service.name]), tr("删除服务"), { type: "warning" });
-  await api(`/api/v1/services/${service.id}`, { method: "DELETE" });
-  selectedServiceId.value = "";
-  await reload();
-  ElMessage.success(tr("服务已删除"));
-}
-
-function resetDeploymentForm() {
-  const defaultHost = selectedHost.value ?? payload.value.hosts[0];
-  Object.assign(deploymentForm, { sshConnectionId: defaultHost?.sshConnectionId ?? "", candidateKey: "", provider: "systemd", externalId: "", displayName: "", origin: "manual" });
-  manualDeployment.value = !(defaultHost?.candidates.length);
-}
-
-function openDeploymentCreate(candidate?: MonitorCandidate, host?: MonitorHost) {
-  editingDeploymentId.value = "";
-  resetDeploymentForm();
-  if (host) deploymentForm.sshConnectionId = host.sshConnectionId;
-  if (candidate) {
-    manualDeployment.value = false;
-    deploymentForm.candidateKey = `${candidate.provider}:${candidate.externalId}`;
-    Object.assign(deploymentForm, { provider: candidate.provider, externalId: candidate.externalId, displayName: candidate.name, origin: "discovered" });
-  }
-  deploymentDialog.value = true;
-}
-
-function assignDiscoveryTarget(serviceId: string) {
-  discoveryTargetServiceId.value = serviceId;
-  if (serviceId) selectedServiceId.value = serviceId;
-}
-
-function beginCandidateEnrollment(candidate: MonitorCandidate) {
-  if (!payload.value.canConfigure) return;
-  const host = selectedHost.value;
-  if (!host) return;
-  pendingDiscoveryCandidate.value = candidate;
-  if (discoveryTargetServiceId.value && payload.value.services.some((item) => item.id === discoveryTargetServiceId.value)) {
-    selectedServiceId.value = discoveryTargetServiceId.value;
-    openDeploymentCreate(candidate, host);
-    return;
-  }
-  if (payload.value.services.length === 1 && payload.value.services[0]) {
-    assignDiscoveryTarget(payload.value.services[0].id);
-    openDeploymentCreate(candidate, host);
-    return;
-  }
-  if (!payload.value.services.length) {
-    openServiceCreate(true);
-    return;
-  }
-  servicePickerDialog.value = true;
-}
-
-function pickServiceForDiscovery(serviceId: string) {
-  assignDiscoveryTarget(serviceId);
-  const candidate = pendingDiscoveryCandidate.value;
-  const host = selectedHost.value;
-  if (candidate && host) openDeploymentCreate(candidate, host);
-  servicePickerDialog.value = false;
-}
-
-function createServiceFromDiscovery() {
-  openServiceCreate(true);
-  servicePickerDialog.value = false;
-}
-
-function cancelServicePicker() {
-  servicePickerDialog.value = false;
-  pendingDiscoveryCandidate.value = null;
-}
-
-function onServicePickerClosed() {
-  if (creatingServiceFromDiscovery.value || deploymentDialog.value) return;
-  pendingDiscoveryCandidate.value = null;
-}
-
-function discoveryPickerIntro() {
-  return pendingDiscoveryCandidate.value
-    ? tr("将“{{0}}”加入哪个服务？", [pendingDiscoveryCandidate.value.name])
-    : tr("请选择要把扫描结果纳管到的服务。");
-}
-
-function openDeploymentEdit(deployment: Deployment) {
-  editingDeploymentId.value = deployment.id;
-  manualDeployment.value = deployment.origin === "manual";
-  Object.assign(deploymentForm, {
-    sshConnectionId: deployment.sshConnectionId ?? "",
-    candidateKey: deployment.origin === "discovered" ? `${deployment.provider}:${deployment.externalId}` : "",
-    provider: deployment.provider,
-    externalId: deployment.externalId,
-    displayName: deployment.displayName,
-    origin: deployment.origin,
-  });
-  deploymentDialog.value = true;
-}
-
-async function saveDeployment() {
-  if (!selectedService.value) return;
-  if (!deploymentForm.sshConnectionId) return ElMessage.warning(tr("请选择 SSH 连接"));
-  if (!manualDeployment.value && !deploymentForm.candidateKey) return ElMessage.warning(tr("请选择扫描到的服务"));
-  if (!manualDeployment.value) {
-    const candidate = candidateOptions.value.find((item) => item.key === deploymentForm.candidateKey);
-    if (!candidate) return ElMessage.warning(tr("扫描候选已变化，请重新选择"));
-    Object.assign(deploymentForm, {
-      provider: candidate.provider,
-      externalId: candidate.externalId,
-      displayName: deploymentForm.displayName || candidate.name,
-      origin: "discovered",
-    });
-  }
-  if (!deploymentForm.externalId.trim()) return ElMessage.warning(tr("请选择扫描结果或填写服务标识"));
-  saving.value = true;
-  try {
-    const body = JSON.stringify({
-      sshConnectionId: deploymentForm.sshConnectionId,
-      provider: deploymentForm.provider,
-      externalId: deploymentForm.externalId,
-      displayName: deploymentForm.displayName,
-      origin: manualDeployment.value ? "manual" : deploymentForm.origin,
-    });
-    if (editingDeploymentId.value) await api(`/api/v1/service-deployments/${editingDeploymentId.value}`, { method: "PUT", body });
-    else await api(`/api/v1/services/${selectedService.value.id}/deployments`, { method: "POST", body });
-    deploymentDialog.value = false;
-    await reload();
-    ElMessage.success(tr("部署节点已保存"));
-  } finally {
-    saving.value = false;
-  }
-}
-
-async function removeDeployment(deployment: Deployment) {
-  await ElMessageBox.confirm(tr("从当前服务移除部署节点“{{0}}”？不会删除远程服务。", [deployment.displayName || deployment.externalId]), tr("移除部署节点"), { type: "warning" });
-  await api(`/api/v1/service-deployments/${deployment.id}`, { method: "DELETE" });
-  await reload();
-}
-
-function resolveScriptActionIcon(icon: ScriptActionIcon) {
-  return scriptActionIconComponents[icon] ?? Terminal;
-}
-
-function resetScriptActionForm() {
-  editingScriptActionId.value = "";
-  Object.assign(scriptActionForm, { name: "", icon: "terminal", scriptBody: "" });
-}
-
-function beginScriptActionCreate() {
-  resetScriptActionForm();
-  scriptActionEditorOpen.value = true;
-}
-
-function beginScriptActionEdit(action: ScriptAction) {
-  editingScriptActionId.value = action.id;
-  Object.assign(scriptActionForm, {
-    name: action.name,
-    icon: action.icon,
-    scriptBody: action.scriptBody ?? "",
-  });
-  scriptActionEditorOpen.value = true;
-}
-
-function openScriptActionManager(deployment: Deployment | null = null) {
-  const service = selectedService.value;
-  if (!service) return;
-  Object.assign(scriptActionScope, {
-    serviceId: service.id,
-    deploymentId: deployment?.id ?? null,
-    label: deployment ? (deployment.displayName || deployment.externalId) : service.name,
-  });
-  resetScriptActionForm();
-  scriptActionEditorOpen.value = deployment ? deployment.scriptActions.length === 0 : service.scriptActions.length === 0;
-  scriptActionManagerDialog.value = true;
-}
-
-async function saveScriptAction() {
-  if (!scriptActionForm.name.trim()) return ElMessage.warning(tr("请输入按钮名称"));
-  if (!scriptActionForm.scriptBody.trim()) return ElMessage.warning(tr("请输入脚本正文"));
-  saving.value = true;
-  try {
-    const body = JSON.stringify({
-      deploymentId: scriptActionScope.deploymentId,
-      name: scriptActionForm.name,
-      icon: scriptActionForm.icon,
-      scriptBody: scriptActionForm.scriptBody,
-    });
-    if (editingScriptActionId.value) {
-      await api(`/api/v1/service-script-actions/${editingScriptActionId.value}`, { method: "PUT", body });
-    } else {
-      await api(`/api/v1/services/${scriptActionScope.serviceId}/script-actions`, { method: "POST", body });
-    }
-    await reload(true);
-    resetScriptActionForm();
-    scriptActionEditorOpen.value = false;
-    ElMessage.success(tr("功能按钮已保存"));
-  } finally {
-    saving.value = false;
-  }
-}
-
-async function removeScriptAction(action: ScriptAction) {
-  await ElMessageBox.confirm(tr("删除功能按钮“{{0}}”？脚本正文也会一并删除。", [action.name]), tr("删除功能按钮"), { type: "warning" });
-  await api(`/api/v1/service-script-actions/${action.id}`, { method: "DELETE" });
-  await reload(true);
-  if (editingScriptActionId.value === action.id) {
-    resetScriptActionForm();
-    scriptActionEditorOpen.value = false;
-  }
-  ElMessage.success(tr("功能按钮已删除"));
-}
-
-async function executeScriptAction(action: ScriptAction) {
-  const service = payload.value.services.find((item) => item.id === action.serviceId);
-  if (!service) return;
-  const deployment = action.deploymentId ? service.deployments.find((item) => item.id === action.deploymentId) : null;
-  const targetDescription = deployment
-    ? tr("节点“{{0}}”", [deployment.displayName || deployment.externalId])
-    : tr("服务“{{0}}”的 {{1}} 个部署节点", [service.name, service.deployments.length]);
-  await ElMessageBox.confirm(
-    tr("确定执行功能“{{0}}”吗？脚本将通过已有 SSH 连接在{{1}}上以对应 SSH 用户运行。", [action.name, targetDescription]),
-    tr("确认执行脚本"),
-    { type: "warning", confirmButtonText: tr("执行") },
-  );
-  runningScriptActionId.value = action.id;
-  try {
-    scriptActionExecution.value = await api<ScriptActionExecution>(`/api/v1/service-script-actions/${action.id}/execute`, { method: "POST" });
-    scriptActionResultDialog.value = true;
-    if (scriptActionExecution.value.ok) ElMessage.success(tr("功能脚本执行成功"));
-    else ElMessage.warning(tr("功能脚本执行完成，但有 {{0}} 个节点失败", [scriptActionExecution.value.failed]));
-  } finally {
-    runningScriptActionId.value = "";
-  }
-}
-
-function formatScriptDuration(milliseconds: number) {
-  if (milliseconds < 1000) return `${milliseconds} ms`;
-  return `${(milliseconds / 1000).toFixed(1)} s`;
-}
-
-function scriptExecutionSummary(execution: ScriptActionExecution) {
-  return tr("{{0}} 个成功 · {{1}} 个失败", [execution.succeeded, execution.failed]);
-}
-
-function openLogLinks() {
-  if (!selectedService.value) return;
-  selectedLogIds.value = [...selectedService.value.logIds];
-  logDialog.value = true;
-}
-
-async function saveLogLinks() {
-  if (!selectedService.value) return;
-  saving.value = true;
-  try {
-    await api(`/api/v1/services/${selectedService.value.id}/logs`, { method: "PUT", body: JSON.stringify({ logIds: selectedLogIds.value }) });
-    logDialog.value = false;
-    await reload();
-    ElMessage.success(tr("日志关联已更新"));
-  } finally {
-    saving.value = false;
-  }
-}
-
-async function refreshHost(host: MonitorHost) {
-  const next = new Set(refreshingHosts.value);
-  next.add(host.sshConnectionId);
-  refreshingHosts.value = next;
-  try {
-    await api(`/api/v1/environments/${props.environmentId}/monitor-hosts/${host.sshConnectionId}/refresh`, { method: "POST" });
-    await reload();
-    const current = payload.value.hosts.find((item) => item.sshConnectionId === host.sshConnectionId);
-    if (current?.monitorStatus === "missing") ElMessage.warning(tr("目标机器尚未安装 viron-monitor"));
-    else ElMessage.success(tr("节点状态已刷新"));
-  } finally {
-    const updated = new Set(refreshingHosts.value);
-    updated.delete(host.sshConnectionId);
-    refreshingHosts.value = updated;
-  }
-}
-
-function validMonitorInstallPath(value: string) {
-  const path = value.trim().replace(/\/$/, "");
-  const segments = path.slice(1).split("/");
-  return /^\/opt\/[A-Za-z0-9._/-]+$/.test(path)
-    && path !== "/opt"
-    && segments.every((segment) => segment && segment !== "." && segment !== "..");
-}
-
-async function promptMonitorInstallPath(currentPath: string, message: string): Promise<string | null> {
-  try {
-    const result = await ElMessageBox.prompt(message, tr("修改监控安装目录"), {
-      confirmButtonText: tr("重新预检"),
-      cancelButtonText: tr("取消"),
-      inputValue: currentPath === "/opt/viron/monitor" ? "/opt/viron/monitor-custom" : currentPath,
-      inputPlaceholder: "/opt/viron/monitor-custom",
-      inputValidator: (value) => validMonitorInstallPath(value) || tr("请输入 /opt 下不含空格和路径回退的绝对目录"),
-    });
-    return result.value.trim().replace(/\/$/, "");
-  } catch {
-    return null;
-  }
-}
-
-async function installMonitorOnHost(host: MonitorHost) {
-  const next = new Set(installingHosts.value);
-  next.add(host.sshConnectionId);
-  installingHosts.value = next;
-  let installPath = host.installPath || "/opt/viron/monitor";
-  try {
-    while (true) {
-      const response = await api<{ item: MonitorInstallPreflight }>(
-        `/api/v1/environments/${props.environmentId}/monitor-hosts/${host.sshConnectionId}/install/preflight`,
-        { method: "POST", body: JSON.stringify({ installPath }) },
-      );
-      const preflight = response.item;
-      if (preflight.pathState === "conflict") {
-        const conflict = preflight.issues.find((item) => item.code === "MONITOR_INSTALL_PATH_CONFLICT");
-        const replacement = await promptMonitorInstallPath(preflight.installPath, conflict?.message || tr("默认安装目录存在冲突，请修改安装目录"));
-        if (!replacement) return;
-        installPath = replacement;
-        continue;
-      }
-      if (!preflight.canInstall) {
-        await ElMessageBox.alert(preflight.issues.map((item) => item.message).join("\n"), tr("无法一键安装"), {
-          confirmButtonText: tr("知道了"),
-          type: "warning",
-        });
-        return;
-      }
-      const upgrading = preflight.pathState === "upgrade";
-      const privilege = preflight.privilege === "root" ? "root" : tr("免密 sudo");
-      await ElMessageBox.confirm(
-        tr("目标主机：{{0}}\n安装目录：{{1}}\n安装版本：{{2}} · {{3}}\n执行权限：{{4}}\n\n确认后将上传安装包、写入 systemd 单元并启动监控服务。", [
-          `${host.connectionName} (${host.host})`,
-          preflight.installPath,
-          preflight.packageVersion,
-          preflight.architecture ?? preflight.machineArchitecture,
-          privilege,
-        ]),
-        upgrading ? tr("确认更新监控服务") : tr("确认安装监控服务"),
-        { confirmButtonText: upgrading ? tr("更新并重启") : tr("安装并启动"), cancelButtonText: tr("取消"), type: "warning" },
-      );
-      const started = await api<{ item: MonitorInstallTask }>(
-        `/api/v1/environments/${props.environmentId}/monitor-hosts/${host.sshConnectionId}/install-tasks`,
-        { method: "POST", body: JSON.stringify({ installPath: preflight.installPath }) },
-      );
-      installTaskConnectionId.value = host.sshConnectionId;
-      installTask.value = started.item;
-      installProgressDialog.value = true;
-      startInstallTaskPolling(host.sshConnectionId);
-      return;
-    }
-  } catch (error) {
-    if (error === "cancel" || error === "close") return;
-    if (error instanceof ApiError && error.code === "MONITOR_INSTALL_RUNNING") {
-      await openInstallProgress(host);
-      return;
-    }
-    ElMessage.error(error instanceof ApiError || error instanceof Error ? error.message : tr("监控服务安装失败"));
-  } finally {
-    const updated = new Set(installingHosts.value);
-    updated.delete(host.sshConnectionId);
-    installingHosts.value = updated;
-  }
-}
-
-async function clearMonitorData(host: MonitorHost) {
-  try {
-    await ElMessageBox.confirm(
-      tr("仅清理目标 SSH 主机上的 viron-monitor 本地缓冲，Viron 服务端已经入库的监控数据不会删除。确定继续吗？"),
-      tr("清理节点监控数据"),
-      { confirmButtonText: tr("清理本地缓冲"), cancelButtonText: tr("取消"), type: "warning" },
-    );
-  } catch {
-    return;
-  }
-  const next = new Set(clearingHosts.value);
-  next.add(host.sshConnectionId);
-  clearingHosts.value = next;
-  try {
-    const result = await api<{ cleared: { samples: number; gaps: number } }>(
-      `/api/v1/environments/${props.environmentId}/monitor-hosts/${host.sshConnectionId}/clear`,
-      { method: "POST" },
-    );
-    ElMessage.success(tr("已清理目标机本地缓冲：{{0}} 条样本，{{1}} 条缺口记录", [result.cleared.samples, result.cleared.gaps]));
-  } finally {
-    const updated = new Set(clearingHosts.value);
-    updated.delete(host.sshConnectionId);
-    clearingHosts.value = updated;
-  }
-}
-
-async function runMaintenanceAction(deployment: Deployment, action: "start" | "stop" | "restart") {
-  const actionLabel = ({ start: tr("启动"), stop: tr("停止"), restart: tr("重启") })[action];
-  await ElMessageBox.confirm(tr("确定要{{0}}“{{1}}”吗？命令将在 {{2}} 上执行。", [actionLabel, deployment.displayName || deployment.externalId, deployment.sshConnectionName]), tr("确认维护动作"), { type: action === "stop" ? "warning" : "info" });
-  runningAction.value = `${deployment.id}:${action}`;
-  try {
-    const result = await api<{ monitorWarning?: string }>(`/api/v1/service-deployments/${deployment.id}/actions`, { method: "POST", body: JSON.stringify({ action }) });
-    await reload();
-    if (result.monitorWarning) ElMessage.warning(tr("动作已完成，但状态刷新失败：{{0}}", [result.monitorWarning]));
-    else ElMessage.success(tr("{{0}}动作已完成", [actionLabel]));
-  } finally {
-    runningAction.value = "";
-  }
-}
 
 onMounted(() => {
   void load().catch((error) => ElMessage.error(error instanceof Error ? error.message : tr("读取服务维护数据失败")));

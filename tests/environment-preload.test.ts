@@ -48,7 +48,8 @@ describe("environment preload policy", () => {
     const ordinaryWeb = source("../src/client/components/WebAccountBrowser.vue");
     const desktopWeb = source("../src/client/components/DesktopWebAccountBrowser.vue");
     const viewManager = source("../src/server/web-browser/view-manager.ts");
-    const desktopMain = source("../src/desktop/main.ts");
+    // contract unchanged; implementation moved from src/desktop/main.ts
+    const desktopWebRuntime = source("../src/desktop/web-view-runtime.ts");
     expect(environment).toContain("webPreloadCredentialId.value = paneCredentialIds.value[0]");
     expect(environment).toContain("webPreloadCredentialId === opened.id");
     expect(ordinaryWeb).toContain("body: JSON.stringify({ ...viewportSize(), initialPage, preload })");
@@ -71,8 +72,8 @@ describe("environment preload policy", () => {
     expect(viewManager).toContain("if (!preload) await navigation");
     expect(viewManager).toContain("starting.cancelled = true");
     expect(viewManager.indexOf("this.app.activeConnections.release(view.runtimeId)")).toBeLessThan(viewManager.indexOf("await view.context.close().catch(() => undefined)"));
-    expect(desktopMain).toContain("registrationId: string");
-    expect(desktopMain).toContain("const releaseReservation = releaseDesktopRuntimeReservation(managed.registrationId)");
-    expect(desktopMain).toContain("await releaseReservation");
+    expect(desktopWebRuntime).toContain("registrationId: string");
+    expect(desktopWebRuntime).toContain("const releaseReservation = releaseDesktopRuntimeReservation(managed.registrationId)");
+    expect(desktopWebRuntime).toContain("await releaseReservation");
   });
 });

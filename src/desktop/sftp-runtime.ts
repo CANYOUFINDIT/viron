@@ -3,11 +3,20 @@ import { randomUUID } from "node:crypto";
 import { join as nativeJoin, posix } from "node:path";
 import { once } from "node:events";
 import { pipeline } from "node:stream/promises";
-import { Transform, type Writable } from "node:stream";
+import type { Writable } from "node:stream";
 import { createReadStream, createWriteStream, type Stats as LocalStats } from "node:fs";
 import { chmod, lstat as localLstat, mkdir, readdir as localReaddir, rename as localRename, rmdir, stat as localStat, unlink } from "node:fs/promises";
 import type { FileEntryWithStats, SFTPWrapper, Stats } from "ssh2";
 import type { DesktopSshCredential } from "./device-identity.js";
+import { contextKey } from "./ssh-context.js";
+import {
+  buildSftpPlan,
+  collectSftpConflicts,
+  copySftpEntry,
+  isSftpMissingFileCode,
+  type SftpPlanFileSystem,
+  type SftpTransferProgress,
+} from "../shared/sftp-transfer-plan.js";
 import {
   connectDesktopSshConnection,
   desktopSshErrorMessage,
@@ -119,17 +128,7 @@ interface ManagedTransfer extends DesktopSftpTransferTask {
   lastActivityAt: number;
 }
 
-interface TransferPlan {
-  sourceType: "file" | "directory";
-  totalBytes: number;
-  totalFiles: number;
-}
-
-interface TransferProgress {
-  transferredBytes: number;
-  completedFiles: number;
-  skippedFiles: number;
-}
+type TransferProgress = SftpTransferProgress;
 
 type FileAttributes = Pick<Stats, "mode" | "size" | "isDirectory" | "isSymbolicLink"> & { mtime?: number | Date; mtimeMs?: number };
 
@@ -139,7 +138,7 @@ interface FileSystemEntry {
   attrs: FileAttributes;
 }
 
-interface SftpFileSystem {
+interface SftpFileSystem extends SftpPlanFileSystem {
   lstat(path: string): Promise<FileAttributes>;
   stat(path: string): Promise<FileAttributes>;
   readdir(path: string): Promise<FileSystemEntry[]>;
@@ -156,10 +155,6 @@ const TRANSFER_LIMIT = 3;
 const SFTP_FILE_TYPE_MASK = 0o170000;
 const SFTP_DIRECTORY_TYPE = 0o040000;
 const SFTP_SYMLINK_TYPE = 0o120000;
-
-function contextKey(context: DesktopSshContext): string {
-  return `${context.endpoint}\0${context.userId}\0${context.workspaceType}\0${context.workspaceId}`;
-}
 
 function transferCancelled(task: ManagedTransfer): boolean {
   return task.status === "cancelled";
@@ -338,75 +333,8 @@ async function resolveSftpListItem(fileSystem: SftpFileSystem, parentPath: strin
   };
 }
 
-async function existingStats(fileSystem: SftpFileSystem, path: string): Promise<FileAttributes | null> {
-  try {
-    return await fileSystem.lstat(path);
-  } catch (error) {
-    const code = (error as { code?: string | number }).code;
-    if (code === 2 || code === "ENOENT" || code === "NO_SUCH_FILE" || /no such file/i.test(desktopSshErrorMessage(error))) return null;
-    throw error;
-  }
-}
-
-async function buildPlan(fileSystem: SftpFileSystem, path: string, signal?: AbortSignal): Promise<TransferPlan> {
-  if (signal?.aborted) throw signal.reason;
-  const attributes = await fileSystem.lstat(path);
-  if (attributes.isSymbolicLink()) throw new Error(tr("暂不支持传输符号链接"));
-  if (!attributes.isDirectory()) return { sourceType: "file", totalBytes: attributes.size, totalFiles: 1 };
-  let totalBytes = 0;
-  let totalFiles = 0;
-  for (const entry of await fileSystem.readdir(path)) {
-    if (entry.filename === "." || entry.filename === "..") continue;
-    const child = await buildPlan(fileSystem, posix.join(path, entry.filename), signal);
-    totalBytes += child.totalBytes;
-    totalFiles += child.totalFiles;
-  }
-  return { sourceType: "directory", totalBytes, totalFiles };
-}
-
-function entryType(attributes: FileAttributes): DesktopSftpTransferConflictItem["targetType"] {
-  if (attributes.isSymbolicLink()) return "symlink";
-  return attributes.isDirectory() ? "directory" : "file";
-}
-
-async function collectConflicts(
-  source: SftpFileSystem,
-  target: SftpFileSystem,
-  sourcePath: string,
-  targetPath: string,
-  conflicts: DesktopSftpTransferConflictItem[],
-  signal?: AbortSignal,
-): Promise<void> {
-  if (signal?.aborted) throw signal.reason;
-  const sourceAttributes = await source.lstat(sourcePath);
-  if (sourceAttributes.isSymbolicLink()) throw new Error(tr("暂不支持传输符号链接：{{0}}", [sourcePath]));
-  const existing = await existingStats(target, targetPath);
-  if (!sourceAttributes.isDirectory()) {
-    if (existing) conflicts.push({ sourcePath, targetPath, sourceType: "file", targetType: entryType(existing) });
-    return;
-  }
-  if (!existing) return;
-  if (!existing.isDirectory() || existing.isSymbolicLink()) {
-    conflicts.push({ sourcePath, targetPath, sourceType: "directory", targetType: entryType(existing) });
-    return;
-  }
-  for (const child of await source.readdir(sourcePath)) {
-    if (child.filename === "." || child.filename === "..") continue;
-    await collectConflicts(source, target, posix.join(sourcePath, child.filename), posix.join(targetPath, child.filename), conflicts, signal);
-  }
-}
-
-async function removeEntry(fileSystem: SftpFileSystem, path: string, attributes: FileAttributes): Promise<void> {
-  if (!attributes.isDirectory() || attributes.isSymbolicLink()) {
-    await fileSystem.unlink(path);
-    return;
-  }
-  for (const child of await fileSystem.readdir(path)) {
-    if (child.filename === "." || child.filename === "..") continue;
-    const childPath = posix.join(path, child.filename);
-    await removeEntry(fileSystem, childPath, await fileSystem.lstat(childPath));
-  }
-  await fileSystem.rmdir(path);
+function desktopSftpMissingFile(error: unknown): boolean {
+  return isSftpMissingFileCode(error) || /no such file/i.test(desktopSshErrorMessage(error));
 }
 
 async function materializeEntry(fileSystem: SftpFileSystem, sourcePath: string, targetPath: string): Promise<void> {
@@ -421,86 +349,6 @@ async function materializeEntry(fileSystem: SftpFileSystem, sourcePath: string, 
     if (child.filename === "." || child.filename === "..") continue;
     await materializeEntry(fileSystem, posix.join(sourcePath, child.filename), nativeJoin(targetPath, child.filename));
   }
-}
-
-function conflictDecision(
-  targetPath: string,
-  fallback: "overwrite" | "skip",
-  decisions: Readonly<Record<string, "overwrite" | "skip">> | undefined,
-): "overwrite" | "skip" {
-  return decisions?.[targetPath] ?? fallback;
-}
-
-async function ensureDirectory(
-  fileSystem: SftpFileSystem,
-  path: string,
-  conflict: "overwrite" | "skip",
-  decisions?: Readonly<Record<string, "overwrite" | "skip">>,
-): Promise<boolean> {
-  const existing = await existingStats(fileSystem, path);
-  if (!existing) {
-    await fileSystem.mkdir(path);
-    return true;
-  }
-  if (existing.isDirectory() && !existing.isSymbolicLink()) return true;
-  if (conflictDecision(path, conflict, decisions) === "skip") return false;
-  await removeEntry(fileSystem, path, existing);
-  await fileSystem.mkdir(path);
-  return true;
-}
-
-async function copyEntry(
-  source: SftpFileSystem,
-  target: SftpFileSystem,
-  sourcePath: string,
-  targetPath: string,
-  conflict: "overwrite" | "skip",
-  decisions: Readonly<Record<string, "overwrite" | "skip">> | undefined,
-  progress: TransferProgress,
-  onProgress: (progress: TransferProgress) => void,
-  signal: AbortSignal,
-): Promise<void> {
-  if (signal.aborted) throw signal.reason;
-  const attributes = await source.lstat(sourcePath);
-  if (attributes.isSymbolicLink()) throw new Error(tr("暂不支持传输符号链接：{{0}}", [sourcePath]));
-  if (attributes.isDirectory()) {
-    if (!await ensureDirectory(target, targetPath, conflict, decisions)) {
-      const skipped = await buildPlan(source, sourcePath, signal);
-      progress.skippedFiles += skipped.totalFiles;
-      onProgress(progress);
-      return;
-    }
-    for (const entry of await source.readdir(sourcePath)) {
-      if (entry.filename === "." || entry.filename === "..") continue;
-      await copyEntry(source, target, posix.join(sourcePath, entry.filename), posix.join(targetPath, entry.filename), conflict, decisions, progress, onProgress, signal);
-    }
-    await target.chmod(targetPath, attributes.mode & 0o777);
-    return;
-  }
-
-  const existing = await existingStats(target, targetPath);
-  if (existing && conflictDecision(targetPath, conflict, decisions) === "skip") {
-    progress.skippedFiles += 1;
-    onProgress(progress);
-    return;
-  }
-  if (existing?.isDirectory() || existing?.isSymbolicLink()) await removeEntry(target, targetPath, existing);
-  const counter = new Transform({
-    transform(chunk: Buffer, _encoding, callback) {
-      progress.transferredBytes += chunk.length;
-      onProgress(progress);
-      callback(null, chunk);
-    },
-  });
-  await pipeline(
-    source.createReadStream(sourcePath),
-    counter,
-    target.createWriteStream(targetPath, { flags: "w", mode: attributes.mode & 0o777 }),
-    { signal },
-  );
-  await target.chmod(targetPath, attributes.mode & 0o777);
-  progress.completedFiles += 1;
-  onProgress(progress);
 }
 
 export class DesktopSftpRuntime {
@@ -667,12 +515,12 @@ export class DesktopSftpRuntime {
       this.openFileSystem(options.targetConnectionId, expectedContext),
     ]);
     try {
-      const plans = await Promise.all(sourcePaths.map((sourcePath) => buildPlan(source, sourcePath)));
+      const plans = await Promise.all(sourcePaths.map((sourcePath) => buildSftpPlan(source, sourcePath, undefined, tr)));
       const conflicts: DesktopSftpTransferConflictItem[] = [];
       for (const [index, sourcePath] of sourcePaths.entries()) {
         const targetPath = posix.join(targetDirectory, posix.basename(sourcePath));
         this.assertSafeDestination(options.sourceConnectionId, options.targetConnectionId, sourcePath, targetPath, plans[index].sourceType);
-        await collectConflicts(source, target, sourcePath, targetPath, conflicts);
+        await collectSftpConflicts(source, target, sourcePath, targetPath, conflicts, undefined, tr, desktopSftpMissingFile);
       }
       const sourcePath = sourcePaths[0];
       const plan = plans[0];
@@ -913,7 +761,7 @@ export class DesktopSftpRuntime {
       ]);
       const sourceFileSystem = source;
       const targetFileSystem = target;
-      const plans = await Promise.all(task.sourcePaths.map((sourcePath) => buildPlan(sourceFileSystem, sourcePath, task.abortController.signal)));
+      const plans = await Promise.all(task.sourcePaths.map((sourcePath) => buildSftpPlan(sourceFileSystem, sourcePath, task.abortController.signal, tr)));
       for (const [index, sourcePath] of task.sourcePaths.entries()) {
         this.assertSafeDestination(task.sourceConnectionId, task.targetConnectionId, sourcePath, posix.join(task.options.targetDirectory, posix.basename(sourcePath)), plans[index].sourceType);
       }
@@ -921,7 +769,7 @@ export class DesktopSftpRuntime {
       task.totalFiles = plans.reduce((total, plan) => total + plan.totalFiles, 0);
       const progress: TransferProgress = { transferredBytes: 0, completedFiles: 0, skippedFiles: 0 };
       for (const sourcePath of task.sourcePaths) {
-        await copyEntry(sourceFileSystem, targetFileSystem, sourcePath, posix.join(task.options.targetDirectory, posix.basename(sourcePath)), task.conflict, task.options.conflictDecisions, progress, (next) => {
+        await copySftpEntry(sourceFileSystem, targetFileSystem, sourcePath, posix.join(task.options.targetDirectory, posix.basename(sourcePath)), task.conflict, task.options.conflictDecisions, progress, (next) => {
           task.transferredBytes = next.transferredBytes;
           task.completedFiles = next.completedFiles;
           task.skippedFiles = next.skippedFiles;
@@ -932,7 +780,7 @@ export class DesktopSftpRuntime {
             ? Math.min(99, Math.round(task.transferredBytes / task.totalBytes * 100))
             : Math.min(99, Math.round(processedFiles / Math.max(1, task.totalFiles) * 100));
           task.lastActivityAt = Date.now();
-        }, task.abortController.signal);
+        }, task.abortController.signal, tr, desktopSftpMissingFile);
       }
       if (!transferCancelled(task)) {
         task.status = "success";
