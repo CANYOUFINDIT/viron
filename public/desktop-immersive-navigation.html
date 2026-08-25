@@ -19,10 +19,11 @@
     body[data-edge="left"] .handle .chevron { transform: rotate(45deg); }
     body[data-edge="right"] .handle .chevron { transform: rotate(-135deg); }
     body[data-edge="top"] .handle .chevron { transform: rotate(135deg); }
-    .panel { position: relative; width: 100%; height: 100%; border: 1px solid #d7dfe0; background: rgba(255,255,255,.97); color: #122024; box-shadow: 0 20px 54px rgba(8,22,25,.22), 0 3px 12px rgba(8,22,25,.12); display: grid; grid-template-rows: auto minmax(0,1fr) auto; overflow: hidden; }
-    body[data-edge="left"] .panel { border-radius: 0 15px 15px 0; }
-    body[data-edge="right"] .panel { border-radius: 15px 0 0 15px; }
-    body[data-edge="top"] .panel { border-radius: 0 0 15px 15px; }
+    .panel { position: relative; width: 100%; height: 100%; color: #122024; overflow: visible; outline: 0; }
+    .panel-surface { width: 100%; height: 100%; background: rgba(255,255,255,.97); box-shadow: inset 0 0 0 1px #d7dfe0; display: grid; grid-template-rows: auto minmax(0,1fr) auto; overflow: hidden; isolation: isolate; }
+    body[data-edge="left"] .panel-surface { border-radius: 0 15px 15px 0; clip-path: inset(0 round 0 15px 15px 0); }
+    body[data-edge="right"] .panel-surface { border-radius: 15px 0 0 15px; clip-path: inset(0 round 15px 0 0 15px); }
+    body[data-edge="top"] .panel-surface { border-radius: 0 0 15px 15px; clip-path: inset(0 round 0 0 15px 15px); }
     .collapse { position: absolute; z-index: 3; width: 28px; height: 42px; }
     body[data-edge="left"] .collapse { right: 0; top: 32px; border-radius: 9px 0 0 9px; }
     body[data-edge="right"] .collapse { left: 0; top: 32px; border-radius: 0 9px 9px 0; }
@@ -57,7 +58,8 @@
     footer button { width: 100%; height: 34px; padding: 0 10px; border: 1px solid #e8edee; border-radius: 7px; background: white; color: #73858a; cursor: pointer; font-size: 11px; font-weight: 700; }
     footer button:hover { border-color: #f8dedb; background: #f8dedb; color: #b7473f; }
     body[data-theme="dark"] { color-scheme: dark; }
-    body[data-theme="dark"] .panel { border-color: #344844; background: rgba(21,33,36,.98); color: #e7ecea; }
+    body[data-theme="dark"] .panel { color: #e7ecea; }
+    body[data-theme="dark"] .panel-surface { background: rgba(21,33,36,.98); box-shadow: inset 0 0 0 1px #344844; }
     body[data-theme="dark"] header { border-color: #263936; background: linear-gradient(135deg, #14312d, #152124); }
     body[data-theme="dark"] nav { scrollbar-color: #344844 transparent; }
     body[data-theme="dark"] .row { color: #a2b3af; }
@@ -237,7 +239,9 @@
       );
       const footer = element("footer");
       footer.append(button("", { type: "exit" }, copy("退出沉浸模式", "Exit immersive mode")));
-      panel.append(collapse, header, nav, footer);
+      const surface = element("div", "panel-surface");
+      surface.append(header, nav, footer);
+      panel.append(collapse, surface);
       app.append(panel);
     }
 

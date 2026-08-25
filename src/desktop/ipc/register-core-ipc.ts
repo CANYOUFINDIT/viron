@@ -86,6 +86,7 @@ import {
   updateConnectionQualityWindow,
 } from "../overlays/connection-quality-window.js";
 import {
+  applyImmersiveNavigationActionPreview,
   handleImmersiveNavigationDrag,
   immersiveNavigationWindow,
   sendImmersiveNavigationAction,
@@ -162,6 +163,7 @@ export function registerDesktopCoreIpc(desktopUpdater: DesktopUpdater): void {
     if (["drag-start", "drag-move", "drag-end"].includes(action.type)) {
       handleImmersiveNavigationDrag(action as Extract<ImmersiveNavigationAction, { type: "drag-start" | "drag-move" | "drag-end" }>);
     } else {
+      applyImmersiveNavigationActionPreview(action);
       sendImmersiveNavigationAction(action);
       if (["collapse", "select-tab", "select-credential", "exit"].includes(action.type)) mainWindow?.focus();
     }

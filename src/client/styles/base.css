@@ -81,7 +81,7 @@
 }
 
 * { box-sizing: border-box; }
-html, body { overflow-x: clip; }
+html, body { overflow-x: clip; overscroll-behavior-x: none; }
 html, body, #app { width: 100%; min-height: 100%; }
 body {
   margin: 0;
@@ -337,6 +337,15 @@ button { color: inherit; }
   app-region: drag;
   -webkit-user-select: none;
   user-select: none;
+}
+.desktop-window-header::after {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto auto;
+  width: 64px;
+  height: 100%;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
 }
 .icon-action { width: 34px; height: 34px; padding: 0; border: 1px solid var(--ink-200); border-radius: 8px; background: var(--surface); color: var(--ink-600); display: inline-grid; place-items: center; cursor: pointer; transition: .15s ease; }
 .icon-action:hover:not(:disabled) { border-color: var(--teal-500); color: var(--teal-600); transform: translateY(-1px); }
@@ -3508,6 +3517,28 @@ button { color: inherit; }
 .el-overlay {
   background-color: color-mix(in srgb, var(--color-sidebar, #0b1517) 42%, transparent);
   backdrop-filter: blur(2px);
+}
+.el-overlay,
+.el-drawer,
+.el-drawer__header,
+.el-drawer__close-btn,
+.el-dialog,
+.el-dialog__headerbtn,
+.el-message-box,
+.el-notification,
+.el-popper {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+.monitor-alert-drawer .el-drawer__header {
+  margin-bottom: 0;
+  padding: 16px 16px 12px;
+}
+.monitor-alert-drawer .el-drawer__close-btn {
+  position: relative;
+  z-index: 2;
+  width: 32px;
+  height: 32px;
 }
 .el-overlay-dialog {
   padding: 20px;

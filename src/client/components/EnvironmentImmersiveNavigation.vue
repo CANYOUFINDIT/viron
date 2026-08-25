@@ -326,47 +326,49 @@ watch(expanded, (value) => { if (value && !props.native) void focusPanel(); });
           <ChevronRight v-else-if="dock.edge === 'right'" :size="19" />
           <ChevronUp v-else :size="19" />
         </button>
-        <header>
-          <span>IMMERSIVE WORKSPACE</span>
-          <strong>{{ environmentName }}</strong>
-        </header>
+        <div class="immersive-navigation-surface">
+          <header>
+            <span>IMMERSIVE WORKSPACE</span>
+            <strong>{{ environmentName }}</strong>
+          </header>
 
-        <nav class="immersive-navigation-tree">
-          <button class="immersive-tree-row is-level-1" :class="{ 'is-active': activeTab === 'web' }" type="button" @click="toggleWeb">
-            <Globe2 :size="16" /><span>{{ $t('Web 入口') }}</span><small>{{ counts.web }}</small><ChevronDown :size="14" :class="{ 'is-collapsed': !webExpanded }" />
-          </button>
-          <div v-if="webExpanded" class="immersive-tree-branch is-web-branch">
-            <template v-for="entry in entries" :key="entry.id">
-              <button class="immersive-tree-row is-level-2" :class="{ 'is-active': selectedEntryId === entry.id }" type="button" @click="toggleEntry(entry.id)">
-                <span class="immersive-tree-dot"></span><span>{{ entry.name }}</span><small>{{ entry.credentialCount }}</small><ChevronDown :size="13" :class="{ 'is-collapsed': expandedEntryId !== entry.id }" />
-              </button>
-              <div v-if="expandedEntryId === entry.id" class="immersive-tree-branch is-account-branch">
-                <span v-if="entry.loading" class="immersive-tree-empty">{{ $t('正在读取登录账号…') }}</span>
-                <button
-                  v-for="credential in entry.credentials || []"
-                  :key="credential.id"
-                  class="immersive-tree-row is-level-3"
-                  :class="{ 'is-active': activeTab === 'web' && selectedEntryId === entry.id && selectedCredentialId === credential.id }"
-                  type="button"
-                  @click="selectCredential(entry.id, credential.id)"
-                >
-                  <KeyRound :size="13" /><span>{{ credential.username }}</span>
+          <nav class="immersive-navigation-tree">
+            <button class="immersive-tree-row is-level-1" :class="{ 'is-active': activeTab === 'web' }" type="button" @click="toggleWeb">
+              <Globe2 :size="16" /><span>{{ $t('Web 入口') }}</span><small>{{ counts.web }}</small><ChevronDown :size="14" :class="{ 'is-collapsed': !webExpanded }" />
+            </button>
+            <div v-if="webExpanded" class="immersive-tree-branch is-web-branch">
+              <template v-for="entry in entries" :key="entry.id">
+                <button class="immersive-tree-row is-level-2" :class="{ 'is-active': selectedEntryId === entry.id }" type="button" @click="toggleEntry(entry.id)">
+                  <span class="immersive-tree-dot"></span><span>{{ entry.name }}</span><small>{{ entry.credentialCount }}</small><ChevronDown :size="13" :class="{ 'is-collapsed': expandedEntryId !== entry.id }" />
                 </button>
-                <span v-if="!entry.loading && entry.credentials && !entry.credentials.length" class="immersive-tree-empty">{{ $t('暂无登录账号') }}</span>
-              </div>
-            </template>
-            <span v-if="!entries.length" class="immersive-tree-empty">{{ $t('暂无 Web 入口') }}</span>
-          </div>
+                <div v-if="expandedEntryId === entry.id" class="immersive-tree-branch is-account-branch">
+                  <span v-if="entry.loading" class="immersive-tree-empty">{{ $t('正在读取登录账号…') }}</span>
+                  <button
+                    v-for="credential in entry.credentials || []"
+                    :key="credential.id"
+                    class="immersive-tree-row is-level-3"
+                    :class="{ 'is-active': activeTab === 'web' && selectedEntryId === entry.id && selectedCredentialId === credential.id }"
+                    type="button"
+                    @click="selectCredential(entry.id, credential.id)"
+                  >
+                    <KeyRound :size="13" /><span>{{ credential.username }}</span>
+                  </button>
+                  <span v-if="!entry.loading && entry.credentials && !entry.credentials.length" class="immersive-tree-empty">{{ $t('暂无登录账号') }}</span>
+                </div>
+              </template>
+              <span v-if="!entries.length" class="immersive-tree-empty">{{ $t('暂无 Web 入口') }}</span>
+            </div>
 
-          <button class="immersive-tree-row is-level-1" :class="{ 'is-active': activeTab === 'ssh' }" type="button" @click="selectTab('ssh')"><TerminalSquare :size="16" /><span>{{ $t('SSH 终端') }}</span><small>{{ counts.ssh }}</small></button>
-          <button class="immersive-tree-row is-level-1" :class="{ 'is-active': activeTab === 'logs' }" type="button" @click="selectTab('logs')"><FileText :size="16" /><span>{{ $t('日志') }}</span><small>{{ counts.logs }}</small></button>
-          <button class="immersive-tree-row is-level-1" :class="{ 'is-active': activeTab === 'database' }" type="button" @click="selectTab('database')"><Database :size="16" /><span>{{ $t('数据库') }}</span><small>{{ counts.database }}</small></button>
-          <button class="immersive-tree-row is-level-1" :class="{ 'is-active': activeTab === 'redis' }" type="button" @click="selectTab('redis')"><MemoryStick :size="16" /><span>Redis</span><small>{{ counts.redis }}</small></button>
-          <button class="immersive-tree-row is-level-1" :class="{ 'is-active': activeTab === 'knowledge' }" type="button" @click="selectTab('knowledge')"><BookOpen :size="16" /><span>{{ $t('知识库') }}</span><small>{{ counts.knowledge }}</small></button>
-          <button class="immersive-tree-row is-level-1" :class="{ 'is-active': activeTab === 'maintenance' }" type="button" @click="selectTab('maintenance')"><Wrench :size="16" /><span>{{ $t('服务维护') }}</span><small class="maintenance-count">{{ $t('服务') }} {{ counts.maintenance }} · {{ $t('主机') }} {{ maintenanceHostCount }}</small></button>
-        </nav>
+            <button class="immersive-tree-row is-level-1" :class="{ 'is-active': activeTab === 'ssh' }" type="button" @click="selectTab('ssh')"><TerminalSquare :size="16" /><span>{{ $t('SSH 终端') }}</span><small>{{ counts.ssh }}</small></button>
+            <button class="immersive-tree-row is-level-1" :class="{ 'is-active': activeTab === 'logs' }" type="button" @click="selectTab('logs')"><FileText :size="16" /><span>{{ $t('日志') }}</span><small>{{ counts.logs }}</small></button>
+            <button class="immersive-tree-row is-level-1" :class="{ 'is-active': activeTab === 'database' }" type="button" @click="selectTab('database')"><Database :size="16" /><span>{{ $t('数据库') }}</span><small>{{ counts.database }}</small></button>
+            <button class="immersive-tree-row is-level-1" :class="{ 'is-active': activeTab === 'redis' }" type="button" @click="selectTab('redis')"><MemoryStick :size="16" /><span>Redis</span><small>{{ counts.redis }}</small></button>
+            <button class="immersive-tree-row is-level-1" :class="{ 'is-active': activeTab === 'knowledge' }" type="button" @click="selectTab('knowledge')"><BookOpen :size="16" /><span>{{ $t('知识库') }}</span><small>{{ counts.knowledge }}</small></button>
+            <button class="immersive-tree-row is-level-1" :class="{ 'is-active': activeTab === 'maintenance' }" type="button" @click="selectTab('maintenance')"><Wrench :size="16" /><span>{{ $t('服务维护') }}</span><small class="maintenance-count">{{ $t('服务') }} {{ counts.maintenance }} · {{ $t('主机') }} {{ maintenanceHostCount }}</small></button>
+          </nav>
 
-        <footer><button type="button" @click="exit"><LogOut :size="15" />{{ $t('退出沉浸模式') }}</button></footer>
+          <footer><button type="button" @click="exit"><LogOut :size="15" />{{ $t('退出沉浸模式') }}</button></footer>
+        </div>
       </section>
     </div>
   </Teleport>
@@ -380,20 +382,19 @@ watch(expanded, (value) => { if (value && !props.native) void focusPanel(); });
 .is-left .immersive-edge-handle { border-radius: 0 11px 11px 0; }
 .is-right .immersive-edge-handle { border-radius: 11px 0 0 11px; }
 .is-top .immersive-edge-handle { border-radius: 0 0 11px 11px; }
-.immersive-navigation-panel { position: relative; width: 100%; height: 100%; border: 1px solid color-mix(in srgb, var(--ink-200) 82%, transparent); background: color-mix(in srgb, var(--surface) 97%, transparent); box-shadow: 0 20px 54px rgba(8, 22, 25, .22), 0 3px 12px rgba(8, 22, 25, .12); backdrop-filter: blur(18px); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; overflow: visible; outline: 0; }
-.is-left .immersive-navigation-panel { border-radius: 0 15px 15px 0; }
-.is-right .immersive-navigation-panel { border-radius: 15px 0 0 15px; }
-.is-top .immersive-navigation-panel { border-radius: 0 0 15px 15px; }
+.immersive-navigation-panel { position: relative; width: 100%; height: 100%; filter: drop-shadow(0 20px 27px rgba(8, 22, 25, .18)) drop-shadow(0 3px 6px rgba(8, 22, 25, .12)); overflow: visible; outline: 0; }
+.immersive-navigation-surface { width: 100%; height: 100%; background: color-mix(in srgb, var(--surface) 97%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink-200) 82%, transparent); backdrop-filter: blur(18px); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; isolation: isolate; }
+.is-left .immersive-navigation-surface { border-radius: 0 15px 15px 0; clip-path: inset(0 round 0 15px 15px 0); }
+.is-right .immersive-navigation-surface { border-radius: 15px 0 0 15px; clip-path: inset(0 round 15px 0 0 15px); }
+.is-top .immersive-navigation-surface { border-radius: 0 0 15px 15px; clip-path: inset(0 round 0 0 15px 15px); }
 .immersive-panel-collapse { position: absolute; z-index: 2; width: 28px; height: 42px; }
 .is-left .immersive-panel-collapse { right: -28px; top: 32px; border-radius: 0 9px 9px 0; }
 .is-right .immersive-panel-collapse { left: -28px; top: 32px; border-radius: 9px 0 0 9px; }
 .is-top .immersive-panel-collapse { left: 32px; bottom: -28px; width: 42px; height: 28px; border-radius: 0 0 9px 9px; }
-.immersive-navigation-panel > header { min-height: 72px; padding: 17px 18px 14px; border-bottom: 1px solid var(--ink-100); background: linear-gradient(135deg, color-mix(in srgb, var(--teal-50) 74%, var(--surface)), var(--surface)); }
-.is-left .immersive-navigation-panel > header { border-radius: 0 14px 0 0; }
-.is-right .immersive-navigation-panel > header { border-radius: 14px 0 0 0; }
-.immersive-navigation-panel > header span, .immersive-navigation-panel > header strong { display: block; }
-.immersive-navigation-panel > header span { color: var(--teal-600); font-family: var(--font-mono); font-size: 9px; font-weight: 800; letter-spacing: .16em; }
-.immersive-navigation-panel > header strong { margin-top: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
+.immersive-navigation-surface > header { min-height: 72px; padding: 17px 18px 14px; border-bottom: 1px solid var(--ink-100); background: linear-gradient(135deg, color-mix(in srgb, var(--teal-50) 74%, var(--surface)), var(--surface)); }
+.immersive-navigation-surface > header span, .immersive-navigation-surface > header strong { display: block; }
+.immersive-navigation-surface > header span { color: var(--teal-600); font-family: var(--font-mono); font-size: 9px; font-weight: 800; letter-spacing: .16em; }
+.immersive-navigation-surface > header strong { margin-top: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
 .immersive-navigation-tree { min-height: 0; padding: 10px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--ink-200) transparent; }
 .immersive-tree-row { width: 100%; min-width: 0; min-height: 36px; padding: 0 9px; border: 0; border-radius: 7px; background: transparent; color: var(--ink-600); display: grid; grid-template-columns: 18px minmax(0, 1fr) auto auto; align-items: center; gap: 7px; text-align: left; cursor: pointer; }
 .immersive-tree-row:hover { background: var(--ink-50); color: var(--ink-800); }
@@ -412,11 +413,8 @@ watch(expanded, (value) => { if (value && !props.native) void focusPanel(); });
 .immersive-tree-row.is-level-3 { min-height: 32px; padding-left: 28px; grid-template-columns: 15px minmax(0, 1fr); }
 .immersive-tree-row.is-level-3 span { font-size: 11px; font-weight: 650; }
 .immersive-tree-empty { min-height: 31px; padding: 7px 10px 7px 43px; color: var(--ink-400); display: flex; align-items: center; font-size: 10px; }
-.immersive-navigation-panel > footer { padding: 10px; border-top: 1px solid var(--ink-100); }
-.is-left .immersive-navigation-panel > footer { border-radius: 0 0 14px 0; }
-.is-right .immersive-navigation-panel > footer { border-radius: 0 0 0 14px; }
-.is-top .immersive-navigation-panel > footer { border-radius: 0 0 14px 14px; }
-.immersive-navigation-panel > footer button { width: 100%; height: 34px; padding: 0 10px; border: 1px solid var(--ink-100); border-radius: 7px; background: var(--surface); color: var(--ink-500); display: flex; align-items: center; justify-content: center; gap: 7px; cursor: pointer; font-size: 11px; font-weight: 700; }
-.immersive-navigation-panel > footer button:hover { border-color: var(--red-100); background: var(--red-100); color: var(--red-600); }
+.immersive-navigation-surface > footer { padding: 10px; border-top: 1px solid var(--ink-100); }
+.immersive-navigation-surface > footer button { width: 100%; height: 34px; padding: 0 10px; border: 1px solid var(--ink-100); border-radius: 7px; background: var(--surface); color: var(--ink-500); display: flex; align-items: center; justify-content: center; gap: 7px; cursor: pointer; font-size: 11px; font-weight: 700; }
+.immersive-navigation-surface > footer button:hover { border-color: var(--red-100); background: var(--red-100); color: var(--red-600); }
 @media (prefers-reduced-motion: reduce) { .environment-immersive-navigation, .immersive-tree-row > svg:last-child { transition: none; } }
 </style>

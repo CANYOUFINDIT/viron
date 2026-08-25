@@ -17,6 +17,9 @@ describe("desktop title bar layout", () => {
     expect(styles).toContain(".is-desktop .app-content.is-workbench-page {");
     expect(styles).toContain(".is-desktop.is-immersive .standalone-workbench { height: var(--desktop-usable-viewport-height); }");
     expect(styles).toContain("-webkit-app-region: drag;");
+    expect(styles).toContain(".desktop-window-header::after {");
+    expect(styles).toContain(".el-drawer__close-btn,");
+    expect(styles).toContain("-webkit-app-region: no-drag;");
     expect(main).toContain('titleBarOverlay: desktopTitleBarOverlay("login")');
   });
 

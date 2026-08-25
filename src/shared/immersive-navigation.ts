@@ -44,6 +44,31 @@ export type ImmersiveNavigationAction =
   | { type: "dock"; dock: ImmersiveDockPosition }
   | { type: "drag-start" | "drag-move" | "drag-end"; screenX: number; screenY: number };
 
+export function previewImmersiveNavigationAction(
+  state: ImmersiveNavigationState,
+  action: ImmersiveNavigationAction,
+): ImmersiveNavigationState {
+  if (action.type === "toggle") {
+    const expanded = !state.expanded;
+    return {
+      ...state,
+      expanded,
+      ...(expanded ? {
+        webExpanded: state.activeTab === "web",
+        expandedEntryId: state.activeTab === "web" ? state.selectedEntryId : "",
+      } : {}),
+    };
+  }
+  if (["collapse", "select-tab", "select-credential", "exit"].includes(action.type)) {
+    return state.expanded ? { ...state, expanded: false } : state;
+  }
+  if (action.type === "toggle-web") return { ...state, webExpanded: !state.webExpanded };
+  if (action.type === "toggle-entry") {
+    return { ...state, expandedEntryId: state.expandedEntryId === action.entryId ? "" : action.entryId };
+  }
+  return state;
+}
+
 export function plainImmersiveNavigationState(state: ImmersiveNavigationState): ImmersiveNavigationState {
   return {
     ...state,

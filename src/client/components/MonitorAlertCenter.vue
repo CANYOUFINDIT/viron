@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { BellRing, CheckCheck, CircleCheck, CirclePlus, CircleX, ExternalLink, MonitorCog } from "@lucide/vue";
+import { BellRing, CheckCheck, CircleCheck, CirclePlus, CircleX, ExternalLink, MonitorCog, X } from "@lucide/vue";
 import { ElMessage, ElNotification } from "element-plus";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
@@ -12,6 +12,12 @@ import {
 import { translate as tr } from "../i18n";
 import { monitorAlertBody, monitorAlertRuleLabel, monitorAlertTitle } from "../monitor-alert-copy";
 import { session, switchWorkspace } from "../session";
+import {
+  MONITOR_ALERT_TOAST_DURATION_OPTIONS,
+  monitorAlertToastDurationMs,
+  persistMonitorAlertToastDurationSeconds,
+  readMonitorAlertToastDurationSeconds,
+} from "../monitor-alert-toasts";
 import {
   monitorAlertNavigationQuery,
   type DesktopMonitorAlertNotification,
@@ -31,6 +37,8 @@ const permission = ref<NotificationPermission | "unsupported">(
   desktop ? "granted" : typeof Notification === "undefined" ? "unsupported" : Notification.permission,
 );
 const displaying = new Set<string>();
+const toastDurationSeconds = ref(readMonitorAlertToastDurationSeconds());
+const openToastCount = ref(0);
 let pollTimer: number | undefined;
 let removeDesktopOpenListener: (() => void) | undefined;
 
@@ -123,13 +131,16 @@ async function presentAlert(alert: MonitorAlertItem, phase: "active" | "recovere
   displaying.add(key);
   const title = monitorAlertTitle(alert, phase);
   const body = monitorAlertBody(alert, phase);
+  openToastCount.value += 1;
   ElNotification({
     title,
     message: body,
     type: alert.status === "event" ? "warning" : phase === "active" ? "error" : "success",
-    duration: alert.status === "event" ? 10_000 : phase === "active" ? 0 : 6_000,
+    duration: monitorAlertToastDurationMs(toastDurationSeconds.value),
+    offset: 52,
     position: "top-right",
     onClick: () => { void openAlert(alert); },
+    onClose: () => { openToastCount.value = Math.max(0, openToastCount.value - 1); },
   });
   await showSystemNotification(alert, phase, title, body);
   await api(`/api/v1/monitor-alerts/${alert.id}/notified`, {
@@ -165,6 +176,19 @@ async function markAllRead() {
   unread.value = 0;
 }
 
+function setToastDurationSeconds(seconds: unknown) {
+  toastDurationSeconds.value = persistMonitorAlertToastDurationSeconds(seconds);
+}
+
+function onToastDurationChange(event: Event) {
+  const target = event.target;
+  if (target instanceof HTMLSelectElement) setToastDurationSeconds(target.value);
+}
+
+function closeAllToasts() {
+  ElNotification.closeAll();
+}
+
 function startPolling() {
   window.clearInterval(pollTimer);
   pollTimer = undefined;
@@ -190,6 +214,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  ElNotification.closeAll();
   window.clearInterval(pollTimer);
   removeDesktopOpenListener?.();
 });
@@ -209,11 +234,26 @@ onBeforeUnmount(() => {
     <strong v-if="unread" class="monitor-alert-badge">{{ unread > 99 ? '99+' : unread }}</strong>
   </button>
 
-  <el-drawer v-model="drawerOpen" class="monitor-alert-drawer" :title="$t('监控告警')" size="min(430px, 92vw)" append-to-body>
+  <el-drawer
+    v-model="drawerOpen"
+    class="monitor-alert-drawer"
+    :title="$t('监控告警')"
+    size="min(430px, 92vw)"
+    append-to-body
+    :close-on-click-modal="true"
+    :close-on-press-escape="true"
+    @close="drawerOpen = false"
+  >
     <section class="monitor-alert-center" v-loading="loading">
       <header>
         <div><strong>{{ activeCount }} {{ $t('条活动告警') }}</strong><small>{{ notificationStatus }}</small></div>
         <div>
+          <label class="monitor-alert-duration">
+            <span>{{ $t('自动消失') }}</span>
+            <el-select :model-value="toastDurationSeconds" size="small" @update:model-value="setToastDurationSeconds">
+              <el-option v-for="seconds in MONITOR_ALERT_TOAST_DURATION_OPTIONS" :key="seconds" :label="$t('{0} 秒', [seconds])" :value="seconds" />
+            </el-select>
+          </label>
           <el-button v-if="!desktop && permission === 'default'" size="small" plain @click="requestSystemPermission"><MonitorCog :size="14" />{{ $t('开启系统通知') }}</el-button>
           <el-button size="small" plain :disabled="!unread" @click="markAllRead"><CheckCheck :size="14" />{{ $t('全部已读') }}</el-button>
         </div>
@@ -233,6 +273,18 @@ onBeforeUnmount(() => {
       <div v-else class="monitor-alert-empty"><BellRing :size="25" /><strong>{{ $t('当前没有监控告警') }}</strong></div>
     </section>
   </el-drawer>
+
+  <Teleport to="body">
+    <div v-if="openToastCount > 0" class="monitor-alert-toast-toolbar" role="toolbar" :aria-label="$t('告警弹窗')">
+      <label class="monitor-alert-duration">
+        <span>{{ $t('自动消失') }}</span>
+        <select :value="toastDurationSeconds" @change="onToastDurationChange">
+          <option v-for="seconds in MONITOR_ALERT_TOAST_DURATION_OPTIONS" :key="seconds" :value="seconds">{{ $t('{0} 秒', [seconds]) }}</option>
+        </select>
+      </label>
+      <button type="button" @click="closeAllToasts"><X :size="14" />{{ $t('全部关闭') }}</button>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -241,7 +293,49 @@ onBeforeUnmount(() => {
 .monitor-alert-badge { position: absolute; inset: -5px -5px auto auto; min-width: 18px; height: 18px; padding: 0 4px; border: 2px solid #102023; border-radius: 9px; background: #d8584d; color: white; display: grid; place-items: center; font-family: var(--font-mono); font-size: 9px; line-height: 1; }
 .monitor-alert-center { min-height: 240px; }
 .monitor-alert-center > header { padding: 0 0 14px; border-bottom: 1px solid var(--ink-100); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.monitor-alert-center > header > div:last-child { display: flex; gap: 7px; }
+.monitor-alert-center > header > div:last-child { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.monitor-alert-duration { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-500); font-size: 12px; }
+.monitor-alert-duration :deep(.el-select) { width: 92px; }
+.monitor-alert-duration select {
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--ink-200);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--ink-800);
+  font: inherit;
+}
+.monitor-alert-toast-toolbar {
+  position: fixed;
+  top: 10px;
+  right: 16px;
+  z-index: 4100;
+  padding: 6px 7px;
+  border: 1px solid var(--ink-200);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  box-shadow: 0 10px 28px rgba(8, 22, 25, .16);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+.monitor-alert-toast-toolbar button {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--ink-200);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--ink-700);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+.monitor-alert-toast-toolbar button:hover { border-color: var(--teal-500); color: var(--teal-700); }
 .monitor-alert-center > header strong, .monitor-alert-center > header small { display: block; }
 .monitor-alert-center > header strong { font-size: 14px; }
 .monitor-alert-center > header small { margin-top: 4px; color: var(--ink-400); font-size: 11px; }

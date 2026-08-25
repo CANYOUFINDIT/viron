@@ -45,6 +45,10 @@ import {
   immersiveNavigationState,
   sendImmersiveNavigationAction,
 } from "./overlays/immersive-navigation-window.js";
+import {
+  attachHistoryNavigationTouchTracking,
+  handleDesktopHistoryNavigationMouse,
+} from "./history-navigation-runtime.js";
 import { mainWindow } from "./window-host.js";
 import {
   desktopWebActionScript,
@@ -305,7 +309,9 @@ export function createDesktopWebPage(
   };
   view.pages.set(page.id, page);
   mainWindow.contentView.addChildView(nativeView);
-  nativeView.webContents.on("before-mouse-event", (_event, mouse) => {
+  attachHistoryNavigationTouchTracking(nativeView.webContents);
+  nativeView.webContents.on("before-mouse-event", (event, mouse) => {
+    if (handleDesktopHistoryNavigationMouse(event, mouse, view, nativeView.webContents)) return;
     if (mouse.type !== "mouseDown") return;
     if (!mainWindow || mainWindow.isDestroyed()) return;
     mainWindow.webContents.send("viron:native-view-pointer-down");

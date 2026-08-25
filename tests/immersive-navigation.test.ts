@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { reactive } from "vue";
 import {
@@ -6,6 +7,7 @@ import {
   immersiveNavigationBounds,
   immersiveNavigationSize,
   plainImmersiveNavigationState,
+  previewImmersiveNavigationAction,
   snapImmersiveDock,
 } from "../src/shared/immersive-navigation.js";
 
@@ -77,5 +79,39 @@ describe("environment immersive navigation geometry", () => {
     expect(immersiveNavigationEscapeAction({ visible: true, expanded: true })).toEqual({ type: "collapse" });
     expect(immersiveNavigationEscapeAction({ visible: true, expanded: false })).toEqual({ type: "exit" });
     expect(immersiveNavigationEscapeAction(null)).toBeNull();
+  });
+
+  it("previews native overlay actions without waiting for the main renderer", () => {
+    const state = {
+      visible: true,
+      expanded: false,
+      dark: false,
+      dock: { edge: "right" as const, offset: 0.5 },
+      environmentName: "开发环境",
+      activeTab: "web" as const,
+      webExpanded: false,
+      expandedEntryId: "",
+      selectedEntryId: "entry-1",
+      selectedCredentialId: "credential-1",
+      counts: { web: 1, ssh: 2, logs: 3, database: 4, redis: 5, knowledge: 6, maintenance: 0 },
+      maintenanceHostCount: 0,
+      entries: [],
+    };
+
+    const opened = previewImmersiveNavigationAction(state, { type: "toggle" });
+    expect(opened).toMatchObject({ expanded: true, webExpanded: true, expandedEntryId: "entry-1" });
+    expect(previewImmersiveNavigationAction(opened, { type: "toggle-web" }).webExpanded).toBe(false);
+    expect(previewImmersiveNavigationAction(opened, { type: "toggle-entry", entryId: "entry-2" }).expandedEntryId).toBe("entry-2");
+    expect(previewImmersiveNavigationAction(opened, { type: "select-tab", tab: "ssh" }).expanded).toBe(false);
+  });
+
+  it("clips web and desktop panels through a dedicated antialiased surface", () => {
+    const webNavigation = readFileSync(new URL("../src/client/components/EnvironmentImmersiveNavigation.vue", import.meta.url), "utf8");
+    const desktopNavigation = readFileSync(new URL("../public/desktop-immersive-navigation.html", import.meta.url), "utf8");
+
+    expect(webNavigation).toContain('class="immersive-navigation-surface"');
+    expect(webNavigation).toContain("clip-path: inset(0 round 15px 0 0 15px)");
+    expect(desktopNavigation).toContain('element("div", "panel-surface")');
+    expect(desktopNavigation).toContain("box-shadow: inset 0 0 0 1px #d7dfe0");
   });
 });

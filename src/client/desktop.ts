@@ -414,6 +414,16 @@ export function onDesktopNativeViewPointerDown(listener: () => void): () => void
   return window.vironDesktop.onNativeViewPointerDown(listener);
 }
 
+export function onDesktopHistoryNavigation(listener: (direction: "back" | "forward") => void): () => void {
+  if (!window.vironDesktop) return () => undefined;
+  return window.vironDesktop.onHistoryNavigation(listener);
+}
+
+export function onDesktopHistoryNavigationTouch(listener: (phase: "begin" | "end") => void): () => void {
+  if (!window.vironDesktop) return () => undefined;
+  return window.vironDesktop.onHistoryNavigationTouch(listener);
+}
+
 if (typeof window !== "undefined") {
   window.vironDesktop?.onStateChanged((state) => { desktopAppState.value = state; });
 }
