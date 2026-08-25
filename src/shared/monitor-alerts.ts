@@ -29,6 +29,9 @@ export interface MonitorAlertSettings {
 
 export interface MonitorAlertItem {
   id: string;
+  workspaceType: "personal" | "organization";
+  workspaceId: string;
+  workspaceName: string;
   environmentId: string;
   environmentName: string;
   targetType: MonitorAlertTargetType;
@@ -58,6 +61,9 @@ export interface DesktopMonitorAlertNotification {
   id: string;
   title: string;
   body: string;
+  workspaceType: "personal" | "organization";
+  workspaceId: string;
+  workspaceName: string;
   environmentId: string;
   sshConnectionId: string | null;
   serviceId: string | null;
