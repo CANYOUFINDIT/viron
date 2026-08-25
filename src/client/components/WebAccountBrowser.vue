@@ -20,6 +20,8 @@ import { api, transientApi } from "../api";
 import { downloadApiFile, isDesktopApp } from "../desktop";
 import { ServiceSocket } from "../service-socket";
 import { normalizeWebAddress } from "../../shared/web-address";
+import { historyNavigationFromMouseButton } from "../../shared/history-navigation-gesture";
+import { applyHistoryNavigationCommand, applyHistoryNavigationWheel } from "../history-navigation";
 import WebPageTabStrip from "./WebPageTabStrip.vue";
 
 interface BrowserPage {
@@ -304,6 +306,11 @@ function handleMouseMove(event: MouseEvent) {
 }
 
 function handleMouseButton(event: MouseEvent, action: "down" | "up") {
+  const historyDirection = historyNavigationFromMouseButton(event.button);
+  if (historyDirection) {
+    if (action === "up") applyHistoryNavigationCommand(historyDirection);
+    return;
+  }
   const position = pointerPosition(event);
   if (!position) return;
   focusKeyboard();
@@ -321,7 +328,9 @@ function handleContextMenu(event: MouseEvent) {
 
 function handleWheel(event: WheelEvent) {
   event.preventDefault();
-  send({ type: "wheel", deltaX: event.deltaX, deltaY: event.deltaY });
+  event.stopPropagation();
+  const next = applyHistoryNavigationWheel(event, performance.now(), { ignoreBlockedTargets: true });
+  if (next.status === "idle") send({ type: "wheel", deltaX: event.deltaX, deltaY: event.deltaY });
 }
 
 function handleKeydown(event: KeyboardEvent) {

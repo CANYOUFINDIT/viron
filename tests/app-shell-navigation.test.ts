@@ -28,4 +28,12 @@ describe("app shell navigation", () => {
     expect(shell).toContain("environmentOverviewNavigationTarget(activeRouteName.value, rememberedEnvironmentId.value)");
     expect(shell).toContain('if (route.name !== target.name || Object.keys(route.query).length) await router.push(target);');
   });
+
+  it("installs trackpad history navigation for previous and next visited pages", () => {
+    expect(shell).toContain("installVisitHistory(router)");
+    expect(shell).toContain("installHistoryNavigationGestures({");
+    expect(shell).toContain("canNavigate: visitHistoryCanNavigate");
+    expect(shell).toContain("navigate: visitHistoryNavigate");
+    expect(shell).toContain("<HistoryNavigationOverlay />");
+  });
 });

@@ -95,6 +95,8 @@ interface Window {
     captureRendererPreview(bounds: import("./desktop").DesktopWebViewBounds): Promise<string>;
     onActiveEnvironmentDockAction(listener: (action: import("../shared/active-environment-dock").ActiveEnvironmentDockAction) => void): () => void;
     onNativeViewPointerDown(listener: () => void): () => void;
+    onHistoryNavigation(listener: (direction: "back" | "forward") => void): () => void;
+    onHistoryNavigationTouch(listener: (phase: "begin" | "end") => void): () => void;
     onStateChanged(listener: (state: import("./desktop").DesktopState) => void): () => void;
     setEndpoint(endpoint: string): Promise<
       | { ok: true; state: import("./desktop").DesktopState }

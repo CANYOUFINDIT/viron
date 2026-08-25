@@ -30,7 +30,10 @@ import { session, switchWorkspace } from "../session";
 import { activeConnections, loadActiveConnections } from "../active-connections";
 import { immersiveModeKey } from "../immersive-mode";
 import { agentNativeOverlayActive } from "../agent-host";
+import { installHistoryNavigationGestures } from "../history-navigation";
+import { installVisitHistory, visitHistoryCanNavigate, visitHistoryNavigate } from "../visit-history";
 import AgentFloatingWindow from "./AgentFloatingWindow.vue";
+import HistoryNavigationOverlay from "./HistoryNavigationOverlay.vue";
 import AgentHostBridge from "./AgentHostBridge.vue";
 import ActiveEnvironmentDockWindow from "./ActiveEnvironmentDockWindow.vue";
 import ConnectionQualityWindow from "./ConnectionQualityWindow.vue";
@@ -48,6 +51,8 @@ const rememberedEnvironmentId = ref<string | null>(null);
 let connectionPollTimer: number | undefined;
 let connectionLimitDialogOpen = false;
 let removeShortcutListener: (() => void) | undefined;
+let removeHistoryNavigation: (() => void) | undefined;
+let removeVisitHistory: (() => void) | undefined;
 
 const menuItems = [
   { key: "overview", label: tr("环境总览"), icon: CircleGauge, routeName: "overview", routeNames: ["overview", "environment"], planned: false },
@@ -207,11 +212,18 @@ onMounted(() => {
   removeShortcutListener = onAppShortcut((action) => {
     if (action === "app.settings") void router.push({ name: "settings", query: { section: "shortcuts" } });
   });
+  removeVisitHistory = installVisitHistory(router);
+  removeHistoryNavigation = installHistoryNavigationGestures({
+    canNavigate: visitHistoryCanNavigate,
+    navigate: visitHistoryNavigate,
+  });
   document.addEventListener("keydown", handleGlobalKeydown);
   window.addEventListener("viron:connection-limit", handleConnectionLimit);
 });
 onBeforeUnmount(() => {
   removeShortcutListener?.();
+  removeHistoryNavigation?.();
+  removeVisitHistory?.();
   document.removeEventListener("keydown", handleGlobalKeydown);
   window.removeEventListener("viron:connection-limit", handleConnectionLimit);
   window.clearInterval(connectionPollTimer);
@@ -380,5 +392,6 @@ onBeforeUnmount(() => {
     <AgentFloatingWindow v-if="desktop && !agentNativeOverlayActive" />
     <ActiveEnvironmentDockWindow />
     <ConnectionQualityWindow />
+    <HistoryNavigationOverlay />
   </div>
 </template>

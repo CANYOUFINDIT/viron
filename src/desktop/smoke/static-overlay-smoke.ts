@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { BrowserWindow, WebContentsView } from "electron";
 import { translate as tr } from "../i18n.js";
-import type { ImmersiveNavigationState } from "../../shared/immersive-navigation.js";
+import { immersiveNavigationSize, type ImmersiveNavigationState } from "../../shared/immersive-navigation.js";
 import {
   agentFloatingOverlayInteractionState,
   type AgentFloatingOverlayState,
@@ -14,6 +14,7 @@ import {
 } from "../../shared/connection-quality.js";
 import { mainWindow } from "../window-host.js";
 import {
+  immersiveNavigationState,
   immersiveNavigationViewport,
   immersiveNavigationWindow,
   updateImmersiveNavigationWindow,
@@ -43,6 +44,8 @@ export async function waitForDesktopWindowSnapshot(window: BrowserWindow, timeou
 }
 
 export async function runDesktopImmersiveNavigationSmoke(): Promise<{
+  immediateExpand: boolean;
+  expandLatencyMs: number;
   rendered: boolean;
   snapshot: boolean;
   webViewStayedVisible: boolean;
@@ -78,7 +81,19 @@ export async function runDesktopImmersiveNavigationSmoke(): Promise<{
   };
   try {
     await updateImmersiveNavigationWindow(base);
-    await updateImmersiveNavigationWindow({ ...base, expanded: true });
+    const expandStartedAt = Date.now();
+    await immersiveNavigationWindow!.webContents.executeJavaScript("document.querySelector('.handle')?.click()");
+    const expandDeadline = expandStartedAt + 250;
+    while (!immersiveNavigationState?.expanded && Date.now() < expandDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    const expandLatencyMs = Date.now() - expandStartedAt;
+    const expandedBounds = immersiveNavigationWindow!.getBounds();
+    const immediateExpand = Boolean(
+      immersiveNavigationState?.expanded
+      && expandedBounds.width === immersiveNavigationSize(base.dock, true, immersiveNavigationViewport()).width
+      && expandLatencyMs <= 250,
+    );
     const rendered = await immersiveNavigationWindow!.webContents.executeJavaScript(`new Promise((resolve, reject) => {
       const deadline = Date.now() + 5000;
       const inspect = () => {
@@ -94,7 +109,7 @@ export async function runDesktopImmersiveNavigationSmoke(): Promise<{
     const topBounds = immersiveNavigationWindow!.getBounds();
     const snappedTop = topBounds.y === immersiveNavigationViewport().y && topBounds.width === 48 && topBounds.height === 34;
     await updateImmersiveNavigationWindow(null);
-    return { rendered, snapshot, webViewStayedVisible, snappedTop, hidden: !immersiveNavigationWindow!.isVisible() };
+    return { immediateExpand, expandLatencyMs, rendered, snapshot, webViewStayedVisible, snappedTop, hidden: !immersiveNavigationWindow!.isVisible() };
   } finally {
     mainWindow.contentView.removeChildView(testView);
     if (!testView.webContents.isDestroyed()) testView.webContents.close();

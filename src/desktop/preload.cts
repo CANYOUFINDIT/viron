@@ -109,6 +109,16 @@ contextBridge.exposeInMainWorld("vironDesktop", {
     ipcRenderer.on("viron:native-view-pointer-down", handler);
     return () => ipcRenderer.off("viron:native-view-pointer-down", handler);
   },
+  onHistoryNavigation: (listener: (direction: unknown) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, direction: unknown) => listener(direction);
+    ipcRenderer.on("viron:history-navigation", handler);
+    return () => ipcRenderer.off("viron:history-navigation", handler);
+  },
+  onHistoryNavigationTouch: (listener: (phase: unknown) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, phase: unknown) => listener(phase);
+    ipcRenderer.on("viron:history-navigation-touch", handler);
+    return () => ipcRenderer.off("viron:history-navigation-touch", handler);
+  },
   onStateChanged: (listener: (state: unknown) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, state: unknown) => listener(state);
     ipcRenderer.on("viron:state-changed", handler);

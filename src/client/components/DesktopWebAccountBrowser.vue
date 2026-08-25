@@ -21,6 +21,8 @@ import {
 import { releaseAgentNativeOverlay, retainAgentNativeOverlay } from "../agent-host";
 import { rendererOverlayCoversSurface, type RectangleBounds } from "../desktop-web-overlay";
 import { normalizeWebAddress } from "../../shared/web-address";
+import { historyNavigationFromMouseButton } from "../../shared/history-navigation-gesture";
+import { applyHistoryNavigationCommand, applyHistoryNavigationWheel } from "../history-navigation";
 import WebPageTabStrip from "./WebPageTabStrip.vue";
 
 const props = withDefaults(defineProps<{
@@ -370,6 +372,22 @@ function handleBrowserInteraction(event: Event) {
   claimPreloadedView();
 }
 
+function handleHistoryMouseButton(event: MouseEvent) {
+  const direction = historyNavigationFromMouseButton(event.button);
+  if (!direction) return;
+  event.preventDefault();
+  if (event.type === "mouseup") applyHistoryNavigationCommand(direction);
+}
+
+function handleHistoryWheel(event: WheelEvent) {
+  if (event.target instanceof Element && event.target.closest("input, textarea, button, .web-page-tabs")) return;
+  const next = applyHistoryNavigationWheel(event, performance.now(), { ignoreBlockedTargets: true });
+  if (next.status !== "idle") {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+}
+
 onMounted(() => {
   stopStateListener = onDesktopWebViewState(applyState);
   removeNativeViewPointerDownListener = onDesktopNativeViewPointerDown(() => {
@@ -451,7 +469,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="web-account-browser desktop-web-account-browser" @pointerdown.capture="handleBrowserInteraction" @keydown.capture="handleBrowserInteraction">
+  <section class="web-account-browser desktop-web-account-browser" @pointerdown.capture="handleBrowserInteraction" @keydown.capture="handleBrowserInteraction" @mousedown.capture="handleHistoryMouseButton" @mouseup.capture="handleHistoryMouseButton" @wheel.capture="handleHistoryWheel">
     <WebPageTabStrip
       :pages="pageTabs"
       :active-page-id="activePageId"

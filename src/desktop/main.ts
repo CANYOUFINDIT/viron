@@ -87,6 +87,10 @@ import {
   updateImmersiveNavigationWindow,
 } from "./overlays/immersive-navigation-window.js";
 import {
+  attachDesktopHistoryNavigationListeners,
+  closeDesktopHistoryNavigation,
+} from "./history-navigation-runtime.js";
+import {
   desktopAgentRuntime,
   desktopAuditSourceContext,
   desktopDatabaseOperationRuntime,
@@ -373,6 +377,7 @@ async function createWindow(): Promise<void> {
   createdMainWindow.webContents.on("will-navigate", (event, url) => {
     if (url !== createdMainWindow.webContents.getURL()) event.preventDefault();
   });
+  attachDesktopHistoryNavigationListeners(createdMainWindow);
   createdMainWindow.once("ready-to-show", () => createdMainWindow.show());
   createdMainWindow.on("move", () => {
     layoutImmersiveNavigationWindow();
@@ -402,6 +407,7 @@ async function createWindow(): Promise<void> {
     connectionQualityVisualWindow?.close();
     void updateActiveEnvironmentDockWindow(null);
     activeEnvironmentDockWindow?.close();
+    closeDesktopHistoryNavigation();
     resetShortcutCapture();
     setMainWindow(null);
   });
@@ -486,7 +492,7 @@ async function createWindow(): Promise<void> {
       const localLogsPassed = localLogs === null || (localLogs.opened && localLogs.outputReceived && localLogs.stopped);
       const localDatabasePassed = localDatabase === null || (localDatabase.tested && localDatabase.queried && localDatabase.cancelled);
       const localInspectionPassed = localInspection === null || (localInspection.total === 2 && localInspection.available === 2 && localInspection.sshAvailable && localInspection.databaseAvailable && localInspection.credentialsHidden);
-      const immersiveNavigationPassed = immersiveNavigation.rendered && immersiveNavigation.snapshot && immersiveNavigation.webViewStayedVisible && immersiveNavigation.snappedTop && immersiveNavigation.hidden;
+      const immersiveNavigationPassed = immersiveNavigation.immediateExpand && immersiveNavigation.rendered && immersiveNavigation.snapshot && immersiveNavigation.webViewStayedVisible && immersiveNavigation.snappedTop && immersiveNavigation.hidden;
       const agentLauncherPassed = agentLauncher.rendered && agentLauncher.exactButtonSize && agentLauncher.glowClearance && agentLauncher.compactInteraction
         && agentLauncher.nonFocusable && agentLauncher.passivePointerStable
         && agentLauncher.snapshot && agentLauncher.webViewStayedVisible && agentLauncher.actionDelivered && agentLauncher.hidden;

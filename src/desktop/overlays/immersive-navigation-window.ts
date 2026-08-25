@@ -3,6 +3,7 @@ import { app, BrowserWindow, type Rectangle } from "electron";
 import {
   immersiveNavigationBounds,
   immersiveNavigationSize,
+  previewImmersiveNavigationAction,
   snapImmersiveDock,
   type ImmersiveNavigationAction,
   type ImmersiveNavigationState,
@@ -18,6 +19,20 @@ let immersiveNavigationDrag: { cursor: { x: number; y: number }; bounds: Rectang
 export function sendImmersiveNavigationAction(action: ImmersiveNavigationAction): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send("viron:immersive-navigation-action", action);
+}
+
+export function applyImmersiveNavigationActionPreview(action: ImmersiveNavigationAction): void {
+  if (!immersiveNavigationState || !immersiveNavigationWindow || immersiveNavigationWindow.isDestroyed()) return;
+  const previousState = immersiveNavigationState;
+  const nextState = previewImmersiveNavigationAction(previousState, action);
+  if (nextState === previousState) return;
+  immersiveNavigationState = nextState;
+  layoutImmersiveNavigationWindow();
+  publishImmersiveNavigationState();
+  if (nextState.expanded && !previousState.expanded) {
+    immersiveNavigationWindow.show();
+    immersiveNavigationWindow.focus();
+  }
 }
 
 export function immersiveNavigationViewport(): Rectangle {

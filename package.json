@@ -39,6 +39,7 @@
     "package:windows:arm64": "node scripts/package-windows.mjs --arch=arm64",
     "package:windows:all": "npm run package:windows:x86 && npm run package:windows:x64 && npm run package:windows:arm64",
     "package:desktop:requested": "npm run package:macos:all && npm run package:windows:all",
+    "package:current-os": "node scripts/package-current-os.mjs",
     "package:release": "bash scripts/package-release.sh",
     "start": "node scripts/start.mjs",
     "typecheck": "vue-tsc --noEmit && tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.desktop.json --noEmit",
