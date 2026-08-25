@@ -10,13 +10,18 @@ import type {
 import { aggregateMonitorProcessesByIdentity, monitorProcessIdentity, monitorProcessLabel } from "../../shared/monitor-performance";
 import { api } from "../api";
 import { translate as tr } from "../i18n";
+import {
+  monitorHistoryLoadPlan,
+  QUICK_MONITOR_HISTORY_RANGE,
+  type MonitorHistoryRange,
+} from "../monitor-history-loading";
 import MonitorTimeSeriesChart, {
   type MonitorChartAnnotation,
   type MonitorChartSeries,
   type MonitorChartTooltipRow,
 } from "./MonitorTimeSeriesChart.vue";
 
-type HistoryRange = "1h" | "6h" | "24h" | "7d" | "30d";
+type HistoryRange = MonitorHistoryRange;
 type ProcessMetric = "cpu" | "memory" | "io";
 export type HostFocusMetric = "cpu" | "memory" | "disk" | "network" | "load" | "io" | "pressure" | "swap" | "uptime" | "temperature";
 type ChartId =
@@ -106,6 +111,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ "update:focusMetric": [value: HostFocusMetric] }>();
 const range = ref<HistoryRange>("6h");
 const loading = ref(false);
+const loadingRange = ref<HistoryRange | null>(null);
 const error = ref("");
 const selectedFocus = ref<HostFocusMetric>(props.focusMetric);
 const cpuView = ref<CpuView>("process");
@@ -119,12 +125,28 @@ const history = ref<HistoryResponse>({
 });
 const selectedDisk = ref("");
 let requestSequence = 0;
+let loadedContext = "";
 
 const ranges: Array<{ value: HistoryRange; label: string }> = [
   { value: "1h", label: tr("1 小时") }, { value: "6h", label: tr("6 小时") }, { value: "24h", label: tr("24 小时") },
   { value: "7d", label: tr("7 天") }, { value: "30d", label: tr("30 天") },
 ];
+function rangeLabel(value: HistoryRange): string {
+  return ranges.find((item) => item.value === value)?.label ?? value;
+}
 const points = computed(() => history.value.points);
+const loadingStatus = computed(() => {
+  if (!loading.value || !points.value.length) return "";
+  if (history.value.range === QUICK_MONITOR_HISTORY_RANGE && range.value !== QUICK_MONITOR_HISTORY_RANGE) {
+    return tr("已显示 {{0}}，正在补齐 {{1}}", [rangeLabel(history.value.range), rangeLabel(range.value)]);
+  }
+  return tr("正在后台更新监控数据");
+});
+const initialLoadingLabel = computed(() => (
+  loadingRange.value === QUICK_MONITOR_HISTORY_RANGE && range.value !== QUICK_MONITOR_HISTORY_RANGE
+    ? tr("正在优先读取最近 1 小时的数据")
+    : tr("正在读取监控历史")
+));
 const diskOptions = computed(() => {
   const options = new Map<string, { value: string; label: string }>();
   for (const point of points.value) for (const disk of point.host.disks) {
@@ -140,15 +162,35 @@ watch(diskOptions, (options) => {
 
 async function loadHistory() {
   const sequence = ++requestSequence;
+  const context = `${props.environmentId}:${props.hostId}`;
+  if (context !== loadedContext) {
+    loadedContext = context;
+    history.value = {
+      range: "6h", from: "", to: "", sourceSampleCount: 0, points: [], diagnostics: [], summary: emptySummary, gaps: [],
+    };
+  }
+  const targetRange = range.value;
+  const loadPlan = monitorHistoryLoadPlan(targetRange, Boolean(history.value.from || history.value.to));
   loading.value = true;
   error.value = "";
-  try {
-    const response = await api<HistoryResponse>(`/api/v1/environments/${props.environmentId}/monitor-hosts/${props.hostId}/history?range=${range.value}`);
-    if (sequence === requestSequence) history.value = response;
-  } catch (caught) {
-    if (sequence === requestSequence) error.value = caught instanceof Error ? caught.message : tr("监控历史加载失败");
-  } finally {
-    if (sequence === requestSequence) loading.value = false;
+  let lastError = "";
+  for (const requestedRange of loadPlan) {
+    if (sequence !== requestSequence) return;
+    loadingRange.value = requestedRange;
+    try {
+      const response = await api<HistoryResponse>(`/api/v1/environments/${props.environmentId}/monitor-hosts/${props.hostId}/history?range=${requestedRange}`);
+      if (sequence !== requestSequence) return;
+      history.value = response;
+      lastError = "";
+    } catch (caught) {
+      if (sequence !== requestSequence) return;
+      lastError = caught instanceof Error ? caught.message : tr("监控历史加载失败");
+    }
+  }
+  if (sequence === requestSequence) {
+    error.value = lastError;
+    loading.value = false;
+    loadingRange.value = null;
   }
 }
 
@@ -566,13 +608,15 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
       <button class="monitor-history__refresh" type="button" :disabled="loading" :title="$t('刷新监控历史')" @click="loadHistory"><RefreshCw :size="15" :class="{ 'is-spinning': loading }" /></button>
     </header>
 
-    <div v-if="error" class="monitor-history__notice is-error"><CircleGauge :size="18" /><span>{{ error }}</span><button type="button" @click="loadHistory">{{ $t('重试') }}</button></div>
-    <div v-else-if="loading && !points.length" class="monitor-history__notice"><RefreshCw :size="18" class="is-spinning" /><span>{{ $t('正在读取监控历史') }}</span></div>
+    <div v-if="error && !points.length" class="monitor-history__notice is-error"><CircleGauge :size="18" /><span>{{ error }}</span><button type="button" @click="loadHistory">{{ $t('重试') }}</button></div>
+    <div v-else-if="loading && !points.length" class="monitor-history__notice"><RefreshCw :size="18" class="is-spinning" /><span>{{ initialLoadingLabel }}</span></div>
     <div v-else-if="!points.length" class="monitor-history__notice"><Activity :size="19" /><span>{{ $t('当前时间范围还没有监控样本') }}</span></div>
 
     <template v-else>
       <div class="monitor-history__meta">
         <span :title="sampleMeta ? sampledPointLabel(history.sampledPointCount || history.sourceSampleCount) : ''">{{ formatTime(history.from) }} - {{ formatTime(history.to) }}</span>
+        <span v-if="loadingStatus" class="monitor-history__load-status"><RefreshCw :size="12" class="is-spinning" />{{ loadingStatus }}</span>
+        <button v-else-if="error" class="monitor-history__load-status is-error" type="button" :title="error" @click="loadHistory"><CircleGauge :size="12" />{{ $t('后台更新失败，点击重试') }}</button>
         <span v-if="history.gaps.length" class="is-warning">{{ history.gaps.length }} {{ $t('处采集断档') }}</span>
         <span v-if="diskOptions.length && selectedFocus === 'disk'" class="monitor-history__disk">
           <el-select v-model="selectedDisk" size="small">
@@ -762,6 +806,20 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
   font-size: var(--text-2xs);
 }
 .monitor-history__meta .is-warning { color: var(--color-warning); }
+.monitor-history__load-status {
+  min-height: 1.5rem;
+  padding: 0 var(--space-xs);
+  border: 0;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--color-info-soft);
+  color: var(--color-info);
+  font: inherit;
+  font-size: var(--text-2xs);
+}
+.monitor-history__load-status.is-error { background: var(--color-danger-soft); color: var(--color-danger); cursor: pointer; }
 .monitor-history__disk :deep(.el-select),
 .monitor-history__disk-more :deep(.el-select) { width: min(18rem, 100%); }
 .monitor-diagnostics {
