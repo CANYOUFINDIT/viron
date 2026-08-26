@@ -4159,6 +4159,7 @@ const generatedEnMessages: Record<string, string> = {
 };
 
 const enOverrides: Record<string, string> = {
+  "服务维护清单": "Service maintenance lists",
   "登记证书": "Register certificate",
   "证书": "Certificates",
   "端点": "endpoints",
