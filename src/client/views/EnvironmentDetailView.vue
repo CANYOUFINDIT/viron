@@ -27,6 +27,7 @@ import DesktopExecutionNotice from "../components/DesktopExecutionNotice.vue";
 import EnvironmentImmersiveNavigation from "../components/EnvironmentImmersiveNavigation.vue";
 import DesktopWebAccountBrowser from "../components/DesktopWebAccountBrowser.vue";
 import WebAccountBrowser from "../components/WebAccountBrowser.vue";
+import { copyTextToClipboard } from "../clipboard";
 import { desktopExecutionTargets, desktopState, isDesktopApp } from "../desktop";
 import {
   environmentBackgroundPreloadAllowed,
@@ -866,8 +867,12 @@ async function toggleReveal(credential: WebCredential) {
 }
 
 async function copyText(value: string, label: string) {
-  await navigator.clipboard.writeText(value);
-  ElMessage.success(tr("{0}已复制", [label]));
+  try {
+    await copyTextToClipboard(value);
+    ElMessage.success(tr("{0}已复制", [label]));
+  } catch {
+    ElMessage.error(tr("复制失败"));
+  }
 }
 
 onMounted(async () => {

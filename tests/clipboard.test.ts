@@ -26,12 +26,26 @@ function createLegacyDocument(copyResult = true) {
 }
 
 describe("clipboard copy", () => {
+  it("uses the desktop native clipboard bridge when available", async () => {
+    const writeClipboardText = vi.fn().mockResolvedValue({ written: true });
+    const writeText = vi.fn();
+
+    await expect(copyTextToClipboard("hello", {
+      desktopClipboard: { writeClipboardText },
+      clipboard: { writeText },
+      document: null,
+    })).resolves.toBe("desktop-bridge");
+    expect(writeClipboardText).toHaveBeenCalledWith("hello");
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
   it("uses the Clipboard API in a secure context", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
 
     await expect(copyTextToClipboard("hello", {
       secureContext: true,
       clipboard: { writeText },
+      desktopClipboard: null,
       document: null,
     })).resolves.toBe("clipboard-api");
     expect(writeText).toHaveBeenCalledWith("hello");
@@ -43,6 +57,7 @@ describe("clipboard copy", () => {
     await expect(copyTextToClipboard("selected output", {
       secureContext: false,
       clipboard: null,
+      desktopClipboard: null,
       document: documentRef,
     })).resolves.toBe("exec-command");
     expect(textarea.value).toBe("selected output");
@@ -58,6 +73,7 @@ describe("clipboard copy", () => {
     await expect(copyTextToClipboard("hello", {
       secureContext: true,
       clipboard: { writeText },
+      desktopClipboard: null,
       document: documentRef,
     })).resolves.toBe("exec-command");
   });
@@ -68,22 +84,30 @@ describe("clipboard copy", () => {
     await expect(copyTextToClipboard("hello", {
       secureContext: false,
       clipboard: null,
+      desktopClipboard: null,
       document: documentRef,
     })).rejects.toThrow("Clipboard API unavailable");
   });
 
-  it("connects the desktop terminal to the trusted native clipboard bridge", () => {
+  it("connects desktop copy actions to the trusted native clipboard bridge", () => {
     const preload = source("src/desktop/preload.cts");
     // contract unchanged; implementation moved from src/desktop/main.ts
     const main = source("src/desktop/ipc/register-core-ipc.ts");
+    const clipboard = source("src/client/clipboard.ts");
+    const environment = source("src/client/views/EnvironmentDetailView.vue");
     const terminal = source("src/client/components/SshTerminalPane.vue");
 
     expect(preload).toContain('ipcRenderer.invoke("viron:clipboard:read-text")');
     expect(preload).toContain('ipcRenderer.invoke("viron:clipboard:write-text", value)');
     expect(main).toContain('ipcMain.handle("viron:clipboard:read-text", (event) => {\n    trustedSender(event);');
     expect(main).toContain('ipcMain.handle("viron:clipboard:write-text", (event, value: unknown) => {\n    trustedSender(event);');
+    expect(clipboard).toContain("window.vironDesktop?.writeClipboardText");
+    expect(clipboard).toContain('return "desktop-bridge"');
+    expect(environment).toContain("await copyTextToClipboard(value)");
+    expect(environment).toContain('ElMessage.error(tr("复制失败"))');
+    expect(environment).not.toContain("navigator.clipboard.writeText");
     expect(terminal).toContain("terminal.onSelectionChange(scheduleSelectionCopy)");
-    expect(terminal).toContain("await writeDesktopClipboardText(selection)");
+    expect(terminal).toContain("await copyTextToClipboard(selection)");
     expect(terminal).toContain("terminal.paste(value)");
     expect(terminal).toContain('@contextmenu="pasteClipboardOnContextMenu"');
   });

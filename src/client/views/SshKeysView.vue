@@ -4,6 +4,7 @@ import { Copy, Download, Fingerprint, KeyRound, LockKeyhole, Pencil, Plus, Shiel
 import { ElMessage, ElMessageBox } from "element-plus";
 import { computed, onMounted, reactive, ref } from "vue";
 import { api } from "../api";
+import { copyTextToClipboard } from "../clipboard";
 import PageHeader from "../components/PageHeader.vue";
 import { downloadApiFile } from "../desktop";
 import { session } from "../session";
@@ -128,7 +129,7 @@ async function renameKey() {
 
 async function copyPublicKey(key: SshKeyItem) {
   try {
-    await navigator.clipboard.writeText(key.publicKey);
+    await copyTextToClipboard(key.publicKey);
     ElMessage.success(tr("公钥已复制"));
   } catch {
     ElMessage.error(tr("无法访问剪贴板，请导出公钥文件"));
