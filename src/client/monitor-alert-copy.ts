@@ -65,6 +65,22 @@ export function monitorAlertBody(alert: MonitorAlertItem, phase: "active" | "rec
       ? tr("{0} 的磁盘 {1} 已重新出现", [target, diskLabel(alert)])
       : tr("{0} 的磁盘 {1} 连续两次采集未出现，可能已经掉盘", [target, diskLabel(alert)]);
   }
+  if (alert.ruleType === "tls_expired") {
+    return recovered
+      ? tr("{0} 的证书已更新到有效期内", [target])
+      : tr("{0} 的证书已经过期", [target]);
+  }
+  if (alert.ruleType === "tls_expiring") {
+    const days = number(alert.details, "daysRemaining");
+    return recovered
+      ? tr("{0} 的证书有效期已回到告警阈值以上", [target])
+      : tr("{0} 的证书将在 {1} 天后过期", [target, days == null ? tr("不久") : String(days)]);
+  }
+  if (alert.ruleType === "tls_hostname_mismatch") {
+    return recovered
+      ? tr("{0} 的证书主机名已匹配", [target])
+      : tr("{0} 的证书主机名与 SNI 不匹配", [target]);
+  }
   const status = String(alert.details.status ?? tr("异常"));
   return recovered
     ? tr("服务 {0} 的部署节点 {1} 已恢复运行", [alert.serviceName, target])
@@ -81,5 +97,8 @@ export function monitorAlertRuleLabel(alert: Pick<MonitorAlertItem, "ruleType">)
     disk_added: tr("新增磁盘"),
     disk_missing: tr("掉盘"),
     deployment_status: tr("部署状态"),
+    tls_expiring: tr("证书即将过期"),
+    tls_expired: tr("证书已过期"),
+    tls_hostname_mismatch: tr("证书主机名不匹配"),
   })[alert.ruleType];
 }

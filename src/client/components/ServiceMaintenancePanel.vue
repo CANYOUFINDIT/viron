@@ -47,6 +47,7 @@ import { useMaintenanceDirectory } from "./service-maintenance/use-maintenance-d
 import { useMonitorInstall } from "./service-maintenance/use-monitor-install";
 import { useScriptActions } from "./service-maintenance/use-script-actions";
 import { useAlertSettings } from "./service-maintenance/use-alert-settings";
+import { useTlsCertificates } from "./service-maintenance/use-tls-certificates";
 import type { MaintenanceCounts } from "./service-maintenance/types";
 
 const props = defineProps<{
@@ -54,6 +55,7 @@ const props = defineProps<{
   focusHostId?: string;
   focusServiceId?: string;
   focusDeploymentId?: string;
+  focusEndpointId?: string;
 }>();
 const emit = defineEmits<{ "count-change": [counts: MaintenanceCounts]; "open-log": [logId: string] }>();
 const maintenanceContext = createMaintenanceContext();
@@ -67,7 +69,9 @@ const scriptActions = useScriptActions(maintenanceContext, props, emit);
 maintenanceContext.scriptActions = scriptActions;
 const alertSettings = useAlertSettings(maintenanceContext, props, emit);
 maintenanceContext.alertSettings = alertSettings;
-const maintenance = { ...maintenancePayload, ...maintenanceDirectory, ...monitorInstall, ...scriptActions, ...alertSettings };
+const tlsCertificates = useTlsCertificates(maintenanceContext, props, emit);
+maintenanceContext.tls = tlsCertificates;
+const maintenance = { ...maintenancePayload, ...maintenanceDirectory, ...monitorInstall, ...scriptActions, ...alertSettings, ...tlsCertificates };
 
 const {
   loading,
@@ -237,6 +241,23 @@ const {
   monitorDiskOptions,
   openAlertSettings,
   saveAlertSettings,
+  certificateDialog,
+  editingEndpointId,
+  probingEndpointIds,
+  selectedCertificateKey,
+  certificateForm,
+  certificateGroups,
+  selectedCertificate,
+  selectCertificate,
+  certificateTone,
+  certificateSummary,
+  endpointStatusLabel,
+  fingerprintLabel,
+  openCertificateCreate,
+  openCertificateEdit,
+  saveCertificate,
+  removeCertificate,
+  probeCertificate,
 } = maintenance;
 
 watch(selectedService, (service) => {
@@ -289,16 +310,17 @@ onBeforeUnmount(() => {
   <section class="maintenance-console" v-loading="loading">
     <header class="maintenance-toolbar">
       <div class="maintenance-summary" :aria-label="$t('服务维护')">
-        <span v-for="item in attentionItems" :key="item.key"><i :class="item.key === 'problems' || item.key === 'offline' ? 'is-amber' : 'is-muted'"></i><strong>{{ item.value }}</strong><small>{{ item.label }}</small></span>
+        <span v-for="item in attentionItems" :key="item.key"><i :class="item.key === 'problems' || item.key === 'offline' || item.key === 'tls-expired' || item.key === 'tls-expiring' ? 'is-amber' : 'is-muted'"></i><strong>{{ item.value }}</strong><small>{{ item.label }}</small></span>
         <span v-if="!attentionItems.length" class="is-quiet"><i class="is-green"></i><strong>{{ runningDeployments }}</strong><small>{{ $t('运行节点') }}</small></span>
       </div>
       <div v-if="payload.canConfigure" class="maintenance-toolbar__actions">
         <el-button :type="payload.alertSettings.enabled ? 'warning' : 'default'" plain @click="openAlertSettings"><BellRing :size="16" />{{ $t('告警设置') }}</el-button>
         <el-button v-if="activeWorkspace !== 'host'" type="primary" @click="openServiceCreate()"><Plus :size="16" />{{ $t('录入服务') }}</el-button>
+        <el-button plain @click="openCertificateCreate"><ShieldCheck :size="16" />{{ $t('登记证书') }}</el-button>
       </div>
     </header>
 
-    <div v-if="payload.services.length || payload.hosts.length" class="maintenance-layout">
+    <div v-if="payload.services.length || payload.hosts.length || payload.tlsEndpoints.length" class="maintenance-layout">
       <aside class="maintenance-directory" :class="{ 'has-no-services': !payload.services.length }">
         <section class="directory-group">
           <header><h3>{{ $t('服务清单') }}</h3><RefreshCw v-if="savingServiceOrder" :size="13" class="is-spinning" /><span>{{ payload.services.length }}</span></header>
@@ -359,6 +381,29 @@ onBeforeUnmount(() => {
                 <template #dropdown><el-dropdown-menu><el-dropdown-item command="up" :disabled="!canMoveDirectoryItem('host', host.sshConnectionId, 'up')"><ArrowUp :size="14" />{{ $t('上移') }}</el-dropdown-item><el-dropdown-item command="down" :disabled="!canMoveDirectoryItem('host', host.sshConnectionId, 'down')"><ArrowDown :size="14" />{{ $t('下移') }}</el-dropdown-item></el-dropdown-menu></template>
               </el-dropdown>
             </article>
+          </div>
+        </section>
+
+        <section class="directory-group directory-group--certs">
+          <header><h3>{{ $t('证书') }}</h3><span>{{ certificateGroups.length }}</span></header>
+          <div class="directory-list">
+            <article
+              v-for="group in certificateGroups"
+              :key="group.key"
+              class="host-index__row"
+              :class="{ 'is-active': activeWorkspace === 'certificate' && selectedCertificate?.key === group.key }"
+            >
+              <span class="directory-row__spacer"></span>
+              <button class="directory-row__main" type="button" :aria-pressed="activeWorkspace === 'certificate' && selectedCertificate?.key === group.key" @click="selectCertificate(group.key)">
+                <ShieldCheck :size="15" />
+                <span>
+                  <strong>{{ group.leafCn }}</strong>
+                  <small>{{ certificateSummary(group) }}<template v-if="group.endpoints.length"> · {{ group.endpoints.length }} {{ $t('端点') }}</template></small>
+                </span>
+                <i :class="`is-${certificateTone(group)}`"></i>
+              </button>
+            </article>
+            <div v-if="!certificateGroups.length" class="directory-empty"><ShieldCheck :size="17" /><span>{{ $t('尚未观察证书') }}</span></div>
           </div>
         </section>
       </aside>
@@ -534,6 +579,37 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
+        <section v-else-if="activeWorkspace === 'certificate' && selectedCertificate" class="host-observatory certificate-stage">
+          <header class="service-stage__header">
+            <div>
+              <div class="service-title-line"><h3>{{ selectedCertificate.leafCn }}</h3><span class="status-seal" :class="`is-${certificateTone(selectedCertificate)}`"><ShieldCheck :size="15" />{{ certificateSummary(selectedCertificate) }}</span></div>
+              <p v-if="selectedCertificate.issuer">{{ $t('颁发者') }} · {{ selectedCertificate.issuer }}</p>
+            </div>
+            <div v-if="payload.canConfigure" class="service-stage__actions">
+              <button type="button" :title="$t('登记证书')" :aria-label="$t('登记证书')" @click="openCertificateCreate"><Plus :size="16" /></button>
+            </div>
+          </header>
+          <div class="certificate-facts">
+            <article><small>{{ $t('指纹') }}</small><strong>{{ fingerprintLabel(selectedCertificate.fingerprintSha256) }}</strong></article>
+            <article><small>{{ $t('到期时间') }}</small><strong>{{ selectedCertificate.notAfter ? formatTime(selectedCertificate.notAfter) : $t('尚未探测') }}</strong></article>
+            <article><small>{{ $t('主体备用名') }}</small><strong>{{ selectedCertificate.leafSans.join(', ') || '—' }}</strong></article>
+          </div>
+          <div class="certificate-endpoints">
+            <article v-for="endpoint in selectedCertificate.endpoints" :key="endpoint.id" class="certificate-endpoint">
+              <div>
+                <strong>{{ endpoint.host }}:{{ endpoint.port }}</strong>
+                <small>{{ endpoint.sshConnectionName || $t('未绑定 SSH') }} · {{ endpoint.sni || endpoint.host }} · {{ endpointStatusLabel(endpoint) }}</small>
+                <p v-if="endpoint.webEntries.length">{{ $t('Web 入口') }} · {{ endpoint.webEntries.map((entry) => entry.name).join('、') }}</p>
+                <p v-if="endpoint.probeError">{{ endpoint.probeError }}</p>
+              </div>
+              <div class="certificate-endpoint__actions">
+                <el-button :loading="probingEndpointIds.has(endpoint.id)" :disabled="!endpoint.sshConnectionId" @click="probeCertificate(endpoint)"><RefreshCw :size="14" />{{ $t('重新探测') }}</el-button>
+                <el-button v-if="payload.canConfigure" @click="openCertificateEdit(endpoint)"><Pencil :size="14" />{{ $t('编辑') }}</el-button>
+                <el-button v-if="payload.canConfigure" type="danger" plain @click="removeCertificate(endpoint)"><Trash2 :size="14" />{{ $t('删除') }}</el-button>
+              </div>
+            </article>
+          </div>
+        </section>
         <div v-else class="workspace-empty"><Wrench :size="26" /><strong>{{ $t('尚未录入服务') }}</strong><el-button v-if="payload.canConfigure" type="primary" @click="openServiceCreate()"><Plus :size="16" />{{ $t('录入服务') }}</el-button></div>
       </main>
     </div>
@@ -732,6 +808,19 @@ onBeforeUnmount(() => {
             <el-checkbox v-model="alertSettingsForm.deploymentStatusEnabled">{{ $t('部署节点状态') }}</el-checkbox>
             <span>{{ $t('已纳管节点进入停止或异常状态时告警') }}</span>
           </article>
+          <article class="is-switch-rule">
+            <el-checkbox v-model="alertSettingsForm.tlsEnabled">{{ $t('TLS 证书到期') }}</el-checkbox>
+            <span>{{ $t('剩余天数不超过') }}</span>
+            <el-select v-model="alertSettingsForm.tlsWarnDays" style="width: 7rem">
+              <el-option :value="7" :label="$t('7 天')" />
+              <el-option :value="14" :label="$t('14 天')" />
+              <el-option :value="30" :label="$t('30 天')" />
+            </el-select>
+          </article>
+          <article class="is-switch-rule">
+            <el-checkbox v-model="alertSettingsForm.tlsHostnameMismatchEnabled">{{ $t('证书主机名不匹配') }}</el-checkbox>
+            <span>{{ $t('SNI 或连接主机与证书 CN/SAN 不一致时告警') }}</span>
+          </article>
         </div>
         <section class="monitor-alert-exclusions">
           <div>
@@ -744,6 +833,19 @@ onBeforeUnmount(() => {
         </section>
       </section>
       <template #footer><el-button @click="alertSettingsDialog = false">{{ $t('取消') }}</el-button><el-button type="primary" :loading="savingAlertSettings" @click="saveAlertSettings">{{ $t('保存告警设置') }}</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="certificateDialog" align-center class="envman-dialog" :title="editingEndpointId ? $t('编辑证书端点') : $t('登记证书端点')" width="560px">
+      <el-form label-position="top">
+        <el-form-item :label="$t('探测主机')" required><el-input v-model="certificateForm.host" :placeholder="$t('域名、IPv4 或 127.0.0.1')" /></el-form-item>
+        <div class="deployment-form-grid">
+          <el-form-item :label="$t('端口')" required><el-input-number v-model="certificateForm.port" :min="1" :max="65535" controls-position="right" style="width:100%" /></el-form-item>
+          <el-form-item :label="$t('SNI')"><el-input v-model="certificateForm.sni" :placeholder="$t('默认使用探测主机')" /></el-form-item>
+        </div>
+        <el-form-item :label="$t('SSH 连接')"><el-select v-model="certificateForm.sshConnectionId" clearable style="width:100%" :placeholder="$t('待关联主机时不探测')"><el-option v-for="host in payload.hosts" :key="host.sshConnectionId" :value="host.sshConnectionId" :label="`${host.connectionName} · ${host.username}@${host.host}`" /></el-select></el-form-item>
+        <el-form-item :label="$t('启用观察')"><el-switch v-model="certificateForm.observeEnabled" /></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="certificateDialog = false">{{ $t('取消') }}</el-button><el-button type="primary" :loading="saving" @click="saveCertificate">{{ $t('保存') }}</el-button></template>
     </el-dialog>
   </section>
 </template>
@@ -858,9 +960,23 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, var(--ink-50) 54%, var(--surface));
 }
 
-.directory-group { min-height: 0; flex: 0 1 44%; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
-.directory-group--hosts { flex: 1 1 56%; border-block-start: 1px solid var(--ink-100); }
+.directory-group { min-height: 0; flex: 1 1 33%; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
+.directory-group--hosts, .directory-group--certs { border-block-start: 1px solid var(--ink-100); }
 .maintenance-directory.has-no-services .directory-group:first-child { flex: 0 0 auto; }
+.host-index__row i.is-expired, .host-index__row i.is-expiring, .host-index__row i.is-mismatch { background: var(--ops-amber) !important; }
+.host-index__row i.is-ok { background: var(--ops-green) !important; }
+.host-index__row i.is-unbound, .host-index__row i.is-failed { background: var(--ink-200) !important; }
+.certificate-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem; padding: 1rem 1.25rem; border-block-end: 1px solid var(--ink-100); }
+.certificate-facts article { min-width: 0; display: grid; gap: .25rem; }
+.certificate-facts small { color: var(--ink-400); font-size: .625rem; }
+.certificate-facts strong { overflow: hidden; color: var(--ink-800); font-size: .75rem; font-weight: 650; text-overflow: ellipsis; }
+.certificate-endpoints { min-height: 0; overflow: auto; display: grid; gap: .75rem; padding: 1rem 1.25rem 1.25rem; }
+.certificate-endpoint { min-width: 0; padding: .875rem 1rem; border: 1px solid var(--ink-100); border-radius: 10px; display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+.certificate-endpoint strong, .certificate-endpoint small, .certificate-endpoint p { display: block; }
+.certificate-endpoint p, .certificate-endpoint small { margin: .25rem 0 0; color: var(--ink-400); font-size: .6875rem; }
+.certificate-endpoint__actions { display: flex; flex-wrap: wrap; gap: .375rem; }
+.status-seal.is-expired, .status-seal.is-expiring, .status-seal.is-mismatch { color: var(--ops-amber); }
+.status-seal.is-ok { color: var(--ops-green); }
 .directory-group > header {
   min-height: 2.75rem;
   padding-inline: .875rem;
@@ -1585,8 +1701,8 @@ onBeforeUnmount(() => {
 @media (min-width: 40rem) {
   .maintenance-summary span { padding-inline: var(--space-sm); grid-template-columns: auto auto minmax(0, 1fr); grid-template-rows: auto; gap: var(--space-xs); }
   .maintenance-summary i { grid-row: auto; }
-  .maintenance-directory { height: 15rem; max-height: 15rem; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: hidden; }
-  .directory-group--hosts { border-block-start: 0; border-inline-start: 1px solid var(--ink-100); }
+  .maintenance-directory { height: 15rem; max-height: 15rem; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: hidden; }
+  .directory-group--hosts, .directory-group--certs { border-block-start: 0; border-inline-start: 1px solid var(--ink-100); }
   .deployment-form-grid { grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); }
 }
 

@@ -60,6 +60,7 @@ import { registerMonitorAlertRoutes } from "./routes/monitor-alerts.js";
 import { McpOperationStore } from "./mcp/operation-store.js";
 import { migrateDatabaseTlsCredentials } from "./database-credentials.js";
 import { startMonitorHostPuller } from "./service-monitor.js";
+import { startTlsEndpointPuller } from "./tls-certificates.js";
 import { enterAuditSourceForRequest } from "./audit.js";
 import { MonitorInstallTaskManager } from "./monitor-install-task-manager.js";
 
@@ -177,6 +178,7 @@ export async function buildApp(options: BuildAppOptions) {
   await app.register(registerMcpRoutes);
   await app.connectionSourceScheduler.start();
   const stopMonitorHostPuller = startMonitorHostPuller(app);
+  const stopTlsEndpointPuller = startTlsEndpointPuller(app);
 
   const currentDir = fileURLToPath(new URL(".", import.meta.url));
   const clientDir = join(currentDir, "../client");
@@ -195,6 +197,7 @@ export async function buildApp(options: BuildAppOptions) {
 
   app.addHook("onClose", async () => {
     await stopMonitorHostPuller();
+    await stopTlsEndpointPuller();
     await app.monitorInstallTasks.closeAll();
     await app.sshSessions.closeAll();
     app.sshLogStreams.closeAll();

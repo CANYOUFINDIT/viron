@@ -143,6 +143,10 @@ function monitorAlertNotificationInput(value: unknown): import("../../shared/mon
     sshConnectionId: optionalId("sshConnectionId"),
     serviceId: optionalId("serviceId"),
     deploymentId: optionalId("deploymentId"),
+    targetType: input.targetType === "host" || input.targetType === "deployment" || input.targetType === "tls_endpoint"
+      ? input.targetType
+      : undefined,
+    targetId: typeof input.targetId === "string" && /^[0-9a-f-]{36}$/i.test(input.targetId) ? input.targetId : undefined,
   };
 }
 

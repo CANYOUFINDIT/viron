@@ -623,6 +623,9 @@ CREATE TABLE IF NOT EXISTS monitor_alert_settings (
   temperature_threshold REAL NOT NULL DEFAULT 80,
   deployment_status_enabled INTEGER NOT NULL DEFAULT 1,
   disk_missing_enabled INTEGER NOT NULL DEFAULT 1,
+  tls_enabled INTEGER NOT NULL DEFAULT 1,
+  tls_warn_days INTEGER NOT NULL DEFAULT 14,
+  tls_hostname_mismatch_enabled INTEGER NOT NULL DEFAULT 1,
   excluded_disks_json TEXT NOT NULL DEFAULT '[]',
   updated_by_user_id TEXT REFERENCES admin_users(id) ON DELETE SET NULL,
   created_at TEXT NOT NULL,
@@ -632,9 +635,9 @@ CREATE TABLE IF NOT EXISTS monitor_alert_settings (
 CREATE TABLE IF NOT EXISTS monitor_alert_states (
   id TEXT PRIMARY KEY,
   environment_id TEXT NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
-  target_type TEXT NOT NULL CHECK(target_type IN ('host','deployment')),
+  target_type TEXT NOT NULL CHECK(target_type IN ('host','deployment','tls_endpoint')),
   target_id TEXT NOT NULL,
-  rule_type TEXT NOT NULL CHECK(rule_type IN ('host_offline','cpu','memory','disk_usage','temperature','disk_added','disk_missing','deployment_status')),
+  rule_type TEXT NOT NULL CHECK(rule_type IN ('host_offline','cpu','memory','disk_usage','temperature','disk_added','disk_missing','deployment_status','tls_expiring','tls_expired','tls_hostname_mismatch')),
   rule_key_hash TEXT NOT NULL,
   rule_key TEXT NOT NULL DEFAULT '',
   ssh_connection_id TEXT REFERENCES ssh_connections(id) ON DELETE SET NULL,
@@ -660,9 +663,9 @@ CREATE TABLE IF NOT EXISTS monitor_alerts (
   id TEXT PRIMARY KEY,
   environment_id TEXT NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
   state_id TEXT REFERENCES monitor_alert_states(id) ON DELETE SET NULL,
-  target_type TEXT NOT NULL CHECK(target_type IN ('host','deployment')),
+  target_type TEXT NOT NULL CHECK(target_type IN ('host','deployment','tls_endpoint')),
   target_id TEXT NOT NULL,
-  rule_type TEXT NOT NULL CHECK(rule_type IN ('host_offline','cpu','memory','disk_usage','temperature','disk_added','disk_missing','deployment_status')),
+  rule_type TEXT NOT NULL CHECK(rule_type IN ('host_offline','cpu','memory','disk_usage','temperature','disk_added','disk_missing','deployment_status','tls_expiring','tls_expired','tls_hostname_mismatch')),
   rule_key TEXT NOT NULL DEFAULT '',
   ssh_connection_id TEXT REFERENCES ssh_connections(id) ON DELETE SET NULL,
   service_id TEXT REFERENCES services(id) ON DELETE SET NULL,
@@ -1096,4 +1099,51 @@ CREATE TABLE IF NOT EXISTS settings (
   value_json TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS tls_endpoints (
+  id TEXT PRIMARY KEY,
+  environment_id TEXT NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
+  ssh_connection_id TEXT REFERENCES ssh_connections(id) ON DELETE SET NULL,
+  ssh_bind_key TEXT NOT NULL DEFAULT '',
+  host TEXT NOT NULL,
+  port INTEGER NOT NULL,
+  sni TEXT NOT NULL DEFAULT '',
+  source TEXT NOT NULL CHECK(source IN ('web_entry','manual')),
+  observe_enabled INTEGER NOT NULL DEFAULT 1,
+  customized INTEGER NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  probe_status TEXT NOT NULL DEFAULT 'never' CHECK(probe_status IN ('never','ok','connect_failed','handshake_failed','timeout','probe_unavailable','skipped')),
+  probe_error TEXT NOT NULL DEFAULT '',
+  probed_at TEXT,
+  leaf_cn TEXT NOT NULL DEFAULT '',
+  leaf_sans_json TEXT NOT NULL DEFAULT '[]',
+  issuer TEXT NOT NULL DEFAULT '',
+  serial TEXT NOT NULL DEFAULT '',
+  signature_algorithm TEXT NOT NULL DEFAULT '',
+  not_before TEXT,
+  not_after TEXT,
+  fingerprint_sha256 TEXT NOT NULL DEFAULT '',
+  is_self_signed INTEGER NOT NULL DEFAULT 0,
+  hostname_match INTEGER,
+  chain_complete INTEGER,
+  days_remaining INTEGER,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS tls_endpoints_identity_idx
+  ON tls_endpoints(environment_id, ssh_bind_key, host, port, sni);
+CREATE INDEX IF NOT EXISTS tls_endpoints_environment_idx
+  ON tls_endpoints(environment_id, sort_order, updated_at DESC);
+CREATE INDEX IF NOT EXISTS tls_endpoints_connection_idx
+  ON tls_endpoints(ssh_connection_id, probed_at);
+
+CREATE TABLE IF NOT EXISTS tls_endpoint_web_entries (
+  endpoint_id TEXT NOT NULL REFERENCES tls_endpoints(id) ON DELETE CASCADE,
+  web_entry_id TEXT NOT NULL REFERENCES web_entries(id) ON DELETE CASCADE,
+  PRIMARY KEY(endpoint_id, web_entry_id)
+);
+
+CREATE INDEX IF NOT EXISTS tls_endpoint_web_entries_entry_idx
+  ON tls_endpoint_web_entries(web_entry_id);
 `;

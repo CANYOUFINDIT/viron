@@ -6,9 +6,12 @@ export type MonitorAlertRuleType =
   | "temperature"
   | "disk_added"
   | "disk_missing"
-  | "deployment_status";
+  | "deployment_status"
+  | "tls_expiring"
+  | "tls_expired"
+  | "tls_hostname_mismatch";
 
-export type MonitorAlertTargetType = "host" | "deployment";
+export type MonitorAlertTargetType = "host" | "deployment" | "tls_endpoint";
 
 export interface MonitorAlertSettings {
   enabled: boolean;
@@ -23,6 +26,9 @@ export interface MonitorAlertSettings {
   temperatureThreshold: number;
   deploymentStatusEnabled: boolean;
   diskMissingEnabled: boolean;
+  tlsEnabled: boolean;
+  tlsWarnDays: number;
+  tlsHostnameMismatchEnabled: boolean;
   excludedDisks: string[];
   consecutiveSamples: 2;
 }
@@ -68,6 +74,8 @@ export interface DesktopMonitorAlertNotification {
   sshConnectionId: string | null;
   serviceId: string | null;
   deploymentId: string | null;
+  targetType?: MonitorAlertTargetType;
+  targetId?: string;
 }
 
 export const defaultMonitorAlertSettings: MonitorAlertSettings = {
@@ -83,15 +91,20 @@ export const defaultMonitorAlertSettings: MonitorAlertSettings = {
   temperatureThreshold: 80,
   deploymentStatusEnabled: true,
   diskMissingEnabled: true,
+  tlsEnabled: true,
+  tlsWarnDays: 14,
+  tlsHostnameMismatchEnabled: true,
   excludedDisks: [],
   consecutiveSamples: 2,
 };
 
-export function monitorAlertNavigationQuery(alert: Pick<MonitorAlertItem, "sshConnectionId" | "serviceId" | "deploymentId">) {
+export function monitorAlertNavigationQuery(alert: Pick<MonitorAlertItem, "sshConnectionId" | "serviceId" | "deploymentId"> & Partial<Pick<MonitorAlertItem, "targetType" | "targetId">>) {
+  const certificateTarget = alert.targetType === "tls_endpoint";
   const serviceTarget = Boolean(alert.serviceId || alert.deploymentId);
   return {
     tab: "maintenance",
-    ...(!serviceTarget && alert.sshConnectionId ? { maintenanceHostId: alert.sshConnectionId } : {}),
+    ...(certificateTarget && alert.targetId ? { maintenanceEndpointId: alert.targetId } : {}),
+    ...(!certificateTarget && !serviceTarget && alert.sshConnectionId ? { maintenanceHostId: alert.sshConnectionId } : {}),
     ...(alert.serviceId ? { maintenanceServiceId: alert.serviceId } : {}),
     ...(alert.deploymentId ? { maintenanceDeploymentId: alert.deploymentId } : {}),
   };

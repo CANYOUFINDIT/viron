@@ -5,8 +5,11 @@ import { writeAudit } from "../audit.js";
 import { canAccessEnvironment, canManageWorkspace } from "../access-control.js";
 import { parseBody } from "../validation.js";
 import { loadWebFavicon } from "../web-favicon.js";
+import { tlsWebEntryBadge } from "../../shared/tls-certificates.js";
+import { monitorAlertSettingsForEnvironment } from "../monitor-alerts.js";
 import { hasExactIds } from "../../shared/tab-order.js";
 import { requireAdmin } from "./auth.js";
+import { listTlsEndpoints, removeWebEntryTlsEndpoint, syncWebEntryTlsEndpoint } from "../tls-certificates.js";
 
 const entrySchema = z.object({
   name: z.string().trim().min(1).max(120),
@@ -54,18 +57,26 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
         WHERE w.environment_id = ?
         ORDER BY w.sort_order, w.created_at
       `).all(request.params.environmentId) as Record<string, unknown>[];
+      const [tlsEndpoints, alertSettings] = await Promise.all([
+        listTlsEndpoints(app, request.params.environmentId),
+        monitorAlertSettingsForEnvironment(app, request.params.environmentId),
+      ]);
       return {
-        items: rows.map((row) => ({
-          id: row.id,
-          environmentId: row.environment_id,
-          name: row.name,
-          url: row.url,
-          description: row.description,
-          tags: JSON.parse(String(row.tags_json ?? "[]")),
-          credentialCount: Number(row.credential_count),
-          createdAt: row.created_at,
-          updatedAt: row.updated_at,
-        })),
+        items: rows.map((row) => {
+          const linked = tlsEndpoints.filter((endpoint) => endpoint.webEntries.some((entry) => entry.id === row.id));
+          return {
+            id: row.id,
+            environmentId: row.environment_id,
+            name: row.name,
+            url: row.url,
+            description: row.description,
+            tags: JSON.parse(String(row.tags_json ?? "[]")),
+            credentialCount: Number(row.credential_count),
+            tls: tlsWebEntryBadge(linked, alertSettings.tlsWarnDays),
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+          };
+        }),
       };
     },
   );
@@ -99,6 +110,7 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
         now,
         now,
       );
+      await syncWebEntryTlsEndpoint(app, request.params.environmentId, id, body.url);
       await writeAudit(app.db, {
         action: "web_entry.created",
         resourceType: "web_entry",
@@ -154,6 +166,7 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
         .run(body.name, body.url, body.description, JSON.stringify(body.tags), new Date().toISOString(), request.params.id);
       if (!result.changes) return reply.code(404).send({ error: "NOT_FOUND", message: "Web 入口不存在" });
       await Promise.all(credentials.map((credential) => app.webAccountViews.sleepCredential(credential.id)));
+      await syncWebEntryTlsEndpoint(app, environmentId, request.params.id, body.url);
       await writeAudit(app.db, { action: "web_entry.updated", resourceType: "web_entry", resourceId: request.params.id, summary: `更新 Web 入口 ${body.name}`, request });
       return { ok: true };
     },
@@ -170,6 +183,7 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
       if (!entry) return reply.code(404).send({ error: "NOT_FOUND", message: "Web 入口不存在" });
       const credentials = await app.db.prepare("SELECT id FROM web_credentials WHERE web_entry_id = ?").all(request.params.id) as Array<{ id: string }>;
       await Promise.all(credentials.map((credential) => app.webAccountViews.purgeCredential(credential.id)));
+      await removeWebEntryTlsEndpoint(app, request.params.id);
       await app.db.prepare("DELETE FROM web_entries WHERE id = ?").run(request.params.id);
       await writeAudit(app.db, { action: "web_entry.deleted", resourceType: "web_entry", resourceId: request.params.id, summary: `删除 Web 入口 ${entry.name}`, request });
       return reply.code(204).send();

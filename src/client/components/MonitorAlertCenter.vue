@@ -47,10 +47,10 @@ const notificationStatus = computed(() => {
 
 type MonitorAlertNavigationTarget = Pick<
   MonitorAlertItem,
-  "id" | "workspaceType" | "workspaceId" | "environmentId" | "sshConnectionId" | "serviceId" | "deploymentId"
+  "id" | "workspaceType" | "workspaceId" | "environmentId" | "sshConnectionId" | "serviceId" | "deploymentId" | "targetType" | "targetId"
 >;
 
-function navigationTarget(alert: Pick<MonitorAlertItem, "environmentId" | "sshConnectionId" | "serviceId" | "deploymentId">) {
+function navigationTarget(alert: Pick<MonitorAlertItem, "environmentId" | "sshConnectionId" | "serviceId" | "deploymentId" | "targetType" | "targetId">) {
   return { name: "environment" as const, params: { id: alert.environmentId }, query: monitorAlertNavigationQuery(alert) };
 }
 
@@ -113,6 +113,8 @@ async function showSystemNotification(alert: MonitorAlertItem, phase: "active" |
       sshConnectionId: alert.sshConnectionId,
       serviceId: alert.serviceId,
       deploymentId: alert.deploymentId,
+      targetType: alert.targetType,
+      targetId: alert.targetId,
     }).catch(() => undefined);
     return;
   }
@@ -202,6 +204,8 @@ onMounted(() => {
       sshConnectionId: target.sshConnectionId,
       serviceId: target.serviceId,
       deploymentId: target.deploymentId,
+      targetType: target.targetType ?? "host",
+      targetId: target.targetId ?? "",
     });
   });
 });
