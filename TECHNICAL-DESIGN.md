@@ -78,6 +78,7 @@ Web、桌面共享界面、浏览器 favicon 和 App 图标统一使用 `design/
 - 定时数据库数据同步和双向实时数据库同步；SecureCRT 连接目录仍支持 Cron 定时拉取。
 - 验证码、短信、MFA、WebAuthn 和跨域 SSO 的自动完成。
 - 本地 Agent 或 server/agent 混合浏览器执行。
+- 普通 Web 对允许名单站点的每账号独立子域反向代理浏览通道；任意 Web 入口仍使用服务端 Chromium 与独立 Profile。
 - 内置 Viron Agent 已使用 Pi 作为持久多轮与 ReAct/tool-loop 内核，按设备、Endpoint 与用户保存脱敏文本历史，并通过 Viron MCP 紧凑网关调用已注册业务 Operation；本机 SSH 单行命令与 Shell 脚本安全填入、本机与服务端转发 SSH/数据库多步只读诊断、SSH 写命令与数据库写 SQL 的影响预览和确认执行，以及双执行位置已交付。日志、Redis、Web、知识库和服务维护的通用业务调用以 MCP 目录实际注册能力为准，领域专用可见工作台适配器、远程脚本文件创建或执行、数据库批处理任务、Redis 写和 Web 提交仍需继续补齐。服务端转发不提供命令或脚本填入。
 - 日志时间过滤、日志历史保存和跨文件日志时间排序。
 - 手机端终端分屏和数据库编辑。
