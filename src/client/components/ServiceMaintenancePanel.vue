@@ -148,6 +148,7 @@ const {
   visualThreshold,
   selectService,
   selectHost,
+  openWorkspaceTab,
   openServiceCreate,
   openServiceEdit,
   saveService,
@@ -248,6 +249,8 @@ const {
   certificateForm,
   certificateGroups,
   selectedCertificate,
+  expiredCertificates,
+  expiringCertificates,
   selectCertificate,
   certificateTone,
   certificateSummary,
@@ -315,14 +318,19 @@ onBeforeUnmount(() => {
       </div>
       <div v-if="payload.canConfigure" class="maintenance-toolbar__actions">
         <el-button :type="payload.alertSettings.enabled ? 'warning' : 'default'" plain @click="openAlertSettings"><BellRing :size="16" />{{ $t('告警设置') }}</el-button>
-        <el-button v-if="activeWorkspace !== 'host'" type="primary" @click="openServiceCreate()"><Plus :size="16" />{{ $t('录入服务') }}</el-button>
-        <el-button plain @click="openCertificateCreate"><ShieldCheck :size="16" />{{ $t('登记证书') }}</el-button>
+        <el-button v-if="activeWorkspace === 'service'" type="primary" @click="openServiceCreate()"><Plus :size="16" />{{ $t('录入服务') }}</el-button>
+        <el-button v-else-if="activeWorkspace === 'certificate'" type="primary" @click="openCertificateCreate"><ShieldCheck :size="16" />{{ $t('登记证书') }}</el-button>
       </div>
     </header>
 
     <div v-if="payload.services.length || payload.hosts.length || payload.tlsEndpoints.length" class="maintenance-layout">
-      <aside class="maintenance-directory" :class="{ 'has-no-services': !payload.services.length }">
-        <section class="directory-group">
+      <aside class="maintenance-directory">
+        <nav class="directory-tabs" role="tablist" :aria-label="$t('服务维护清单')">
+          <button type="button" role="tab" :aria-selected="activeWorkspace === 'service'" :class="{ 'is-active': activeWorkspace === 'service' }" @click="openWorkspaceTab('service')">{{ $t('服务') }}<small>{{ payload.services.length }}</small></button>
+          <button type="button" role="tab" :aria-selected="activeWorkspace === 'host'" :class="{ 'is-active': activeWorkspace === 'host' }" @click="openWorkspaceTab('host')">{{ $t('主机') }}<small>{{ payload.hosts.length }}</small></button>
+          <button type="button" role="tab" :aria-selected="activeWorkspace === 'certificate'" :class="{ 'is-active': activeWorkspace === 'certificate', 'has-alert': expiredCertificates + expiringCertificates > 0 }" @click="openWorkspaceTab('certificate')">{{ $t('证书') }}<small :class="{ 'is-alert': expiredCertificates + expiringCertificates > 0 }">{{ certificateGroups.length }}</small></button>
+        </nav>
+        <section v-show="activeWorkspace === 'service'" class="directory-group">
           <header><h3>{{ $t('服务清单') }}</h3><RefreshCw v-if="savingServiceOrder" :size="13" class="is-spinning" /><span>{{ payload.services.length }}</span></header>
           <div class="directory-list">
             <article
@@ -355,7 +363,7 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <section class="directory-group directory-group--hosts">
+        <section v-show="activeWorkspace === 'host'" class="directory-group">
           <header><h3>{{ $t('SSH 宿主机') }}</h3><RefreshCw v-if="savingHostOrder" :size="13" class="is-spinning" /><span>{{ payload.hosts.length }}</span></header>
           <div class="directory-list">
             <article
@@ -384,7 +392,7 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <section class="directory-group directory-group--certs">
+        <section v-show="activeWorkspace === 'certificate'" class="directory-group">
           <header><h3>{{ $t('证书') }}</h3><span>{{ certificateGroups.length }}</span></header>
           <div class="directory-list">
             <article
@@ -403,7 +411,11 @@ onBeforeUnmount(() => {
                 <i :class="`is-${certificateTone(group)}`"></i>
               </button>
             </article>
-            <div v-if="!certificateGroups.length" class="directory-empty"><ShieldCheck :size="17" /><span>{{ $t('尚未观察证书') }}</span></div>
+            <div v-if="!certificateGroups.length" class="directory-empty">
+              <ShieldCheck :size="17" />
+              <span>{{ $t('尚未观察证书') }}</span>
+              <el-button v-if="payload.canConfigure" type="primary" link @click="openCertificateCreate">{{ $t('登记证书') }}</el-button>
+            </div>
           </div>
         </section>
       </aside>
@@ -610,6 +622,7 @@ onBeforeUnmount(() => {
             </article>
           </div>
         </section>
+        <div v-else-if="activeWorkspace === 'certificate'" class="workspace-empty"><ShieldCheck :size="26" /><strong>{{ $t('尚未观察证书') }}</strong><el-button v-if="payload.canConfigure" type="primary" @click="openCertificateCreate"><Plus :size="16" />{{ $t('登记证书') }}</el-button></div>
         <div v-else class="workspace-empty"><Wrench :size="26" /><strong>{{ $t('尚未录入服务') }}</strong><el-button v-if="payload.canConfigure" type="primary" @click="openServiceCreate()"><Plus :size="16" />{{ $t('录入服务') }}</el-button></div>
       </main>
     </div>
@@ -960,9 +973,57 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, var(--ink-50) 54%, var(--surface));
 }
 
-.directory-group { min-height: 0; flex: 1 1 33%; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
-.directory-group--hosts, .directory-group--certs { border-block-start: 1px solid var(--ink-100); }
-.maintenance-directory.has-no-services .directory-group:first-child { flex: 0 0 auto; }
+.directory-tabs {
+  flex: 0 0 auto;
+  margin: .5rem .625rem 0;
+  padding: 3px;
+  border: 1px solid var(--ink-100);
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 3px;
+  background: color-mix(in srgb, var(--ink-100) 55%, var(--surface));
+}
+.directory-tabs button {
+  min-width: 0;
+  min-height: 2.125rem;
+  padding: 0 .5rem;
+  border: 0;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .25rem;
+  background: transparent;
+  color: var(--ink-500);
+  font-size: .6875rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+.directory-tabs button.is-active {
+  background: var(--surface);
+  color: var(--teal-700);
+  box-shadow: 0 1px 5px rgba(8, 22, 25, .1);
+}
+.directory-tabs small {
+  min-width: 1.125rem;
+  height: 1.125rem;
+  padding: 0 .3rem;
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  background: var(--ink-100);
+  color: var(--ink-500);
+  font-family: var(--font-mono);
+  font-size: .625rem;
+  font-weight: 700;
+}
+.directory-tabs button.is-active small { background: var(--teal-50); color: var(--teal-700); }
+.directory-tabs small.is-alert,
+.directory-tabs button.has-alert small { background: color-mix(in srgb, var(--ops-amber) 22%, var(--surface)); color: var(--ops-amber); }
+.directory-tabs button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+
+.directory-group { min-height: 0; flex: 1 1 auto; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
 .host-index__row i.is-expired, .host-index__row i.is-expiring, .host-index__row i.is-mismatch { background: var(--ops-amber) !important; }
 .host-index__row i.is-ok { background: var(--ops-green) !important; }
 .host-index__row i.is-unbound, .host-index__row i.is-failed { background: var(--ink-200) !important; }
@@ -1673,7 +1734,8 @@ onBeforeUnmount(() => {
   .host-index__row:hover .directory-row__menu { color: var(--ink-500); }
   .directory-row__grip:hover:not(.is-disabled),
   .directory-row__menu:hover:not(:disabled) { background: var(--surface); color: var(--teal-700); }
-  .host-workspace-tabs button:hover:not(.is-active) { color: var(--ink-800); }
+  .host-workspace-tabs button:hover:not(.is-active),
+  .directory-tabs button:hover:not(.is-active) { color: var(--ink-800); }
   .service-stage__actions > button:not(.el-button):hover,
   .deployment-card__tools button:hover,
   .deployment-card footer button:hover,
@@ -1696,13 +1758,13 @@ onBeforeUnmount(() => {
   .deployment-card__tools button,
   .deployment-card footer button,
   .host-workspace-tabs button { min-width: 2.75rem; min-height: 2.75rem; }
+  .directory-tabs button { min-width: 2.75rem; min-height: 2.75rem; }
 }
 
 @media (min-width: 40rem) {
   .maintenance-summary span { padding-inline: var(--space-sm); grid-template-columns: auto auto minmax(0, 1fr); grid-template-rows: auto; gap: var(--space-xs); }
   .maintenance-summary i { grid-row: auto; }
-  .maintenance-directory { height: 15rem; max-height: 15rem; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: hidden; }
-  .directory-group--hosts, .directory-group--certs { border-block-start: 0; border-inline-start: 1px solid var(--ink-100); }
+  .maintenance-directory { height: 18rem; max-height: 18rem; }
   .deployment-form-grid { grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); }
 }
 
@@ -1730,7 +1792,6 @@ onBeforeUnmount(() => {
 @media (min-width: 52rem) {
   .maintenance-layout { display: grid; grid-template-columns: 16.75rem minmax(0, 1fr); overflow: hidden; }
   .maintenance-directory { height: auto; max-height: none; border-inline-end: 1px solid var(--ink-100); border-block-end: 0; display: flex; }
-  .directory-group--hosts { border-inline-start: 0; border-block-start: 1px solid var(--ink-100); }
   .maintenance-workspace { padding: var(--space-lg); overflow: auto; }
   .maintenance-workspace:has(.host-observatory) { overflow: hidden; display: flex; flex-direction: column; }
   .maintenance-workspace:has(.host-observatory) > .host-observatory { flex: 1 1 auto; min-height: 0; }

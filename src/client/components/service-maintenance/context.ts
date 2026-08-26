@@ -77,6 +77,7 @@ export type MaintenancePayloadApi = MaintenancePart<
   | "visualThreshold"
   | "selectService"
   | "selectHost"
+  | "openWorkspaceTab"
   | "openServiceCreate"
   | "openServiceEdit"
   | "saveService"

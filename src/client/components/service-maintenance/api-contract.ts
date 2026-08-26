@@ -82,6 +82,7 @@ export interface MaintenanceApi {
   "visualThreshold": (enabled: boolean, value: number, fallback: number) => number;
   "selectService": (id: string) => void;
   "selectHost": (id: string) => void;
+  "openWorkspaceTab": (kind: MaintenanceWorkspace) => void;
   "openServiceCreate": (fromDiscovery?: boolean) => void;
   "openServiceEdit": () => void;
   "saveService": () => Promise<MessageHandler | undefined>;

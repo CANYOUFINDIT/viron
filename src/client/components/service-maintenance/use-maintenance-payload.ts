@@ -416,6 +416,24 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
       activeWorkspace.value = "host";
   }
 
+  function openWorkspaceTab(kind: MaintenanceWorkspace) {
+      if (kind === "service") {
+          const id = selectedServiceId.value || payload.value.services[0]?.id;
+          if (id) selectService(id);
+          else activeWorkspace.value = "service";
+          return;
+      }
+      if (kind === "host") {
+          const id = selectedHostId.value || payload.value.hosts[0]?.sshConnectionId;
+          if (id) selectHost(id);
+          else activeWorkspace.value = "host";
+          return;
+      }
+      const key = $tls.selectedCertificate.value?.key || $tls.certificateGroups.value[0]?.key;
+      if (key) $tls.selectCertificate(key);
+      else activeWorkspace.value = "certificate";
+  }
+
   function openServiceCreate(fromDiscovery = false) {
       creatingServiceFromDiscovery.value = fromDiscovery === true;
       editingServiceId.value = "";
@@ -758,6 +776,7 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
     visualThreshold,
     selectService,
     selectHost,
+    openWorkspaceTab,
     openServiceCreate,
     openServiceEdit,
     saveService,
