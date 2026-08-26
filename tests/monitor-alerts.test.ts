@@ -531,4 +531,53 @@ describe("monitor alerts", () => {
       await app.close();
     }
   });
+
+  it("clears a large unread backlog with a bulk write instead of per-alert updates", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "viron-monitor-alert-clear-all-test-"));
+    directories.push(directory);
+    const config = testConfig(directory);
+    const db = await openDatabase(config);
+    await ensureAdmin(db, config);
+    const app = await buildApp({ config, db, logger: false });
+    try {
+      const login = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { username: "admin", password: config.adminPassword } });
+      const cookies = { envman_session: login.cookies.find((item) => item.name === "envman_session")!.value };
+      const environment = await app.inject({ method: "POST", url: "/api/v1/environments", cookies, payload: { name: "大批量告警环境" } });
+      const environmentId = environment.json().id as string;
+      const now = new Date().toISOString();
+      const total = 240;
+      await app.db.transaction(async () => {
+        for (let index = 0; index < total; index += 1) {
+          await app.db.prepare(`
+            INSERT INTO monitor_alerts (
+              id, environment_id, state_id, target_type, target_id, rule_type, rule_key,
+              ssh_connection_id, service_id, deployment_id, environment_name, target_name,
+              connection_name, service_name, status, details_json, triggered_at, recovered_at,
+              created_at, updated_at
+            ) VALUES (?, ?, NULL, 'host', ?, 'cpu', '', NULL, NULL, NULL, ?, ?, '', '', 'active', ?, ?, NULL, ?, ?)
+          `).run(
+            randomUUID(),
+            environmentId,
+            randomUUID(),
+            "大批量告警环境",
+            `主机 ${index}`,
+            JSON.stringify({ value: 95, threshold: 90 }),
+            now,
+            now,
+            now,
+          );
+        }
+      })();
+      expect((await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies })).json().unread).toBe(total);
+      const started = Date.now();
+      const cleared = await app.inject({ method: "POST", url: "/api/v1/monitor-alerts/clear-all", cookies });
+      expect(cleared.statusCode).toBe(200);
+      expect(cleared.json()).toMatchObject({ ok: true, updated: total });
+      expect(Date.now() - started).toBeLessThan(1_500);
+      expect((await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies })).json()).toMatchObject({ unread: 0, items: [] });
+      expect((await app.inject({ method: "POST", url: "/api/v1/monitor-alerts/clear-all", cookies })).json()).toMatchObject({ updated: 0 });
+    } finally {
+      await app.close();
+    }
+  });
 });

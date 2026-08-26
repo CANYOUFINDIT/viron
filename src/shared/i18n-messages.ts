@@ -4315,6 +4315,7 @@ const enOverrides: Record<string, string> = {
   "打开连接位置：{{0}}": "Open connection location: {{0}}",
   "该连接属于“{{0}}”，当前不能无损跳转；切换工作空间会关闭活动连接。": "This connection belongs to “{{0}}”. It cannot be opened without disruption because switching workspaces closes active connections.",
   "无法打开连接位置": "Failed to open the connection location",
+  "无法清理告警": "Failed to clear alerts",
   "批量查询数量必须为 1–20 条": "A batch must contain 1–20 queries",
   "批量查询参数无效": "Invalid batch query parameters",
   "数据库名称过长": "Database name is too long",

@@ -151,6 +151,72 @@ async function touchAlertUserState(
   await app.db.prepare(`UPDATE monitor_alert_user_states SET ${assignments.join(", ")} WHERE alert_id = ? AND user_id = ?`).run(...params);
 }
 
+async function bulkMarkAlertUserStates(
+  app: FastifyInstance,
+  userId: string,
+  scope: { sql: string; parameters: unknown[] },
+  now: string,
+  mode: "read" | "clear",
+): Promise<number> {
+  const scopedAlertsSql = `
+    SELECT id FROM (
+      SELECT a.id AS id
+      FROM monitor_alerts a
+      JOIN environments e ON e.id = a.environment_id
+      WHERE ${scope.sql}
+    ) AS scoped_alerts
+  `;
+  let updated = 0;
+  await app.db.transaction(async () => {
+    if (mode === "clear") {
+      const updateResult = await app.db.prepare(`
+        UPDATE monitor_alert_user_states
+        SET read_at = COALESCE(read_at, ?), cleared_at = ?, updated_at = ?
+        WHERE user_id = ? AND cleared_at IS NULL AND alert_id IN (${scopedAlertsSql})
+      `).run(now, now, now, userId, ...scope.parameters);
+      const insertResult = await app.db.prepare(`
+        INSERT INTO monitor_alert_user_states (
+          alert_id, user_id, active_notified_at, recovery_notified_at, read_at, cleared_at, updated_at
+        )
+        SELECT alert_id, user_id, active_notified_at, recovery_notified_at, read_at, cleared_at, updated_at
+        FROM (
+          SELECT a.id AS alert_id, ? AS user_id, NULL AS active_notified_at, NULL AS recovery_notified_at,
+            ? AS read_at, ? AS cleared_at, ? AS updated_at
+          FROM monitor_alerts a
+          JOIN environments e ON e.id = a.environment_id
+          LEFT JOIN monitor_alert_user_states u ON u.alert_id = a.id AND u.user_id = ?
+          WHERE ${scope.sql}
+            AND u.alert_id IS NULL
+        ) AS missing_alert_states
+      `).run(userId, now, now, now, userId, ...scope.parameters);
+      updated = updateResult.changes + insertResult.changes;
+      return;
+    }
+    const updateResult = await app.db.prepare(`
+      UPDATE monitor_alert_user_states
+      SET read_at = COALESCE(read_at, ?), updated_at = ?
+      WHERE user_id = ? AND alert_id IN (${scopedAlertsSql})
+    `).run(now, now, userId, ...scope.parameters);
+    const insertResult = await app.db.prepare(`
+      INSERT INTO monitor_alert_user_states (
+        alert_id, user_id, active_notified_at, recovery_notified_at, read_at, cleared_at, updated_at
+      )
+      SELECT alert_id, user_id, active_notified_at, recovery_notified_at, read_at, cleared_at, updated_at
+      FROM (
+        SELECT a.id AS alert_id, ? AS user_id, NULL AS active_notified_at, NULL AS recovery_notified_at,
+          ? AS read_at, NULL AS cleared_at, ? AS updated_at
+        FROM monitor_alerts a
+        JOIN environments e ON e.id = a.environment_id
+        LEFT JOIN monitor_alert_user_states u ON u.alert_id = a.id AND u.user_id = ?
+        WHERE ${scope.sql}
+          AND u.alert_id IS NULL
+      ) AS missing_alert_states
+    `).run(userId, now, now, userId, ...scope.parameters);
+    updated = updateResult.changes + insertResult.changes;
+  })();
+  return updated;
+}
+
 async function canAccessAlert(app: FastifyInstance, request: FastifyRequest, alertId: string): Promise<boolean> {
   const environmentId = await alertEnvironmentId(app, alertId);
   if (!environmentId) return false;
@@ -364,32 +430,13 @@ export async function registerMonitorAlertRoutes(app: FastifyInstance): Promise<
 
   app.post("/api/v1/monitor-alerts/read-all", { preHandler: requireAdmin }, async (request) => {
     const scope = alertScopeWhere(await alertWorkspaceScopes(app, request));
-    const rows = await app.db.prepare(`
-      SELECT a.id FROM monitor_alerts a JOIN environments e ON e.id = a.environment_id
-      WHERE ${scope.sql}
-    `).all(...scope.parameters) as Array<{ id: string }>;
-    const now = new Date().toISOString();
-    await app.db.transaction(async () => {
-      for (const row of rows) await touchAlertUserState(app, row.id, request.admin!.id, now, { readAt: now });
-    })();
-    return { ok: true, updated: rows.length };
+    const updated = await bulkMarkAlertUserStates(app, request.admin!.id, scope, new Date().toISOString(), "read");
+    return { ok: true, updated };
   });
 
   app.post("/api/v1/monitor-alerts/clear-all", { preHandler: requireAdmin }, async (request) => {
     const scope = alertScopeWhere(await alertWorkspaceScopes(app, request));
-    const parameters = [request.admin!.id, ...scope.parameters];
-    const rows = await app.db.prepare(`
-      SELECT a.id
-      FROM monitor_alerts a
-      JOIN environments e ON e.id = a.environment_id
-      LEFT JOIN monitor_alert_user_states u ON u.alert_id = a.id AND u.user_id = ?
-      WHERE ${scope.sql}
-        AND u.cleared_at IS NULL
-    `).all(...parameters) as Array<{ id: string }>;
-    const now = new Date().toISOString();
-    await app.db.transaction(async () => {
-      for (const row of rows) await touchAlertUserState(app, row.id, request.admin!.id, now, { readAt: now, clearedAt: now });
-    })();
-    return { ok: true, updated: rows.length };
+    const updated = await bulkMarkAlertUserStates(app, request.admin!.id, scope, new Date().toISOString(), "clear");
+    return { ok: true, updated };
   });
 }
