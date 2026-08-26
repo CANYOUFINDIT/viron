@@ -10,7 +10,7 @@
 - 用户与接入：资源移交、注册与账号恢复增强、细粒度组织角色，以及通用联邦登录和外部系统初始化。
 - 服务维护：TLS 证书观察与到期告警、端口/HTTP 健康检查、历史保留与容量分析、Kubernetes 受控运维动作、环境组汇总和独立脚本库。
 - 自动化：跨环境 SSH 脚本主动执行、批量执行、调度、历史、取消、重试和审计。
-- Web：普通 Web 服务端画面流的受控页面检查器。
+- Web：普通 Web 服务端画面流的受控页面检查器；允许名单站点的每账号独立子域反向代理浏览通道（不替换服务端 Chromium）。
 - 桌面 App：个人本机审计、组织可靠上报队列、失权与清理收口、远程签名或受控 SSH Agent，以及 macOS/Windows 正式签名和目标机验收。
 - Viron Agent：Web、日志、Redis、知识库和服务维护的强类型安全工具，远程脚本文件与脚本执行，数据库批处理任务，Redis/Web 写操作，以及受限 Runbook。
 - MCP：补齐新增业务目录、日志与 Web 运行语义、真实目标写入和完整生命周期回收验收。
@@ -270,6 +270,78 @@ ARDM 只作为参考实现，不能把其安全行为当作 Viron 的默认设�
 - 覆盖普通 Web 与 App 服务端转发、主页面与 HTTP(S) 弹窗、同账号多页面、双账号并排、刷新/导航/关闭及重新登录。
 - 验证跨用户、跨账号、跨执行实例和过期票据均被拒绝；检查消息不能调用未列入白名单的 CDP 能力，也不能读取其他 Profile、Cookie 或服务器文件。
 - 真实 Chromium 验证元素定位、高亮、DOM 增量展开、计算样式和盒模型准确，检查器关闭后页面交互、画面流、上传下载和登录态不受影响。
+
+## 普通 Web 的反向代理浏览通道
+
+普通 Web 当前由服务端 Chromium 渲染目标站点，再通过 CDP JPEG 画面流送到浏览器，因此画质受压缩和带宽限制，也吃并发 Chromium 配额。桌面 App 本机 `WebContentsView` 已经用独立 Profile 在本地渲染，不走这条路径。本节规划的是普通 Web 的**可选附加通道**：对明确允许的内网站点，用独立子域把真实 HTML/CSS/JS 交给用户浏览器渲染，换清晰度和更低画面流量，同时在同一浏览器里保持多账号登录态隔离。
+
+该通道**不替换**现有服务端 Chromium。任意用户录入的 URL、OAuth/扫码/跨域 SSO、多主机名站点，以及不允许被嵌入或改写 Cookie 的站点，继续走独立 Chrome Profile 与画面流。画面流本身的编码升级（例如 WebRTC）是另一条候选，不在本节。
+
+### 为什么必须是独立子域
+
+浏览器登录态按 origin（协议 + host + 端口）隔离；Cookie 还不认端口。因此下列写法都不能作为多账号隔离键：
+
+- 查询参数，例如 `https://<endpoint>/?proxy=grafana.internal`
+- 路径前缀，例如 `https://<endpoint>/proxy/<credentialId>/`（localStorage、IndexedDB、Service Worker 仍按 origin 共享）
+- 不同端口（Cookie 在多数浏览器中跨端口共享）
+
+可行形态是每个 Web 凭据一个不同 host。DNS 通配符和证书都只覆盖**一层**标签，所以子域必须是单层，不能把账号名和目标网站名叠进去。
+
+禁止使用 `http://{账号}.{网站名}.<platform-domain>`：账号名与网站名不是合法或唯一的 DNS 标签，同一入口两个 `admin` 会冲突，目标 URL 中的点会破坏通配解析，证书盖不住多级子域，父域 `Domain=.google.<platform-domain>` 会把隔离打穿，并且把目标主机写进公开 Host 等于开放代理。
+
+约定：
+
+```text
+https://{credentialLabel}.web.<platform-domain>/
+```
+
+- `platform-domain` 是部署时配置的平台域名，不是写死的 `viron.com`。
+- `credentialLabel` 是从当前 Web 凭据稳定派生的 DNS 安全不透明标签（例如凭据 ID 的规范编码或短哈希），**不得**使用用户名、备注或目标主机名。
+- 只使用 HTTPS；HTTP 会丢掉 `Secure` Cookie，并与现代站点的混合内容策略冲突。
+- 需要 `*.web.<platform-domain>` 的 DNS 与通配证书。当前 Compose 不包含反向代理组件，实施时作为部署层增加，不能假定仓库里已经有 NGINX。
+
+### 转发职责
+
+流量形态：
+
+```text
+浏览器
+  → https://{credentialLabel}.web.<platform-domain>/
+    → 边缘反向代理：终止 TLS，按 Host 转给 Viron，不自行解析目标站
+      → Viron：用 Host 反查凭据，校验登录、工作空间和 Web 入口授权，读取已入库的入口 URL
+        → 反向代理到该凭据对应的入口 Origin
+        → 把 Set-Cookie 改写成当前 host-only，去掉可指向父域的 Domain
+```
+
+硬性边界：
+
+- 上游地址**只**来自当前用户有权使用、且已写入 Web 入口的 URL，禁止从 Host、路径、查询参数或请求体拼出任意目标。构造未授权标签、伪造网站名或探测内网必须拒绝，并作为开放代理/SSRF 回归用例。
+- 边缘 NGINX（或等价组件）只做证书、HTTP/2 和按 Host 转发；鉴权、凭据查找、Cookie 改写和上游限制必须在 Viron 内完成，不能写成 `proxy_pass` 到 Host 里拆出来的主机。
+- 首期只代理该凭据入口 URL 的 Origin。跳转到其他主机（登录、API、CDN、OAuth）一律视为不兼容，不得为每个上游主机再叠一层子域，也不得靠改写 HTML/JS 假装通用网站代理。
+- Cookie 必须改成当前子域的 host-only。禁止把 `Domain` 设到 `web.<platform-domain>` 或其上级。路径改写不能替代子域隔离。
+- 工作区内嵌时受 `X-Frame-Options` 和 `CSP frame-ancestors` 约束；站点拒绝嵌入则该通道不可用，回退画面流，不能关闭用户浏览器的安全策略去换兼容。
+- 自动填充仍只允许入口原始 Origin。代理页的 origin 是 `*.web.<platform-domain>`，首期不在该 origin 上自动提交密码；需要填充时继续走现有 Chromium 通道或后续单独设计。
+- 密码、上游 Cookie 明文、改写后的完整 `Set-Cookie` 不得进入普通 API、应用日志或审计详情。审计只记录通道启用、凭据、目标 Origin、成功/拒绝原因。
+
+### 产品行为
+
+- 默认继续使用服务端 Chromium 与独立 Profile。反向代理通道按站点允许名单或入口级开关启用，未启用时界面与现在一致。
+- 允许名单面向主机名单一、不校验页面 origin、可接受 host-only Cookie、并且（若嵌入工作区）允许被 Viron 域名嵌入的内网后台，例如部分自建 Grafana 或简单管理端。Google、GitHub、云控制台、带扫码或跨域 SSO 的站点不得列入默认允许名单。
+- 同一浏览器中两个账号打开同一允许站点时，使用两个不同的 `credentialLabel` 子域，从而隔离 Cookie、localStorage 和 IndexedDB。这是该通道存在的理由，也是验收必须覆盖的行为。
+- 桌面 App 本机 Web 继续使用 `WebContentsView` 与独立 Profile，不改走该通道。App 选择服务端转发时可以复用同一代理入口，但不能把它当成 App 本机浏览的替代，也不能在中心未启用该通道时假装浏览器本机直连。
+- Lite 若不具备 Web 代理能力，不得展示该通道；与现有「服务端未启用 Web 代理则普通 Web 不可打开页面」的能力声明保持一致。
+
+### 验收边界
+
+实施前要把平台域名、通配证书、标签编码、并发代理数、上游超时、响应大小、Cookie 改写规则和允许名单来源写入技术设计。真实验收至少覆盖：
+
+- 同一允许站点两个账号在同一浏览器中登录态不串号，localStorage 不串。
+- 查询参数、路径前缀和换端口方案不得作为已交付隔离手段出现在界面或配置里。
+- Host 中的标签不能指向未授权凭据、其他用户凭据或不存在的入口；不能把内网任意主机当成上游。
+- 目标站跳转到其他主机时明确失败或回退画面流，不能静默离开代理。
+- 拒绝嵌入的站点不能把工作区掏空或泄露外层 Viron Cookie。
+- Cookie `Domain` 父域改写被拒绝；`Secure` / `SameSite` 行为符合 HTTPS 子域。
+- 未完成上述验收前，入口不得显示为已交付，也不得对任意 Web 入口默认开启。
 
 ## 桌面 App、本机执行与服务端转发
 
