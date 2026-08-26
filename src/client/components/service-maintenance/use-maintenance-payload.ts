@@ -114,18 +114,24 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
 
   const unmonitoredHosts = computed(() => payload.value.hosts.filter((host) => host.monitorStatus === "missing" && !host.monitorOffline).length);
 
-  const attentionItems = computed(() => [
-      problemDeployments.value ? { key: "problems", value: problemDeployments.value, label: tr("待处理") } : null,
-      offlineHosts.value ? { key: "offline", value: offlineHosts.value, label: tr("离线主机") } : null,
-      unmonitoredHosts.value ? { key: "missing", value: unmonitoredHosts.value, label: tr("未监控") } : null,
-      $tls.expiredCertificates.value ? { key: "tls-expired", value: $tls.expiredCertificates.value, label: tr("证书已过期") } : null,
-      $tls.expiringCertificates.value ? { key: "tls-expiring", value: $tls.expiringCertificates.value, label: tr("证书即将过期") } : null,
-      $tls.unboundCertificates.value ? { key: "tls-unbound", value: $tls.unboundCertificates.value, label: tr("待关联主机") } : null,
-  ].filter((item): item is {
-      key: string;
-      value: number;
-      label: string;
-  } => Boolean(item)));
+  const attentionItems = computed(() => {
+      const items = activeWorkspace.value === "certificate"
+          ? [
+              $tls.expiredCertificates.value ? { key: "tls-expired", value: $tls.expiredCertificates.value, label: tr("证书已过期") } : null,
+              $tls.expiringCertificates.value ? { key: "tls-expiring", value: $tls.expiringCertificates.value, label: tr("证书即将过期") } : null,
+              $tls.unboundCertificates.value ? { key: "tls-unbound", value: $tls.unboundCertificates.value, label: tr("待关联主机") } : null,
+          ]
+          : [
+              problemDeployments.value ? { key: "problems", value: problemDeployments.value, label: tr("待处理") } : null,
+              offlineHosts.value ? { key: "offline", value: offlineHosts.value, label: tr("离线主机") } : null,
+              unmonitoredHosts.value ? { key: "missing", value: unmonitoredHosts.value, label: tr("未监控") } : null,
+          ];
+      return items.filter((item): item is {
+          key: string;
+          value: number;
+          label: string;
+      } => Boolean(item));
+  });
 
   const selectedUnmanagedCount = computed(() => selectedHost.value ? hostUnmanagedCount(selectedHost.value) : 0);
 
@@ -164,8 +170,6 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
               activeWorkspace.value = "host";
           if (activeWorkspace.value === "host" && !payload.value.hosts.length && payload.value.services.length)
               activeWorkspace.value = "service";
-          if (activeWorkspace.value !== "certificate" && !payload.value.services.length && !payload.value.hosts.length && payload.value.tlsEndpoints.length)
-              activeWorkspace.value = "certificate";
           emit("count-change", { services: payload.value.services.length, monitoredHosts: monitoredHosts.value });
           applyFocusTarget();
       }

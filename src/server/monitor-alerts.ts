@@ -623,7 +623,7 @@ export async function evaluateTlsEndpointAlerts(app: FastifyInstance, environmen
   `).get(environmentId) as (MonitorAlertSettingsRow & { id: string; name: string }) | undefined;
   if (!row) return;
   const settings = monitorAlertSettingsFromRow(row.enabled == null ? null : row);
-  if (!settings.enabled || !settings.tlsEnabled) return;
+  if (!settings.tlsEnabled) return;
   const endpoints = await app.db.prepare(`
     SELECT e.id, e.host, e.port, e.sni, e.ssh_connection_id, e.leaf_cn, e.not_after, e.days_remaining,
       e.hostname_match, e.fingerprint_sha256, c.name AS connection_name
@@ -701,18 +701,33 @@ export async function evaluateTlsEndpointAlerts(app: FastifyInstance, environmen
   await applyObservations(app, environment, observations, now, new Set());
 }
 
-export async function resetMonitorAlertEnvironment(app: FastifyInstance, environmentId: string): Promise<void> {
+const TLS_ALERT_RULE_SQL = "('tls_expiring', 'tls_expired', 'tls_hostname_mismatch')";
+
+export async function resetMonitorAlertEnvironment(
+  app: FastifyInstance,
+  environmentId: string,
+  scope: "all" | "monitor" | "tls" = "all",
+): Promise<void> {
   const now = new Date().toISOString();
+  const ruleClause = scope === "tls"
+    ? `AND rule_type IN ${TLS_ALERT_RULE_SQL}`
+    : scope === "monitor"
+      ? `AND rule_type NOT IN ${TLS_ALERT_RULE_SQL}`
+      : "";
   await app.db.transaction(async () => {
     await app.db.prepare(`
       UPDATE monitor_alerts SET status = 'recovered', recovered_at = ?, updated_at = ?
-      WHERE environment_id = ? AND status = 'active'
+      WHERE environment_id = ? AND status = 'active' ${ruleClause}
     `).run(now, now, environmentId);
-    await app.db.prepare("DELETE FROM monitor_alert_states WHERE environment_id = ?").run(environmentId);
+    await app.db.prepare(`DELETE FROM monitor_alert_states WHERE environment_id = ? ${ruleClause}`).run(environmentId);
   })();
 }
 
-export async function primeMonitorAlertEnvironment(app: FastifyInstance, environmentId: string): Promise<void> {
+export async function primeMonitorAlertEnvironment(
+  app: FastifyInstance,
+  environmentId: string,
+  options: { includeTls?: boolean } = {},
+): Promise<void> {
   const environment = await app.db.prepare("SELECT workspace_type, workspace_id FROM environments WHERE id = ?").get(environmentId) as
     | { workspace_type: string; workspace_id: string }
     | undefined;
@@ -741,5 +756,5 @@ export async function primeMonitorAlertEnvironment(app: FastifyInstance, environ
       // Invalid legacy snapshots are ignored until the next validated monitor pull.
     }
   }
-  await evaluateTlsEndpointAlerts(app, environmentId);
+  if (options.includeTls !== false) await evaluateTlsEndpointAlerts(app, environmentId);
 }

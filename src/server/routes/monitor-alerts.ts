@@ -10,6 +10,7 @@ import {
 import { hasBearerApiKey } from "../api-key-auth.js";
 import { writeAudit } from "../audit.js";
 import {
+  evaluateTlsEndpointAlerts,
   monitorAlertSettingsForEnvironment,
   primeMonitorAlertEnvironment,
   resetMonitorAlertEnvironment,
@@ -36,6 +37,7 @@ const settingsSchema = z.object({
   tlsWarnDays: z.union([z.literal(7), z.literal(14), z.literal(30)]).optional(),
   tlsHostnameMismatchEnabled: z.boolean().optional(),
   excludedDisks: z.array(z.string().min(1).max(1024)).max(512).transform((items) => [...new Set(items)]),
+  section: z.enum(["monitor", "tls"]).optional(),
 });
 const notificationSchema = z.object({ phase: z.enum(["active", "recovered"]) });
 
@@ -348,13 +350,24 @@ export async function registerMonitorAlertRoutes(app: FastifyInstance): Promise<
         tlsEnabled ? 1 : 0, tlsWarnDays, tlsHostnameMismatchEnabled ? 1 : 0,
         JSON.stringify(body.excludedDisks), request.admin!.id, now, now,
       );
-      await resetMonitorAlertEnvironment(app, request.params.environmentId);
-      if (body.enabled) await primeMonitorAlertEnvironment(app, request.params.environmentId);
+      const section = body.section ?? "all";
+      if (section === "tls") {
+        await resetMonitorAlertEnvironment(app, request.params.environmentId, "tls");
+        if (tlsEnabled) await evaluateTlsEndpointAlerts(app, request.params.environmentId);
+      } else if (section === "monitor") {
+        await resetMonitorAlertEnvironment(app, request.params.environmentId, "monitor");
+        if (body.enabled) await primeMonitorAlertEnvironment(app, request.params.environmentId, { includeTls: false });
+      } else {
+        await resetMonitorAlertEnvironment(app, request.params.environmentId);
+        if (body.enabled) await primeMonitorAlertEnvironment(app, request.params.environmentId);
+      }
       await writeAudit(app.db, {
         action: "monitor_alert.settings_updated",
         resourceType: "environment",
         resourceId: request.params.environmentId,
-        summary: body.enabled ? "启用并更新监控告警" : "关闭监控告警",
+        summary: section === "tls"
+          ? (tlsEnabled ? "启用并更新证书告警" : "关闭证书告警")
+          : (body.enabled ? "启用并更新监控告警" : "关闭监控告警"),
         details: {
           hostOfflineEnabled,
           cpuEnabled: body.cpuEnabled,

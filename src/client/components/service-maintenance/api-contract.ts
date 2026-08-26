@@ -168,6 +168,7 @@ export interface MaintenanceApi {
   "formatScriptDuration": (milliseconds: number) => string;
   "scriptExecutionSummary": (execution: ScriptActionExecution) => string;
   "alertSettingsDialog": Ref<boolean, boolean>;
+  "certificateAlertDialog": Ref<boolean, boolean>;
   "savingAlertSettings": Ref<boolean, boolean>;
   "alertSettingsForm": MonitorAlertSettings;
   "cpuVisualThreshold": ComputedRef<number>;
@@ -175,7 +176,9 @@ export interface MaintenanceApi {
   "diskVisualThreshold": ComputedRef<number>;
   "monitorDiskOptions": ComputedRef<{ key: string; label: string; }[]>;
   "openAlertSettings": () => void;
+  "openCertificateAlertSettings": () => void;
   "saveAlertSettings": () => Promise<void>;
+  "saveCertificateAlertSettings": () => Promise<void>;
   "certificateDialog": Ref<boolean, boolean>;
   "editingEndpointId": Ref<string, string>;
   "probingEndpointIds": Ref<Set<string>, Set<string>>;

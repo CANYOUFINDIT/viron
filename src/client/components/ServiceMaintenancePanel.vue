@@ -242,6 +242,9 @@ const {
   monitorDiskOptions,
   openAlertSettings,
   saveAlertSettings,
+  certificateAlertDialog,
+  openCertificateAlertSettings,
+  saveCertificateAlertSettings,
   certificateDialog,
   editingEndpointId,
   probingEndpointIds,
@@ -311,25 +314,43 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="maintenance-console" v-loading="loading">
-    <header class="maintenance-toolbar">
-      <div class="maintenance-summary" :aria-label="$t('服务维护')">
-        <span v-for="item in attentionItems" :key="item.key"><i :class="item.key === 'problems' || item.key === 'offline' || item.key === 'tls-expired' || item.key === 'tls-expiring' ? 'is-amber' : 'is-muted'"></i><strong>{{ item.value }}</strong><small>{{ item.label }}</small></span>
-        <span v-if="!attentionItems.length" class="is-quiet"><i class="is-green"></i><strong>{{ runningDeployments }}</strong><small>{{ $t('运行节点') }}</small></span>
-      </div>
-      <div v-if="payload.canConfigure" class="maintenance-toolbar__actions">
-        <el-button :type="payload.alertSettings.enabled ? 'warning' : 'default'" plain @click="openAlertSettings"><BellRing :size="16" />{{ $t('告警设置') }}</el-button>
-        <el-button v-if="activeWorkspace === 'service'" type="primary" @click="openServiceCreate()"><Plus :size="16" />{{ $t('录入服务') }}</el-button>
-        <el-button v-else-if="activeWorkspace === 'certificate'" type="primary" @click="openCertificateCreate"><ShieldCheck :size="16" />{{ $t('登记证书') }}</el-button>
-      </div>
-    </header>
-
-    <div v-if="payload.services.length || payload.hosts.length || payload.tlsEndpoints.length" class="maintenance-layout">
-      <aside class="maintenance-directory">
-        <nav class="directory-tabs" role="tablist" :aria-label="$t('服务维护清单')">
+    <div class="maintenance-chrome">
+      <nav class="maintenance-switcher" :class="{ 'is-certificate': activeWorkspace === 'certificate' }" :aria-label="$t('服务维护清单')">
+        <div class="maintenance-switcher__primary" role="tablist" :aria-label="$t('服务与主机')">
           <button type="button" role="tab" :aria-selected="activeWorkspace === 'service'" :class="{ 'is-active': activeWorkspace === 'service' }" @click="openWorkspaceTab('service')">{{ $t('服务') }}<small>{{ payload.services.length }}</small></button>
           <button type="button" role="tab" :aria-selected="activeWorkspace === 'host'" :class="{ 'is-active': activeWorkspace === 'host' }" @click="openWorkspaceTab('host')">{{ $t('主机') }}<small>{{ payload.hosts.length }}</small></button>
-          <button type="button" role="tab" :aria-selected="activeWorkspace === 'certificate'" :class="{ 'is-active': activeWorkspace === 'certificate', 'has-alert': expiredCertificates + expiringCertificates > 0 }" @click="openWorkspaceTab('certificate')">{{ $t('证书') }}<small :class="{ 'is-alert': expiredCertificates + expiringCertificates > 0 }">{{ certificateGroups.length }}</small></button>
-        </nav>
+        </div>
+        <button
+          type="button"
+          class="maintenance-switcher__certificate"
+          :class="{ 'is-active': activeWorkspace === 'certificate', 'has-alert': expiredCertificates + expiringCertificates > 0 }"
+          :aria-pressed="activeWorkspace === 'certificate'"
+          @click="openWorkspaceTab('certificate')"
+        >
+          <ShieldCheck :size="14" />{{ $t('证书') }}<small :class="{ 'is-alert': expiredCertificates + expiringCertificates > 0 }">{{ certificateGroups.length }}</small>
+        </button>
+      </nav>
+      <header class="maintenance-toolbar">
+        <div class="maintenance-summary" :aria-label="activeWorkspace === 'certificate' ? $t('证书观察') : $t('服务维护')">
+          <span v-for="item in attentionItems" :key="item.key"><i :class="item.key === 'problems' || item.key === 'offline' || item.key === 'tls-expired' || item.key === 'tls-expiring' ? 'is-amber' : 'is-muted'"></i><strong>{{ item.value }}</strong><small>{{ item.label }}</small></span>
+          <span v-if="!attentionItems.length && activeWorkspace === 'certificate'" class="is-quiet"><i class="is-green"></i><strong>{{ certificateGroups.length }}</strong><small>{{ $t('观察中的证书') }}</small></span>
+          <span v-else-if="!attentionItems.length" class="is-quiet"><i class="is-green"></i><strong>{{ runningDeployments }}</strong><small>{{ $t('运行节点') }}</small></span>
+        </div>
+        <div v-if="payload.canConfigure" class="maintenance-toolbar__actions">
+          <template v-if="activeWorkspace === 'certificate'">
+            <el-button :type="payload.alertSettings.tlsEnabled ? 'warning' : 'default'" plain @click="openCertificateAlertSettings"><BellRing :size="16" />{{ $t('证书告警') }}</el-button>
+            <el-button type="primary" @click="openCertificateCreate"><ShieldCheck :size="16" />{{ $t('登记证书') }}</el-button>
+          </template>
+          <template v-else>
+            <el-button :type="payload.alertSettings.enabled ? 'warning' : 'default'" plain @click="openAlertSettings"><BellRing :size="16" />{{ $t('告警设置') }}</el-button>
+            <el-button v-if="activeWorkspace === 'service'" type="primary" @click="openServiceCreate()"><Plus :size="16" />{{ $t('录入服务') }}</el-button>
+          </template>
+        </div>
+      </header>
+    </div>
+
+    <div class="maintenance-layout">
+      <aside class="maintenance-directory">
         <section v-show="activeWorkspace === 'service'" class="directory-group">
           <header><h3>{{ $t('服务清单') }}</h3><RefreshCw v-if="savingServiceOrder" :size="13" class="is-spinning" /><span>{{ payload.services.length }}</span></header>
           <div class="directory-list">
@@ -389,6 +410,7 @@ onBeforeUnmount(() => {
                 <template #dropdown><el-dropdown-menu><el-dropdown-item command="up" :disabled="!canMoveDirectoryItem('host', host.sshConnectionId, 'up')"><ArrowUp :size="14" />{{ $t('上移') }}</el-dropdown-item><el-dropdown-item command="down" :disabled="!canMoveDirectoryItem('host', host.sshConnectionId, 'down')"><ArrowDown :size="14" />{{ $t('下移') }}</el-dropdown-item></el-dropdown-menu></template>
               </el-dropdown>
             </article>
+            <div v-if="!payload.hosts.length" class="directory-empty"><Server :size="17" /><span>{{ $t('尚未关联 SSH 主机') }}</span></div>
           </div>
         </section>
 
@@ -623,11 +645,10 @@ onBeforeUnmount(() => {
           </div>
         </section>
         <div v-else-if="activeWorkspace === 'certificate'" class="workspace-empty"><ShieldCheck :size="26" /><strong>{{ $t('尚未观察证书') }}</strong><el-button v-if="payload.canConfigure" type="primary" @click="openCertificateCreate"><Plus :size="16" />{{ $t('登记证书') }}</el-button></div>
+        <div v-else-if="activeWorkspace === 'host'" class="workspace-empty"><Server :size="26" /><strong>{{ $t('尚未关联 SSH 主机') }}</strong></div>
         <div v-else class="workspace-empty"><Wrench :size="26" /><strong>{{ $t('尚未录入服务') }}</strong><el-button v-if="payload.canConfigure" type="primary" @click="openServiceCreate()"><Plus :size="16" />{{ $t('录入服务') }}</el-button></div>
       </main>
     </div>
-
-    <div v-else class="maintenance-zero-state"><Server :size="30" /><h3>{{ $t('当前环境还没有可维护资源') }}</h3></div>
 
     <el-dialog v-model="scriptActionManagerDialog" align-center class="envman-dialog script-action-manager-dialog" :title="$t('{{0}} · 功能按钮', [scriptActionScope.label])" width="760px">
       <section class="script-action-manager">
@@ -821,19 +842,6 @@ onBeforeUnmount(() => {
             <el-checkbox v-model="alertSettingsForm.deploymentStatusEnabled">{{ $t('部署节点状态') }}</el-checkbox>
             <span>{{ $t('已纳管节点进入停止或异常状态时告警') }}</span>
           </article>
-          <article class="is-switch-rule">
-            <el-checkbox v-model="alertSettingsForm.tlsEnabled">{{ $t('TLS 证书到期') }}</el-checkbox>
-            <span>{{ $t('剩余天数不超过') }}</span>
-            <el-select v-model="alertSettingsForm.tlsWarnDays" style="width: 7rem">
-              <el-option :value="7" :label="$t('7 天')" />
-              <el-option :value="14" :label="$t('14 天')" />
-              <el-option :value="30" :label="$t('30 天')" />
-            </el-select>
-          </article>
-          <article class="is-switch-rule">
-            <el-checkbox v-model="alertSettingsForm.tlsHostnameMismatchEnabled">{{ $t('证书主机名不匹配') }}</el-checkbox>
-            <span>{{ $t('SNI 或连接主机与证书 CN/SAN 不一致时告警') }}</span>
-          </article>
         </div>
         <section class="monitor-alert-exclusions">
           <div>
@@ -846,6 +854,31 @@ onBeforeUnmount(() => {
         </section>
       </section>
       <template #footer><el-button @click="alertSettingsDialog = false">{{ $t('取消') }}</el-button><el-button type="primary" :loading="savingAlertSettings" @click="saveAlertSettings">{{ $t('保存告警设置') }}</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="certificateAlertDialog" align-center class="envman-dialog monitor-alert-settings-dialog" :title="$t('证书告警设置')" width="560px">
+      <section class="monitor-alert-settings">
+        <header>
+          <div><strong>{{ $t('启用当前环境的证书告警') }}</strong><p>{{ $t('连续两次探测达到条件后触发，连续两次恢复正常后解除。') }}</p></div>
+          <el-switch v-model="alertSettingsForm.tlsEnabled" />
+        </header>
+        <div class="monitor-alert-rule-list" :class="{ 'is-disabled': !alertSettingsForm.tlsEnabled }">
+          <article class="is-named-rule">
+            <strong>{{ $t('证书到期') }}</strong>
+            <span>{{ $t('剩余天数不超过') }}</span>
+            <el-select v-model="alertSettingsForm.tlsWarnDays" style="width: 7rem">
+              <el-option :value="7" :label="$t('7 天')" />
+              <el-option :value="14" :label="$t('14 天')" />
+              <el-option :value="30" :label="$t('30 天')" />
+            </el-select>
+          </article>
+          <article class="is-switch-rule">
+            <el-checkbox v-model="alertSettingsForm.tlsHostnameMismatchEnabled">{{ $t('证书主机名不匹配') }}</el-checkbox>
+            <span>{{ $t('SNI 或连接主机与证书 CN/SAN 不一致时告警') }}</span>
+          </article>
+        </div>
+      </section>
+      <template #footer><el-button @click="certificateAlertDialog = false">{{ $t('取消') }}</el-button><el-button type="primary" :loading="savingAlertSettings" @click="saveCertificateAlertSettings">{{ $t('保存证书告警') }}</el-button></template>
     </el-dialog>
 
     <el-dialog v-model="certificateDialog" align-center class="envman-dialog" :title="editingEndpointId ? $t('编辑证书端点') : $t('登记证书端点')" width="560px">
@@ -882,10 +915,95 @@ onBeforeUnmount(() => {
   font-family: var(--font-body);
 }
 
+.maintenance-chrome {
+  min-width: 0;
+  display: grid;
+  background: var(--surface);
+}
+.maintenance-switcher {
+  min-width: 0;
+  min-height: 2.75rem;
+  padding: .5rem .875rem .375rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+}
+.maintenance-switcher__primary {
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 3px;
+  border: 1px solid var(--ink-100);
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(5.25rem, 1fr));
+  gap: 3px;
+  background: color-mix(in srgb, var(--ink-100) 55%, var(--surface));
+}
+.maintenance-switcher.is-certificate .maintenance-switcher__primary { opacity: .72; }
+.maintenance-switcher__primary button {
+  min-width: 0;
+  min-height: 2.125rem;
+  padding: 0 .5rem;
+  border: 0;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .25rem;
+  background: transparent;
+  color: var(--ink-500);
+  font-size: .6875rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+.maintenance-switcher__primary button.is-active {
+  background: var(--surface);
+  color: var(--teal-700);
+  box-shadow: 0 1px 5px rgba(8, 22, 25, .1);
+}
+.maintenance-switcher__certificate {
+  min-width: 2.75rem;
+  min-height: 2.125rem;
+  padding: 0 .625rem;
+  border: 0;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: .375rem;
+  background: transparent;
+  color: var(--ink-500);
+  font-size: .6875rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+.maintenance-switcher__certificate.is-active {
+  background: var(--teal-50);
+  color: var(--teal-700);
+}
+.maintenance-switcher small {
+  min-width: 1.125rem;
+  height: 1.125rem;
+  padding: 0 .3rem;
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  background: var(--ink-100);
+  color: var(--ink-500);
+  font-family: var(--font-mono);
+  font-size: .625rem;
+  font-weight: 700;
+}
+.maintenance-switcher__primary button.is-active small { background: var(--teal-50); color: var(--teal-700); }
+.maintenance-switcher__certificate.is-active small { background: var(--surface); color: var(--teal-700); }
+.maintenance-switcher small.is-alert,
+.maintenance-switcher__certificate.has-alert small { background: color-mix(in srgb, var(--ops-amber) 22%, var(--surface)); color: var(--ops-amber); }
+.maintenance-switcher button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 .maintenance-toolbar {
   min-width: 0;
   min-height: 3.25rem;
   padding: .5rem .875rem;
+  border-block-start: 1px solid var(--ink-100);
   border-block-end: 1px solid var(--ink-100);
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -972,56 +1090,6 @@ onBeforeUnmount(() => {
   flex-direction: column;
   background: color-mix(in srgb, var(--ink-50) 54%, var(--surface));
 }
-
-.directory-tabs {
-  flex: 0 0 auto;
-  margin: .5rem .625rem 0;
-  padding: 3px;
-  border: 1px solid var(--ink-100);
-  border-radius: 8px;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 3px;
-  background: color-mix(in srgb, var(--ink-100) 55%, var(--surface));
-}
-.directory-tabs button {
-  min-width: 0;
-  min-height: 2.125rem;
-  padding: 0 .5rem;
-  border: 0;
-  border-radius: 6px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: .25rem;
-  background: transparent;
-  color: var(--ink-500);
-  font-size: .6875rem;
-  font-weight: 650;
-  cursor: pointer;
-}
-.directory-tabs button.is-active {
-  background: var(--surface);
-  color: var(--teal-700);
-  box-shadow: 0 1px 5px rgba(8, 22, 25, .1);
-}
-.directory-tabs small {
-  min-width: 1.125rem;
-  height: 1.125rem;
-  padding: 0 .3rem;
-  border-radius: 999px;
-  display: inline-grid;
-  place-items: center;
-  background: var(--ink-100);
-  color: var(--ink-500);
-  font-family: var(--font-mono);
-  font-size: .625rem;
-  font-weight: 700;
-}
-.directory-tabs button.is-active small { background: var(--teal-50); color: var(--teal-700); }
-.directory-tabs small.is-alert,
-.directory-tabs button.has-alert small { background: color-mix(in srgb, var(--ops-amber) 22%, var(--surface)); color: var(--ops-amber); }
-.directory-tabs button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 
 .directory-group { min-height: 0; flex: 1 1 auto; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
 .host-index__row i.is-expired, .host-index__row i.is-expiring, .host-index__row i.is-mismatch { background: var(--ops-amber) !important; }
@@ -1710,6 +1778,9 @@ onBeforeUnmount(() => {
 .monitor-alert-rule-list article > span { min-width: 0; color: var(--ink-500); font-size: .75rem; }
 .monitor-alert-rule-list article:not(.is-switch-rule) > span { grid-column: 3; justify-self: end; }
 .monitor-alert-rule-list article.is-switch-rule > span { grid-column: 2 / -1; }
+.monitor-alert-rule-list article.is-named-rule > strong { color: var(--ink-800); font-size: .875rem; font-weight: 650; }
+.monitor-alert-rule-list article.is-named-rule > span { grid-column: 3; justify-self: end; }
+.monitor-alert-rule-list article.is-named-rule :deep(.el-select) { grid-column: 4; justify-self: start; width: 7rem; }
 .monitor-alert-rule-list article :deep(.animated-counter) { grid-column: 4; justify-self: start; }
 .monitor-alert-settings :deep(.el-select) { width: 100%; }
 .monitor-alert-exclusions {
@@ -1735,7 +1806,8 @@ onBeforeUnmount(() => {
   .directory-row__grip:hover:not(.is-disabled),
   .directory-row__menu:hover:not(:disabled) { background: var(--surface); color: var(--teal-700); }
   .host-workspace-tabs button:hover:not(.is-active),
-  .directory-tabs button:hover:not(.is-active) { color: var(--ink-800); }
+  .maintenance-switcher__primary button:hover:not(.is-active),
+  .maintenance-switcher__certificate:hover:not(.is-active) { color: var(--ink-800); }
   .service-stage__actions > button:not(.el-button):hover,
   .deployment-card__tools button:hover,
   .deployment-card footer button:hover,
@@ -1758,7 +1830,7 @@ onBeforeUnmount(() => {
   .deployment-card__tools button,
   .deployment-card footer button,
   .host-workspace-tabs button { min-width: 2.75rem; min-height: 2.75rem; }
-  .directory-tabs button { min-width: 2.75rem; min-height: 2.75rem; }
+  .maintenance-switcher button { min-width: 2.75rem; min-height: 2.75rem; }
 }
 
 @media (min-width: 40rem) {
@@ -1775,7 +1847,9 @@ onBeforeUnmount(() => {
   .monitor-alert-rule-list article,
   .monitor-alert-rule-list article.is-switch-rule { grid-template-columns: minmax(0, 1fr); justify-items: start; }
   .monitor-alert-rule-list article:not(.is-switch-rule) > span,
-  .monitor-alert-rule-list article.is-switch-rule > span { grid-column: auto; justify-self: start; }
+  .monitor-alert-rule-list article.is-switch-rule > span,
+  .monitor-alert-rule-list article.is-named-rule > span { grid-column: auto; justify-self: start; }
+  .monitor-alert-rule-list article.is-named-rule :deep(.el-select) { grid-column: auto; justify-self: start; }
   .monitor-alert-rule-list article :deep(.animated-counter) { grid-column: auto; justify-self: start; }
   .host-observatory > header,
   .host-observatory__actions { width: 100%; }
@@ -1800,6 +1874,7 @@ onBeforeUnmount(() => {
 }
 
 @media (min-width: 60rem) {
+  .maintenance-switcher,
   .maintenance-toolbar { padding-inline: 1rem; }
 }
 
