@@ -21,6 +21,7 @@ export function useAlertSettings(ctx: MaintenanceContext, props: Readonly<Mainte
   const $monitorInstall = deferMaintenancePart(ctx, "monitorInstall");
   const $scriptActions = deferMaintenancePart(ctx, "scriptActions");
   const alertSettingsDialog = ref(false);
+  const certificateAlertDialog = ref(false);
 
   const savingAlertSettings = ref(false);
 
@@ -47,38 +48,63 @@ export function useAlertSettings(ctx: MaintenanceContext, props: Readonly<Mainte
       return [...options.values()];
   });
 
-  function openAlertSettings() {
+  function copyAlertSettingsForm() {
       Object.assign(alertSettingsForm, $payload.payload.value.alertSettings, { excludedDisks: [...$payload.payload.value.alertSettings.excludedDisks] });
+  }
+
+  function openAlertSettings() {
+      copyAlertSettingsForm();
       alertSettingsDialog.value = true;
   }
 
-  async function saveAlertSettings() {
+  function openCertificateAlertSettings() {
+      copyAlertSettingsForm();
+      certificateAlertDialog.value = true;
+  }
+
+  function monitorSettingsBody(section: "monitor" | "tls") {
+      const monitor = section === "monitor" ? alertSettingsForm : $payload.payload.value.alertSettings;
+      const tls = section === "tls" ? alertSettingsForm : $payload.payload.value.alertSettings;
+      return {
+          section,
+          enabled: monitor.enabled,
+          hostOfflineEnabled: monitor.hostOfflineEnabled,
+          cpuEnabled: monitor.cpuEnabled,
+          cpuThreshold: monitor.cpuThreshold,
+          memoryEnabled: monitor.memoryEnabled,
+          memoryThreshold: monitor.memoryThreshold,
+          diskUsageEnabled: monitor.diskUsageEnabled,
+          diskUsageThreshold: monitor.diskUsageThreshold,
+          temperatureEnabled: monitor.temperatureEnabled,
+          temperatureThreshold: monitor.temperatureThreshold,
+          deploymentStatusEnabled: monitor.deploymentStatusEnabled,
+          diskMissingEnabled: monitor.diskMissingEnabled,
+          excludedDisks: section === "monitor" ? alertSettingsForm.excludedDisks : monitor.excludedDisks,
+          ...(section === "tls"
+              ? {
+                  tlsEnabled: tls.tlsEnabled,
+                  tlsWarnDays: tls.tlsWarnDays,
+                  tlsHostnameMismatchEnabled: tls.tlsHostnameMismatchEnabled,
+              }
+              : {}),
+      };
+  }
+
+  async function putAlertSettings(section: "monitor" | "tls") {
       savingAlertSettings.value = true;
       try {
           const response = await api<{
               item: MonitorAlertSettings;
           }>(`/api/v1/environments/${props.environmentId}/monitor-alert-settings`, {
               method: "PUT",
-              body: JSON.stringify({
-                  enabled: alertSettingsForm.enabled,
-                  hostOfflineEnabled: alertSettingsForm.hostOfflineEnabled,
-                  cpuEnabled: alertSettingsForm.cpuEnabled,
-                  cpuThreshold: alertSettingsForm.cpuThreshold,
-                  memoryEnabled: alertSettingsForm.memoryEnabled,
-                  memoryThreshold: alertSettingsForm.memoryThreshold,
-                  diskUsageEnabled: alertSettingsForm.diskUsageEnabled,
-                  diskUsageThreshold: alertSettingsForm.diskUsageThreshold,
-                  temperatureEnabled: alertSettingsForm.temperatureEnabled,
-                  temperatureThreshold: alertSettingsForm.temperatureThreshold,
-                  deploymentStatusEnabled: alertSettingsForm.deploymentStatusEnabled,
-                  diskMissingEnabled: alertSettingsForm.diskMissingEnabled,
-                  tlsEnabled: alertSettingsForm.tlsEnabled,
-                  tlsWarnDays: alertSettingsForm.tlsWarnDays,
-                  tlsHostnameMismatchEnabled: alertSettingsForm.tlsHostnameMismatchEnabled,
-                  excludedDisks: alertSettingsForm.excludedDisks,
-              }),
+              body: JSON.stringify(monitorSettingsBody(section)),
           });
           $payload.payload.value.alertSettings = response.item;
+          if (section === "tls") {
+              certificateAlertDialog.value = false;
+              ElMessage.success(response.item.tlsEnabled ? tr("证书告警已启用") : tr("证书告警已关闭"));
+              return;
+          }
           alertSettingsDialog.value = false;
           ElMessage.success(response.item.enabled ? tr("监控告警已启用") : tr("监控告警已关闭"));
       }
@@ -87,8 +113,17 @@ export function useAlertSettings(ctx: MaintenanceContext, props: Readonly<Mainte
       }
   }
 
+  async function saveAlertSettings() {
+      await putAlertSettings("monitor");
+  }
+
+  async function saveCertificateAlertSettings() {
+      await putAlertSettings("tls");
+  }
+
   return {
     alertSettingsDialog,
+    certificateAlertDialog,
     savingAlertSettings,
     alertSettingsForm,
     cpuVisualThreshold,
@@ -96,7 +131,9 @@ export function useAlertSettings(ctx: MaintenanceContext, props: Readonly<Mainte
     diskVisualThreshold,
     monitorDiskOptions,
     openAlertSettings,
+    openCertificateAlertSettings,
     saveAlertSettings,
+    saveCertificateAlertSettings,
   };
 }
 

@@ -182,7 +182,7 @@ describe("TLS certificate maintenance", () => {
 
       await app.db.prepare("UPDATE tls_endpoints SET days_remaining = 3, not_after = ? WHERE id = ?")
         .run(new Date(Date.now() + 3 * 86_400_000).toISOString(), endpointId);
-      await app.inject({
+      const settingsPut = await app.inject({
         method: "PUT",
         url: `/api/v1/environments/${environmentId}/monitor-alert-settings`,
         cookies,
@@ -204,9 +204,63 @@ describe("TLS certificate maintenance", () => {
           excludedDisks: [],
         },
       });
+      expect(settingsPut.statusCode).toBe(200);
+      await evaluateTlsEndpointAlerts(app, environmentId);
+      await new Promise((resolve) => setTimeout(resolve, 10));
       await evaluateTlsEndpointAlerts(app, environmentId);
       const alerts = await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies });
       expect(alerts.json().items.some((item: { ruleType: string; status: string }) => item.ruleType === "tls_expiring" && item.status === "active")).toBe(true);
+
+      const monitorOff = await app.inject({
+        method: "PUT",
+        url: `/api/v1/environments/${environmentId}/monitor-alert-settings`,
+        cookies,
+        payload: {
+          section: "monitor",
+          enabled: false,
+          cpuEnabled: false,
+          cpuThreshold: 90,
+          memoryEnabled: false,
+          memoryThreshold: 90,
+          diskUsageEnabled: false,
+          diskUsageThreshold: 90,
+          temperatureEnabled: false,
+          temperatureThreshold: 80,
+          deploymentStatusEnabled: false,
+          diskMissingEnabled: false,
+          excludedDisks: [],
+        },
+      });
+      expect(monitorOff.statusCode).toBe(200);
+      const stillActive = await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies });
+      expect(stillActive.json().items.some((item: { ruleType: string; status: string }) => item.ruleType === "tls_expiring" && item.status === "active")).toBe(true);
+
+      const tlsOff = await app.inject({
+        method: "PUT",
+        url: `/api/v1/environments/${environmentId}/monitor-alert-settings`,
+        cookies,
+        payload: {
+          section: "tls",
+          enabled: false,
+          cpuEnabled: false,
+          cpuThreshold: 90,
+          memoryEnabled: false,
+          memoryThreshold: 90,
+          diskUsageEnabled: false,
+          diskUsageThreshold: 90,
+          temperatureEnabled: false,
+          temperatureThreshold: 80,
+          deploymentStatusEnabled: false,
+          diskMissingEnabled: false,
+          tlsEnabled: false,
+          tlsWarnDays: 14,
+          tlsHostnameMismatchEnabled: true,
+          excludedDisks: [],
+        },
+      });
+      expect(tlsOff.statusCode).toBe(200);
+      const recovered = await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies });
+      expect(recovered.json().items.some((item: { ruleType: string; status: string }) => item.ruleType === "tls_expiring" && item.status === "active")).toBe(false);
     } finally {
       await app.close();
       ssh.server.close();

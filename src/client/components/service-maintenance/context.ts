@@ -175,6 +175,7 @@ export type ScriptActionsApi = MaintenancePart<
 
 export type AlertSettingsApi = MaintenancePart<
   | "alertSettingsDialog"
+  | "certificateAlertDialog"
   | "savingAlertSettings"
   | "alertSettingsForm"
   | "cpuVisualThreshold"
@@ -182,7 +183,9 @@ export type AlertSettingsApi = MaintenancePart<
   | "diskVisualThreshold"
   | "monitorDiskOptions"
   | "openAlertSettings"
+  | "openCertificateAlertSettings"
   | "saveAlertSettings"
+  | "saveCertificateAlertSettings"
 >;
 
 export type TlsCertificatesApi = MaintenancePart<
