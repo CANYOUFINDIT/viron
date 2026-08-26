@@ -592,6 +592,7 @@ button { color: inherit; }
 .resource-list__item:hover .resource-list__icon, .resource-list__item.is-active .resource-list__icon { color: var(--browser-tab-icon-active); }
 .resource-list__item strong { min-width: 0; flex: 1; color: currentColor; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; }
 .resource-list__item em { display: none; }
+.resource-list__item .web-entry-tls { flex: 0 0 auto; color: var(--ops-amber); font-size: 10px; font-style: normal; font-weight: 650; }
 .list-empty { min-width: 260px; height: 39px; padding: 0 12px; color: var(--browser-tab-muted); display: flex; align-items: center; gap: 8px; font-size: 12px; }
 .resource-list__add, .web-account-list__add { position: sticky; right: 0; z-index: 2; flex: 0 0 auto; padding: 0; border: 0; background: transparent; display: grid; place-items: center; cursor: pointer; }
 .resource-list__add { width: 42px; height: 40px; background: var(--browser-tab-bar); color: var(--browser-tab-muted); box-shadow: inset 0 -1px var(--browser-tab-divider); }

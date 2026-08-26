@@ -55,6 +55,9 @@ export async function openDatabase(config: AppConfig): Promise<EnvmanDatabase> {
     await addMysqlColumnIfMissing(db, "monitor_hosts", "installed_at", "VARCHAR(32) NULL");
     await addMysqlColumnIfMissing(db, "monitor_hosts", "latest_kubernetes_configs_json", "LONGTEXT NULL");
     await addMysqlColumnIfMissing(db, "monitor_alert_settings", "host_offline_enabled", "TINYINT NOT NULL DEFAULT 0");
+    await addMysqlColumnIfMissing(db, "monitor_alert_settings", "tls_enabled", "TINYINT NOT NULL DEFAULT 1");
+    await addMysqlColumnIfMissing(db, "monitor_alert_settings", "tls_warn_days", "INT NOT NULL DEFAULT 14");
+    await addMysqlColumnIfMissing(db, "monitor_alert_settings", "tls_hostname_mismatch_enabled", "TINYINT NOT NULL DEFAULT 1");
     await addMysqlColumnIfMissing(db, "monitor_alert_user_states", "cleared_at", "VARCHAR(32) NULL");
     await db.prepare("UPDATE monitor_hosts SET latest_kubernetes_configs_json = '[]' WHERE latest_kubernetes_configs_json IS NULL").run();
     const monitorAgentIndex = await db.prepare("SHOW INDEX FROM `monitor_samples` WHERE Key_name = 'monitor_samples_agent_collected_idx'").get();
@@ -74,6 +77,7 @@ export async function openDatabase(config: AppConfig): Promise<EnvmanDatabase> {
   const db = new SqliteDatabaseClient(raw);
   raw.exec(SQLITE_SCHEMA);
   rebuildMonitorAlertRuleTables(raw);
+  rebuildMonitorAlertTlsTables(raw);
   rebuildKnowledgeBaseTables(raw);
   rebuildServiceDeploymentProviderTable(raw);
   raw.exec(`
@@ -106,6 +110,9 @@ export async function openDatabase(config: AppConfig): Promise<EnvmanDatabase> {
   addColumnIfMissing(raw, "monitor_hosts", "installed_at", "TEXT");
   addColumnIfMissing(raw, "monitor_hosts", "latest_kubernetes_configs_json", "TEXT NOT NULL DEFAULT '[]'");
   addColumnIfMissing(raw, "monitor_alert_settings", "host_offline_enabled", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(raw, "monitor_alert_settings", "tls_enabled", "INTEGER NOT NULL DEFAULT 1");
+  addColumnIfMissing(raw, "monitor_alert_settings", "tls_warn_days", "INTEGER NOT NULL DEFAULT 14");
+  addColumnIfMissing(raw, "monitor_alert_settings", "tls_hostname_mismatch_enabled", "INTEGER NOT NULL DEFAULT 1");
   addColumnIfMissing(raw, "monitor_alert_user_states", "cleared_at", "TEXT");
   rebuildWorkspaceScopedUniqueTables(raw);
   rebuildRedisCompatibleConstraintTables(raw);
@@ -328,6 +335,117 @@ function rebuildMonitorAlertRuleTables(db: Database.Database): void {
   }
   const violation = db.prepare("PRAGMA foreign_key_check").get();
   if (violation) throw new Error("Monitor alert rule migration left invalid foreign keys");
+}
+
+function rebuildMonitorAlertTlsTables(db: Database.Database): void {
+  const tableSql = (table: string) => String((db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?").get(table) as { sql?: string } | undefined)?.sql ?? "");
+  if (/['"]tls_expiring['"]/i.test(tableSql("monitor_alert_states"))
+    && /['"]tls_endpoint['"]/i.test(tableSql("monitor_alert_states"))
+    && /['"]tls_expiring['"]/i.test(tableSql("monitor_alerts"))) return;
+
+  db.pragma("foreign_keys = OFF");
+  try {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE monitor_alert_states_tls_new (
+          id TEXT PRIMARY KEY,
+          environment_id TEXT NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
+          target_type TEXT NOT NULL CHECK(target_type IN ('host','deployment','tls_endpoint')),
+          target_id TEXT NOT NULL,
+          rule_type TEXT NOT NULL CHECK(rule_type IN ('host_offline','cpu','memory','disk_usage','temperature','disk_added','disk_missing','deployment_status','tls_expiring','tls_expired','tls_hostname_mismatch')),
+          rule_key_hash TEXT NOT NULL,
+          rule_key TEXT NOT NULL DEFAULT '',
+          ssh_connection_id TEXT REFERENCES ssh_connections(id) ON DELETE SET NULL,
+          service_id TEXT REFERENCES services(id) ON DELETE SET NULL,
+          deployment_id TEXT REFERENCES service_deployments(id) ON DELETE SET NULL,
+          target_name TEXT NOT NULL DEFAULT '',
+          connection_name TEXT NOT NULL DEFAULT '',
+          service_name TEXT NOT NULL DEFAULT '',
+          breach_count INTEGER NOT NULL DEFAULT 0,
+          recovery_count INTEGER NOT NULL DEFAULT 0,
+          active_alert_id TEXT,
+          last_value_json TEXT NOT NULL DEFAULT '{}',
+          last_evaluated_at TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE(environment_id, target_type, target_id, rule_type, rule_key_hash)
+        );
+        INSERT INTO monitor_alert_states_tls_new (
+          id, environment_id, target_type, target_id, rule_type, rule_key_hash, rule_key,
+          ssh_connection_id, service_id, deployment_id, target_name, connection_name, service_name,
+          breach_count, recovery_count, active_alert_id, last_value_json, last_evaluated_at, created_at, updated_at
+        ) SELECT
+          id, environment_id, target_type, target_id, rule_type, rule_key_hash, rule_key,
+          ssh_connection_id, service_id, deployment_id, target_name, connection_name, service_name,
+          breach_count, recovery_count, active_alert_id, last_value_json, last_evaluated_at, created_at, updated_at
+        FROM monitor_alert_states;
+
+        CREATE TABLE monitor_alerts_tls_new (
+          id TEXT PRIMARY KEY,
+          environment_id TEXT NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
+          state_id TEXT REFERENCES monitor_alert_states(id) ON DELETE SET NULL,
+          target_type TEXT NOT NULL CHECK(target_type IN ('host','deployment','tls_endpoint')),
+          target_id TEXT NOT NULL,
+          rule_type TEXT NOT NULL CHECK(rule_type IN ('host_offline','cpu','memory','disk_usage','temperature','disk_added','disk_missing','deployment_status','tls_expiring','tls_expired','tls_hostname_mismatch')),
+          rule_key TEXT NOT NULL DEFAULT '',
+          ssh_connection_id TEXT REFERENCES ssh_connections(id) ON DELETE SET NULL,
+          service_id TEXT REFERENCES services(id) ON DELETE SET NULL,
+          deployment_id TEXT REFERENCES service_deployments(id) ON DELETE SET NULL,
+          environment_name TEXT NOT NULL,
+          target_name TEXT NOT NULL DEFAULT '',
+          connection_name TEXT NOT NULL DEFAULT '',
+          service_name TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL CHECK(status IN ('active','recovered','event')),
+          details_json TEXT NOT NULL DEFAULT '{}',
+          triggered_at TEXT NOT NULL,
+          recovered_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        INSERT INTO monitor_alerts_tls_new (
+          id, environment_id, state_id, target_type, target_id, rule_type, rule_key,
+          ssh_connection_id, service_id, deployment_id, environment_name, target_name,
+          connection_name, service_name, status, details_json, triggered_at, recovered_at, created_at, updated_at
+        ) SELECT
+          id, environment_id, state_id, target_type, target_id, rule_type, rule_key,
+          ssh_connection_id, service_id, deployment_id, environment_name, target_name,
+          connection_name, service_name, status, details_json, triggered_at, recovered_at, created_at, updated_at
+        FROM monitor_alerts;
+
+        CREATE TABLE monitor_alert_user_states_tls_new (
+          alert_id TEXT NOT NULL REFERENCES monitor_alerts(id) ON DELETE CASCADE,
+          user_id TEXT NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+          active_notified_at TEXT,
+          recovery_notified_at TEXT,
+          read_at TEXT,
+          cleared_at TEXT,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY(alert_id, user_id)
+        );
+        INSERT INTO monitor_alert_user_states_tls_new
+          (alert_id, user_id, active_notified_at, recovery_notified_at, read_at, cleared_at, updated_at)
+          SELECT alert_id, user_id, active_notified_at, recovery_notified_at, read_at, cleared_at, updated_at
+          FROM monitor_alert_user_states;
+
+        DROP TABLE monitor_alert_user_states;
+        DROP TABLE monitor_alerts;
+        DROP TABLE monitor_alert_states;
+        ALTER TABLE monitor_alert_states_tls_new RENAME TO monitor_alert_states;
+        ALTER TABLE monitor_alerts_tls_new RENAME TO monitor_alerts;
+        ALTER TABLE monitor_alert_user_states_tls_new RENAME TO monitor_alert_user_states;
+        CREATE INDEX monitor_alert_states_environment_idx
+          ON monitor_alert_states(environment_id, active_alert_id, updated_at DESC);
+        CREATE INDEX monitor_alerts_environment_idx
+          ON monitor_alerts(environment_id, status, triggered_at DESC);
+        CREATE INDEX monitor_alert_user_states_user_idx
+          ON monitor_alert_user_states(user_id, read_at, updated_at DESC);
+      `);
+    })();
+  } finally {
+    db.pragma("foreign_keys = ON");
+  }
+  const violation = db.prepare("PRAGMA foreign_key_check").get();
+  if (violation) throw new Error("Monitor alert TLS migration left invalid foreign keys");
 }
 
 async function migrateMysqlKnowledgeSchema(db: EnvmanDatabase): Promise<void> {

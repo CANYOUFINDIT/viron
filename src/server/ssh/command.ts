@@ -26,7 +26,7 @@ export async function executeSshCommand(
   app: FastifyInstance,
   connectionId: string,
   command: string,
-  options: { timeoutMs?: number; maxBytes?: number; signal?: AbortSignal } = {},
+  options: { timeoutMs?: number; maxBytes?: number; signal?: AbortSignal; endStdin?: boolean } = {},
 ): Promise<SshCommandResult> {
   const connected = await connectSsh(app, connectionId);
   try {
@@ -39,7 +39,7 @@ export async function executeSshCommand(
 export async function executeSshCommandOnConnection(
   connected: ConnectedSsh,
   command: string,
-  options: { timeoutMs?: number; maxBytes?: number; signal?: AbortSignal } = {},
+  options: { timeoutMs?: number; maxBytes?: number; signal?: AbortSignal; endStdin?: boolean } = {},
 ): Promise<SshCommandResult> {
   const timeoutMs = Math.max(1_000, Math.min(120_000, options.timeoutMs ?? 30_000));
   const maxBytes = Math.max(1_024, Math.min(maxSshCommandOutputBytes, options.maxBytes ?? 512 * 1024));
@@ -81,6 +81,7 @@ export async function executeSshCommandOnConnection(
           return;
         }
         channel = openedChannel;
+        if (options.endStdin) openedChannel.end();
         let stdout = Buffer.alloc(0);
         let stderr = Buffer.alloc(0);
         let truncated = false;

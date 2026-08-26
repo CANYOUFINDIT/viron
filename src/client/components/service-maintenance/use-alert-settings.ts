@@ -72,6 +72,9 @@ export function useAlertSettings(ctx: MaintenanceContext, props: Readonly<Mainte
                   temperatureThreshold: alertSettingsForm.temperatureThreshold,
                   deploymentStatusEnabled: alertSettingsForm.deploymentStatusEnabled,
                   diskMissingEnabled: alertSettingsForm.diskMissingEnabled,
+                  tlsEnabled: alertSettingsForm.tlsEnabled,
+                  tlsWarnDays: alertSettingsForm.tlsWarnDays,
+                  tlsHostnameMismatchEnabled: alertSettingsForm.tlsHostnameMismatchEnabled,
                   excludedDisks: alertSettingsForm.excludedDisks,
               }),
           });

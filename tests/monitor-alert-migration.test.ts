@@ -86,8 +86,11 @@ describe("monitor alert database migration", () => {
       const alertSql = await db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'monitor_alerts'").get() as { sql: string };
       expect(stateSql.sql).toContain("host_offline");
       expect(stateSql.sql).toContain("disk_added");
+      expect(stateSql.sql).toContain("tls_expiring");
+      expect(stateSql.sql).toContain("tls_endpoint");
       expect(alertSql.sql).toContain("host_offline");
       expect(alertSql.sql).toContain("disk_added");
+      expect(alertSql.sql).toContain("tls_expiring");
       expect(alertSql.sql).toContain("'event'");
       expect(await db.prepare("SELECT id, status FROM monitor_alerts WHERE id = ?").get(alertId)).toEqual({ id: alertId, status: "active" });
       expect(await db.prepare("SELECT alert_id, user_id FROM monitor_alert_user_states WHERE alert_id = ?").get(alertId)).toEqual({ alert_id: alertId, user_id: userId });

@@ -79,6 +79,7 @@ interface WebEntry {
   description: string;
   tags: string[];
   credentialCount: number;
+  tls?: { status: "ok" | "expiring" | "expired" | "mismatch" | "unbound" | "unknown"; daysRemaining: number | null; endpointId: string | null; fingerprintSha256: string } | null;
 }
 
 interface WebCredential {
@@ -477,6 +478,12 @@ function pinWorkspaceTabsIntoView() {
     inline: "nearest",
     behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
   });
+}
+
+async function openTlsCertificate(entry: WebEntry) {
+  if (!entry.tls?.endpointId) return;
+  const query: Record<string, string> = { ...workspaceQuery.value, tab: "maintenance", maintenanceEndpointId: entry.tls.endpointId };
+  await router.replace({ name: "environment", params: { id: environmentId }, query });
 }
 
 async function selectWorkspaceTab(tab: WorkspaceTab) {
@@ -956,6 +963,9 @@ onBeforeUnmount(() => {
           >
             <span class="resource-list__icon"><img v-if="entryFavicons[entry.id]" :src="entryFavicons[entry.id]" alt="" @error="discardEntryFavicon(entry.id)" /><Globe2 v-else :size="17" /></span>
             <strong>{{ entry.name }}</strong>
+            <small v-if="entry.tls?.status === 'expired'" class="web-entry-tls is-expired" @click.stop="openTlsCertificate(entry)">{{ $t('证书已过期') }}</small>
+            <small v-else-if="entry.tls?.status === 'expiring'" class="web-entry-tls is-expiring" @click.stop="openTlsCertificate(entry)">{{ $t('{{0}} 天后到期', [entry.tls.daysRemaining ?? 0]) }}</small>
+            <small v-else-if="entry.tls?.status === 'mismatch'" class="web-entry-tls is-mismatch" @click.stop="openTlsCertificate(entry)">{{ $t('证书主机名不匹配') }}</small>
             <em>{{ entry.credentialCount }}</em>
           </button>
           <div v-if="!webEntries.length" class="list-empty"><Globe2 :size="20" /><span>{{ $t('还没有页面入口') }}</span></div>
@@ -1092,6 +1102,7 @@ onBeforeUnmount(() => {
           :focus-host-id="workspaceQuery.maintenanceHostId"
           :focus-service-id="workspaceQuery.maintenanceServiceId"
           :focus-deployment-id="workspaceQuery.maintenanceDeploymentId"
+          :focus-endpoint-id="workspaceQuery.maintenanceEndpointId"
           @count-change="updateServiceCount"
           @open-log="openServiceLog"
         />

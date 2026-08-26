@@ -32,6 +32,9 @@ const settingsSchema = z.object({
   temperatureThreshold: z.number().finite().min(1).max(200),
   deploymentStatusEnabled: z.boolean(),
   diskMissingEnabled: z.boolean(),
+  tlsEnabled: z.boolean().optional(),
+  tlsWarnDays: z.union([z.literal(7), z.literal(14), z.literal(30)]).optional(),
+  tlsHostnameMismatchEnabled: z.boolean().optional(),
   excludedDisks: z.array(z.string().min(1).max(1024)).max(512).transform((items) => [...new Set(items)]),
 });
 const notificationSchema = z.object({ phase: z.enum(["active", "recovered"]) });
@@ -229,17 +232,26 @@ export async function registerMonitorAlertRoutes(app: FastifyInstance): Promise<
       if (!await canAccessEnvironment(app.db, request.admin!, request.params.environmentId)) {
         return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
       }
-      const currentSettings = await app.db.prepare("SELECT host_offline_enabled FROM monitor_alert_settings WHERE environment_id = ?")
-        .get(request.params.environmentId) as { host_offline_enabled: number | string } | undefined;
+      const currentSettings = await app.db.prepare("SELECT host_offline_enabled, tls_enabled, tls_warn_days, tls_hostname_mismatch_enabled FROM monitor_alert_settings WHERE environment_id = ?")
+        .get(request.params.environmentId) as {
+          host_offline_enabled?: number | string;
+          tls_enabled?: number | string;
+          tls_warn_days?: number | string;
+          tls_hostname_mismatch_enabled?: number | string;
+        } | undefined;
       const hostOfflineEnabled = body.hostOfflineEnabled ?? Boolean(Number(currentSettings?.host_offline_enabled ?? 0));
+      const tlsEnabled = body.tlsEnabled ?? (currentSettings?.tls_enabled == null ? true : Boolean(Number(currentSettings.tls_enabled)));
+      const tlsWarnDays = body.tlsWarnDays ?? (Number(currentSettings?.tls_warn_days) || 14);
+      const tlsHostnameMismatchEnabled = body.tlsHostnameMismatchEnabled
+        ?? (currentSettings?.tls_hostname_mismatch_enabled == null ? true : Boolean(Number(currentSettings.tls_hostname_mismatch_enabled)));
       const now = new Date().toISOString();
       await app.db.prepare(`
         INSERT INTO monitor_alert_settings (
           environment_id, enabled, host_offline_enabled, cpu_enabled, cpu_threshold, memory_enabled, memory_threshold,
           disk_usage_enabled, disk_usage_threshold, temperature_enabled, temperature_threshold,
-          deployment_status_enabled, disk_missing_enabled, excluded_disks_json,
-          updated_by_user_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          deployment_status_enabled, disk_missing_enabled, tls_enabled, tls_warn_days, tls_hostname_mismatch_enabled,
+          excluded_disks_json, updated_by_user_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(environment_id) DO UPDATE SET
           enabled = excluded.enabled,
           host_offline_enabled = excluded.host_offline_enabled,
@@ -253,6 +265,9 @@ export async function registerMonitorAlertRoutes(app: FastifyInstance): Promise<
           temperature_threshold = excluded.temperature_threshold,
           deployment_status_enabled = excluded.deployment_status_enabled,
           disk_missing_enabled = excluded.disk_missing_enabled,
+          tls_enabled = excluded.tls_enabled,
+          tls_warn_days = excluded.tls_warn_days,
+          tls_hostname_mismatch_enabled = excluded.tls_hostname_mismatch_enabled,
           excluded_disks_json = excluded.excluded_disks_json,
           updated_by_user_id = excluded.updated_by_user_id,
           updated_at = excluded.updated_at
@@ -264,6 +279,7 @@ export async function registerMonitorAlertRoutes(app: FastifyInstance): Promise<
         body.diskUsageEnabled ? 1 : 0, body.diskUsageThreshold,
         body.temperatureEnabled ? 1 : 0, body.temperatureThreshold,
         body.deploymentStatusEnabled ? 1 : 0, body.diskMissingEnabled ? 1 : 0,
+        tlsEnabled ? 1 : 0, tlsWarnDays, tlsHostnameMismatchEnabled ? 1 : 0,
         JSON.stringify(body.excludedDisks), request.admin!.id, now, now,
       );
       await resetMonitorAlertEnvironment(app, request.params.environmentId);
@@ -285,6 +301,9 @@ export async function registerMonitorAlertRoutes(app: FastifyInstance): Promise<
           temperatureThreshold: body.temperatureThreshold,
           deploymentStatusEnabled: body.deploymentStatusEnabled,
           diskMissingEnabled: body.diskMissingEnabled,
+          tlsEnabled,
+          tlsWarnDays,
+          tlsHostnameMismatchEnabled,
           excludedDiskCount: body.excludedDisks.length,
         },
         request,

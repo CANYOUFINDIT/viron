@@ -184,16 +184,41 @@ export type AlertSettingsApi = MaintenancePart<
   | "saveAlertSettings"
 >;
 
+export type TlsCertificatesApi = MaintenancePart<
+  | "certificateDialog"
+  | "editingEndpointId"
+  | "probingEndpointIds"
+  | "selectedCertificateKey"
+  | "certificateForm"
+  | "certificateGroups"
+  | "selectedCertificate"
+  | "expiringCertificates"
+  | "expiredCertificates"
+  | "unboundCertificates"
+  | "selectCertificate"
+  | "certificateTone"
+  | "certificateSummary"
+  | "endpointStatusLabel"
+  | "fingerprintLabel"
+  | "openCertificateCreate"
+  | "openCertificateEdit"
+  | "saveCertificate"
+  | "removeCertificate"
+  | "probeCertificate"
+  | "applyCertificateFocus"
+>;
+
 export interface MaintenanceContext {
   payload: MaintenancePayloadApi | null;
   directory: MaintenanceDirectoryApi | null;
   monitorInstall: MonitorInstallApi | null;
   scriptActions: ScriptActionsApi | null;
   alertSettings: AlertSettingsApi | null;
+  tls: TlsCertificatesApi | null;
 }
 
 export function createMaintenanceContext(): MaintenanceContext {
-  return { payload: null, directory: null, monitorInstall: null, scriptActions: null, alertSettings: null };
+  return { payload: null, directory: null, monitorInstall: null, scriptActions: null, alertSettings: null, tls: null };
 }
 
 export function requireMaintenancePart<Key extends keyof MaintenanceContext>(ctx: MaintenanceContext, key: Key): NonNullable<MaintenanceContext[Key]> {

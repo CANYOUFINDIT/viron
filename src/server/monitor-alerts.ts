@@ -7,6 +7,7 @@ import {
   type MonitorAlertSettings,
   type MonitorAlertTargetType,
 } from "../shared/monitor-alerts.js";
+import { DEFAULT_TLS_WARN_DAYS, TLS_WARN_DAYS, tlsDaysRemaining } from "../shared/tls-certificates.js";
 import type { MonitorCandidate, MonitorHostSnapshot } from "./service-monitor.js";
 
 interface MonitorAlertSettingsRow {
@@ -22,6 +23,9 @@ interface MonitorAlertSettingsRow {
   temperature_threshold: number | string;
   deployment_status_enabled: number | string;
   disk_missing_enabled: number | string;
+  tls_enabled?: number | string;
+  tls_warn_days?: number | string;
+  tls_hostname_mismatch_enabled?: number | string;
   excluded_disks_json: string;
 }
 
@@ -108,6 +112,11 @@ export function monitorAlertSettingsFromRow(row?: MonitorAlertSettingsRow | null
     temperatureThreshold: Number(row.temperature_threshold),
     deploymentStatusEnabled: Boolean(Number(row.deployment_status_enabled)),
     diskMissingEnabled: Boolean(Number(row.disk_missing_enabled)),
+    tlsEnabled: row.tls_enabled == null ? true : Boolean(Number(row.tls_enabled)),
+    tlsWarnDays: TLS_WARN_DAYS.includes(Number(row.tls_warn_days) as typeof TLS_WARN_DAYS[number])
+      ? Number(row.tls_warn_days)
+      : DEFAULT_TLS_WARN_DAYS,
+    tlsHostnameMismatchEnabled: row.tls_hostname_mismatch_enabled == null ? true : Boolean(Number(row.tls_hostname_mismatch_enabled)),
     excludedDisks: parseExcludedDisks(row.excluded_disks_json),
     consecutiveSamples: 2,
   };
@@ -166,7 +175,8 @@ async function monitoredEnvironments(
     SELECT e.id, e.name, c.id AS ssh_connection_id, c.name AS connection_name,
       s.enabled, s.host_offline_enabled, s.cpu_enabled, s.cpu_threshold, s.memory_enabled, s.memory_threshold,
       s.disk_usage_enabled, s.disk_usage_threshold, s.temperature_enabled, s.temperature_threshold,
-      s.deployment_status_enabled, s.disk_missing_enabled, s.excluded_disks_json,
+      s.deployment_status_enabled, s.disk_missing_enabled,
+      s.tls_enabled, s.tls_warn_days, s.tls_hostname_mismatch_enabled, s.excluded_disks_json,
       h.install_managed, h.status, h.last_collected_at, ce.maintenance_sort_order
     FROM environments e
     JOIN ssh_connection_environments ce ON ce.environment_id = e.id
@@ -601,6 +611,96 @@ export async function evaluateRecentMonitorAlerts(
   await evaluateMonitorAlertSamples(app, { agentId, workspaceType, workspaceId, samples });
 }
 
+export async function evaluateTlsEndpointAlerts(app: FastifyInstance, environmentId: string): Promise<void> {
+  const row = await app.db.prepare(`
+    SELECT e.id, e.name, s.enabled, s.host_offline_enabled, s.cpu_enabled, s.cpu_threshold, s.memory_enabled, s.memory_threshold,
+      s.disk_usage_enabled, s.disk_usage_threshold, s.temperature_enabled, s.temperature_threshold,
+      s.deployment_status_enabled, s.disk_missing_enabled, s.tls_enabled, s.tls_warn_days,
+      s.tls_hostname_mismatch_enabled, s.excluded_disks_json
+    FROM environments e
+    LEFT JOIN monitor_alert_settings s ON s.environment_id = e.id
+    WHERE e.id = ?
+  `).get(environmentId) as (MonitorAlertSettingsRow & { id: string; name: string }) | undefined;
+  if (!row) return;
+  const settings = monitorAlertSettingsFromRow(row.enabled == null ? null : row);
+  if (!settings.enabled || !settings.tlsEnabled) return;
+  const endpoints = await app.db.prepare(`
+    SELECT e.id, e.host, e.port, e.sni, e.ssh_connection_id, e.leaf_cn, e.not_after, e.days_remaining,
+      e.hostname_match, e.fingerprint_sha256, c.name AS connection_name
+    FROM tls_endpoints e
+    LEFT JOIN ssh_connections c ON c.id = e.ssh_connection_id
+    WHERE e.environment_id = ? AND e.observe_enabled = 1
+  `).all(environmentId) as Array<{
+    id: string;
+    host: string;
+    port: number | string;
+    sni: string;
+    ssh_connection_id: string | null;
+    leaf_cn: string;
+    not_after: string | null;
+    days_remaining: number | string | null;
+    hostname_match: number | string | null;
+    fingerprint_sha256: string;
+    connection_name: string | null;
+  }>;
+  const now = new Date().toISOString();
+  const observations: MonitorAlertObservation[] = [];
+  for (const endpoint of endpoints) {
+    if (!endpoint.fingerprint_sha256 || !endpoint.not_after) continue;
+    const daysRemaining = endpoint.days_remaining == null ? tlsDaysRemaining(endpoint.not_after) : Number(endpoint.days_remaining);
+    const target = {
+      targetType: "tls_endpoint" as const,
+      targetId: endpoint.id,
+      sshConnectionId: endpoint.ssh_connection_id,
+      serviceId: null,
+      deploymentId: null,
+      targetName: endpoint.leaf_cn || endpoint.sni || endpoint.host,
+      connectionName: endpoint.connection_name || `${endpoint.host}:${endpoint.port}`,
+      serviceName: "",
+    };
+    const details = {
+      host: endpoint.host,
+      port: Number(endpoint.port),
+      sni: endpoint.sni,
+      fingerprint: endpoint.fingerprint_sha256,
+      daysRemaining,
+      notAfter: endpoint.not_after,
+      threshold: settings.tlsWarnDays,
+    };
+    observations.push({
+      ...target,
+      ruleType: "tls_expired",
+      ruleKey: "",
+      breached: daysRemaining != null && daysRemaining < 0,
+      details,
+    });
+    observations.push({
+      ...target,
+      ruleType: "tls_expiring",
+      ruleKey: "",
+      breached: daysRemaining != null && daysRemaining >= 0 && daysRemaining <= settings.tlsWarnDays,
+      details,
+    });
+    if (settings.tlsHostnameMismatchEnabled) {
+      observations.push({
+        ...target,
+        ruleType: "tls_hostname_mismatch",
+        ruleKey: "",
+        breached: endpoint.hostname_match == null ? null : !Number(endpoint.hostname_match),
+        details: { ...details, hostnameMatch: endpoint.hostname_match == null ? null : Boolean(Number(endpoint.hostname_match)) },
+      });
+    }
+  }
+  const environment: MonitorAlertEnvironment = {
+    id: row.id,
+    name: row.name,
+    sshConnectionId: "",
+    connectionName: "",
+    settings,
+  };
+  await applyObservations(app, environment, observations, now, new Set());
+}
+
 export async function resetMonitorAlertEnvironment(app: FastifyInstance, environmentId: string): Promise<void> {
   const now = new Date().toISOString();
   await app.db.transaction(async () => {
@@ -641,4 +741,5 @@ export async function primeMonitorAlertEnvironment(app: FastifyInstance, environ
       // Invalid legacy snapshots are ignored until the next validated monitor pull.
     }
   }
+  await evaluateTlsEndpointAlerts(app, environmentId);
 }

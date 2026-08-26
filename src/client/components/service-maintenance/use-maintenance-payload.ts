@@ -20,6 +20,7 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
   const $monitorInstall = deferMaintenancePart(ctx, "monitorInstall");
   const $scriptActions = deferMaintenancePart(ctx, "scriptActions");
   const $alertSettings = deferMaintenancePart(ctx, "alertSettings");
+  const $tls = deferMaintenancePart(ctx, "tls");
   const loading = ref(true);
 
   const saving = ref(false);
@@ -32,6 +33,7 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
       services: [],
       logs: [],
       hosts: [],
+      tlsEndpoints: [],
   });
 
   const selectedServiceId = ref("");
@@ -116,6 +118,9 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
       problemDeployments.value ? { key: "problems", value: problemDeployments.value, label: tr("待处理") } : null,
       offlineHosts.value ? { key: "offline", value: offlineHosts.value, label: tr("离线主机") } : null,
       unmonitoredHosts.value ? { key: "missing", value: unmonitoredHosts.value, label: tr("未监控") } : null,
+      $tls.expiredCertificates.value ? { key: "tls-expired", value: $tls.expiredCertificates.value, label: tr("证书已过期") } : null,
+      $tls.expiringCertificates.value ? { key: "tls-expiring", value: $tls.expiringCertificates.value, label: tr("证书即将过期") } : null,
+      $tls.unboundCertificates.value ? { key: "tls-unbound", value: $tls.unboundCertificates.value, label: tr("待关联主机") } : null,
   ].filter((item): item is {
       key: string;
       value: number;
@@ -151,10 +156,16 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
               discoveryTargetServiceId.value = "";
           if (!payload.value.hosts.some((item) => item.sshConnectionId === selectedHostId.value))
               selectedHostId.value = payload.value.hosts[0]?.sshConnectionId ?? "";
+          if (!payload.value.tlsEndpoints.some((item) => (item.fingerprintSha256 || `pending:${item.id}`) === $tls.selectedCertificateKey.value)
+            && payload.value.tlsEndpoints[0]) {
+              $tls.selectedCertificateKey.value = payload.value.tlsEndpoints[0].fingerprintSha256 || `pending:${payload.value.tlsEndpoints[0].id}`;
+          }
           if (activeWorkspace.value === "service" && !payload.value.services.length && payload.value.hosts.length)
               activeWorkspace.value = "host";
           if (activeWorkspace.value === "host" && !payload.value.hosts.length && payload.value.services.length)
               activeWorkspace.value = "service";
+          if (activeWorkspace.value !== "certificate" && !payload.value.services.length && !payload.value.hosts.length && payload.value.tlsEndpoints.length)
+              activeWorkspace.value = "certificate";
           emit("count-change", { services: payload.value.services.length, monitoredHosts: monitoredHosts.value });
           applyFocusTarget();
       }
@@ -165,6 +176,7 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
   }
 
   function applyFocusTarget() {
+      if ($tls.applyCertificateFocus()) return;
       const requestedServiceId = props.focusServiceId
           || payload.value.services.find((service) => service.deployments.some((deployment) => deployment.id === props.focusDeploymentId))?.id;
       if (requestedServiceId && payload.value.services.some((service) => service.id === requestedServiceId)) {
