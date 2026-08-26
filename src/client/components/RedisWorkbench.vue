@@ -32,6 +32,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { ApiError, api } from "../api";
+import { copyTextToClipboard } from "../clipboard";
 import { rememberActiveConnectionOrigin } from "../active-connection-origin";
 import {
   detectRedisValueView,
@@ -207,7 +208,7 @@ function formatTtl(value: number): string {
 
 async function copyText(value: string, label: string) {
   try {
-    await navigator.clipboard.writeText(value);
+    await copyTextToClipboard(value);
     ElMessage.success(tr("{0}已复制", [label]));
   } catch {
     ElMessage.error(tr("无法复制{0}", [label]));

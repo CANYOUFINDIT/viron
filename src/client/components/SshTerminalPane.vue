@@ -29,7 +29,6 @@ import {
   resizeDesktopSshSession,
   sendDesktopSshBinary,
   sendDesktopSshInput,
-  writeDesktopClipboardText,
 } from "../desktop";
 import { ServiceSocket } from "../service-socket";
 import { shouldReconnectFromTerminalKey, type SshTerminalStatus } from "../ssh-terminal-reconnect";
@@ -547,8 +546,7 @@ async function copyCurrentSelection() {
   const selection = activeTerminal.getSelection();
   if (!selection || selection === lastCopiedSelection) return;
   try {
-    if (isDesktopApp()) await writeDesktopClipboardText(selection);
-    else await copyTextToClipboard(selection);
+    await copyTextToClipboard(selection);
     if (terminal?.getSelection() === selection) lastCopiedSelection = selection;
   } catch (error) {
     ElMessage.warning(clipboardFailureMessage(error));

@@ -1,9 +1,14 @@
-export type ClipboardCopyMethod = "clipboard-api" | "exec-command";
+export type ClipboardCopyMethod = "clipboard-api" | "exec-command" | "desktop-bridge";
+
+export interface DesktopClipboardWriter {
+  writeClipboardText(value: string): Promise<{ written: true }>;
+}
 
 export interface ClipboardCopyOptions {
   secureContext?: boolean;
   clipboard?: Pick<Clipboard, "writeText"> | null;
   document?: Document | null;
+  desktopClipboard?: DesktopClipboardWriter | null;
 }
 
 function copyWithExecCommand(documentRef: Document, value: string): boolean {
@@ -33,7 +38,20 @@ function copyWithExecCommand(documentRef: Document, value: string): boolean {
   }
 }
 
+function resolveDesktopClipboard(desktopClipboard: ClipboardCopyOptions["desktopClipboard"]): DesktopClipboardWriter | undefined {
+  if (desktopClipboard === null) return undefined;
+  if (desktopClipboard) return desktopClipboard;
+  if (typeof window !== "undefined" && window.vironDesktop?.writeClipboardText) return window.vironDesktop;
+  return undefined;
+}
+
 export async function copyTextToClipboard(value: string, options: ClipboardCopyOptions = {}): Promise<ClipboardCopyMethod> {
+  const desktopClipboard = resolveDesktopClipboard(options.desktopClipboard);
+  if (desktopClipboard) {
+    await desktopClipboard.writeClipboardText(value);
+    return "desktop-bridge";
+  }
+
   const secureContext = options.secureContext ?? (typeof window !== "undefined" && window.isSecureContext);
   const clipboard = options.clipboard === undefined
     ? (typeof navigator !== "undefined" ? navigator.clipboard : undefined)

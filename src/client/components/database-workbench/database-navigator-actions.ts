@@ -1,6 +1,7 @@
 import { nextTick } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { api } from "../../api";
+import { copyTextToClipboard } from "../../clipboard";
 import { createClientId } from "../../client-id";
 import { downloadApiFile } from "../../desktop";
 import type { DatabaseNavigatorTarget } from "../../database-navigator-menu";
@@ -515,7 +516,7 @@ export function createDatabaseNavigatorActions(ctx: DatabaseWorkbenchContext) {
               name: object.item.name,
               ddl,
           };
-          await navigator.clipboard.writeText(ddl).catch(() => undefined);
+          await copyTextToClipboard(ddl).catch(() => undefined);
           ElMessage.success(tr("已复制 {0}", [object.item.name]));
       }
       catch (error) {

@@ -4,6 +4,7 @@ import { Copy, KeyRound, Plus, RefreshCw, ShieldCheck, Trash2 } from "@lucide/vu
 import { ElMessage, ElMessageBox } from "element-plus";
 import { onMounted, ref } from "vue";
 import { api } from "../api";
+import { copyTextToClipboard } from "../clipboard";
 import { activeApiKeys } from "../api-key-list";
 import McpApprovalModeSelector from "./McpApprovalModeSelector.vue";
 import type { McpApprovalMode } from "../../shared/mcp-settings";
@@ -152,7 +153,7 @@ async function revokeKey(item: ApiKeyItem) {
 async function copyRevealedKey() {
   if (!revealedKey.value) return;
   try {
-    await navigator.clipboard.writeText(revealedKey.value.apiKey);
+    await copyTextToClipboard(revealedKey.value.apiKey);
     ElMessage.success(tr("API Key 已复制"));
   } catch {
     ElMessage.warning(tr("无法自动复制，请手动选择复制"));
