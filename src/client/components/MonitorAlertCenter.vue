@@ -26,6 +26,7 @@ const router = useRouter();
 const desktop = isDesktopApp();
 const drawerOpen = ref(false);
 const loading = ref(false);
+const clearing = ref(false);
 const alerts = ref<MonitorAlertItem[]>([]);
 const unread = ref(0);
 const permission = ref<NotificationPermission | "unsupported">(
@@ -147,10 +148,11 @@ async function presentAlert(alert: MonitorAlertItem, phase: "active" | "recovere
 }
 
 async function loadAlerts(silent = false) {
-  if (!session.user) return;
+  if (!session.user || clearing.value) return;
   if (!silent) loading.value = true;
   try {
     const response = await api<MonitorAlertListResponse>("/api/v1/monitor-alerts");
+    if (clearing.value) return;
     alerts.value = response.items;
     unread.value = response.unread;
     for (const alert of response.items) if (alert.notificationPhase) void presentAlert(alert, alert.notificationPhase);
@@ -173,11 +175,22 @@ async function markAllRead() {
 }
 
 async function clearAll() {
-  if (!alerts.value.length) return;
-  await api("/api/v1/monitor-alerts/clear-all", { method: "POST" });
+  if (!alerts.value.length || clearing.value) return;
+  clearing.value = true;
+  const previousAlerts = alerts.value;
+  const previousUnread = unread.value;
   alerts.value = [];
   unread.value = 0;
   ElNotification.closeAll();
+  try {
+    await api("/api/v1/monitor-alerts/clear-all", { method: "POST" });
+  } catch (error) {
+    alerts.value = previousAlerts;
+    unread.value = previousUnread;
+    ElMessage.error(error instanceof Error ? error.message : tr("无法清理告警"));
+  } finally {
+    clearing.value = false;
+  }
 }
 
 function closeAllToasts() {
@@ -228,7 +241,7 @@ onBeforeUnmount(() => {
   >
     <span class="header-utility-icon"><BellRing :size="17" /></span>
     <span class="sidebar-label-wrap"><span class="sidebar-label">{{ $t('监控告警') }}</span></span>
-    <strong v-if="unread" class="monitor-alert-badge">{{ unread > 99 ? '99+' : unread }}</strong>
+    <strong v-if="unread" class="monitor-alert-badge" :class="{ 'is-corner': !sidebarExpanded }">{{ unread > 99 ? '99+' : unread }}</strong>
   </button>
 
   <el-drawer
@@ -247,7 +260,7 @@ onBeforeUnmount(() => {
         <div>
           <el-button v-if="!desktop && permission === 'default'" size="small" plain @click="requestSystemPermission"><MonitorCog :size="14" />{{ $t('开启系统通知') }}</el-button>
           <el-button size="small" plain :disabled="!unread" @click="markAllRead"><CheckCheck :size="14" />{{ $t('全部已读') }}</el-button>
-          <el-button size="small" plain :disabled="!alerts.length" :title="$t('仅清理当前用户的告警记录')" @click="clearAll"><Eraser :size="14" />{{ $t('全部清理') }}</el-button>
+          <el-button size="small" plain :loading="clearing" :disabled="!alerts.length && !clearing" :title="$t('仅清理当前用户的告警记录')" @click="clearAll"><Eraser :size="14" />{{ $t('全部清理') }}</el-button>
         </div>
       </header>
       <div v-if="alerts.length" class="monitor-alert-list">
@@ -274,9 +287,39 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.monitor-alert-trigger { position: relative; }
+.monitor-alert-trigger { position: relative; overflow: visible; }
 .monitor-alert-trigger.has-alerts { border-color: color-mix(in srgb, var(--red-600) 60%, #2a3d40); color: #ef8f84; }
-.monitor-alert-badge { position: absolute; inset: -5px -5px auto auto; min-width: 18px; height: 18px; padding: 0 4px; border: 2px solid #102023; border-radius: 9px; background: #d8584d; color: white; display: grid; place-items: center; font-family: var(--font-mono); font-size: 9px; line-height: 1; }
+.monitor-alert-badge {
+  flex: 0 0 auto;
+  margin-left: auto;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: #d8584d;
+  color: white;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+  box-shadow: 0 0 0 2px #102023;
+  z-index: 1;
+}
+.monitor-alert-badge.is-corner {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  margin: 0;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  font-size: 9px;
+  border-radius: 8px;
+}
 .monitor-alert-center { min-height: 240px; }
 .monitor-alert-center > header { padding: 0 0 14px; border-bottom: 1px solid var(--ink-100); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .monitor-alert-center > header > div:last-child { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }

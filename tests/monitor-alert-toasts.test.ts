@@ -24,6 +24,20 @@ describe("monitor alert toasts", () => {
     expect(center).toContain("monitor-alert-toast-toolbar");
     expect(center).toContain("$t('全部清理')");
     expect(center).toContain("/api/v1/monitor-alerts/clear-all");
+    expect(center).toContain("clearing.value");
+    expect(center).toContain(":class=\"{ 'is-corner': !sidebarExpanded }\"");
+    expect(center).not.toContain("inset: -5px -5px auto auto");
+    expect(center).toContain("white-space: nowrap");
+    expect(center).toContain("overflow: visible");
     expect(toasts).toContain("pauses this timer while the mouse is over the toast");
+  });
+
+  it("clears alerts with a bulk SQL write and keeps the unread badge inside the trigger", () => {
+    const routes = source("src/server/routes/monitor-alerts.ts");
+    const center = source("src/client/components/MonitorAlertCenter.vue");
+    expect(routes).toContain("bulkMarkAlertUserStates");
+    expect(routes).not.toContain("for (const row of rows) await touchAlertUserState");
+    expect(center).toContain("class=\"monitor-alert-badge\"");
+    expect(center).toContain("is-corner");
   });
 });
