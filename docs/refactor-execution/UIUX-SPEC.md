@@ -343,11 +343,106 @@ sequenceDiagram
 | **Kubernetes** | ☸️ `K8s` 蓝标 | Pod 命名空间 / Pod 名称、Deployment 副本集、Node IP | 🟢 `Running (Ready)` / 🔴 `CrashLoopBackOff` / 🟡 `Pending` | `[🔄 重启Pod]` `[💻 容器Shell]` `[📜 Pod日志]` |
 | **裸进程** | 🖥️ `Process` 绿标 | 进程 PID、可执行文件路径、启动用户、工作目录 | 🟢 `Running (PID: 28911)` / 🔴 `Stopped` | `[⏹ Terminate]` `[🔄 重启]` `[💻 直连SSH]` |
 
-#### 节点核心指标实时展示：
-- `CPU 使用率`（百分比 + 微型彩色进度条）
-- `内存占用`（已用内存 / 总量，自动格式化为 MB/GB）
-- `连续运行时间`（Uptime 格式化，如 `14d 6h`）
-- `异常重启计数`（Restart Count，若 `> 0` 标记为琥珀色高亮）
+### 14.1 场景走查与总览矩阵
+
+| 场景编号 | 所属阶段 | 验收场景 | 运行截图 / 实现依据 | 验收判定 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| **UX-SC-01** | Phase 1 | 凭据中心多 Web 入口证书自动归并与查看 | `CertificateCenter.vue` / 测试证据 | `PASSED` | SHA-256 指纹归并、受保护入口清单与指标统计正常 |
+| **UX-SC-02** | Phase 1 | Web 入口证书状态感知与 Popover 联动 | `TlsPopover.vue` / 测试证据 | `PASSED` | 徽标色值/倒计时、就地重探与凭据中心跳转正常；深链滚动有 minor 体验缺陷 (UX-P2-004) |
+| **UX-SC-03** | Phase 2 | 服务维护纯粹化与一键运维 | `phase2-service-maintenance.png` | `CHANGES_REQUIRED` | 硬件时序与证书已剥离，启动/停止/重启与批量正常；缺少一键 SSH/日志按钮 (UX-P1-001) 及参数名不兼容 (UX-P1-002) |
+| **UX-SC-04** | Phase 3 | 监控大盘三视图切换与 NOC 沉浸全屏 | `phase3-monitoring-hosts.png`、`phase3-monitoring-services.png`、`phase3-monitoring-noc.png` | `CHANGES_REQUIRED` | 3 视图切换、空状态缺失指标非 0%、全屏/Esc 正常；NOC 告警流为空 (UX-P1-003) 及部分空态/下钻断链 (UX-P2-001~003) |
+
+---
+
+### 14.2 缺陷清单与整改要求 (Issue Registry)
+
+| 问题编号 | 严重级别 | 所属范围 | 页面 / 组件 | 问题摘要 | 修复责任人 | 状态 |
+| --- | --- | --- | --- | --- | --- | --- |
+| **`UX-P1-001`** | `P1` | Phase 2 / 跨模块 | 环境详情 · 服务维护 | 部署节点卡片缺少直连 SSH 与容器/节点日志一键直达动作 | Grok | `OPEN` |
+| **`UX-P1-002`** | `P1` | 跨模块导航 | 环境详情 · 服务维护 | 跨模块深链查询参数名不一致导致服务自动聚焦失效 | Grok | `OPEN` |
+| **`UX-P1-003`** | `P1` | Phase 3 / NOC | 监控大盘 · NOC 全屏 | NOC 监控大屏左栏告警事件流数据源硬编码为空数组 | Grok | `OPEN` |
+| **`UX-P2-001`** | `P2` | Phase 3 / APM | 监控大盘 · 业务服务 | APM 视图「服务健康矩阵」在空数据时缺失居中空态提示 | Grok | `OPEN` |
+| **`UX-P2-002`** | `P2` | Phase 3 / NOC | 监控大盘 · NOC 全屏 | NOC 监控大屏在空数据场景下多个子区块缺失空态引导 | Grok | `OPEN` |
+| **`UX-P2-003`** | `P2` | 跨模块 / Phase 3 | 监控大盘 · 基础设施/APM | APM 高负载节点与基础设施 Findings 缺少一键下钻治理入口 | Grok | `OPEN` |
+| **`UX-P2-004`** | `P2` | 跨模块 / Phase 1 | 密钥与证书 · 证书 Tab | 携带 fingerprint 深链首次加载凭据中心时未能自动滚动定位 | Grok | `OPEN` |
+| **`UX-P3-001`** | `P3` | Phase 3 / NOC | 监控大盘 · NOC 全屏 | NOC 大屏右栏指标维度偏少（建议后续补充网络与磁盘容量水位） | 迭代建议 | `OPEN` |
+
+---
+
+### 14.3 问题详情与验收标准
+
+#### `UX-P1-001`：部署节点卡片缺少直连 SSH 与容器/节点日志一键直达动作
+- **所属阶段**：Phase 2 服务维护 & 跨模块协同
+- **页面**：环境详情 · 服务维护 (`/environments/:id?tab=maintenance`)
+- **操作路径**：进入环境服务维护页签，查看服务下方的 Docker / Systemd / Kubernetes / 裸进程部署节点卡片底部操作区。
+- **实际表现**：卡片右下角仅展示启动 (`Play`)、停止 (`Square`)、重启 (`RotateCw`) 三个调度动作；卡片上没有提供 `[💻 直连 SSH]` 与 `[📜 容器/节点日志]` 按钮。用户如需排查，必须手动记下节点 IP/容器名并分别跳至 SSH 工作台或日志页手动查找，导致排障交互断链。
+- **预期表现**：对齐 `UIUX-SPEC.md` §3.3 场景 2、§6.4 节点卡片规格与 §12 场景 3 验收条件：
+  1. 部署节点卡片操作区一等公民露出 `[💻 直连 SSH]` 按钮，点击后平滑跳转至当前环境 SSH 终端并自动连入该节点所在主机。
+  2. 部署节点卡片操作区露出 `[📜 节点日志]` 按钮，点击后跳转至当前环境日志流并自动过滤出该节点关联的日志。
+  3. 普通只读用户（Member）可正常使用查看类按钮（直连 SSH 与查看日志）。
+- **建议修复边界**：修改 `src/client/components/ServiceMaintenancePanel.vue` 与 `src/client/views/EnvironmentDetailView.vue`，增加节点卡片 SSH/日志快捷动作事件转发。
+- **验收方法**：在各类型节点卡片上点击 SSH 图标，能够平滑切至当前环境 SSH 终端并自动选中对应主机连接；点击日志图标能够切至日志页签并选定对应日志。
+
+#### `UX-P1-002`：跨模块深链查询参数名不一致导致服务自动聚焦失效
+- **所属阶段**：跨模块导航 & Phase 2 服务维护
+- **页面**：环境详情 · 服务维护 (`/environments/:id?tab=maintenance&serviceId=...`)
+- **操作路径**：从监控大盘、监控告警中心通知或外部深链携带 `?tab=maintenance&serviceId=<id>` / `?tab=maintenance&deploymentId=<id>` 访问环境详情。
+- **实际表现**：`EnvironmentDetailView.vue:1104-1106` 仅将 `workspaceQuery.maintenanceServiceId`、`workspaceQuery.maintenanceDeploymentId`、`workspaceQuery.maintenanceEndpointId` 传递给维护面板；而 `MonitorAlertCenter.vue`、`UIUX-SPEC.md` 规格及标准 REST 习惯均使用 `serviceId`、`deploymentId`。导致使用标准 URL 参数跳转时，服务维护面板无法获取待聚焦目标，无法自动选中并高亮对应服务。
+- **预期表现**：`EnvironmentDetailView.vue` 兼容绑定 `workspaceQuery.maintenanceServiceId || workspaceQuery.serviceId`、`workspaceQuery.maintenanceDeploymentId || workspaceQuery.deploymentId`、`workspaceQuery.maintenanceHostId || workspaceQuery.hostId`，确保跨模块跳转与外部链接均可顺畅聚焦目标服务与节点。
+- **建议修复边界**：修改 `src/client/views/EnvironmentDetailView.vue` 中的属性传递逻辑。
+- **验收方法**：在浏览器访问 `/environments/<envId>?tab=maintenance&serviceId=<serviceId>`，页面加载后应自动展开该服务并呈现选中状态。
+
+#### `UX-P1-003`：NOC 监控大屏左栏告警事件流数据源硬编码为空数组
+- **所属阶段**：Phase 3 监控大盘 (NOC 全屏)
+- **页面**：全局监控大盘 · NOC 全屏视图 (`/monitoring?view=noc`)
+- **操作路径**：主导航点击「监控大盘」-> 切换至「NOC 全屏」。
+- **实际表现**：`MonitoringView.vue:262` 挂载 `NocScreen` 时传递 `:alerts="[]"`，且 `loadOverview` 未拉取告警数据，导致 NOC 监控大屏左栏「实时告警滚动事件流」永远为空白，大屏态势感知能力受损。
+- **预期表现**：对齐 `UIUX-SPEC.md` §7.4.2 规格，NOC 模式下应拉取 `/api/v1/monitor-alerts`（或从概览接口聚合）并将近期告警（包含活动与已恢复事件）传递给 `NocScreen`，左栏正常滚动呈现最近告警列表及级别徽标。
+- **建议修复边界**：修改 `src/client/views/MonitoringView.vue`，在 NOC 模式或定时轮询中加载告警数据并传递给 `NocScreen.vue`。
+- **验收方法**：在存在活跃/历史监控告警的环境下打开 NOC 大屏，左栏应能完整展示告警事件流。
+
+#### `UX-P2-001`：APM 视图「服务健康矩阵」在空数据时缺失居中空态提示
+- **所属阶段**：Phase 3 监控大盘 (APM 视图)
+- **页面**：全局监控大盘 · 业务服务 APM (`/monitoring?view=services`)
+- **操作路径**：在无服务的空环境或初始状态下切换至「业务服务」Tab（见截图 `phase3-monitoring-services.png`）。
+- **实际表现**：「服务健康矩阵」区块渲染为一个带标题的空白白色卡片容器，没有空状态图标或文字提示。
+- **预期表现**：对齐 `UIUX-SPEC.md` §8 通用状态矩阵，当 `services.length === 0` 时，卡片内部居中展示 `<p class="is-empty">{{ $t('暂无服务时序') }}</p>` 或对应空态占位。
+- **建议修复边界**：修改 `src/client/components/monitoring/ServiceApmPanel.vue`。
+- **验收方法**：在无服务环境下查看 APM 视图，服务健康矩阵呈现统一格式的空态提示。
+
+#### `UX-P2-002`：NOC 监控大屏在空数据场景下多个子区块缺失空态引导
+- **所属阶段**：Phase 3 监控大盘 (NOC 全屏)
+- **页面**：全局监控大盘 · NOC 全屏视图 (`/monitoring?view=noc`)
+- **操作路径**：在无主机/无服务数据环境下打开 NOC 大屏（见截图 `phase3-monitoring-noc.png`）。
+- **实际表现**：左栏告警列表、中栏热力图网格、右栏高负载节点与资源排行在数据为空时均显示为完全空白的纯黑区块，缺乏视觉占位。
+- **预期表现**：对齐 `UIUX-SPEC.md` §4 与 §8 要求，各子面板在无数据时应展示低噪、暗色调的空态文案（如 `暂无活动告警`、`暂无主机矩阵`、`无高负载节点`、`暂无服务时序`）。
+- **建议修复边界**：修改 `src/client/components/monitoring/NocScreen.vue`。
+- **验收方法**：在空数据下打开 NOC 大屏，各面板均具备合理的暗色空态文字占位。
+
+#### `UX-P2-003`：APM 高负载节点与基础设施 Findings 缺少一键下钻治理入口
+- **所属阶段**：跨模块 / Phase 3 监控大盘
+- **页面**：监控大盘主机基础设施 (`/monitoring?view=hosts`) 与业务服务 (`/monitoring?view=services`)
+- **操作路径**：用户在 APM 视图发现高负载异常节点，或在主机视图查看智能 Findings 诊断。
+- **实际表现**：APM 点击 Problem Node 仅能将下方图表过滤为该服务，无法直接前往服务维护页签执行治理；主机 Findings 诊断卡片仅呈现静态文本，无法一键直达对应服务或跳转时序突刺。
+- **预期表现**：对齐 `UIUX-SPEC.md` §3.3 场景 3 与 §7.3 规格：
+  1. 高负载节点卡片提供 `[立即排查 ↗]` 或点击直达目标环境服务维护页签 (`/environments/:envId?tab=maintenance&serviceId=:serviceId`)。
+  2. Findings 卡片提供快捷入口引导前往目标服务。
+- **建议修复边界**：修改 `src/client/components/monitoring/ServiceApmPanel.vue` 与 `src/client/components/HostMonitorDashboard.vue`。
+- **验收方法**：点击高负载节点的排查按钮，应无缝导航至对应环境的服务维护页签并自动高亮该服务。
+
+#### `UX-P2-004`：携带 fingerprint 深链首次加载凭据中心时未能自动滚动定位
+- **所属阶段**：跨模块 / Phase 1 凭据中心
+- **页面**：全局密钥与证书中心 (`/ssh-keys?tab=ssl&fingerprint=...`)
+- **操作路径**：在环境 Web 入口 Popover 中点击 `[🛡️ 在凭据中心管理 ↗]` 导航至凭据中心。
+- **实际表现**：`CertificateCenter.vue:237-241` 的 `watch(highlighted)` 在页面初次加载时由于 `items.value` 尚为空数组而提前退出；当 `load()` 完成后 `highlighted` 未改变，故不会执行 `scrollIntoView()`，目标证书在多卡片长列表中无法自动滚动居中。
+- **预期表现**：对齐 `UIUX-SPEC.md` §3.3 场景 1 规格，页面初次加载且数据拉取完毕后，应自动执行 smooth scroll 滚动至目标证书卡片。
+- **建议修复边界**：修改 `src/client/components/credentials/CertificateCenter.vue`，在 `load()` 完成后若存在 `highlighted` 则触发 `scrollIntoView`。
+- **验收方法**：构造包含多张证书的列表，通过携带 `fingerprint` 的链接直接打开凭据中心，页面加载完成后应平滑滚动至目标证书卡片。
+
+#### `UX-P3-001`：NOC 大屏右栏指标维度偏少
+- **所属阶段**：Phase 3 监控大盘 (NOC 全屏)
+- **页面**：全局监控大盘 · NOC 全屏视图 (`/monitoring?view=noc`)
+- **说明**：当前右栏展示高负载节点与服务排行，后续可按 `UIUX-SPEC.md` §7.4.2 规划进一步丰富实时网络吞吐排行与磁盘挂载点容量水位排行。此项为体验优化建议，不阻塞 Phase 2+3 发布。
 
 ### 6.5 批量操作与部分失败重试交互
 
@@ -589,13 +684,127 @@ sequenceDiagram
 
 ---
 
-## 14. 实现验收记录 (Phase 3 验收阶段预留)
+## 14. 实现验收记录 (Phase 2+3 整体验收)
 
-> 本节将在 Phase 3（Grok 实现完成）后由 Gemini UI/UX Agent 进行逐项走查并记录偏差。
+> 验收执行人：Gemini (UI/UX Agent)  
+> 验收时间：2026-08-27  
+> 评估基线 commit：`f68e0a9`（Phase 3 实现；Phase 2 独立 commit 为 `75daf80`）  
+> 审查依据：已批准的 `UIUX-SPEC.md` 2.0.0-final 规格、4 份真实运行截图（`docs/refactor-execution/screenshots/`）及端到端实现走查。  
+> 综合验收结论：`CHANGES_REQUIRED`（无 P0 阻断；存在 3 项 P1、4 项 P2 体验缺陷需 Grok 集中修复；1 项 P3 建议后续迭代）
 
-| 编号 | 等级 (P0~P3) | 页面/功能路径 | 实际表现 | 预期表现 | 验收判定 | 修复状态 |
+### 14.1 场景走查与总览矩阵
+
+| 场景编号 | 所属阶段 | 验收场景 | 运行截图 / 实现依据 | 验收判定 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| **UX-SC-01** | Phase 1 | 凭据中心多 Web 入口证书自动归并与查看 | CertificateCenter.vue / 测试证据 | `PASSED` | SHA-256 指纹归并、受保护入口清单与指标统计正常 |
+| **UX-SC-02** | Phase 1 | Web 入口证书状态感知与 Popover 联动 | TlsPopover.vue / 测试证据 | `PASSED` | 徽标色值/倒计时、就地重探与凭据中心跳转正常；深链滚动有 minor 体验缺陷 (UX-P2-004) |
+| **UX-SC-03** | Phase 2 | 服务维护纯粹化与一键运维 | phase2-service-maintenance.png | `CHANGES_REQUIRED` | 硬件时序与证书已剥离，启动/停止/重启与批量正常；缺少一键 SSH/日志按钮 (UX-P1-001) 及参数名不兼容 (UX-P1-002) |
+| **UX-SC-04** | Phase 3 | 监控大盘三视图切换与 NOC 沉浸全屏 | phase3-monitoring-*.png (3份截图) | `CHANGES_REQUIRED` | 3 视图切换、空状态缺失指标非 0%、全屏/Esc 正常；NOC 告警流为空 (UX-P1-003) 及部分空态/下钻断链 (UX-P2-001~003) |
+
+---
+
+### 14.2 缺陷清单与整改要求 (Issue Registry)
+
+| 问题编号 | 严重级别 | 所属范围 | 页面 / 组件 | 问题摘要 | 修复责任人 | 状态 |
 | --- | --- | --- | --- | --- | --- | --- |
-| UX-001 | `P1` | 密钥与证书 · 证书 Tab | 待 Phase 3 走查 | 证书按 SHA-256 指纹归并，卡片露出受保护入口 | 待验收 | `PENDING` |
-| UX-002 | `P1` | Web 入口 · 证书徽标 | 待 Phase 3 走查 | 徽标 Popover 支持就地探测与跳转凭据中心 | 待验收 | `PENDING` |
-| UX-003 | `P1` | 服务维护 · 节点网格 | 待 Phase 3 走查 | 彻底剥离宿主机时序与证书，一等公民操作直达 | 待验收 | `PENDING` |
-| UX-004 | `P1` | 监控大盘 · NOC 全屏 | 待 Phase 3 走查 | 深色全屏大屏，包含仪表、热力图与告警流 | 待验收 | `PENDING` |
+| **`UX-P1-001`** | `P1` | Phase 2 / 跨模块 | 环境详情 · 服务维护 | 部署节点卡片缺少直连 SSH 与容器/节点日志一键直达动作 | Grok | `OPEN` |
+| **`UX-P1-002`** | `P1` | 跨模块导航 | 环境详情 · 服务维护 | 跨模块深链查询参数名不一致导致服务自动聚焦失效 | Grok | `OPEN` |
+| **`UX-P1-003`** | `P1` | Phase 3 / NOC | 监控大盘 · NOC 全屏 | NOC 监控大屏左栏告警事件流数据源硬编码为空数组 | Grok | `OPEN` |
+| **`UX-P2-001`** | `P2` | Phase 3 / APM | 监控大盘 · 业务服务 | APM 视图「服务健康矩阵」在空数据时缺失居中空态提示 | Grok | `OPEN` |
+| **`UX-P2-002`** | `P2` | Phase 3 / NOC | 监控大盘 · NOC 全屏 | NOC 监控大屏在空数据场景下多个子区块缺失空态引导 | Grok | `OPEN` |
+| **`UX-P2-003`** | `P2` | 跨模块 / Phase 3 | 监控大盘 · 基础设施/APM | APM 高负载节点与基础设施 Findings 缺少一键下钻治理入口 | Grok | `OPEN` |
+| **`UX-P2-004`** | `P2` | 跨模块 / Phase 1 | 密钥与证书 · 证书 Tab | 携带 fingerprint 深链首次加载凭据中心时未能自动滚动定位 | Grok | `OPEN` |
+| **`UX-P3-001`** | `P3` | Phase 3 / NOC | 监控大盘 · NOC 全屏 | NOC 大屏右栏指标维度偏少（建议后续补充网络与磁盘容量水位） | 迭代建议 | `OPEN` |
+
+---
+
+### 14.3 问题详情与验收标准
+
+#### `UX-P1-001`：部署节点卡片缺少直连 SSH 与容器/节点日志一键直达动作
+- **所属阶段**：Phase 2 服务维护 & 跨模块协同
+- **页面**：环境详情 · 服务维护 (`/environments/:id?tab=maintenance`)
+- **操作路径**：进入环境服务维护页签，查看服务下方的 Docker / Systemd / Kubernetes / 裸进程部署节点卡片底部操作区。
+- **实际表现**：卡片右下角仅展示启动 (`Play`)、停止 (`Square`)、重启 (`RotateCw`) 三个调度动作；卡片上没有提供 `直连 SSH` 与 `容器/节点日志` 按钮。用户如需排查，必须手动记下节点 IP/容器名并分别跳至 SSH 工作台或日志页手动查找，导致排障交互断链。
+- **预期表现**：对齐 `UIUX-SPEC.md` §3.3 场景 2、§6.4 节点卡片规格与 §12 场景 3 验收条件：
+  1. 部署节点卡片操作区一等公民露出 `[💻 直连 SSH]` 按钮，点击后平滑跳转至当前环境 SSH 终端并自动连入该节点所在主机。
+  2. 部署节点卡片操作区露出 `[📜 节点日志]` 按钮，点击后跳转至当前环境日志流并自动过滤出该节点关联的日志。
+  3. 普通只读用户（Member）可正常使用查看类按钮（直连 SSH 与查看日志）。
+- **建议修复边界**：修改 `src/client/components/ServiceMaintenancePanel.vue` 与 `src/client/views/EnvironmentDetailView.vue`，增加节点卡片 SSH/日志快捷动作事件转发。
+- **验收方法**：在各类型节点卡片上点击 SSH 图标，能够平滑切至当前环境 SSH 终端并自动选中对应主机连接；点击日志图标能够切至日志页签并选定对应日志。
+
+---
+
+#### `UX-P1-002`：跨模块深链查询参数名不一致导致服务自动聚焦失效
+- **所属阶段**：跨模块导航 & Phase 2 服务维护
+- **页面**：环境详情 · 服务维护 (`/environments/:id?tab=maintenance&serviceId=...`)
+- **操作路径**：从监控大盘、监控告警中心通知或外部深链携带 `?tab=maintenance&serviceId=<id>` / `?tab=maintenance&deploymentId=<id>` 访问环境详情。
+- **实际表现**：`EnvironmentDetailView.vue:1104-1106` 仅将 `workspaceQuery.maintenanceServiceId`、`workspaceQuery.maintenanceDeploymentId`、`workspaceQuery.maintenanceEndpointId` 传递给维护面板；而 `MonitorAlertCenter.vue`、`UIUX-SPEC.md` 规格及标准 REST 习惯均使用 `serviceId`、`deploymentId`。导致使用标准 URL 参数跳转时，服务维护面板无法获取待聚焦目标，无法自动选中并高亮对应服务。
+- **预期表现**：`EnvironmentDetailView.vue` 兼容绑定 `workspaceQuery.maintenanceServiceId || workspaceQuery.serviceId`、`workspaceQuery.maintenanceDeploymentId || workspaceQuery.deploymentId`、`workspaceQuery.maintenanceHostId || workspaceQuery.hostId`，确保跨模块跳转与外部链接均可顺畅聚焦目标服务与节点。
+- **建议修复边界**：修改 `src/client/views/EnvironmentDetailView.vue` 中的属性传递逻辑。
+- **验收方法**：在浏览器访问 `/environments/<envId>?tab=maintenance&serviceId=<serviceId>`，页面加载后应自动展开该服务并呈现选中状态。
+
+---
+
+#### `UX-P1-003`：NOC 监控大屏左栏告警事件流数据源硬编码为空数组
+- **所属阶段**：Phase 3 监控大盘 (NOC 全屏)
+- **页面**：全局监控大盘 · NOC 全屏视图 (`/monitoring?view=noc`)
+- **操作路径**：主导航点击「监控大盘」-> 切换至「NOC 全屏」。
+- **实际表现**：`MonitoringView.vue:262` 挂载 `NocScreen` 时传递 `:alerts="[]"`，且 `loadOverview` 未拉取告警数据，导致 NOC 监控大屏左栏「实时告警滚动事件流」永远为空白，大屏态势感知能力受损。
+- **预期表现**：对齐 `UIUX-SPEC.md` §7.4.2 规格，NOC 模式下应拉取 `/api/v1/monitor-alerts`（或从概览接口聚合）并将近期告警（包含活动与已恢复事件）传递给 `NocScreen`，左栏正常滚动呈现最近告警列表及级别徽标。
+- **建议修复边界**：修改 `src/client/views/MonitoringView.vue`，在 NOC 模式或定时轮询中加载告警数据并传递给 `NocScreen.vue`。
+- **验收方法**：在存在活跃/历史监控告警的环境下打开 NOC 大屏，左栏应能完整展示告警事件流。
+
+---
+
+#### `UX-P2-001`：APM 视图「服务健康矩阵」在空数据时缺失居中空态提示
+- **所属阶段**：Phase 3 监控大盘 (APM 视图)
+- **页面**：全局监控大盘 · 业务服务 APM (`/monitoring?view=services`)
+- **操作路径**：在无服务的空环境或初始状态下切换至「业务服务」Tab（见截图 `phase3-monitoring-services.png`）。
+- **实际表现**：「服务健康矩阵」区块渲染为一个带标题的空白白色卡片容器，没有空状态图标或文字提示。
+- **预期表现**：对齐 `UIUX-SPEC.md` §8 通用状态矩阵，当 `services.length === 0` 时，卡片内部居中展示 `<p class="is-empty">{{ $t('暂无服务时序') }}</p>` 或对应空态占位。
+- **建议修复边界**：修改 `src/client/components/monitoring/ServiceApmPanel.vue`。
+- **验收方法**：在无服务环境下查看 APM 视图，服务健康矩阵呈现统一格式的空态提示。
+
+---
+
+#### `UX-P2-002`：NOC 监控大屏在空数据场景下多个子区块缺失空态引导
+- **所属阶段**：Phase 3 监控大盘 (NOC 全屏)
+- **页面**：全局监控大盘 · NOC 全屏视图 (`/monitoring?view=noc`)
+- **操作路径**：在无主机/无服务数据环境下打开 NOC 大屏（见截图 `phase3-monitoring-noc.png`）。
+- **实际表现**：左栏告警列表、中栏热力图网格、右栏高负载节点与资源排行在数据为空时均显示为完全空白的纯黑区块，缺乏视觉占位。
+- **预期表现**：对齐 `UIUX-SPEC.md` §4 与 §8 要求，各子面板在无数据时应展示低噪、暗色调的空态文案（如 `暂无活动告警`、`暂无主机矩阵`、`无高负载节点`、`暂无服务时序`）。
+- **建议修复边界**：修改 `src/client/components/monitoring/NocScreen.vue`。
+- **验收方法**：在空数据下打开 NOC 大屏，各面板均具备合理的暗色空态文字占位。
+
+---
+
+#### `UX-P2-003`：APM 高负载节点与基础设施 Findings 缺少一键下钻治理入口
+- **所属阶段**：跨模块 / Phase 3 监控大盘
+- **页面**：监控大盘主机基础设施 (`/monitoring?view=hosts`) 与业务服务 (`/monitoring?view=services`)
+- **操作路径**：用户在 APM 视图发现高负载异常节点，或在主机视图查看智能 Findings 诊断。
+- **实际表现**：APM 点击 Problem Node 仅能将下方图表过滤为该服务，无法直接前往服务维护页签执行治理；主机 Findings 诊断卡片仅呈现静态文本，无法一键直达对应服务或跳转时序突刺。
+- **预期表现**：对齐 `UIUX-SPEC.md` §3.3 场景 3 与 §7.3 规格：
+  1. 高负载节点卡片提供 `[立即排查 ↗]` 或点击直达目标环境服务维护页签 (`/environments/:envId?tab=maintenance&serviceId=:serviceId`)。
+  2. Findings 卡片提供快捷入口引导前往目标服务。
+- **建议修复边界**：修改 `src/client/components/monitoring/ServiceApmPanel.vue` 与 `src/client/components/HostMonitorDashboard.vue`。
+- **验收方法**：点击高负载节点的排查按钮，应无缝导航至对应环境的服务维护页签并自动高亮该服务。
+
+---
+
+#### `UX-P2-004`：携带 fingerprint 深链首次加载凭据中心时未能自动滚动定位
+- **所属阶段**：跨模块 / Phase 1 凭据中心
+- **页面**：全局密钥与证书中心 (`/ssh-keys?tab=ssl&fingerprint=...`)
+- **操作路径**：在环境 Web 入口 Popover 中点击 `[🛡️ 在凭据中心管理 ↗]` 导航至凭据中心。
+- **实际表现**：`CertificateCenter.vue:237-241` 的 `watch(highlighted)` 在页面初次加载时由于 `items.value` 尚为空数组而提前退出；当 `load()` 完成后 `highlighted` 未改变，故不会执行 `scrollIntoView()`，目标证书在多卡片长列表中无法自动滚动居中。
+- **预期表现**：对齐 `UIUX-SPEC.md` §3.3 场景 1 规格，页面初次加载且数据拉取完毕后，应自动执行 smooth scroll 滚动至目标证书卡片。
+- **建议修复边界**：修改 `src/client/components/credentials/CertificateCenter.vue`，在 `load()` 完成后若存在 `highlighted` 则触发 `scrollIntoView`。
+- **验收方法**：构造包含多张证书的列表，通过携带 `fingerprint` 的链接直接打开凭据中心，页面加载完成后应平滑滚动至目标证书卡片。
+
+---
+
+#### `UX-P3-001`：NOC 大屏右栏指标维度偏少
+- **所属阶段**：Phase 3 监控大盘 (NOC 全屏)
+- **页面**：全局监控大盘 · NOC 全屏视图 (`/monitoring?view=noc`)
+- **说明**：当前右栏展示高负载节点与服务排行，后续可按 `UIUX-SPEC.md` §7.4.2 规划进一步丰富实时网络吞吐排行与磁盘挂载点容量水位排行。此项为体验优化建议，不阻塞 Phase 2+3 发布。
+
+
