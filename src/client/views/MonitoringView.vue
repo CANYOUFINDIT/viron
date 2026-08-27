@@ -54,6 +54,7 @@ let timeseriesAbort: AbortController | null = null;
 let alertsAbort: AbortController | null = null;
 let refreshTimer: number | undefined;
 let overviewInFlight = false;
+let lastTimeseriesAt = 0;
 
 const view = computed<MonitoringView>(() => {
   const value = String(route.query.view ?? "hosts");
@@ -84,16 +85,17 @@ async function loadEnvironments() {
 }
 
 async function loadOverview(silent = false) {
-  if (overviewInFlight) return;
-  overviewInFlight = true;
   overviewAbort?.abort();
   overviewAbort = new AbortController();
+  const signal = overviewAbort.signal;
+  overviewInFlight = true;
   if (!silent) loading.value = true;
   else refreshing.value = true;
   try {
     const params = new URLSearchParams();
     if (environmentId.value) params.set("environmentId", environmentId.value);
-    const response = await api<OverviewPayload>(`/api/v1/monitoring/overview${params.size ? `?${params}` : ""}`, { signal: overviewAbort.signal });
+    const response = await api<OverviewPayload>(`/api/v1/monitoring/overview${params.size ? `?${params}` : ""}`, { signal });
+    if (signal.aborted) return;
     overview.value = response;
     lastUpdated.value = response.generatedAt;
     error.value = "";
@@ -102,12 +104,14 @@ async function loadOverview(silent = false) {
       patchQuery({ hostId: response.hosts[0].sshConnectionId, environmentId: environmentId.value || response.hosts[0].environmentId });
     }
   } catch (caught) {
-    if ((caught as { name?: string }).name === "AbortError") return;
+    if ((caught as { name?: string }).name === "AbortError" || signal.aborted) return;
     error.value = caught instanceof Error ? caught.message : tr("读取监控概览失败");
   } finally {
-    overviewInFlight = false;
-    loading.value = false;
-    refreshing.value = false;
+    if (overviewAbort?.signal === signal) {
+      overviewInFlight = false;
+      loading.value = false;
+      refreshing.value = false;
+    }
   }
 }
 
@@ -139,6 +143,7 @@ async function loadTimeseries() {
       { signal: timeseriesAbort.signal },
     );
     timeseriesPoints.value = response.points;
+    lastTimeseriesAt = Date.now();
   } catch (caught) {
     if ((caught as { name?: string }).name === "AbortError") return;
     timeseriesPoints.value = [];
@@ -160,7 +165,7 @@ function startRefresh() {
   refreshTimer = window.setInterval(() => {
     if (document.hidden) return;
     void loadOverview(true);
-    if (view.value === "services") void loadTimeseries();
+    if (view.value === "services" && Date.now() - lastTimeseriesAt >= 30_000) void loadTimeseries();
     void loadAlerts();
   }, refreshSeconds.value * 1000);
 }

@@ -1,4 +1,4 @@
-import { createHash, generateKeyPairSync } from "node:crypto";
+import { createHash, generateKeyPairSync, randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -450,6 +450,36 @@ describe("monitor installer", () => {
         message: "监控安装包校验失败：viron-monitor",
       })]));
       expect(context.ssh.state.uploads.size).toBe(0);
+    } finally {
+      await context.app.close();
+      await context.ssh.close();
+    }
+  });
+
+  it("rejects member probe install, preflight, and install-tasks", async () => {
+    const context = await createInstallationContext();
+    try {
+      const now = new Date().toISOString();
+      const memberRegistration = await context.app.inject({
+        method: "POST",
+        url: "/api/v1/auth/register",
+        payload: { username: "install-member", password: "member-password-123" },
+      });
+      const org = await context.app.inject({ method: "POST", url: "/api/v1/organizations", cookies: context.cookies, payload: { name: "Install Org", description: "" } });
+      await context.app.db.prepare("INSERT INTO organization_members (organization_id, user_id, role, created_at, updated_at) VALUES (?, ?, 'member', ?, ?)").run(
+        org.json().id,
+        memberRegistration.json().user.id,
+        now,
+        now,
+      );
+      const member = { envman_session: memberRegistration.cookies.find((item) => item.name === "envman_session")!.value };
+      expect((await context.app.inject({ method: "PUT", url: "/api/v1/auth/workspace", cookies: member, payload: { type: "organization", id: org.json().id } })).statusCode).toBe(200);
+      const base = `/api/v1/environments/${context.environmentId}/monitor-hosts/${context.connectionId}`;
+      for (const path of [`${base}/install/preflight`, `${base}/install`, `${base}/install-tasks`]) {
+        const response = await context.app.inject({ method: "POST", url: path, cookies: member, payload: { installPath: "/opt/viron/monitor" } });
+        expect(response.statusCode, path).toBe(403);
+        expect(response.json().error).toBe("WORKSPACE_ADMIN_REQUIRED");
+      }
     } finally {
       await context.app.close();
       await context.ssh.close();

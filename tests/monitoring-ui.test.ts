@@ -35,6 +35,8 @@ describe("monitoring dashboard wiring", () => {
     expect(monitoringView).toContain("loadAlerts");
     expect(monitoringView).toContain(":alerts=\"alerts\"");
     expect(monitoringView).not.toContain(":alerts=\"[]\"");
+    expect(monitoringView).not.toContain("if (overviewInFlight) return");
+    expect(monitoringView).toContain("Date.now() - lastTimeseriesAt >= 30_000");
     expect(apm).toContain("$t('暂无服务时序')");
     expect(apm).toContain("$t('立即排查')");
     expect(noc).toContain("<Teleport to=\"body\">");

@@ -968,6 +968,7 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     "/api/v1/environments/:environmentId/monitor-hosts/:connectionId/install/preflight",
     { preHandler: requireAdmin },
     async (request, reply) => {
+      if (!requireManager(request, reply)) return;
       const body = parseBody(monitorInstallSchema, request.body ?? {}, reply);
       if (!body) return;
       if (!await canAccessEnvironment(app.db, request.admin!, request.params.environmentId)) return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
@@ -988,6 +989,7 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     "/api/v1/environments/:environmentId/monitor-hosts/:connectionId/install",
     { preHandler: requireAdmin },
     async (request, reply) => {
+      if (!requireManager(request, reply)) return;
       const body = parseBody(monitorInstallSchema, request.body ?? {}, reply);
       if (!body) return;
       if (!await canAccessEnvironment(app.db, request.admin!, request.params.environmentId)) return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
