@@ -1,7 +1,7 @@
 /** @vitest-environment happy-dom */
 import { flushPromises, mount } from "@vue/test-utils";
 import { ElMessage } from "element-plus";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryHistory, createRouter } from "vue-router";
 
 
@@ -116,6 +116,11 @@ describe("certificate center UI", () => {
     vi.spyOn(ElMessage, "warning").mockImplementation(() => ({}) as never);
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
   it("keeps the credentials entry and does not import the untracked monitoring dashboard", async () => {
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
@@ -146,10 +151,24 @@ describe("certificate center UI", () => {
     mockListAndLookups(async (path) => {
       probeCalls += 1;
       if (probeCalls === 1) await firstGate;
-      if (path.includes(assets[0]!.id)) return { probed: 1 };
-      throw new ApiError("同一端点 1 分钟内只能重新探测一次", 429, "TLS_PROBE_RATE_LIMIT");
+      if (path.includes(assets[0]!.id)) {
+        return { probed: 1, succeeded: 1, failed: 0, results: [{ endpointId: "endpoint-a", status: "succeeded" }] };
+      }
+      return {
+        probed: 1,
+        succeeded: 0,
+        failed: 1,
+        results: [{
+          endpointId: "endpoint-b",
+          status: "failed",
+          error: "TLS_PROBE_RATE_LIMIT",
+          message: "同一端点 1 分钟内只能重新探测一次",
+        }],
+      };
     });
     const wrapper = await mountCenter();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-27T00:00:00.000Z"));
     const vm = wrapper.vm as unknown as { probeAll: () => Promise<void>; retryFailed: () => Promise<void> };
     const first = vm.probeAll();
     await flushPromises();
@@ -162,9 +181,31 @@ describe("certificate center UI", () => {
     expect(wrapper.get("[data-testid='certificate-batch-failures']").text()).toContain("b.example.com");
     expect(wrapper.get("[data-testid='certificate-batch-summary']").text()).toContain("成功 1");
     expect(ElMessage.warning).toHaveBeenCalled();
+    expect(wrapper.get("[data-testid='certificate-batch-retry']").attributes("disabled")).toBeDefined();
 
-    let clock = Date.now() + 61_000;
-    vi.spyOn(Date, "now").mockImplementation(() => clock);
+    const retriedPaths: string[] = [];
+    mockedApi.mockImplementation(async (path: string) => {
+      if (path.startsWith("/api/v1/environments")) return { items: [] };
+      if (path.startsWith("/api/v1/connections")) return { items: [] };
+      if (path.includes("/probe")) {
+        retriedPaths.push(path);
+        return { probed: 1, succeeded: 1, failed: 0, results: [{ endpointId: "endpoint-b", status: "succeeded" }] };
+      }
+      if (path.startsWith("/api/v1/certificates")) {
+        return { items: assets, summary: { total: 2, valid: 2, expiring: 0, expired: 0, error: 0, orphan: 0 } };
+      }
+      return {};
+    });
+    await vi.advanceTimersByTimeAsync(60_250);
+    await flushPromises();
+    expect(wrapper.get("[data-testid='certificate-batch-retry']").attributes("disabled")).toBeUndefined();
+    await wrapper.get("[data-testid='certificate-batch-retry']").trigger("click");
+    await flushPromises();
+    expect(retriedPaths).toHaveLength(1);
+    expect(retriedPaths[0]).toContain(assets[1]!.id);
+    expect(wrapper.find("[data-testid='certificate-batch-retry']").exists()).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(60_250);
     mockedApi.mockImplementation(async (path: string) => {
       if (path.startsWith("/api/v1/environments")) return { items: [] };
       if (path.startsWith("/api/v1/connections")) return { items: [] };
@@ -177,21 +218,7 @@ describe("certificate center UI", () => {
     await vm.probeAll();
     await flushPromises();
     expect(ElMessage.error).toHaveBeenCalled();
-
-    clock += 61_000;
-    mockedApi.mockImplementation(async (path: string) => {
-      if (path.startsWith("/api/v1/environments")) return { items: [] };
-      if (path.startsWith("/api/v1/connections")) return { items: [] };
-      if (path.includes("/probe")) throw new Error("boom");
-      if (path.startsWith("/api/v1/certificates")) {
-        return { items: assets, summary: { total: 2, valid: 2, expiring: 0, expired: 0, error: 0, orphan: 0 } };
-      }
-      throw new Error("boom");
-    });
-    await vm.retryFailed();
-    await flushPromises();
-    expect(wrapper.get("[data-testid='certificate-batch-failures']").text()).toContain("boom");
-    vi.restoreAllMocks();
+    expect(wrapper.get("[data-testid='certificate-batch-failures']").text()).toContain("database down");
     wrapper.unmount();
   });
 });

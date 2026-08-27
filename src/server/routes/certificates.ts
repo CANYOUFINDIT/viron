@@ -1,11 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import type { CertificateProbeTargetResult } from "../../shared/tls-certificates.js";
 import { canAccessEnvironment, canManageWorkspace, workspaceParams } from "../access-control.js";
 import { writeAudit } from "../audit.js";
 import {
   TlsCertificateError,
   deleteWorkspaceCertificate,
-  getTlsEndpoint,
   getWorkspaceCertificate,
   listWorkspaceCertificates,
   probeTlsEndpoint,
@@ -77,29 +77,53 @@ export async function registerCertificateRoutes(app: FastifyInstance): Promise<v
     const [workspaceType, workspaceId] = workspaceParams(request);
     const item = await getWorkspaceCertificate(app, { type: workspaceType, id: workspaceId }, request.params.id);
     if (!item) return reply.code(404).send({ error: "CERTIFICATE_NOT_FOUND", message: "证书不存在" });
-    const results = [];
+    const results: CertificateProbeTargetResult[] = [];
     for (const endpoint of item.endpoints) {
       if (!endpoint.sshConnectionId || !endpoint.observeEnabled) continue;
       if (!await canAccessEnvironment(app.db, request.admin!, endpoint.environmentId)) continue;
       try {
-        results.push(await probeTlsEndpoint(app, endpoint.id, { manual: true }));
-      } catch (error) {
-        if (error instanceof TlsCertificateError && error.statusCode === 429) {
-          const current = await getTlsEndpoint(app, endpoint.id);
-          if (current) results.push(current);
-          continue;
+        const probed = await probeTlsEndpoint(app, endpoint.id, { manual: true });
+        if (probed.probeStatus === "ok") {
+          results.push({ endpointId: endpoint.id, status: "succeeded", probeStatus: probed.probeStatus });
+        } else {
+          results.push({
+            endpointId: endpoint.id,
+            status: "failed",
+            probeStatus: probed.probeStatus,
+            error: probed.probeStatus,
+            message: probed.probeError || "证书探测失败",
+          });
         }
-        throw error;
+      } catch (error) {
+        results.push({
+          endpointId: endpoint.id,
+          status: "failed",
+          error: error instanceof TlsCertificateError ? error.code : "TLS_PROBE_FAILED",
+          message: (error instanceof Error ? error.message : "证书探测失败").slice(0, 500),
+        });
       }
     }
+    const succeeded = results.filter((result) => result.status === "succeeded").length;
+    const failed = results.length - succeeded;
     await writeAudit(app.db, {
       action: "ssl_certificate.probed",
       resourceType: "ssl_certificate",
       resourceId: request.params.id,
-      summary: `重新探测证书 ${item.leafCn || item.fingerprintSha256.slice(0, 16)}`,
-      details: { endpoints: results.length },
+      summary: `重新探测证书 ${item.leafCn || item.fingerprintSha256.slice(0, 16)}：成功 ${succeeded}，失败 ${failed}`,
+      details: {
+        endpoints: results.length,
+        succeeded,
+        failed,
+        errorCodes: [...new Set(results.flatMap((result) => result.error ? [result.error] : []))],
+      },
       request,
     });
-    return { item: await getWorkspaceCertificate(app, { type: workspaceType, id: workspaceId }, request.params.id), probed: results.length };
+    return {
+      item: await getWorkspaceCertificate(app, { type: workspaceType, id: workspaceId }, request.params.id),
+      probed: results.length,
+      succeeded,
+      failed,
+      results,
+    };
   });
 }

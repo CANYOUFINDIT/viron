@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { ensureAdmin, openDatabase } from "../src/server/database.js";
 import type { EnvmanDatabase } from "../src/server/database.js";
+import { migrateSslAssets, SSL_ASSET_MIGRATION_ID } from "../src/server/ssl-asset-migration.js";
 import {
   createTlsEndpoint,
   deleteTlsEndpoint,
@@ -167,5 +168,43 @@ describe("ssl asset MySQL equivalence", () => {
     const listed = await listWorkspaceCertificates(app, { type: "personal", id: user.id }, { page: 1, pageSize: 50 });
     expect(listed.pageInfo.pageSize).toBe(50);
     expect(listed.pageInfo.total).toBeGreaterThanOrEqual(0);
+  });
+
+  mysqlIt("rejects invalid legacy endpoint domains before activating the migration", async () => {
+    expect(db).toBeDefined();
+    await clearTlsState(db!);
+    const now = new Date().toISOString();
+    const user = await db!.prepare("SELECT id FROM admin_users LIMIT 1").get() as { id: string };
+    const envId = randomUUID();
+    await db!.prepare(`
+      INSERT INTO environments (id, workspace_type, workspace_id, name, short_name, description, status, owner, tags_json, sort_order, created_at, updated_at)
+      VALUES (?, 'personal', ?, 'Invalid legacy domain', '', '', 'active', '', '[]', 0, ?, ?)
+    `).run(envId, user.id, now, now);
+    const invalidRows = [
+      { id: randomUUID(), host: "invalid-source.example.com", port: 443, source: "unknown", observeEnabled: 1, probeStatus: "never" },
+      { id: randomUUID(), host: "invalid-status.example.com", port: 443, source: "manual", observeEnabled: 1, probeStatus: "not_a_status" },
+      { id: randomUUID(), host: "invalid-port.example.com", port: 0, source: "manual", observeEnabled: 1, probeStatus: "never" },
+      { id: randomUUID(), host: "invalid-boolean.example.com", port: 443, source: "manual", observeEnabled: 2, probeStatus: "never" },
+    ];
+    for (const row of invalidRows) {
+      await db!.prepare(`
+        INSERT INTO tls_endpoints (
+          id, environment_id, ssh_bind_key, host, port, sni, source, observe_enabled, customized, sort_order,
+          probe_status, probe_error, leaf_sans_json, is_self_signed, created_at, updated_at
+        ) VALUES (?, ?, '', ?, ?, ?, ?, ?, 0, 0, ?, '', '[]', 0, ?, ?)
+      `).run(row.id, envId, row.host, row.port, row.host, row.source, row.observeEnabled, row.probeStatus, now, now);
+    }
+
+    try {
+      await migrateSslAssets(db!);
+      throw new Error("expected invalid legacy endpoint migration to fail");
+    } catch (error) {
+      expect(error).toMatchObject({ code: "SSL_ASSET_MIGRATION_FAILED" });
+      expect((error as { details: { rowIds: string[] } }).details.rowIds)
+        .toEqual(expect.arrayContaining(invalidRows.map((row) => row.id)));
+    }
+    expect(await db!.prepare("SELECT id FROM schema_migrations WHERE id = ?").get(SSL_ASSET_MIGRATION_ID)).toBeUndefined();
+    expect(await countTable(db!, "tls_endpoints")).toBe(invalidRows.length);
+    expect(await countTable(db!, "ssl_endpoints")).toBe(0);
   });
 });
