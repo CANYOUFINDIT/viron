@@ -6,13 +6,13 @@
 
 | 字段 | 当前值 |
 | --- | --- |
-| 当前阶段 | Gate 2：Phase 1 审查 |
-| 阶段状态 | `REVIEW_REQUIRED` |
+| 当前阶段 | Phase 1：凭据与证书修正 |
+| 阶段状态 | `CHANGES_REQUIRED` |
 | 当前写锁 | `UNLOCKED` |
 | 当前负责人 | 无 |
 | 产品批准 | 用户已于 2026-08-27 11:24 CST 批准 `UIUX-SPEC.md` 2.0.0-final；无例外 |
 | 技术合同状态 | `FROZEN`（Gate 1 `PASSED`） |
-| 下一位负责人 | Codex 执行 Gate 2 |
+| 下一位负责人 | Grok 修正 Gate 2 问题；修正后重新交 Codex 审查 |
 
 ## 2. 基线
 
@@ -32,8 +32,8 @@
 | Phase 0A 现状审计 | Grok | `PASSED` | `e250733` | `8357549` | Codex Gate 1 已复核并采用审计输入 |
 | Phase 0B UI/UX 规格 | Gemini | `PASSED` | `e250733` | `0695956` | 用户于 2026-08-27 11:24 CST 批准 2.0.0-final；无例外 |
 | Gate 1 技术合同 | Codex | `PASSED` | `2677bbe` | `9526f92` | 技术合同已冻结，验收矩阵已完善，无阻断问题 |
-| Phase 1 凭据与证书 | Grok | `REVIEW_REQUIRED` | `9526f92` / `9c3ba63` | `0ec3ab9` | 仅执行合同 Phase 1 范围 |
-| Gate 2 Phase 1 审查 | Codex | `NOT_STARTED` | 待填 | 待填 | 待填 |
+| Phase 1 凭据与证书 | Grok | `CHANGES_REQUIRED` | `9526f92` / `9c3ba63` | `0ec3ab9` | Gate 2 发现迁移、生命周期、分页和 UI/测试阻断项，须在 Phase 1 内修正 |
+| Gate 2 Phase 1 审查 | Codex | `CHANGES_REQUIRED` | `9c3ba63` | `0ec3ab9` / 待回填审查记录 commit | 详见 2026-08-27 12:31 交接；不得进入 Phase 2 |
 | Phase 2 服务维护瘦身 | Grok | `BLOCKED` | 待填 | 待填 | 等待 Gate 2 |
 | Gate 3 Phase 2 审查 | Codex | `BLOCKED` | 待填 | 待填 | 待填 |
 | Phase 3 监控大盘 | Grok | `BLOCKED` | 待填 | 待填 | 等待 Gate 3 |
@@ -56,14 +56,15 @@ Agent：无
 
 ## 5. 当前阻塞与风险
 
-Phase 1 实现已交付，等待 Gate 2 审查。已知风险：
+Gate 2 结论为 `CHANGES_REQUIRED`，Phase 2 继续阻塞。当前阻断与风险：
 
-1. 新旧 TLS 双写窗口仍在；旧 `tls_*` 表未删除。任何停止双写必须延期到独立版本化迁移。
-2. 未跟踪 `EnvironmentMonitoringDashboard.vue` 仍只读未纳管，未修改、未提交、未接入路由。
-3. 服务维护证书/监控 UI 与重型 `/maintenance` Payload 按合同保留到 Phase 2。
-4. TLS 探测仍允许 manager 经授权 SSH 访问私网/loopback；metadata/link-local/multicast 已拒绝。
-5. `tests/ssl-asset-mysql.test.ts` 需要本机 Docker；Gate 2 应确认 CI 也能跑该 job。
-6. Electron 并行安装竞态仍存在，不阻断 Gate 2，Gate 4 前需解决。
+1. `G2-P1-001`～`G2-P1-007` 与 `G2-P2-001`～`G2-P2-002` 未关闭；触发条件、后果、修复边界和验证方法见 2026-08-27 12:31 交接。
+2. 新旧 TLS 双写窗口仍在；旧 `tls_*` 表未删除。任何停止双写必须延期到独立版本化迁移。
+3. 未跟踪 `EnvironmentMonitoringDashboard.vue` 仍只读未纳管，未修改、未提交、未接入路由。
+4. 服务维护证书/监控 UI 与重型 `/maintenance` Payload 按合同保留到 Phase 2；修正 Gate 2 时不得提前瘦身。
+5. TLS 探测仍允许 manager 经授权 SSH 访问私网/loopback；metadata/link-local/multicast 已拒绝。
+6. 本地真实 MariaDB 11.4 测试已执行通过，但仓库没有独立 MySQL CI job，且现有 MySQL 测试未覆盖合同要求的 CRUD/级联/事务回滚等价性。
+7. Electron 并行安装竞态仍存在，不阻断 Gate 2，Gate 4 前需解决。
 
 ## 6. 交接模板
 
@@ -209,3 +210,38 @@ Phase 1 实现已交付，等待 Gate 2 审查。已知风险：
 - 下一位负责人：Codex / Gate 2
 - 下一阶段允许修改范围：Gate 2 审查 Phase 1 diff；必要时只提 CHANGES_REQUIRED 问题清单，不扩大到 Phase 2/3
 - 下一阶段禁止修改内容：服务维护瘦身、operation run、监控大盘/NOC、未跟踪监控草稿、删除旧 `tls_*` 表、操作 `main`
+
+### 2026-08-27 12:31 — Codex / Gate 2 Phase 1 审查
+
+- 输入 commit：`9c3ba63`（Phase 1 实现前状态记录；冻结合同输出为 `9526f92`）
+- 审查 commit：`0ec3ab9`
+- 输出 commit：本次 Gate 2 审查记录提交，随后回填精确 commit
+- 结论：`CHANGES_REQUIRED`
+- 完成内容：
+  1. 严格只审查 `9c3ba63..0ec3ab9`，复核 Schema、迁移、SQLite/MySQL、双写、API、权限、TLS 探测、删除生命周期、客户端状态和测试证据。
+  2. 未修改 Phase 1 生产代码，未实施 Phase 2/3，未操作 `main`。
+  3. 未修改、删除、暂存或提交未跟踪 `src/client/components/EnvironmentMonitoringDashboard.vue`。
+- 修改文件：`docs/refactor-execution/STATUS.md`（仅 Gate 2 状态、问题清单与交接）
+- 数据库/API 变化：无；本次为只读审查。
+- 测试命令及结果：
+  - `git diff --check 9c3ba63..0ec3ab9`：通过。
+  - `npm run typecheck`：通过。
+  - `npm test`：通过；168 files passed / 7 skipped，735 tests passed / 9 skipped；本机 Docker MariaDB 11.4 测试实际执行通过。
+  - `npm run build`：通过；仅有既有 chunk size 警告。
+  - `npx tsx -e ... tlsEndpointIsStale(...)`：最近成功后 10 分钟发生 `connect_failed` 时返回 `false`，复现 `G2-P2-001`。
+- `package:current-os` 结果：不适用；Gate 2 只修改状态文档，Phase 1 的代码安装包已由 Grok 基于 `0ec3ab9` 成功生成且未提交 `release/`。
+- 未完成内容：以下问题全部关闭并重新通过 Gate 2 前，禁止进入 Phase 2。
+- 审查问题：
+  1. **`G2-P1-001`：旧 junction 可被静默丢弃。** 文件/位置：`src/server/ssl-asset-migration.ts:180-207`。触发条件：旧表中同一 `web_entry_id` 关联多个 endpoint；旧 schema 只以 `(endpoint_id, web_entry_id)` 为主键，允许该数据。实际后果：迁移用 `seenEntries` 保留第一条并跳过其余条目，校验又比较 `COUNT(DISTINCT web_entry_id)`，因此会写 marker 并静默丢掉关联。期望行为：按冻结合同校验旧/新 junction 总数，遇到一入口多端点时停止激活并报告全部冲突行 ID。建议修复边界：仅修改 Phase 1 migration helper 与双库 fixture，不改变“一入口一个活动端点”Schema。验证方法：SQLite/MariaDB 分别构造重复入口关联，断言迁移失败、无 marker、旧表未变、新表数据回滚且错误含冲突 ID。
+  2. **`G2-P1-002`：marker 早退无法承接旧版本回滚后的变更。** 文件/位置：`src/server/ssl-asset-migration.ts:58-64,198-236`。触发条件：新版本已写 marker，随后回退旧二进制并新增/更新 endpoint、探测结果或 junction，再升级回当前版本。实际后果：`migrationApplied()` 仅校验 checksum 后直接返回，运行时切换到陈旧 `ssl_*` 真相，旧版本期间的变更不可见；现有校验也未覆盖每个合法指纹映射、唯一键和按工作空间计数。期望行为：回滚再前滚可安全重放/对账，只有完整校验后才激活。建议修复边界：在 Phase 1 migration 中增加可并发安全的幂等 upsert/对账策略或明确版本化再前滚迁移，并补齐合同列出的逐映射/工作空间校验；不得删旧表。验证方法：SQLite/MariaDB 跑“迁移→模拟旧版本只写旧表→重启新版本”和部分回填 fixture，断言新旧一致、ID 不变、无静默遗漏。
+  3. **`G2-P1-003`：失败的旧探测被错误记为当前资产和最近成功。** 文件/位置：`src/server/ssl-asset-migration.ts:128-172`。触发条件：旧 endpoint 当前 `probe_status != 'ok'`，但保留了上次证书指纹/有效期，且 `probed_at` 是最近失败时间。实际后果：代码仍设置 `certificate_id`，并因三元表达式两条 fingerprint 分支都返回 `row.probed_at`，把失败尝试写成 `last_success_at`；与“失败/未探测迁移为 `certificate_id=NULL`、仅成功行回填最近成功”合同不符。期望行为：严格按状态迁移资产关系和成功时间，不能伪造成功时间。建议修复边界：只调整 migration 映射并保留旧表数据。验证方法：双库增加 `never/connect_failed/timeout/ok` fixture，逐项断言 `certificate_id`、`last_success_at` 和 marker/回滚行为。
+  4. **`G2-P1-004`：endpoint 创建/改身份没有原子维护证书状态。** 文件/位置：`src/server/tls-certificates.ts:424-509`。触发条件 A：以 `observeEnabled=false` 创建端点；触发条件 B：编辑已有端点的 host/port/SNI/SSH，或显式解绑 SSH。实际后果：A 在创建事务提交后才用第二个事务禁用，第二步失败会遗留启用端点；B 保留旧 `certificate_id/probe_status/hostname_match`，新目标可继续显示旧证书为健康，显式解绑还保留旧 `ssh_bind_key` 并破坏未绑定身份唯一语义。期望行为：单次 CRUD 在一个事务内双写；身份变化时原子清理/失效旧探测状态，显式解绑使用空 bind key，仅 FK 删除保留旧 bind key。建议修复边界：只修改 endpoint 领域写入与兼容旧表双写。验证方法：双库注入第二侧写失败验证整体回滚，并通过路由测试覆盖禁用创建、改 host/SNI、显式解绑、唯一冲突和重新探测。
+  5. **`G2-P1-005`：自动清理 Web 入口 endpoint 留下幽灵活动告警。** 文件/位置：`src/server/tls-certificates.ts:550-560`。触发条件：删除/改为 HTTP/解绑最后一个关联 Web 入口，且自动生成、未自定义的 endpoint 存在活动 TLS 告警。实际后果：helper 直接删除新旧 endpoint，却没有调用 `recoverEndpointAlerts()`；`monitor_alerts` 和 `monitor_alert_states` 留下指向不存在 endpoint 的活动状态。期望行为：所有 endpoint 删除路径都在同一事务恢复告警、删除状态并双写删除 endpoint。建议修复边界：复用现有删除生命周期 helper，不删除证书资产或真实 Web 入口。验证方法：双库/API fixture 创建活动告警后执行解绑和删除 Web 入口，断言告警 recovered、state 清空、证书成为 orphan、Web 入口按请求保留/删除。
+  6. **`G2-P1-006`：证书列表没有按合同在 DB 分页，详情在 1000 项后误报 404。** 文件/位置：`src/server/tls-certificates.ts:865-981`。触发条件：工作空间证书较多，尤其目标资产在排序后的第 1001 项以后。实际后果：列表先把工作空间全部证书/endpoint 拉入内存再过滤排序切片，违反默认 50/最大 100 且 DB 过滤排序的性能合同；`getWorkspaceCertificate()` 又复用 `pageSize:1000` 列表，导致合法资产的 GET/DELETE/probe 误报 404。期望行为：列表在 DB 中做作用域、过滤、排序、count 和分页；详情按 workspace + ID 直接查并加载该资产全部关联。建议修复边界：仅重写 certificates 查询层，不改变冻结 DTO/API。验证方法：双库使用超过 1000 项 fixture 验证分页边界、总数、过滤/排序、详情/删除可达性，并记录固定数量查询以排除 N+1。
+  7. **`G2-P1-007`：全局批量探测吞掉全部失败并显示成功。** 文件/位置：`src/client/components/credentials/CertificateCenter.vue:102-112`。触发条件：任一资产探测遇到 429、SSH/数据库错误或请求失败。实际后果：每个错误都被 `.catch(() => undefined)` 丢弃，最终总是提示“批量重新探测已完成”，没有成功/失败目标数、进度或重试入口；全失败也显示成功。期望行为：按批准规格展示队列进度与逐目标/汇总的部分成功结果，不绕过 60 秒限制。建议修复边界：只修改 Phase 1 证书中心批量状态与现有 API 适配，不引入 Phase 2 operation 模型。验证方法：组件行为测试模拟全成功、部分失败、全失败、429 和重复点击，断言进度、提示、按钮状态与最终刷新。
+  8. **`G2-P2-001`：失败探测没有立即标记保留快照为 stale。** 文件/位置：`src/shared/tls-certificates.ts:282-293`。触发条件：端点最近成功后下一次探测失败，且距最近成功不足两个重试周期。实际后果：`tlsEndpointIsStale()` 返回 `false`；API 虽为 error，但 retained certificate snapshot 未按合同同时标记 stale。期望行为：失败后保留资产并立即标明快照陈旧，成功探测才清除该失败陈旧状态。建议修复边界：调整共享状态派生函数，不改数据库模型。验证方法：纯函数和 API/badge 行为测试覆盖 success→failure→success、无历史成功和超时。
+  9. **`G2-P2-002`：必需行为测试与独立 MySQL CI 证据不完整。** 文件/位置：`tests/certificate-center-ui.test.ts:1-33`、`tests/ssl-asset-migration.test.ts:30-88`、`tests/ssl-asset-mysql.test.ts:11-121`、仓库 CI 配置缺失。触发条件：上述迁移/CRUD/失败/交互回归发生。实际后果：UI 新测只读取源码并匹配字符串；MySQL 新测只迁移一行并比较行数，未执行运行时 CRUD、junction、唯一冲突、级联和事务回滚；仓库没有独立 MySQL job，因此当前 735 个通过测试仍无法证明冻结验收矩阵。期望行为：新逻辑以渲染/交互和双数据库真实行为测试为主，CI 中 MySQL job 不以 skip 代替。建议修复边界：只补 Phase 1 测试/CI，不改 Phase 2/3。验证方法：新增测试先能捕获 `G2-P1-001`～`G2-P2-001`，修复后 SQLite 与 MariaDB job、typecheck、全量测试、build 全部通过。
+- 已知风险：除上述问题外，旧 TLS 双写清理、Phase 2/3、Electron Gate 4 竞态仍按冻结合同延期，不得混入本轮修正。
+- 下一位负责人：Grok / Phase 1 修正；完成后将状态改回 `REVIEW_REQUIRED` 并重新交 Codex Gate 2。
+- 下一阶段允许修改范围：仅修复 `G2-P1-001`～`G2-P2-002` 所需的 Phase 1 migration、TLS/API、证书中心和测试/CI 文件；更新本状态记录。
+- 下一阶段禁止修改内容：Phase 2 服务维护瘦身/operation run、Phase 3 监控大盘/NOC、删除旧 `tls_*` 表、修改/纳管未跟踪监控草稿、操作或合并 `main`。
