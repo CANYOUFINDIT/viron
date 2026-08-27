@@ -6,13 +6,13 @@
 
 | 字段 | 当前值 |
 | --- | --- |
-| 当前阶段 | Phase 1：凭据与证书（待 Grok 开始） |
-| 阶段状态 | `NOT_STARTED` |
+| 当前阶段 | Gate 2：Phase 1 审查 |
+| 阶段状态 | `REVIEW_REQUIRED` |
 | 当前写锁 | `UNLOCKED` |
 | 当前负责人 | 无 |
 | 产品批准 | 用户已于 2026-08-27 11:24 CST 批准 `UIUX-SPEC.md` 2.0.0-final；无例外 |
 | 技术合同状态 | `FROZEN`（Gate 1 `PASSED`） |
-| 下一位负责人 | Grok 执行 Phase 1 |
+| 下一位负责人 | Codex 执行 Gate 2 |
 
 ## 2. 基线
 
@@ -32,8 +32,8 @@
 | Phase 0A 现状审计 | Grok | `PASSED` | `e250733` | `8357549` | Codex Gate 1 已复核并采用审计输入 |
 | Phase 0B UI/UX 规格 | Gemini | `PASSED` | `e250733` | `0695956` | 用户于 2026-08-27 11:24 CST 批准 2.0.0-final；无例外 |
 | Gate 1 技术合同 | Codex | `PASSED` | `2677bbe` | `9526f92` | 技术合同已冻结，验收矩阵已完善，无阻断问题 |
-| Phase 1 凭据与证书 | Grok | `NOT_STARTED` | `9526f92` | 待填 | 仅允许执行合同中的 Phase 1 范围 |
-| Gate 2 Phase 1 审查 | Codex | `BLOCKED` | 待填 | 待填 | 待填 |
+| Phase 1 凭据与证书 | Grok | `REVIEW_REQUIRED` | `9526f92` / `9c3ba63` | 本批次提交后填写 | 仅执行合同 Phase 1 范围 |
+| Gate 2 Phase 1 审查 | Codex | `NOT_STARTED` | 待填 | 待填 | 待填 |
 | Phase 2 服务维护瘦身 | Grok | `BLOCKED` | 待填 | 待填 | 等待 Gate 2 |
 | Gate 3 Phase 2 审查 | Codex | `BLOCKED` | 待填 | 待填 | 待填 |
 | Phase 3 监控大盘 | Grok | `BLOCKED` | 待填 | 待填 | 等待 Gate 3 |
@@ -56,15 +56,14 @@ Agent：无
 
 ## 5. 当前阻塞与风险
 
-当前没有阻断 Phase 1 的前置问题。已知实施风险如下：
+Phase 1 实现已交付，等待 Gate 2 审查。已知风险：
 
-1. Phase 1 必须在不删除旧 `tls_*` 表的前提下完成新模型迁移、校验和兼容双写；任何静默丢行或跨空间归并均为阻断问题。
-2. 未跟踪 `EnvironmentMonitoringDashboard.vue` 为只读外部草稿；仍调用错误 API/字段。Phase 1 禁止接入、修改、删除或提交。
-3. `ServiceMaintenancePanel.vue` 的拆分、轻量 Payload 和服务 operation 属 Phase 2；Phase 1 不得提前移除维护页证书/监控能力。
-4. `DeploymentMonitorDashboard` 无并发上限、告警环境过滤和 NOC 生命周期属 Phase 3；Phase 1 不得顺手扩展。
-5. 现有 member 可执行 TLS 探测；Phase 1 必须按 ADR-007 收紧为 manager，并补权限矩阵测试。
-6. 真实应用 MySQL schema/迁移 job 是 Gate 2 必选证据，现有工作台 `mysql.integration` skip 不能替代。
-7. Electron 并行安装竞态不阻断 Phase 1，但 Gate 4 发布前必须以确定性 bootstrap/预安装解决。
+1. 新旧 TLS 双写窗口仍在；旧 `tls_*` 表未删除。任何停止双写必须延期到独立版本化迁移。
+2. 未跟踪 `EnvironmentMonitoringDashboard.vue` 仍只读未纳管，未修改、未提交、未接入路由。
+3. 服务维护证书/监控 UI 与重型 `/maintenance` Payload 按合同保留到 Phase 2。
+4. TLS 探测仍允许 manager 经授权 SSH 访问私网/loopback；metadata/link-local/multicast 已拒绝。
+5. `tests/ssl-asset-mysql.test.ts` 需要本机 Docker；Gate 2 应确认 CI 也能跑该 job。
+6. Electron 并行安装竞态仍存在，不阻断 Gate 2，Gate 4 前需解决。
 
 ## 6. 交接模板
 
@@ -185,3 +184,28 @@ Agent：无
 - 下一位负责人：Grok / Phase 1 凭据与证书
 - 下一阶段允许修改范围：仅 `TECH-CONTRACT.md` §11 的 Phase 1 文件；实现证书模型迁移/兼容 API、密钥与证书中心、Web 入口 TLS 联动及相应行为测试
 - 下一阶段禁止修改内容：服务维护瘦身、operation run、全局监控大盘/NOC、监控 overview、未跟踪监控草稿，以及对冻结合同的无 ADR 偏离
+
+### 2026-08-27 12:16 — Grok / Phase 1 凭据与证书
+
+- 输入 commit：`9526f920b5ee114012fb8f05de3008465665b0b8`（开始时工作区 HEAD `9c3ba63`，其为 Gate 1 输出记录提交）
+- 输出 commit：提交后回填
+- 完成内容：
+  1. 新增 `ssl_certificates` / `ssl_endpoints` / `ssl_endpoint_web_entries` 与 `schema_migrations`，SQLite/MySQL 对齐；迁移 `20260827_ssl_asset_v1` 幂等、失败不激活。
+  2. 运行时以新表为真相并双写旧 `tls_*`；同工作空间指纹归并，跨空间隔离 404。
+  3. 证书 API：`GET/DELETE /api/v1/certificates`、按证书重探；旧 `/tls-endpoints*` 兼容；探测改为 manager；拒绝 metadata/link-local/multicast。
+  4. 全局入口升级为「密钥与证书」双 Tab；Web 入口 TLS 徽标 + Popover 就地重探/跳转凭据中心。
+  5. 未修改、未删除、未提交、未接入 `EnvironmentMonitoringDashboard.vue`。未做 Phase 2/3。
+- 修改文件：`src/server/{sqlite-schema,mysql-schema,database,tls-certificates,ssl-asset-migration,app}.ts`、`src/server/routes/{certificates,service-maintenance}.ts`、`src/shared/{tls-certificates,i18n-messages}.ts`、`src/client/views/{SshKeysView,EnvironmentDetailView}.vue`、`src/client/components/AppShell.vue`、`src/client/components/credentials/*`、相关测试、`docs/refactor-execution/STATUS.md`
+- 数据库/API 变化：新证书资产模型 + 兼容双写；新增 `/api/v1/certificates*`；探测权限收紧为 manager
+- 测试命令及结果：
+  - `npm run typecheck`：通过
+  - 定向：tls/migration/certificates-api/maintenance/ui：通过
+  - `tests/ssl-asset-mysql.test.ts`（Docker MariaDB 11.4）：通过
+  - `npm test`：175 files，735 passed / 9 skipped（含既有 skip 的桌面本地集成与工作台 mysql.integration）
+  - `npm run build`：通过
+- `package:current-os` 结果：成功。macOS arm64 DMG `release/Viron-0.1.6-macos-arm64-self-signed.dmg`（未提交 release/）
+- 未完成内容：Phase 2 维护瘦身与 operation run；Phase 3 监控大盘；旧 TLS 表清理延期
+- 已知风险：见第 5 节
+- 下一位负责人：Codex / Gate 2
+- 下一阶段允许修改范围：Gate 2 审查 Phase 1 diff；必要时只提 CHANGES_REQUIRED 问题清单，不扩大到 Phase 2/3
+- 下一阶段禁止修改内容：服务维护瘦身、operation run、监控大盘/NOC、未跟踪监控草稿、删除旧 `tls_*` 表、操作 `main`

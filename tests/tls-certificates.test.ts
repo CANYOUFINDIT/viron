@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  canonicalFingerprint,
   classifyTlsProbeFailure,
   groupTlsEndpoints,
   hostnameMatchesCertificate,
+  isForbiddenTlsProbeTarget,
   parseHttpsOrigin,
   parseSubjectAltNames,
   parseSubjectCommonName,
@@ -39,6 +41,17 @@ describe("TLS certificate helpers", () => {
     expect(parseHttpsOrigin("http://app.example.com")).toBeNull();
   });
 
+  it("canonicalizes fingerprints and rejects metadata or link-local probe targets", () => {
+    expect(canonicalFingerprint("3B:9A:8C:7D:E4:10:F2:88:91:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00")).toHaveLength(64);
+    expect(canonicalFingerprint("not-a-fingerprint")).toBeNull();
+    expect(isForbiddenTlsProbeTarget("169.254.169.254")).toBe(true);
+    expect(isForbiddenTlsProbeTarget("100.100.100.200")).toBe(true);
+    expect(isForbiddenTlsProbeTarget("metadata.google.internal")).toBe(true);
+    expect(isForbiddenTlsProbeTarget("224.0.0.1")).toBe(true);
+    expect(isForbiddenTlsProbeTarget("127.0.0.1")).toBe(false);
+    expect(isForbiddenTlsProbeTarget("10.0.0.8")).toBe(false);
+  });
+
   it("matches wildcard SAN and formats connect targets", () => {
     expect(hostnameMatchesCertificate("app.example.com", "app.example.com", ["*.example.com"])).toBe(true);
     expect(hostnameMatchesCertificate("other.example.net", "app.example.com", ["*.example.com"])).toBe(false);
@@ -67,6 +80,7 @@ describe("TLS certificate helpers", () => {
     const endpoint = {
       id: "endpoint-1",
       environmentId: "env",
+      certificateId: "cert-1",
       sshConnectionId: "ssh",
       sshConnectionName: "web-1",
       sshHost: "app.example.com",
@@ -80,6 +94,7 @@ describe("TLS certificate helpers", () => {
       probeStatus: "ok" as const,
       probeError: "",
       probedAt: "2026-08-26T00:00:00.000Z",
+      lastSuccessAt: "2026-08-26T00:00:00.000Z",
       leafCn: "app.example.com",
       leafSans: ["app.example.com"],
       issuer: "app.example.com",
@@ -92,6 +107,7 @@ describe("TLS certificate helpers", () => {
       hostnameMatch: true,
       chainComplete: true,
       daysRemaining: 6,
+      stale: false,
       webEntries: [],
       createdAt: "2026-08-26T00:00:00.000Z",
       updatedAt: "2026-08-26T00:00:00.000Z",

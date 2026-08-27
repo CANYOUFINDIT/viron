@@ -8,6 +8,7 @@ import { MYSQL_SCHEMA } from "./mysql-schema.js";
 import { SQLITE_SCHEMA } from "./sqlite-schema.js";
 import { passwordPolicyError } from "./password-policy.js";
 import { refreshPendingExistingConnections } from "./connection-existing.js";
+import { migrateSslAssets } from "./ssl-asset-migration.js";
 
 export type { EnvmanDatabase } from "./database-client.js";
 
@@ -64,6 +65,7 @@ export async function openDatabase(config: AppConfig): Promise<EnvmanDatabase> {
     if (!monitorAgentIndex) await db.exec("ALTER TABLE `monitor_samples` ADD KEY `monitor_samples_agent_collected_idx` (`agent_id`, `collected_at`)");
     await migrateMysqlKnowledgeSchema(db);
     await backfillInvitationAcceptances(db);
+    await migrateSslAssets(db);
     await refreshPendingExistingConnections(db);
     await loadSavedSettings(db, config);
     return db;
@@ -169,6 +171,7 @@ export async function openDatabase(config: AppConfig): Promise<EnvmanDatabase> {
     });
     migrateEnvironmentLogs();
   }
+  await migrateSslAssets(db);
   await refreshPendingExistingConnections(db);
   await loadSavedSettings(db, config);
   return db;

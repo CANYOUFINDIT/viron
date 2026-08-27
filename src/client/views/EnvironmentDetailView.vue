@@ -23,6 +23,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { computed, defineAsyncComponent, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { api, prefetchApi } from "../api";
+import TlsPopover from "../components/credentials/TlsPopover.vue";
 import DesktopExecutionNotice from "../components/DesktopExecutionNotice.vue";
 import EnvironmentImmersiveNavigation from "../components/EnvironmentImmersiveNavigation.vue";
 import DesktopWebAccountBrowser from "../components/DesktopWebAccountBrowser.vue";
@@ -79,7 +80,7 @@ interface WebEntry {
   description: string;
   tags: string[];
   credentialCount: number;
-  tls?: { status: "ok" | "expiring" | "expired" | "mismatch" | "unbound" | "unknown"; daysRemaining: number | null; endpointId: string | null; fingerprintSha256: string } | null;
+  tls?: import("../../shared/tls-certificates").TlsWebEntryBadge | null;
 }
 
 interface WebCredential {
@@ -480,17 +481,10 @@ function pinWorkspaceTabsIntoView() {
   });
 }
 
-function tlsEntryBadge(entry: WebEntry) {
-  if (entry.tls?.status === "expired") return tr("证书已过期");
-  if (entry.tls?.status === "expiring") return tr("{{0}} 天后到期", [entry.tls.daysRemaining ?? 0]);
-  if (entry.tls?.status === "mismatch") return tr("证书主机名不匹配");
-  return "";
-}
-
-async function openTlsCertificate(entry: WebEntry) {
-  if (!entry.tls?.endpointId) return;
-  const query: Record<string, string> = { ...workspaceQuery.value, tab: "maintenance", maintenanceEndpointId: entry.tls.endpointId };
-  await router.replace({ name: "environment", params: { id: environmentId }, query });
+function relatedTlsEntries(entry: WebEntry) {
+  return webEntries.value
+    .filter((item) => item.id !== entry.id && item.tls?.certificateId && item.tls.certificateId === entry.tls?.certificateId)
+    .map((item) => ({ id: item.id, name: item.name, url: item.url }));
 }
 
 async function selectWorkspaceTab(tab: WorkspaceTab) {
@@ -970,7 +964,9 @@ onBeforeUnmount(() => {
           >
             <span class="resource-list__icon"><img v-if="entryFavicons[entry.id]" :src="entryFavicons[entry.id]" alt="" @error="discardEntryFavicon(entry.id)" /><Globe2 v-else :size="17" /></span>
             <strong>{{ entry.name }}</strong>
-            <small v-if="tlsEntryBadge(entry)" class="web-entry-tls" :class="`is-${entry.tls?.status}`" @click.stop="openTlsCertificate(entry)">{{ tlsEntryBadge(entry) }}</small>
+            <span v-if="entry.tls" class="web-entry-tls" @click.stop>
+              <TlsPopover :tls="entry.tls" :related-entries="relatedTlsEntries(entry)" @refreshed="loadEnvironment" />
+            </span>
             <em>{{ entry.credentialCount }}</em>
           </button>
           <div v-if="!webEntries.length" class="list-empty"><Globe2 :size="20" /><span>{{ $t('还没有页面入口') }}</span></div>

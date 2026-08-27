@@ -57,7 +57,7 @@ let removeVisitHistory: (() => void) | undefined;
 const menuItems = [
   { key: "overview", label: tr("环境总览"), icon: CircleGauge, routeName: "overview", routeNames: ["overview", "environment"], planned: false },
   { key: "connections", label: tr("连接资源池"), icon: Boxes, routeName: "connections", routeNames: ["connections", "connection-tools"], planned: false },
-  { key: "ssh-keys", label: tr("SSH 密钥"), icon: KeyRound, routeName: "ssh-keys", routeNames: ["ssh-keys"], planned: false, managerOnly: true },
+  { key: "ssh-keys", label: tr("密钥与证书"), icon: KeyRound, routeName: "ssh-keys", routeNames: ["ssh-keys"], planned: false, managerOnly: true },
   { key: "ssh", label: tr("SSH 工作台"), icon: TerminalSquare, routeName: "ssh", routeNames: ["ssh"], planned: false },
   { key: "database", label: tr("数据库工作台"), icon: Database, routeName: "database", routeNames: ["database"], planned: false },
   { key: "redis", label: tr("Redis 工作台"), icon: MemoryStick, routeName: "redis", routeNames: ["redis"], planned: false },

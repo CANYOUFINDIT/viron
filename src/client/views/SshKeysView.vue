@@ -1,11 +1,13 @@
 <script setup lang="ts">import { translate as tr } from "../i18n";
 
-import { Copy, Download, Fingerprint, KeyRound, LockKeyhole, Pencil, Plus, ShieldCheck, Trash2, Upload } from "@lucide/vue";
+import { Copy, Download, Fingerprint, KeyRound, LockKeyhole, Pencil, Plus, RefreshCw, Search, ShieldCheck, Trash2, Upload } from "@lucide/vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { api } from "../api";
 import { copyTextToClipboard } from "../clipboard";
 import PageHeader from "../components/PageHeader.vue";
+import CertificateCenter from "../components/credentials/CertificateCenter.vue";
 import { downloadApiFile } from "../desktop";
 import { session } from "../session";
 
@@ -21,6 +23,10 @@ interface SshKeyItem {
   updatedAt: string;
 }
 
+const route = useRoute();
+const router = useRouter();
+const certificateCenter = ref<{ openCreate: () => void; probeAll: () => Promise<void> } | null>(null);
+const activeTab = computed(() => route.query.tab === "ssl" ? "ssl" : "ssh");
 const loading = ref(true);
 const saving = ref(false);
 const keys = ref<SshKeyItem[]>([]);
@@ -170,17 +176,38 @@ async function removeKey(key: SshKeyItem) {
   }
 }
 
+function selectTab(tab: "ssh" | "ssl") {
+  void router.replace({ query: { ...route.query, tab } });
+}
+
+watch(activeTab, (tab) => {
+  if (tab === "ssh") void load();
+});
+
 onMounted(load);
 </script>
 
 <template>
-  <div class="ssh-key-vault" v-loading="loading">
-    <PageHeader :title="$t('SSH 密钥')">
+  <div class="ssh-key-vault" v-loading="loading && activeTab === 'ssh'">
+    <PageHeader :title="$t('密钥与证书')">
       <template #actions>
-        <el-button @click="openImport"><Upload :size="16" />{{ $t('导入密钥') }}</el-button>
-        <el-button type="primary" @click="openGenerate"><Plus :size="16" />{{ $t('生成密钥') }}</el-button>
+        <template v-if="activeTab === 'ssh'">
+          <el-button @click="openImport"><Upload :size="16" />{{ $t('导入密钥') }}</el-button>
+          <el-button type="primary" @click="openGenerate"><Plus :size="16" />{{ $t('生成密钥') }}</el-button>
+        </template>
+        <template v-else>
+          <el-button @click="certificateCenter?.openCreate()"><Search :size="16" />{{ $t('手动录入端点探测') }}</el-button>
+          <el-button type="primary" @click="certificateCenter?.probeAll()"><RefreshCw :size="16" />{{ $t('全局批量重新探测') }}</el-button>
+        </template>
       </template>
     </PageHeader>
+    <p class="vault-subtitle">{{ $t('集中管理工作空间内的 SSH 连接私钥与 SSL/TLS 域名证书资产') }}</p>
+    <nav class="vault-tabs" role="tablist">
+      <button type="button" role="tab" :aria-selected="activeTab === 'ssh'" :class="{ 'is-active': activeTab === 'ssh' }" @click="selectTab('ssh')">{{ $t('SSH 密钥') }} ({{ keys.length }})</button>
+      <button type="button" role="tab" :aria-selected="activeTab === 'ssl'" :class="{ 'is-active': activeTab === 'ssl' }" @click="selectTab('ssl')">{{ $t('SSL/TLS 证书') }}</button>
+    </nav>
+    <CertificateCenter v-show="activeTab === 'ssl'" ref="certificateCenter" />
+    <div v-show="activeTab === 'ssh'">
 
     <section class="vault-overview" :aria-label="$t('密钥概览')">
       <div class="vault-overview__copy">
@@ -248,11 +275,16 @@ onMounted(load);
       <el-form label-position="top"><el-form-item :label="$t('密钥名称')" required><el-input v-model="renameForm.name" maxlength="160" @keyup.enter="renameKey" /></el-form-item></el-form>
       <template #footer><el-button @click="renameDialog = false">{{ $t('取消') }}</el-button><el-button type="primary" :loading="saving" @click="renameKey">{{ $t('保存') }}</el-button></template>
     </el-dialog>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .ssh-key-vault { min-width: 0; }
+.vault-subtitle { margin: -8px 0 14px; color: var(--ink-500); font-size: 13px; }
+.vault-tabs { display: flex; gap: 6px; margin-bottom: 16px; }
+.vault-tabs button { padding: 7px 14px; border: 0; border-radius: 8px; background: var(--ink-100); color: var(--ink-600); font-size: 12px; font-weight: 800; cursor: pointer; }
+.vault-tabs button.is-active { background: var(--surface); color: var(--teal-700); box-shadow: 0 2px 8px rgba(0,0,0,.06); }
 .vault-overview { position: relative; min-height: 172px; padding: 25px 27px; border: 1px solid color-mix(in srgb, var(--teal-200) 66%, var(--ink-100)); border-radius: 15px; background: linear-gradient(115deg, color-mix(in srgb, var(--teal-50) 88%, var(--surface)) 0 54%, color-mix(in srgb, var(--surface) 92%, var(--ink-50)) 54%); box-shadow: var(--shadow-sm); display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(360px, .85fr); align-items: center; gap: 28px; overflow: hidden; }
 .vault-overview::after { content: ""; position: absolute; right: 34%; bottom: -92px; width: 220px; height: 220px; border: 1px solid color-mix(in srgb, var(--teal-300) 34%, transparent); border-radius: 50%; pointer-events: none; }
 .vault-overview__copy { position: relative; z-index: 1; min-width: 0; }
