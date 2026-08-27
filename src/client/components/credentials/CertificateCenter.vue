@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { RefreshCw, Search, ShieldCheck, Trash2 } from "@lucide/vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ApiError, api } from "../../api";
 import { translate as tr } from "../../i18n";
@@ -56,6 +56,7 @@ async function load() {
     const response = await api<{ items: SslCertificateAsset[]; summary: typeof summary.value }>(`/api/v1/certificates?${params.toString()}`);
     items.value = response.items;
     summary.value = response.summary;
+    await scrollToHighlighted();
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : tr("加载证书失败"));
   } finally {
@@ -233,11 +234,18 @@ function statusLabel(asset: SslCertificateAsset) {
   return tr("正常有效 · 剩余 {{0}} 天", [asset.daysRemaining ?? 0]);
 }
 
+async function scrollToHighlighted() {
+  const value = highlighted.value;
+  if (!value || !items.value.length) return;
+  await nextTick();
+  document.getElementById(`certificate-${value}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+}
+
 watch(query, () => { void load(); }, { deep: true });
 watch(highlighted, async (value) => {
   if (!value || !items.value.length) return;
   await router.replace({ query: { ...route.query, tab: "ssl", fingerprint: value } });
-  document.getElementById(`certificate-${value}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+  await scrollToHighlighted();
 });
 
 onMounted(async () => {

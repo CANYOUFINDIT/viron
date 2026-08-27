@@ -823,6 +823,19 @@ async function openServiceLog(logId: string) {
   await selectWorkspaceTab("logs");
 }
 
+async function openServiceSsh(connectionId: string) {
+  if (!connectionId) return;
+  activeTab.value = "ssh";
+  if (!props.preview) {
+    const query: Record<string, string> = { ...workspaceQuery.value, tab: "ssh", connectionId };
+    delete query.mode;
+    await router.replace({ name: "environment", params: { id: environmentId }, query });
+  }
+  await nextTick();
+  await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+  pinWorkspaceTabsIntoView();
+}
+
 async function saveEnvironment() {
   if (!environmentForm.name.trim()) return ElMessage.warning(tr("请输入环境名称"));
   saving.value = true;
@@ -1100,12 +1113,13 @@ onBeforeUnmount(() => {
           v-if="activeTab === 'maintenance'"
           class="environment-tab-panel"
           :environment-id="environmentId"
-          :focus-host-id="workspaceQuery.maintenanceHostId"
-          :focus-service-id="workspaceQuery.maintenanceServiceId"
-          :focus-deployment-id="workspaceQuery.maintenanceDeploymentId"
-          :focus-endpoint-id="workspaceQuery.maintenanceEndpointId"
+          :focus-host-id="workspaceQuery.maintenanceHostId || workspaceQuery.hostId"
+          :focus-service-id="workspaceQuery.maintenanceServiceId || workspaceQuery.serviceId"
+          :focus-deployment-id="workspaceQuery.maintenanceDeploymentId || workspaceQuery.deploymentId"
+          :focus-endpoint-id="workspaceQuery.maintenanceEndpointId || workspaceQuery.endpointId"
           @count-change="updateServiceCount"
           @open-log="openServiceLog"
+          @open-ssh="openServiceSsh"
         />
       </KeepAlive>
     </div>

@@ -279,5 +279,6 @@ export interface MaintenancePanelProps {
 export interface MaintenancePanelEmit {
   (event: "count-change", counts: MaintenanceCounts): void;
   (event: "open-log", logId: string): void;
+  (event: "open-ssh", connectionId: string): void;
 }
 

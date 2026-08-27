@@ -33,6 +33,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   select: [host: MonitoringHostCard];
   install: [host: MonitoringHostCard];
+  "open-maintenance": [host: MonitoringHostCard];
 }>();
 
 const selected = computed(() => props.hosts.find((host) => host.sshConnectionId === props.selectedHostId) ?? null);
@@ -90,6 +91,7 @@ function presence(host: MonitoringHostCard) {
         :environment-id="selected.environmentId"
         :host-id="selected.sshConnectionId"
         :last-collected-at="selected.lastCollectedAt"
+        @open-maintenance="emit('open-maintenance', selected)"
       />
       <div v-else class="host-fleet__missing"><CircleAlert :size="18" /><span>{{ $t('探针缺失') }}</span></div>
     </div>

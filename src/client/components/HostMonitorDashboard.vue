@@ -109,7 +109,7 @@ const props = withDefaults(defineProps<{
   memoryThreshold: 80,
   diskThreshold: 80,
 });
-const emit = defineEmits<{ "update:focusMetric": [value: HostFocusMetric] }>();
+const emit = defineEmits<{ "update:focusMetric": [value: HostFocusMetric]; "open-maintenance": [] }>();
 const range = ref<HistoryRange>(DEFAULT_MONITOR_HISTORY_RANGE);
 const loading = ref(false);
 const loadingRange = ref<HistoryRange | null>(null);
@@ -641,6 +641,7 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
             <header><strong>{{ diagnosticLabel(finding.type) }}</strong><span>{{ finding.severity === 'critical' ? $t('严重') : $t('注意') }}</span></header>
             <p>{{ formatTime(finding.startedAt) }} - {{ formatTime(finding.endedAt) }} · {{ $t('峰值') }} {{ diagnosticPeak(finding) }}</p>
             <small v-if="finding.topProcesses.length">{{ finding.topProcesses.slice(0, 3).map((process) => monitorProcessLabel(process)).join('、') }}</small>
+            <button type="button" class="monitor-diagnostics__link" @click="emit('open-maintenance')">{{ $t('前往服务维护') }}</button>
           </article>
         </div>
       </section>
@@ -852,6 +853,9 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
 .monitor-diagnostics article.is-critical header span { color: var(--color-danger); }
 .monitor-diagnostics article p { margin: 5px 0 0; color: var(--color-muted); font-family: var(--font-mono); font-size: var(--text-2xs); }
 .monitor-diagnostics article small { display: block; margin-block-start: 5px; overflow: hidden; color: var(--color-ink-soft); font-size: var(--text-2xs); text-overflow: ellipsis; white-space: nowrap; }
+.monitor-diagnostics__link {
+  margin-block-start: .5rem; border: 0; padding: 0; background: transparent; color: var(--teal-700); font-size: var(--text-2xs); font-weight: 650; cursor: pointer;
+}
 .monitor-history__hero,
 .monitor-history__secondary,
 .monitor-chart-grid { min-width: 0; display: grid; gap: var(--space-sm); }

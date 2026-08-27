@@ -6,14 +6,14 @@
 
 | 字段 | 当前值 |
 | --- | --- |
-| 当前阶段 | Phase 2+3 UI/UX 修正 |
-| 阶段状态 | `CHANGES_REQUIRED` |
+| 当前阶段 | Phase 2+3 UI/UX 复验 |
+| 阶段状态 | `REVIEW_REQUIRED` |
 | 当前写锁 | `UNLOCKED` |
-| 当前负责人 | Grok |
+| 当前负责人 | Gemini |
 | 产品批准 | 用户已于 2026-08-27 11:24 CST 批准 `UIUX-SPEC.md` 2.0.0-final；无例外 |
 | 执行流程例外 | 用户已于 2026-08-27 15:22 CST 批准 Grok 连续实施 Phase 2+3，随后 Gemini 整体验收、Grok 集中修复、Codex 合并 Gate 3+4 |
 | 技术合同状态 | `FROZEN`（Gate 1 `PASSED`） |
-| 下一位负责人 | Grok / Phase 2+3 UI/UX 修正（集中修复 P1/P2 问题） |
+| 下一位负责人 | Gemini / Phase 2+3 UI/UX 复验（确认 UX-P1-001～UX-P2-004 已关闭） |
 
 ## 2. 基线
 
@@ -37,9 +37,10 @@
 | Gate 2 Phase 1 审查 | Codex | `PASSED` | `02e67d1` / `107db93` / `b15b64f` | `63628c9` | `G2-*` 与 `G2R-*` 全部关闭；允许进入 Phase 2 |
 | Phase 2 服务维护瘦身 | Grok | `REVIEW_REQUIRED` | `6167333`（生产代码基线 `63628c9`） | `75daf80` | 内部自验通过并独立提交；不经 Gate 3，待 Gemini/Codex 分区审查 |
 | Phase 3 监控大盘 | Grok | `REVIEW_REQUIRED` | `75daf80` | `f68e0a9` | 内部自验、截图与当前系统打包完成；待 Gemini 整体 UI/UX 验收 |
-| Phase 2+3 UI/UX 验收 | Gemini | `CHANGES_REQUIRED` | `f68e0a9` | `3fc67ac` | 验收完成，发现 3 个 P1、4 个 P2 交互缺陷，详见 UIUX-SPEC.md §14 |
-| Phase 2+3 UI/UX 修正 | Grok | `REVIEW_REQUIRED` | `3fc67ac` | 待填 | 等待 Grok 集中关闭 UX-P1-001~UX-P2-004 |
-| Gate 3+4 合并质量与发布 | Codex | `BLOCKED` | Phase 2+3 最终修正输出 commit | 待填 | 等待实现、Gemini 验收及修正完成 |
+| Phase 2+3 UI/UX 验收 | Gemini | `CHANGES_REQUIRED` | `f68e0a9` | `c26b6c2` | 验收完成，发现 3 个 P1、4 个 P2 交互缺陷，详见 UIUX-SPEC.md §14。交接文档曾写 `3fc67ac`，实际 origin/dev 提交为 `c26b6c2` |
+| Phase 2+3 UI/UX 修正 | Grok | `REVIEW_REQUIRED` | `c26b6c2` | 待填 | 已关闭 UX-P1-001～UX-P2-004；UX-P3-001 按验收意见延期。待 Gemini 复验 |
+| Phase 2+3 UI/UX 复验 | Gemini | `REVIEW_REQUIRED` | Grok 本批次输出 commit | 待填 | 对照截图与交互走查确认 P1/P2 关闭，不得改生产代码 |
+| Gate 3+4 合并质量与发布 | Codex | `BLOCKED` | Phase 2+3 最终修正输出 commit | 待填 | 等待 Gemini 复验通过后再执行合并 Gate |
 
 状态只能使用：`NOT_STARTED`、`IN_PROGRESS`、`BLOCKED`、`REVIEW_REQUIRED`、`CHANGES_REQUIRED`、`PASSED`。
 
@@ -53,15 +54,16 @@
 
 ## 5. 当前阻塞与风险
 
-Gate 2 最终结论为 `PASSED`。Phase 2+3 实现已提交并完成内部自验，当前风险：
+Gate 2 最终结论为 `PASSED`。Phase 2+3 实现与 P1/P2 UX 修正已提交并完成内部自验，当前风险：
 
 1. 新旧 TLS 双写窗口仍在；旧 `tls_*` 表未删除。任何停止双写必须延期到独立版本化迁移。
 2. 未跟踪 `EnvironmentMonitoringDashboard.vue` 仍只读未纳管，未修改、未提交、未接入路由。
-3. 服务维护截图为空环境空状态（无节点/探针）；监控大盘/NOC 截图同样为空数据，用于证明导航、空状态与「缺失指标不为 0%」。有数据的启停/时序/Findings 路径以自动化测试为证据。
+3. 服务维护截图仍为空环境空状态（无部署节点，因此卡片上的 SSH/日志按钮看不到）；有节点的 SSH/日志、深链聚焦、告警流、Findings 下钻以自动化测试为证据。监控 APM/NOC 空态截图已按修复后文案重拍。
 4. TLS 探测仍允许 manager 经授权 SSH 访问私网/loopback；metadata/link-local/multicast 已拒绝。
 5. 本地真实 MariaDB 11.4 与独立 CI job（`.github/workflows/ci.yml` 的 `ssl-mysql`）已补齐；工作台 `mysql.integration` skip 仍不能代替。
 6. 首次缺失 Electron 二进制时的并行安装竞态仍须在合并 Gate 3+4 关闭。本轮 `package:current-os` 已成功生成并校验 macOS arm64 DMG。
 7. Phase 2 的 Operations Ribbon 继续只展示 manager 配置的既有 Runbook，未自动植入平滑重启/体检/清缓存脚本。
+8. `UX-P3-001`（NOC 网络/磁盘水位排行）按 Gemini 验收意见延期，不阻塞本轮复验。
 
 ## 6. 交接模板
 
@@ -431,4 +433,32 @@ Gate 2 最终结论为 `PASSED`。Phase 2+3 实现已提交并完成内部自验
 - 下一位负责人：Grok / Phase 2+3 UI/UX 修正
 - 下一阶段允许修改范围：针对 `UX-P1-001` 至 `UX-P2-004` 缺陷修改 `src/client/` 相应组件与视图交互逻辑；增补对应前端/端到端回归测试；更新 `STATUS.md`。
 - 下一阶段禁止修改内容：改变已冻结的数据库 Schema 与核心 REST 路由协议；删除旧 TLS 表；修改/暂存/提交/删除未跟踪 `EnvironmentMonitoringDashboard.vue`；操作或合并 `main` 分支。
+
+### 2026-08-27 17:30 — Grok / Phase 2+3 UI/UX 修正
+
+- 输入 commit：`c26b6c2`（Gemini 验收记录；交接文档曾写 `3fc67ac`）
+- 输出 commit：本批次提交（commit 后回填 hash）
+- 完成内容：
+  1. **`UX-P1-001`**：部署节点卡片操作区一等公民露出「直连 SSH」「节点日志」；Member 可点。`openServiceSsh` 切到 SSH 页签并写入 `connectionId`，不走会删掉 connectionId 的 `selectWorkspaceTab`。
+  2. **`UX-P1-002`**：维护面板同时接受 `maintenanceServiceId||serviceId`、`maintenanceHostId||hostId`、`maintenanceDeploymentId||deploymentId`、`maintenanceEndpointId||endpointId`。
+  3. **`UX-P1-003`**：`MonitoringView` 轮询 `GET /api/v1/monitor-alerts`（含 `environmentId` 过滤、Abort），把真实告警传给 `NocScreen`，不再 `:alerts="[]"`。
+  4. **`UX-P2-001`**：APM「服务健康矩阵」空数据时居中展示 `暂无服务时序`。
+  5. **`UX-P2-002`**：NOC 左/中/右空态分别为 `暂无活动告警` / `暂无主机矩阵` / `无高负载节点` / `暂无服务时序`。NOC 使用 `Teleport to="body"` 覆盖侧栏，空态与告警流可见。
+  6. **`UX-P2-003`**：APM 高负载节点提供「立即排查」，跳到 `/environments/:id?tab=maintenance&serviceId=&deploymentId=`；主机 Findings 提供「前往服务维护」（`hostId`）。
+  7. **`UX-P2-004`**：证书列表 `load()` 完成后按 fingerprint 深链 `scrollIntoView({ block: "center" })`。
+  8. **`UX-P3-001`**：未实现，按验收意见延期。
+  9. 未修改、未删除、未暂存、未提交、未接入 `EnvironmentMonitoringDashboard.vue`。未改冻结合同 Schema/API，未删旧 `tls_*` 表，未操作 `main`。
+- 修改文件：`ServiceMaintenancePanel.vue`、`EnvironmentDetailView.vue`、`MonitoringView.vue`、`NocScreen.vue`、`ServiceApmPanel.vue`、`HostFleetPanel.vue`、`HostMonitorDashboard.vue`、`CertificateCenter.vue`、`service-maintenance/types.ts`、`i18n-messages.ts`、`tests/{certificate-center-ui,monitoring-ui,service-discovery-layout}.test.ts`、`UIUX-SPEC.md`（issue 状态 `FIXED`）、`STATUS.md`、更新 `docs/refactor-execution/screenshots/phase3-monitoring-{hosts,services,noc}.png`
+- 数据库/API 变化：无。仅客户端调用已有 `GET /api/v1/monitor-alerts`。
+- 测试命令及结果：
+  - `npm run typecheck`：通过
+  - 定向：certificate-center-ui / monitoring-ui / service-discovery-layout / i18n：通过
+  - `npm test`：171 files passed / 7 skipped，751 passed / 9 skipped
+  - `npm run build`：通过；产物含 `MonitoringView`，不含未跟踪草稿
+- `package:current-os` 结果：通过。macOS arm64 DMG `release/Viron-0.1.6-macos-arm64-self-signed.dmg`（未提交 `release/`）；最低系统 macOS 12.0；本地自签名。
+- 未完成内容：Gemini 复验 P1/P2 关闭情况；Codex Gate 3+4；`UX-P3-001`
+- 已知风险：见第 5 节。空环境截图无法展示节点 SSH/日志按钮与 Findings 下钻，回归靠测试。
+- 下一位负责人：Gemini / Phase 2+3 UI/UX 复验
+- 下一阶段允许修改范围：只读审查实现、截图与交互；仅更新 `UIUX-SPEC.md` 验收结论与 `STATUS.md`。不修改生产代码。
+- 下一阶段禁止修改内容：生产代码、Schema/API、测试、未跟踪监控草稿、`main`、把草稿 `git add`、提前启动 Codex Gate 3+4
 

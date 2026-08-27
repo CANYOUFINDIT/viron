@@ -10,6 +10,7 @@ import NocScreen from "../components/monitoring/NocScreen.vue";
 import ServiceApmPanel, { type MonitoringProblemNode, type MonitoringServiceCard } from "../components/monitoring/ServiceApmPanel.vue";
 import { translate as tr } from "../i18n";
 import { session } from "../session";
+import type { MonitorAlertItem } from "../../shared/monitor-alerts";
 import type { MonitoringRange, MonitoringRefreshSeconds } from "../../shared/monitoring";
 
 interface OverviewPayload {
@@ -47,8 +48,10 @@ const timeseriesPoints = ref<Array<{ at: string; breakBefore?: boolean; cpuUsedP
 const loadingTimeseries = ref(false);
 const lastUpdated = ref("");
 const error = ref("");
+const alerts = ref<MonitorAlertItem[]>([]);
 let overviewAbort: AbortController | null = null;
 let timeseriesAbort: AbortController | null = null;
+let alertsAbort: AbortController | null = null;
 let refreshTimer: number | undefined;
 let overviewInFlight = false;
 
@@ -94,6 +97,7 @@ async function loadOverview(silent = false) {
     overview.value = response;
     lastUpdated.value = response.generatedAt;
     error.value = "";
+    void loadAlerts();
     if (view.value === "hosts" && !selectedHostId.value && response.hosts[0]) {
       patchQuery({ hostId: response.hosts[0].sshConnectionId, environmentId: environmentId.value || response.hosts[0].environmentId });
     }
@@ -104,6 +108,20 @@ async function loadOverview(silent = false) {
     overviewInFlight = false;
     loading.value = false;
     refreshing.value = false;
+  }
+}
+
+async function loadAlerts() {
+  alertsAbort?.abort();
+  alertsAbort = new AbortController();
+  try {
+    const params = new URLSearchParams();
+    if (environmentId.value) params.set("environmentId", environmentId.value);
+    const response = await api<{ items: MonitorAlertItem[] }>(`/api/v1/monitor-alerts${params.size ? `?${params}` : ""}`, { signal: alertsAbort.signal });
+    alerts.value = response.items;
+  } catch (caught) {
+    if ((caught as { name?: string }).name === "AbortError") return;
+    alerts.value = [];
   }
 }
 
@@ -143,6 +161,7 @@ function startRefresh() {
     if (document.hidden) return;
     void loadOverview(true);
     if (view.value === "services") void loadTimeseries();
+    void loadAlerts();
   }, refreshSeconds.value * 1000);
 }
 
@@ -167,6 +186,7 @@ onBeforeUnmount(() => {
   stopRefresh();
   overviewAbort?.abort();
   timeseriesAbort?.abort();
+  alertsAbort?.abort();
   document.removeEventListener("visibilitychange", onVisibility);
 });
 
@@ -183,7 +203,23 @@ function selectService(service: MonitoringServiceCard) {
   patchQuery({ view: "services", serviceId: service.id, environmentId: environmentId.value || service.environmentId });
 }
 function inspectNode(node: MonitoringProblemNode) {
-  patchQuery({ view: "services", serviceId: String(node.serviceId) });
+  if (!node.environmentId) {
+    patchQuery({ view: "services", serviceId: String(node.serviceId) });
+    return;
+  }
+  void router.push({
+    name: "environment",
+    params: { id: String(node.environmentId) },
+    query: { tab: "maintenance", serviceId: String(node.serviceId), deploymentId: String(node.id) },
+  });
+}
+
+function openHostMaintenance(host: MonitoringHostCard) {
+  void router.push({
+    name: "environment",
+    params: { id: host.environmentId },
+    query: { tab: "maintenance", hostId: host.sshConnectionId },
+  });
 }
 function openInstall(host: MonitoringHostCard) {
   void router.push({ name: "environment", params: { id: host.environmentId }, query: { tab: "maintenance", maintenanceHostId: host.sshConnectionId } });
@@ -240,6 +276,7 @@ const summary = computed(() => overview.value?.summary ?? {
       :can-operate="canOperate"
       @select="selectHost"
       @install="openInstall"
+      @open-maintenance="openHostMaintenance"
     />
     <ServiceApmPanel
       v-else-if="view === 'services'"
@@ -259,7 +296,7 @@ const summary = computed(() => overview.value?.summary ?? {
       :hosts="overview.hosts"
       :problem-nodes="overview.problemNodes"
       :ranking="overview.serviceRanking"
-      :alerts="[]"
+      :alerts="alerts"
       @exit="patchQuery({ view: 'hosts' })"
     />
     <p v-if="refreshSeconds === 0" class="monitoring-paused"><Pause :size="14" />{{ $t('暂停刷新') }}</p>

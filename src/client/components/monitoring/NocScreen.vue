@@ -68,6 +68,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <Teleport to="body">
   <section ref="root" class="noc-screen" :class="{ 'is-reduced': reducedMotion }" role="dialog" aria-label="NOC">
     <header>
       <strong>VIRON CLUSTER OPERATIONS CENTER</strong>
@@ -78,9 +79,10 @@ onBeforeUnmount(() => {
       <aside>
         <h3>{{ $t('主机基础设施') }}</h3>
         <p>🟢 {{ summary.hostOnline }} · 🔴 {{ summary.hostOffline }} · ⚪ {{ summary.hostMissing }} · ⚠ {{ summary.hostStale }}</p>
-        <ol>
+        <ol v-if="alerts.length">
           <li v-for="alert in alerts.slice(0, 12)" :key="alert.id">{{ alert.targetName }} · {{ alert.status }}</li>
         </ol>
+        <p v-else class="noc-empty">{{ $t('暂无活动告警') }}</p>
       </aside>
       <main>
         <div class="noc-gauges">
@@ -88,29 +90,33 @@ onBeforeUnmount(() => {
           <article><small>MEM</small><strong>{{ formatPercent(summary.avgMemoryPercent) }}</strong></article>
           <article><small>DISK</small><strong>{{ summary.diskAlerts }}</strong></article>
         </div>
-        <div class="noc-heat">
+        <div v-if="heatHosts.length" class="noc-heat">
           <button v-for="host in heatHosts" :key="host.sshConnectionId" type="button" :class="heatClass(host)" :title="host.connectionName">
             {{ formatPercent(host.cpuUsedPercent) }}
           </button>
         </div>
+        <p v-else class="noc-empty">{{ $t('暂无主机矩阵') }}</p>
       </main>
       <aside>
         <h3>{{ $t('高负载节点') }}</h3>
-        <ol>
+        <ol v-if="problemNodes.length">
           <li v-for="node in problemNodes.slice(0, 10)" :key="String(node.id)">{{ node.serviceName }} · {{ String(node.name ?? "") }}</li>
         </ol>
+        <p v-else class="noc-empty">{{ $t('无高负载节点') }}</p>
         <h3>{{ $t('资源排行') }}</h3>
-        <ol>
+        <ol v-if="ranking.length">
           <li v-for="service in ranking.slice(0, 8)" :key="service.id">{{ service.name }} · {{ formatPercent(service.cpuUsedPercent) }}</li>
         </ol>
+        <p v-else class="noc-empty">{{ $t('暂无服务时序') }}</p>
       </aside>
     </div>
   </section>
+  </Teleport>
 </template>
 
 <style scoped>
 .noc-screen {
-  position: fixed; inset: 0; z-index: 80; display: grid; grid-template-rows: auto minmax(0, 1fr);
+  position: fixed; inset: 0; z-index: 90; display: grid; grid-template-rows: auto minmax(0, 1fr);
   background: #0b1118; color: #d7f7ee; font-family: var(--font-body);
 }
 .noc-screen header {
@@ -134,6 +140,7 @@ onBeforeUnmount(() => {
 .noc-heat .is-critical { background: #ff4d4f; color: #fff; }
 .noc-heat .is-down, .noc-heat .is-unknown { background: #2a3640; color: #8aa; }
 .noc-screen ol { margin: 0; padding-left: 1.1rem; display: grid; gap: .375rem; font-size: .75rem; }
+.noc-empty { margin: .75rem 0; color: #6f8890; font-size: .75rem; }
 .noc-screen.is-reduced .noc-live { animation: none; }
 @media (max-width: 899px) { .noc-grid { grid-template-columns: minmax(0, 1fr); } }
 </style>

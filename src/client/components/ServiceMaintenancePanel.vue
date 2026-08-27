@@ -54,7 +54,7 @@ const props = defineProps<{
   focusDeploymentId?: string;
   focusEndpointId?: string;
 }>();
-const emit = defineEmits<{ "count-change": [counts: MaintenanceCounts]; "open-log": [logId: string] }>();
+const emit = defineEmits<{ "count-change": [counts: MaintenanceCounts]; "open-log": [logId: string]; "open-ssh": [connectionId: string] }>();
 const maintenanceContext = createMaintenanceContext();
 const maintenancePayload = useMaintenancePayload(maintenanceContext, props, emit);
 maintenanceContext.payload = maintenancePayload;
@@ -247,6 +247,14 @@ const {
   openAlertSettings,
   saveAlertSettings,
 } = maintenance;
+
+function deploymentLogId(deployment: { sshConnectionId: string | null }) {
+  const service = selectedService.value;
+  return payload.value.logs.find((log) => log.sshConnectionId === deployment.sshConnectionId && service?.logIds.includes(log.id))?.id
+    ?? payload.value.logs.find((log) => log.sshConnectionId === deployment.sshConnectionId)?.id
+    ?? service?.logIds[0]
+    ?? "";
+}
 
 watch(selectedService, (service) => {
   if (service && selectedServiceId.value !== service.id) selectedServiceId.value = service.id;
@@ -471,12 +479,16 @@ onBeforeUnmount(() => {
               <p v-if="!deployment.connectionAvailable" class="deployment-warning">{{ $t('原 SSH 连接已删除或移出环境，请修复部署节点。') }}</p>
               <footer>
                 <span>{{ formatTime(deployment.lastCheckedAt) }}</span>
-                <div v-if="payload.canOperate && selectedService.status === 'active' && supportsMaintenanceActions(deployment.provider, deployment)">
-                  <button v-if="deploymentAllowsAction(deployment, 'start')" type="button" :disabled="runningAction !== '' || !deployment.connectionAvailable" :title="$t('启动')" :aria-label="$t('启动')" @click="runMaintenanceAction(deployment, 'start')"><Play :size="14" /></button>
-                  <button v-if="deploymentAllowsAction(deployment, 'stop')" type="button" :disabled="runningAction !== '' || !deployment.connectionAvailable" :title="$t('停止')" :aria-label="$t('停止')" @click="runMaintenanceAction(deployment, 'stop')"><Square :size="13" /></button>
-                  <button v-if="deploymentAllowsAction(deployment, 'restart')" type="button" :disabled="runningAction !== '' || !deployment.connectionAvailable" :title="$t('重启')" :aria-label="$t('重启')" @click="runMaintenanceAction(deployment, 'restart')"><RotateCw :size="14" :class="{ 'is-spinning': runningAction === `${deployment.id}:restart` }" /></button>
+                <div class="deployment-card__ops">
+                  <button type="button" :disabled="!deployment.sshConnectionId || !deployment.connectionAvailable" :title="$t('直连 SSH')" :aria-label="$t('直连 SSH')" @click="emit('open-ssh', deployment.sshConnectionId || '')"><Terminal :size="14" /></button>
+                  <button type="button" :disabled="!deploymentLogId(deployment)" :title="$t('节点日志')" :aria-label="$t('节点日志')" @click="emit('open-log', deploymentLogId(deployment))"><FileText :size="14" /></button>
+                  <template v-if="payload.canOperate && selectedService.status === 'active' && supportsMaintenanceActions(deployment.provider, deployment)">
+                    <button v-if="deploymentAllowsAction(deployment, 'start')" type="button" :disabled="runningAction !== '' || !deployment.connectionAvailable" :title="$t('启动')" :aria-label="$t('启动')" @click="runMaintenanceAction(deployment, 'start')"><Play :size="14" /></button>
+                    <button v-if="deploymentAllowsAction(deployment, 'stop')" type="button" :disabled="runningAction !== '' || !deployment.connectionAvailable" :title="$t('停止')" :aria-label="$t('停止')" @click="runMaintenanceAction(deployment, 'stop')"><Square :size="13" /></button>
+                    <button v-if="deploymentAllowsAction(deployment, 'restart')" type="button" :disabled="runningAction !== '' || !deployment.connectionAvailable" :title="$t('重启')" :aria-label="$t('重启')" @click="runMaintenanceAction(deployment, 'restart')"><RotateCw :size="14" :class="{ 'is-spinning': runningAction === `${deployment.id}:restart` }" /></button>
+                  </template>
                 </div>
-                <small v-else-if="unsupportedMaintenanceActionReason(deployment.provider, deployment)" class="deployment-action-note">{{ unsupportedMaintenanceActionReason(deployment.provider, deployment) }}</small>
+                <small v-if="!(payload.canOperate && selectedService.status === 'active' && supportsMaintenanceActions(deployment.provider, deployment)) && unsupportedMaintenanceActionReason(deployment.provider, deployment)" class="deployment-action-note">{{ unsupportedMaintenanceActionReason(deployment.provider, deployment) }}</small>
               </footer>
             </article>
             <button v-if="payload.canConfigure && !selectedService.deployments.length" class="deployment-empty-action" type="button" @click="openDeploymentCreate()"><Plus :size="18" /><strong>{{ $t('添加部署节点') }}</strong></button>
