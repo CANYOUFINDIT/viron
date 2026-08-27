@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
@@ -6,6 +7,7 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import Database from "better-sqlite3";
 import { chromium } from "playwright-core";
 
 // Critical-user-flow integration: production server and UI are real; external database and Electron bridge boundaries use deterministic fixtures.
@@ -125,7 +127,73 @@ async function loginThroughUi(page, baseUrl, { desktop = false } = {}) {
   await expectNoRouteError(page, "登录流程");
 }
 
-async function verifyEnvironmentAndMaintenance(page) {
+function openFlowDatabase(dataDirectory) {
+  const db = new Database(join(dataDirectory, "envman.db"));
+  db.pragma("busy_timeout = 5000");
+  db.pragma("journal_mode = WAL");
+  return db;
+}
+
+function seedSharedCertificate(dataDirectory, environmentId, fingerprint, cn) {
+  const db = openFlowDatabase(dataDirectory);
+  try {
+    const now = new Date().toISOString();
+    const admin = db.prepare("SELECT id FROM admin_users WHERE username = ?").get(adminUsername);
+    const certId = randomUUID();
+    db.prepare(`
+      INSERT INTO ssl_certificates (
+        id, workspace_type, workspace_id, fingerprint_sha256, leaf_cn, leaf_sans_json, issuer, serial,
+        signature_algorithm, not_before, not_after, is_self_signed, first_seen_at, last_seen_at, created_at, updated_at
+      ) VALUES (?, 'personal', ?, ?, ?, ?, 'Flow CA', '1', 'sha256', ?, ?, 0, ?, ?, ?, ?)
+    `).run(certId, admin.id, fingerprint, cn, JSON.stringify([cn, "admin.flow.test", "api.flow.test"]), now, new Date(Date.now() + 30 * 86400000).toISOString(), now, now, now, now);
+    const endpoints = db.prepare("SELECT id FROM ssl_endpoints WHERE environment_id = ?").all(environmentId);
+    for (const endpoint of endpoints) {
+      db.prepare(`
+        UPDATE ssl_endpoints SET certificate_id = ?, probe_status = 'ok', last_success_at = ?, probed_at = ?, updated_at = ?
+        WHERE id = ?
+      `).run(certId, now, now, now, endpoint.id);
+      db.prepare(`
+        UPDATE tls_endpoints SET fingerprint_sha256 = ?, leaf_cn = ?, probe_status = 'ok', probed_at = ?, not_before = ?, not_after = ?, updated_at = ?
+        WHERE id = ?
+      `).run(fingerprint, cn, now, now, new Date(Date.now() + 30 * 86400000).toISOString(), now, endpoint.id);
+    }
+    return certId;
+  } finally {
+    db.close();
+  }
+}
+
+function seedMonitoringFixture(dataDirectory, { environmentId, connectionId, serviceName }) {
+  const db = openFlowDatabase(dataDirectory);
+  try {
+    const now = new Date().toISOString();
+    const host = db.prepare("SELECT ssh_connection_id FROM monitor_hosts WHERE ssh_connection_id = ?").get(connectionId);
+    if (!host) {
+      db.prepare(`
+        INSERT INTO monitor_hosts (
+          ssh_connection_id, agent_id, agent_version, protocol_version, status, last_sequence,
+          latest_host_json, latest_candidates_json, latest_kubernetes_configs_json, last_error,
+          last_collected_at, last_pulled_at, install_path, install_architecture, install_managed, installed_at, updated_at
+        ) VALUES (?, ?, '0.1.4', 1, 'ready', 1, ?, '[]', '[]', '', ?, ?, '', '', 1, ?, ?)
+      `).run(connectionId, randomUUID(), JSON.stringify({
+        cpuUsedPercent: 18, memoryUsedPercent: 33, disks: [{ path: "/", usedPercent: 41 }], operatingSystem: "linux", architecture: "amd64", resolutionSeconds: 30,
+      }), now, now, now, now);
+    }
+    db.prepare(`
+      INSERT INTO monitor_samples (
+        ssh_connection_id, agent_id, sequence_start, sequence_end, collected_at, resolution_seconds, payload_json, received_at
+      ) VALUES (?, 'flow-agent', 1, 1, ?, 30, ?, ?)
+    `).run(connectionId, now, JSON.stringify({
+      collectedAt: now,
+      host: { cpuUsedPercent: 18 },
+      candidates: [{ provider: "systemd", externalId: "flow.service", name: serviceName, cpuUsedPercent: 11, memoryBytes: 128 }],
+    }), now);
+  } finally {
+    db.close();
+  }
+}
+
+async function verifyEnvironmentAndMaintenance(page, { baseUrl }) {
   await page.getByRole("button", { name: "新建环境", exact: true }).click();
   const environmentDialog = page.getByRole("dialog", { name: "新建环境" });
   await expectVisible(environmentDialog, "新建环境对话框");
@@ -152,15 +220,96 @@ async function verifyEnvironmentAndMaintenance(page) {
   await serviceDialog.getByRole("button", { name: "保存服务", exact: true }).click();
   await expectVisible(page.locator(".maintenance-directory").getByText(serviceName, { exact: true }), "新服务目录项");
 
+  const sshPayload = (name) => ({
+    environmentId,
+    name,
+    host: "127.0.0.1",
+    port: 22,
+    username: "operator",
+    authType: "password",
+    credential: { password: "flow-secret" },
+    options: { terminalType: "xterm-256color", keepAliveSeconds: 30, encoding: "utf-8", hostKeySha256: "", loginScriptEnabled: false, loginScript: "" },
+  });
+  const sshA = await page.request.post(`${baseUrl}/api/v1/ssh-connections`, { data: sshPayload("flow-host-a") });
+  const sshB = await page.request.post(`${baseUrl}/api/v1/ssh-connections`, { data: sshPayload("flow-host-b") });
+  assert.equal(sshA.status(), 201, "创建 SSH A 失败");
+  assert.equal(sshB.status(), 201, "创建 SSH B 失败");
+  const connectionA = await sshA.json();
+  const connectionB = await sshB.json();
+  const serviceRow = await page.request.get(`${baseUrl}/api/v1/environments/${environmentId}/service-deployments`);
+  const serviceId = (await serviceRow.json()).services[0].id;
+  const depAResponse = await page.request.post(`${baseUrl}/api/v1/services/${serviceId}/deployments`, {
+    data: { sshConnectionId: connectionA.id, provider: "systemd", externalId: "flow.service", displayName: "flow-a", origin: "manual" },
+  });
+  const depBResponse = await page.request.post(`${baseUrl}/api/v1/services/${serviceId}/deployments`, {
+    data: { sshConnectionId: connectionB.id, provider: "systemd", externalId: "worker.service", displayName: "flow-b", origin: "manual" },
+  });
+  assert.equal(depAResponse.status(), 201, "创建部署节点 A 失败");
+  assert.equal(depBResponse.status(), 201, "创建部署节点 B 失败");
+  const depA = await depAResponse.json();
+  const depB = await depBResponse.json();
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: /服务维护/ }).click();
+  await expectVisible(page.locator(".deployment-card").getByText("flow-a"), "部署节点 A");
+  await page.route("**/api/v1/service-deployments/actions", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    return route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify({ item: { id: "flow-op-1", status: "queued", result: { succeeded: 0, failed: 0, targets: [] } } }),
+    });
+  });
+  await page.route("**/api/v1/service-operations/flow-op-1", async (route) => {
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        item: {
+          id: "flow-op-1",
+          status: "partial",
+          result: {
+            succeeded: 1,
+            failed: 1,
+            truncated: false,
+            targets: [
+              { deploymentId: depA.id, targetName: "flow-a", ok: true, message: "", durationMs: 12 },
+              { deploymentId: depB.id, targetName: "flow-b", ok: false, message: "SSH 执行失败", durationMs: 9 },
+            ],
+          },
+        },
+      }),
+    });
+  });
+  await page.locator(".deployment-select-all input").check();
+  await page.getByRole("button", { name: "批量重启", exact: true }).click();
+  const confirm = page.getByRole("dialog").last();
+  await expectVisible(confirm, "批量确认");
+  await confirm.getByRole("button", { name: /确定|确认|OK/ }).click();
+  await expectVisible(page.getByText("SSH 执行失败"), "批量部分失败结果");
+  await page.getByRole("button", { name: "关闭", exact: true }).click();
+  process.stdout.write("Given/When/Then 服务批量部分失败: pass\n");
+
   await page.locator(".maintenance-toolbar").getByRole("button", { name: "告警设置", exact: true }).click();
   const alertDialog = page.getByRole("dialog", { name: "监控告警设置" });
   await expectVisible(alertDialog, "监控告警设置对话框");
   await alertDialog.getByRole("button", { name: "取消", exact: true }).click();
   await expectNoRouteError(page, "环境与服务维护流程");
-  return environmentId;
+  return { environmentId, serviceName, connectionId: connectionA.id };
 }
 
-async function verifyCredentialsAndMonitoring(page) {
+async function verifyCredentialsAndMonitoring(page, { environmentId, serviceName, connectionId, dataDirectory, baseUrl }) {
+  const adminEntry = await page.request.post(`${baseUrl}/api/v1/environments/${environmentId}/web-entries`, {
+    data: { name: "admin", url: "https://admin.flow.test", description: "", tags: [] },
+  });
+  const apiEntry = await page.request.post(`${baseUrl}/api/v1/environments/${environmentId}/web-entries`, {
+    data: { name: "api", url: "https://api.flow.test", description: "", tags: [] },
+  });
+  assert.equal(adminEntry.status(), 201, "创建 admin Web 入口失败");
+  assert.equal(apiEntry.status(), 201, "创建 api Web 入口失败");
+  const sharedFingerprint = createHash("sha256").update(`flow-shared-${flowSuffix}`).digest("hex");
+  seedSharedCertificate(dataDirectory, environmentId, sharedFingerprint, "flow.shared.test");
+  seedMonitoringFixture(dataDirectory, { environmentId, connectionId, serviceName });
+
   const expandSidebar = page.getByRole("button", { name: "展开左侧菜单" });
   if (await expandSidebar.count()) await expandSidebar.click();
   await page.locator(".primary-menu").getByRole("button", { name: "密钥与证书" }).click();
@@ -169,17 +318,28 @@ async function verifyCredentialsAndMonitoring(page) {
   await expectVisible(page.getByRole("tab", { name: /SSH 密钥/ }), "SSH 密钥 Tab");
   await page.getByRole("tab", { name: "SSL/TLS 证书" }).click();
   await expectVisible(page.locator(".certificate-center"), "证书中心");
-  await expectVisible(page.getByText("当前空间还没有 SSL 证书", { exact: true }), "证书空状态");
+  await expectVisible(page.getByRole("heading", { name: "flow.shared.test" }), "同证书 CN");
+  await expectVisible(page.locator(".cert-card li").filter({ hasText: "admin.flow.test" }), "admin 入口");
+  await expectVisible(page.locator(".cert-card li").filter({ hasText: "api.flow.test" }), "api 入口");
+  const rotatedFingerprint = createHash("sha256").update(`flow-rotated-${flowSuffix}`).digest("hex");
+  seedSharedCertificate(dataDirectory, environmentId, rotatedFingerprint, "flow.rotated.test");
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.getByRole("tab", { name: "SSL/TLS 证书" }).click();
+  await expectVisible(page.getByRole("heading", { name: "flow.rotated.test" }), "轮换后证书");
+  process.stdout.write("Given/When/Then 多入口同证书与轮换: pass\n");
 
   await page.locator(".primary-menu").getByRole("button", { name: "监控大盘" }).click();
   await page.waitForURL((url) => url.pathname === "/monitoring", { timeout: 20_000 });
   await expectVisible(page.getByRole("heading", { name: "监控大盘" }), "监控大盘页");
-  await expectVisible(page.getByText("暂无监控主机", { exact: true }), "主机空状态");
+  await expectVisible(page.getByRole("heading", { name: "flow-host-a" }), "监控主机下钻");
   await page.getByRole("tab", { name: "业务服务" }).click();
-  await expectVisible(page.getByText("暂无服务时序").first(), "APM 空状态");
+  await expectVisible(page.getByText(serviceName).first(), "服务时序下钻");
+  process.stdout.write("Given/When/Then 监控下钻: pass\n");
   await page.getByRole("tab", { name: "NOC 全屏" }).click();
-  await expectVisible(page.getByText("暂无活动告警", { exact: true }), "NOC 告警空状态");
+  await expectVisible(page.locator(".noc-screen"), "NOC 全屏");
   await page.getByRole("button", { name: "退出全屏" }).click();
+  await expectVisible(page.getByRole("heading", { name: "监控大盘" }), "退出 NOC 后回到监控大盘");
+  process.stdout.write("Given/When/Then NOC 进退全屏: pass\n");
   await expectNoRouteError(page, "凭据中心与监控大盘流程");
 }
 
@@ -609,9 +769,9 @@ async function main() {
     activePage = page;
     observePage(page, failures);
     await loginThroughUi(page, baseUrl);
-    const environmentId = await verifyEnvironmentAndMaintenance(page);
-    assert(environmentId, "环境流程未返回环境 ID");
-    await verifyCredentialsAndMonitoring(page);
+    const maintenance = await verifyEnvironmentAndMaintenance(page, { baseUrl });
+    assert(maintenance.environmentId, "环境流程未返回环境 ID");
+    await verifyCredentialsAndMonitoring(page, { ...maintenance, dataDirectory, baseUrl });
     await verifyDatabaseWorkbench(page, baseUrl);
     await verifySettings(page, baseUrl);
     await verifyOrganization(page, baseUrl);

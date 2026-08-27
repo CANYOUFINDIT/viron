@@ -6,8 +6,15 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildApp } from "../src/server/app.js";
 import type { AppConfig } from "../src/server/config.js";
 import { ensureAdmin, openDatabase } from "../src/server/database.js";
-import { interruptStaleServiceOperations } from "../src/server/service-operations.js";
-import { capabilityDisabledReason, deploymentCapabilities, kubernetesController } from "../src/shared/service-operations.js";
+import { interruptStaleServiceOperations, mapWithConcurrency, runServiceOperation } from "../src/server/service-operations.js";
+import {
+  SERVICE_OPERATION_OUTPUT_LIMIT,
+  capabilityDisabledReason,
+  clipUtf8,
+  deploymentCapabilities,
+  kubernetesController,
+} from "../src/shared/service-operations.js";
+import type { FastifyRequest } from "fastify";
 import { operationHeaders } from "./helpers/service-operations.js";
 
 const directories: string[] = [];
@@ -246,6 +253,105 @@ describe("service operation API contract", () => {
       });
       expect(memberForbidden.statusCode).toBe(403);
       expect(memberForbidden.json().error).toBe("WORKSPACE_ADMIN_REQUIRED");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("clips stdout by UTF-8 bytes and keeps locks until the last worker finishes", async () => {
+    const clipped = clipUtf8("测".repeat(6000), SERVICE_OPERATION_OUTPUT_LIMIT);
+    expect(clipped.truncated).toBe(true);
+    expect(Buffer.byteLength(clipped.text, "utf8")).toBeLessThanOrEqual(SERVICE_OPERATION_OUTPUT_LIMIT);
+
+    const started: number[] = [];
+    const assigned = await mapWithConcurrency([0, 1, 2, 3, 4, 5], 4, async (item) => {
+      started.push(item);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return item;
+    }, { shouldContinue: () => started.length < 4 });
+    expect(started.length).toBe(4);
+    expect(assigned.filter((item) => item !== undefined)).toHaveLength(4);
+
+    const directory = mkdtempSync(join(tmpdir(), "viron-ops-timeout-"));
+    directories.push(directory);
+    const config = testConfig(directory);
+    const db = await openDatabase(config);
+    await ensureAdmin(db, config);
+    const app = await buildApp({ config, db, logger: false });
+    try {
+      const login = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { username: "admin", password: config.adminPassword } });
+      const cookies = { envman_session: login.cookies.find((item) => item.name === "envman_session")!.value };
+      const environment = await app.inject({ method: "POST", url: "/api/v1/environments", cookies, payload: { name: "timeout-env" } });
+      const environmentId = environment.json().id as string;
+      const adminId = (await db.prepare("SELECT id FROM admin_users WHERE username = 'admin'").get() as { id: string }).id;
+      const operationId = randomUUID();
+      const now = new Date().toISOString();
+      await db.prepare(`
+        INSERT INTO service_operation_runs (
+          id, workspace_type, workspace_id, environment_id, idempotency_key, request_hash, operation_type,
+          resource_id, requested_by_user_id, status, progress_json, result_json, error_code,
+          created_at, started_at, completed_at, updated_at
+        ) VALUES (?, 'personal', ?, ?, ?, 'hash', 'deployment_batch_action', ?, ?, 'queued', '{}', '{}', '', ?, NULL, NULL, ?)
+      `).run(operationId, adminId, environmentId, randomUUID().repeat(2).slice(0, 32), environmentId, adminId, now, now);
+      await db.prepare(`
+        INSERT INTO service_operation_locks (workspace_type, workspace_id, resource_key, operation_id, expires_at)
+        VALUES ('personal', ?, 'deployment:a', ?, ?)
+      `).run(adminId, operationId, new Date(Date.now() + 120_000).toISOString());
+      const request = {
+        admin: { id: adminId, workspace: { type: "personal", id: adminId, role: "owner" } },
+        ip: "127.0.0.1",
+        url: "/api/v1/service-operations",
+        headers: {},
+        routeOptions: { url: "/api/v1/service-operations" },
+      } as unknown as FastifyRequest;
+      let locksWhileRunning = 0;
+      await runServiceOperation(app, operationId, async (_onProgress, helpers) => {
+        const items = [0, 1, 2, 3, 4, 5];
+        let launched = 0;
+        const assignedTargets = await mapWithConcurrency(items, 4, async (item) => {
+          launched += 1;
+          await new Promise((resolve) => setTimeout(resolve, 15));
+          locksWhileRunning = Number((await db.prepare("SELECT COUNT(*) AS count FROM service_operation_locks WHERE operation_id = ?").get(operationId) as { count: number | string }).count);
+          return {
+            deploymentId: `d-${item}`,
+            targetName: `node-${item}`,
+            connectionId: "c1",
+            connectionName: "host",
+            ok: true,
+            exitCode: 0,
+            durationMs: 15,
+            errorCode: "",
+            message: "",
+            truncated: false,
+            stdout: "测".repeat(6000),
+          };
+        }, { shouldContinue: () => launched < 4 && helpers.shouldContinue() });
+        return items.map((item, index) => assignedTargets[index] ?? {
+          deploymentId: `d-${item}`,
+          targetName: `node-${item}`,
+          connectionId: "c1",
+          connectionName: "host",
+          ok: false,
+          exitCode: null,
+          durationMs: 0,
+          errorCode: "OPERATION_TIMEOUT",
+          message: "未在时限内启动或完成",
+          truncated: false,
+        });
+      }, request);
+      expect(locksWhileRunning).toBeGreaterThan(0);
+      expect(await db.prepare("SELECT 1 FROM service_operation_locks WHERE operation_id = ?").get(operationId)).toBeUndefined();
+      const row = await db.prepare("SELECT status, error_code, result_json FROM service_operation_runs WHERE id = ?").get(operationId) as { status: string; error_code: string; result_json: string };
+      expect(row.status).toBe("timed_out");
+      expect(row.error_code).toBe("OPERATION_TIMEOUT");
+      const result = JSON.parse(row.result_json) as { targets: Array<{ ok: boolean; truncated?: boolean; stdout?: string }> };
+      expect(result.targets).toHaveLength(6);
+      expect(result.targets.filter((item) => item.ok)).toHaveLength(4);
+      expect(result.targets.filter((item) => !item.ok)).toHaveLength(2);
+      expect(result.targets.some((item) => item.truncated)).toBe(true);
+      expect(result.targets.every((item) => !item.stdout || Buffer.byteLength(item.stdout, "utf8") <= SERVICE_OPERATION_OUTPUT_LIMIT)).toBe(true);
+      const audits = await db.prepare("SELECT action FROM audit_events WHERE resource_id = ? ORDER BY created_at").all(operationId) as Array<{ action: string }>;
+      expect(audits.map((item) => item.action)).toEqual(["service_operation.started", "service_operation.timed_out"]);
     } finally {
       await app.close();
     }

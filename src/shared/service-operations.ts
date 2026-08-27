@@ -32,6 +32,18 @@ export const SERVICE_DEPLOYMENTS_MAX_SERVICES = 100;
 export const SERVICE_DEPLOYMENTS_MAX_DEPLOYMENTS = 500;
 export const SERVICE_DEPLOYMENTS_MAX_BYTES = 1024 * 1024;
 
+export function clipUtf8(value: string, maxBytes: number): { text: string; truncated: boolean } {
+  const buffer = Buffer.from(value, "utf8");
+  if (buffer.byteLength <= maxBytes) return { text: value, truncated: false };
+  let end = maxBytes;
+  while (end > 0 && (buffer[end] & 0xc0) === 0x80) end -= 1;
+  return { text: buffer.subarray(0, end).toString("utf8"), truncated: true };
+}
+
+export function utf8ByteLength(value: string): number {
+  return Buffer.byteLength(value, "utf8");
+}
+
 export interface ServiceOperationTargetResult {
   deploymentId: string;
   targetName: string;

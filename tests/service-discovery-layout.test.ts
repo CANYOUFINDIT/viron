@@ -2,7 +2,14 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const discoveryPanel = readFileSync(new URL("../src/client/components/ServiceDiscoveryPanel.vue", import.meta.url), "utf8");
-const maintenancePanel = readFileSync(new URL("../src/client/components/ServiceMaintenancePanel.vue", import.meta.url), "utf8");
+const maintenancePanel = [
+  readFileSync(new URL("../src/client/components/ServiceMaintenancePanel.vue", import.meta.url), "utf8"),
+  readFileSync(new URL("../src/client/components/service-maintenance/MaintenanceServiceSelector.vue", import.meta.url), "utf8"),
+  readFileSync(new URL("../src/client/components/service-maintenance/MaintenanceOperationsRibbon.vue", import.meta.url), "utf8"),
+  readFileSync(new URL("../src/client/components/service-maintenance/MaintenanceDeploymentGrid.vue", import.meta.url), "utf8"),
+  readFileSync(new URL("../src/client/components/service-maintenance/MaintenanceDiscoveryDrawer.vue", import.meta.url), "utf8"),
+  readFileSync(new URL("../src/client/components/service-maintenance/MaintenanceBatchProgress.vue", import.meta.url), "utf8"),
+].join("\n");
 
 function styleRule(source: string, selector: string): string {
   const start = source.lastIndexOf(`${selector} {`);

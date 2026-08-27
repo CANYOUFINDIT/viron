@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { canAccessConnection, canAccessEnvironment, getWorkspaceAccess, workspaceParams } from "./access-control.js";
+import { canAccessEnvironment, getWorkspaceAccess, workspaceParams } from "./access-control.js";
 import {
   MONITORING_MAX_HOSTS,
   MONITORING_MAX_SERVICES,
@@ -63,19 +63,11 @@ export async function loadMonitoringOverview(
   const partialFailures: string[] = [];
   for (const row of hostRows) {
     if (!access.canManage && !access.environmentIds.has(String(row.environment_id))) continue;
-    if (!await canAccessConnection(app.db, request.admin!, "ssh", String(row.ssh_connection_id))) continue;
+    if (!access.canManage && !access.sshConnectionIds.has(String(row.ssh_connection_id))) continue;
     visibleHosts.push(row);
   }
 
-  let hostStart = 0;
-  if (query.hostCursor) {
-    const index = visibleHosts.findIndex((row) => String(row.ssh_connection_id) === query.hostCursor);
-    hostStart = index >= 0 ? index + 1 : 0;
-  }
-  const hostPage = visibleHosts.slice(hostStart, hostStart + hostLimit);
-  const hostsTruncated = hostStart + hostPage.length < visibleHosts.length;
-
-  const hosts = hostPage.map((row) => {
+  const mappedHosts = visibleHosts.map((row) => {
     const snapshot = parseJson<Record<string, unknown>>(row.latest_host_json, {});
     const disks = Array.isArray(snapshot.disks) ? snapshot.disks as Array<Record<string, unknown>> : [];
     const diskPercents = disks.map((disk) => finiteMetric(disk.usedPercent)).filter((value): value is number => value !== null);
@@ -127,6 +119,14 @@ export async function loadMonitoringOverview(
       } : null,
     };
   });
+
+  let hostStart = 0;
+  if (query.hostCursor) {
+    const index = mappedHosts.findIndex((host) => String(host.sshConnectionId) === query.hostCursor);
+    hostStart = index >= 0 ? index + 1 : 0;
+  }
+  const hosts = mappedHosts.slice(hostStart, hostStart + hostLimit);
+  const hostsTruncated = hostStart + hosts.length < mappedHosts.length;
 
   const serviceRows = await app.db.prepare(`
     SELECT s.id, s.name, s.status, s.environment_id, e.name AS environment_name,
@@ -211,22 +211,22 @@ export async function loadMonitoringOverview(
     .sort((left, right) => (finiteMetric(right.cpuUsedPercent) ?? -1) - (finiteMetric(left.cpuUsedPercent) ?? -1))
     .slice(0, 10);
 
-  const healthyHosts = hosts.filter((host) => !host.missing && !host.offline);
+  const healthyHosts = mappedHosts.filter((host) => !host.missing && !host.offline && !host.stale);
   const payload = {
     generatedAt: new Date().toISOString(),
     truncated: hostsTruncated || servicesTruncated,
-    nextHostCursor: hostsTruncated ? String(hostPage[hostPage.length - 1]?.ssh_connection_id ?? "") : null,
+    nextHostCursor: hostsTruncated ? String(hosts[hosts.length - 1]?.sshConnectionId ?? "") : null,
     partialFailures,
     summary: {
-      hostTotal: visibleHosts.length,
-      hostOnline: visibleHosts.filter((row) => String(row.status ?? "") === "ready").length,
-      hostOffline: visibleHosts.filter((row) => String(row.status ?? "") === "error").length,
-      hostMissing: visibleHosts.filter((row) => String(row.status ?? "missing") === "missing" || (!row.agent_id && !row.install_managed)).length,
-      hostStale: hosts.filter((host) => host.stale).length,
+      hostTotal: mappedHosts.length,
+      hostOnline: mappedHosts.filter((host) => host.status === "ready" && !host.stale && !host.offline && !host.missing).length,
+      hostOffline: mappedHosts.filter((host) => host.offline).length,
+      hostMissing: mappedHosts.filter((host) => host.missing).length,
+      hostStale: mappedHosts.filter((host) => host.stale).length,
       serviceTotal: allServices.length,
       avgCpuPercent: average(healthyHosts.map((host) => host.cpuUsedPercent)),
       avgMemoryPercent: average(healthyHosts.map((host) => host.memoryUsedPercent)),
-      diskAlerts: hosts.filter((host) => (host.diskUsedPercent ?? 0) >= 90 && host.diskUsedPercent !== null).length,
+      diskAlerts: mappedHosts.filter((host) => !host.stale && !host.missing && !host.offline && (host.diskUsedPercent ?? 0) >= 90 && host.diskUsedPercent !== null).length,
     },
     hosts,
     services,

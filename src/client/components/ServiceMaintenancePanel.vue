@@ -38,7 +38,11 @@ import {
 import { ElMessage } from "element-plus";
 import { onActivated, onBeforeUnmount, onDeactivated, onMounted, watch } from "vue";
 import AnimatedCounter from "./AnimatedCounter.vue";
-import ServiceDiscoveryPanel from "./ServiceDiscoveryPanel.vue";
+import MaintenanceBatchProgress from "./service-maintenance/MaintenanceBatchProgress.vue";
+import MaintenanceDeploymentGrid from "./service-maintenance/MaintenanceDeploymentGrid.vue";
+import MaintenanceDiscoveryDrawer from "./service-maintenance/MaintenanceDiscoveryDrawer.vue";
+import MaintenanceOperationsRibbon from "./service-maintenance/MaintenanceOperationsRibbon.vue";
+import MaintenanceServiceSelector from "./service-maintenance/MaintenanceServiceSelector.vue";
 import { createMaintenanceContext } from "./service-maintenance/context";
 import { useMaintenancePayload } from "./service-maintenance/use-maintenance-payload";
 import { useMaintenanceDirectory } from "./service-maintenance/use-maintenance-directory";
@@ -248,14 +252,6 @@ const {
   saveAlertSettings,
 } = maintenance;
 
-function deploymentLogId(deployment: { sshConnectionId: string | null }) {
-  const service = selectedService.value;
-  return payload.value.logs.find((log) => log.sshConnectionId === deployment.sshConnectionId && service?.logIds.includes(log.id))?.id
-    ?? payload.value.logs.find((log) => log.sshConnectionId === deployment.sshConnectionId)?.id
-    ?? service?.logIds[0]
-    ?? "";
-}
-
 watch(selectedService, (service) => {
   if (service && selectedServiceId.value !== service.id) selectedServiceId.value = service.id;
 }, { immediate: true });
@@ -324,70 +320,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="maintenance-layout">
-      <aside class="maintenance-directory">
-        <section v-show="activeWorkspace === 'service'" class="directory-group">
-          <header><h3>{{ $t('服务清单') }}</h3><RefreshCw v-if="savingServiceOrder" :size="13" class="is-spinning" /><span>{{ payload.services.length }}</span></header>
-          <div class="directory-list">
-            <article
-              v-for="service in payload.services"
-              :key="service.id"
-              class="service-index__row"
-              :class="{
-                'is-active': activeWorkspace === 'service' && selectedService?.id === service.id,
-                'is-dragging': draggingDirectory?.kind === 'service' && draggingDirectory.id === service.id,
-                'is-drop-before': serviceDropTarget?.id === service.id && !serviceDropTarget.after,
-                'is-drop-after': serviceDropTarget?.id === service.id && serviceDropTarget.after,
-              }"
-              :data-directory-id="service.id"
-              @dragover="dragDirectoryOver('service', service.id, $event)"
-              @dragleave="leaveDirectoryDropTarget('service', $event)"
-              @drop="dropDirectoryItem('service', service.id, $event)"
-            >
-              <span v-if="payload.canConfigure" class="directory-row__grip" :class="{ 'is-disabled': !canSortDirectory }" :draggable="canSortDirectory" :title="$t('拖动服务排序')" aria-hidden="true" @dragstart="startDirectoryDrag('service', service.id, $event)" @dragend="endDirectoryDrag"><GripVertical :size="14" /></span>
-              <span v-else class="directory-row__spacer"></span>
-              <button class="directory-row__main" type="button" :aria-pressed="activeWorkspace === 'service' && selectedService?.id === service.id" @click="selectService(service.id)">
-                <span class="service-mark" :class="`is-${summarizeService(service).status}`"><Box :size="16" /></span>
-                <span><strong>{{ service.name }}</strong><small>{{ summarizeService(service).label }}<template v-if="service.deployments.length"> · {{ service.deployments.length }} {{ $t('节点') }}</template></small></span>
-              </button>
-              <el-dropdown v-if="payload.canConfigure" class="directory-row__menu-target" trigger="click" placement="bottom-end" @command="handleDirectoryMove('service', service.id, $event)">
-                <button class="directory-row__menu" type="button" :disabled="!canSortDirectory" :aria-label="$t('调整服务顺序')" :title="$t('调整服务顺序')"><EllipsisVertical :size="14" /></button>
-                <template #dropdown><el-dropdown-menu><el-dropdown-item command="up" :disabled="!canMoveDirectoryItem('service', service.id, 'up')"><ArrowUp :size="14" />{{ $t('上移') }}</el-dropdown-item><el-dropdown-item command="down" :disabled="!canMoveDirectoryItem('service', service.id, 'down')"><ArrowDown :size="14" />{{ $t('下移') }}</el-dropdown-item></el-dropdown-menu></template>
-              </el-dropdown>
-            </article>
-            <div v-if="!payload.services.length" class="directory-empty"><Box :size="17" /><span>{{ $t('尚未录入服务') }}</span></div>
-          </div>
-        </section>
-
-        <section v-show="activeWorkspace === 'host'" class="directory-group">
-          <header><h3>{{ $t('SSH 宿主机') }}</h3><RefreshCw v-if="savingHostOrder" :size="13" class="is-spinning" /><span>{{ payload.hosts.length }}</span></header>
-          <div class="directory-list">
-            <article
-              v-for="host in payload.hosts"
-              :key="host.sshConnectionId"
-              class="host-index__row"
-              :class="{
-                'is-active': activeWorkspace === 'host' && selectedHost?.sshConnectionId === host.sshConnectionId,
-                'is-dragging': draggingDirectory?.kind === 'host' && draggingDirectory.id === host.sshConnectionId,
-                'is-drop-before': hostDropTarget?.id === host.sshConnectionId && !hostDropTarget.after,
-                'is-drop-after': hostDropTarget?.id === host.sshConnectionId && hostDropTarget.after,
-              }"
-              :data-directory-id="host.sshConnectionId"
-              @dragover="dragDirectoryOver('host', host.sshConnectionId, $event)"
-              @dragleave="leaveDirectoryDropTarget('host', $event)"
-              @drop="dropDirectoryItem('host', host.sshConnectionId, $event)"
-            >
-              <span v-if="payload.canConfigure" class="directory-row__grip" :class="{ 'is-disabled': !canSortDirectory }" :draggable="canSortDirectory" :title="$t('拖动宿主机排序')" aria-hidden="true" @dragstart="startDirectoryDrag('host', host.sshConnectionId, $event)" @dragend="endDirectoryDrag"><GripVertical :size="14" /></span>
-              <span v-else class="directory-row__spacer"></span>
-              <button class="directory-row__main" type="button" :aria-pressed="activeWorkspace === 'host' && selectedHost?.sshConnectionId === host.sshConnectionId" @click="selectHost(host.sshConnectionId)"><Server :size="15" /><span><strong>{{ host.connectionName }}</strong><small>{{ hostPresence(host).label }}<template v-if="hostLiveCpu(host)"> · CPU {{ hostLiveCpu(host) }}</template></small></span><i :class="`is-${hostPresence(host).key}`"></i></button>
-              <el-dropdown v-if="payload.canConfigure" class="directory-row__menu-target" trigger="click" placement="bottom-end" @command="handleDirectoryMove('host', host.sshConnectionId, $event)">
-                <button class="directory-row__menu" type="button" :disabled="!canSortDirectory" :aria-label="$t('调整宿主机顺序')" :title="$t('调整宿主机顺序')"><EllipsisVertical :size="14" /></button>
-                <template #dropdown><el-dropdown-menu><el-dropdown-item command="up" :disabled="!canMoveDirectoryItem('host', host.sshConnectionId, 'up')"><ArrowUp :size="14" />{{ $t('上移') }}</el-dropdown-item><el-dropdown-item command="down" :disabled="!canMoveDirectoryItem('host', host.sshConnectionId, 'down')"><ArrowDown :size="14" />{{ $t('下移') }}</el-dropdown-item></el-dropdown-menu></template>
-              </el-dropdown>
-            </article>
-            <div v-if="!payload.hosts.length" class="directory-empty"><Server :size="17" /><span>{{ $t('尚未关联 SSH 主机') }}</span></div>
-          </div>
-        </section>
-      </aside>
+      <MaintenanceServiceSelector :m="maintenance" />
 
       <main class="maintenance-workspace">
         <template v-if="activeWorkspace === 'service' && selectedService">
@@ -405,139 +338,11 @@ onBeforeUnmount(() => {
             </div>
           </header>
 
-          <div v-if="payload.scriptActionsSupported && (selectedService.scriptActions.length || payload.canConfigure)" class="service-script-ribbon">
-            <span class="service-script-ribbon__label"><Zap :size="15" />{{ $t('服务功能') }}</span>
-            <button
-              v-for="action in selectedService.scriptActions"
-              :key="action.id"
-              type="button"
-              class="script-action-button"
-              :disabled="runningScriptActionId !== '' || selectedService.status !== 'active' || !selectedService.deployments.length || !payload.canOperate"
-              @click="executeScriptAction(action)"
-            >
-              <component :is="resolveScriptActionIcon(action.icon)" :size="15" />
-              <span>{{ action.name }}</span>
-              <RefreshCw v-if="runningScriptActionId === action.id" :size="13" class="is-spinning" />
-            </button>
-            <button v-if="payload.canConfigure && !selectedService.scriptActions.length" type="button" class="script-action-add" @click="openScriptActionManager()"><Plus :size="14" />{{ $t('添加功能按钮') }}</button>
-          </div>
-
-          <div v-if="selectedLogs.length" class="service-log-ribbon">
-            <FileText :size="15" /><span>{{ $t('关联日志') }}</span>
-            <button v-for="log in selectedLogs" :key="log.id" type="button" @click="emit('open-log', log.id)">{{ log.name }}<small>{{ log.connectionName }}</small></button>
-          </div>
-
-          <section class="deployment-grid">
-            <div v-if="payload.canOperate && selectedService.deployments.length" class="deployment-select-all">
-              <label><input type="checkbox" :checked="selectedService.deployments.every((item) => selectedDeploymentIds.includes(item.id))" @change="selectAllVisibleDeployments">{{ $t('全选节点') }}</label>
-            </div>
-            <article v-for="deployment in selectedService.deployments" :key="deployment.id" class="deployment-card" :class="`is-${deployment.status}`">
-              <header>
-                <label v-if="payload.canOperate" class="deployment-select"><input type="checkbox" :checked="selectedDeploymentIds.includes(deployment.id)" @change="toggleDeploymentSelection(deployment.id)"></label>
-                <span class="deployment-provider">{{ providerLabel(deployment.provider) }}</span>
-                <span class="deployment-status"><i></i>{{ statusLabel(deployment.status) }}</span>
-                <div v-if="payload.canConfigure" class="deployment-card__tools">
-                  <button v-if="payload.scriptActionsSupported" type="button" :title="$t('管理节点功能按钮')" :aria-label="$t('管理节点功能按钮')" @click="openScriptActionManager(deployment)"><Settings2 :size="14" /></button>
-                  <button type="button" :title="$t('编辑部署节点')" :aria-label="$t('编辑部署节点')" @click="openDeploymentEdit(deployment)"><Pencil :size="14" /></button>
-                  <button type="button" class="is-danger" :title="$t('移除部署节点')" :aria-label="$t('移除部署节点')" @click="removeDeployment(deployment)"><Trash2 :size="14" /></button>
-                </div>
-              </header>
-              <div class="deployment-card__identity">
-                <strong>{{ deployment.displayName || deployment.externalId }}</strong>
-                <code>{{ deploymentIdentity(deployment) }}</code>
-              </div>
-              <dl>
-                <div><dt>{{ $t('SSH 主机') }}</dt><dd>{{ deployment.sshConnectionName }}</dd></div>
-                <div><dt>{{ $t('服务状态') }}</dt><dd>{{ deployment.state || $t('尚未采集') }}</dd></div>
-                <template v-if="deployment.provider === 'kubernetes'">
-                  <div><dt>{{ $t('期望副本') }}</dt><dd>{{ kubernetesMetric(deployment, 'desiredReplicas') }}</dd></div>
-                  <div><dt>{{ $t('就绪副本') }}</dt><dd>{{ kubernetesMetric(deployment, 'readyReplicas') }}</dd></div>
-                  <div><dt>{{ $t('可用副本') }}</dt><dd>{{ kubernetesMetric(deployment, 'availableReplicas') }}</dd></div>
-                  <div><dt>{{ $t('已更新副本') }}</dt><dd>{{ kubernetesMetric(deployment, 'updatedReplicas') }}</dd></div>
-                </template>
-                <template v-else>
-                  <div><dt>CPU</dt><dd>{{ formatPercent(deployment.metrics.cpuUsedPercent) }}</dd></div>
-                  <div><dt>{{ $t('内存') }}</dt><dd>{{ formatBytes(deployment.metrics.memoryBytes) }}</dd></div>
-                  <div><dt>{{ $t('运行时间') }}</dt><dd>{{ formatDuration(deployment.metrics.uptimeSeconds) }}</dd></div>
-                  <div><dt>{{ $t('重启次数') }}</dt><dd>{{ deployment.metrics.restartCount ?? '—' }}</dd></div>
-                </template>
-              </dl>
-              <div v-if="deployment.scriptActions.length" class="deployment-script-actions">
-                <button
-                  v-for="action in deployment.scriptActions"
-                  :key="action.id"
-                  type="button"
-                  class="script-action-button is-node"
-                  :disabled="runningScriptActionId !== '' || selectedService.status !== 'active' || !deployment.connectionAvailable"
-                  @click="executeScriptAction(action)"
-                >
-                  <component :is="resolveScriptActionIcon(action.icon)" :size="14" />
-                  <span>{{ action.name }}</span>
-                  <RefreshCw v-if="runningScriptActionId === action.id" :size="12" class="is-spinning" />
-                </button>
-              </div>
-              <p v-if="!deployment.connectionAvailable" class="deployment-warning">{{ $t('原 SSH 连接已删除或移出环境，请修复部署节点。') }}</p>
-              <footer>
-                <span>{{ formatTime(deployment.lastCheckedAt) }}</span>
-                <div class="deployment-card__ops">
-                  <button type="button" :disabled="!deployment.sshConnectionId || !deployment.connectionAvailable" :title="$t('直连 SSH')" :aria-label="$t('直连 SSH')" @click="emit('open-ssh', deployment.sshConnectionId || '')"><Terminal :size="14" /></button>
-                  <button type="button" :disabled="!deploymentLogId(deployment)" :title="$t('节点日志')" :aria-label="$t('节点日志')" @click="emit('open-log', deploymentLogId(deployment))"><FileText :size="14" /></button>
-                  <template v-if="payload.canOperate && selectedService.status === 'active' && supportsMaintenanceActions(deployment.provider, deployment)">
-                    <button v-if="deploymentAllowsAction(deployment, 'start')" type="button" :disabled="runningAction !== '' || !deployment.connectionAvailable" :title="$t('启动')" :aria-label="$t('启动')" @click="runMaintenanceAction(deployment, 'start')"><Play :size="14" /></button>
-                    <button v-if="deploymentAllowsAction(deployment, 'stop')" type="button" :disabled="runningAction !== '' || !deployment.connectionAvailable" :title="$t('停止')" :aria-label="$t('停止')" @click="runMaintenanceAction(deployment, 'stop')"><Square :size="13" /></button>
-                    <button v-if="deploymentAllowsAction(deployment, 'restart')" type="button" :disabled="runningAction !== '' || !deployment.connectionAvailable" :title="$t('重启')" :aria-label="$t('重启')" @click="runMaintenanceAction(deployment, 'restart')"><RotateCw :size="14" :class="{ 'is-spinning': runningAction === `${deployment.id}:restart` }" /></button>
-                  </template>
-                </div>
-                <small v-if="!(payload.canOperate && selectedService.status === 'active' && supportsMaintenanceActions(deployment.provider, deployment)) && unsupportedMaintenanceActionReason(deployment.provider, deployment)" class="deployment-action-note">{{ unsupportedMaintenanceActionReason(deployment.provider, deployment) }}</small>
-              </footer>
-            </article>
-            <button v-if="payload.canConfigure && !selectedService.deployments.length" class="deployment-empty-action" type="button" @click="openDeploymentCreate()"><Plus :size="18" /><strong>{{ $t('添加部署节点') }}</strong></button>
-          </section>
+          <MaintenanceOperationsRibbon :m="maintenance" @open-log="(id) => emit('open-log', id)" />
+          <MaintenanceDeploymentGrid :m="maintenance" @open-log="(id) => emit('open-log', id)" @open-ssh="(id) => emit('open-ssh', id)" />
         </template>
 
-        <section v-else-if="activeWorkspace === 'host' && selectedHost" class="host-observatory">
-          <header>
-            <div>
-              <h3>{{ selectedHost.connectionName }}</h3>
-              <p :title="`${selectedHost.username}@${selectedHost.host}:${selectedHost.port} · ${formatTime(selectedHost.lastCollectedAt)}`">{{ hostPresence(selectedHost).label }} · {{ formatRelativeCollected(selectedHost.lastCollectedAt) }}<template v-if="selectedHost.snapshot?.operatingSystem"> · {{ selectedHost.snapshot.operatingSystem }} {{ selectedHost.snapshot.architecture }}</template></p>
-              <p v-if="selectedHost.lastError && selectedHost.snapshot" class="deployment-warning">{{ localizeMessage(selectedHost.lastError) }}</p>
-            </div>
-            <div v-if="payload.canOperate" class="host-observatory__actions">
-              <el-button v-if="selectedInstallTask && (isInstallTaskActive(selectedInstallTask) || selectedInstallTask.status === 'error')" :disabled="installingHosts.has(selectedHost.sshConnectionId)" :type="selectedInstallTask.status === 'error' ? 'danger' : 'primary'" plain @click="openInstallProgress(selectedHost)"><Clock3 v-if="isInstallTaskActive(selectedInstallTask)" :size="15" /><CircleAlert v-else :size="15" />{{ isInstallTaskActive(selectedInstallTask) ? $t('查看安装进度') : $t('查看安装失败详情') }}</el-button>
-              <el-button v-else-if="selectedHost.monitorUpdateAvailable || !isMonitorInstalled(selectedHost)" :loading="installingHosts.has(selectedHost.sshConnectionId)" :disabled="refreshingHosts.has(selectedHost.sshConnectionId) || clearingHosts.has(selectedHost.sshConnectionId)" type="primary" @click="installMonitorOnHost(selectedHost)"><Download :size="15" />{{ isMonitorInstalled(selectedHost) ? $t('更新监控服务') : $t('一键安装监控服务') }}</el-button>
-              <el-button :loading="refreshingHosts.has(selectedHost.sshConnectionId)" :disabled="installingHosts.has(selectedHost.sshConnectionId) || clearingHosts.has(selectedHost.sshConnectionId) || isInstallTaskActive(selectedInstallTask)" @click="refreshHost(selectedHost)"><RefreshCw :size="15" />{{ $t('刷新') }}</el-button>
-              <el-dropdown v-if="isMonitorInstalled(selectedHost) || selectedHost.installPath" trigger="click" placement="bottom-end">
-                <button class="host-observatory__more" type="button" :aria-label="$t('更多操作')"><EllipsisVertical :size="16" /></button>
-                <template #dropdown>
-                  <el-dropdown-menu>
-                    <el-dropdown-item v-if="selectedHost.installPath" disabled>{{ selectedHost.installManaged ? $t('Viron 托管') : $t('手工安装') }} · {{ selectedHost.installPath }}</el-dropdown-item>
-                    <el-dropdown-item v-if="isMonitorInstalled(selectedHost)" :disabled="installingHosts.has(selectedHost.sshConnectionId) || refreshingHosts.has(selectedHost.sshConnectionId) || isInstallTaskActive(selectedInstallTask)" @click="clearMonitorData(selectedHost)">{{ $t('清理监控数据') }}</el-dropdown-item>
-                    <el-dropdown-item @click="refreshHost(selectedHost)">{{ $t('扫描并拉取') }}</el-dropdown-item>
-                  </el-dropdown-menu>
-                </template>
-              </el-dropdown>
-            </div>
-          </header>
-          <nav class="host-workspace-tabs" role="tablist" :aria-label="$t('宿主机工作区')">
-            <button type="button" role="tab" :aria-selected="true" class="is-active"><ScanSearch :size="18" />{{ $t('服务发现') }}<small v-if="selectedUnmanagedCount">{{ selectedUnmanagedCount }}</small><small v-else-if="selectedHost.candidates.length" class="is-muted">{{ selectedHost.candidates.length }}</small></button>
-          </nav>
-          <div class="host-observatory__pane is-discovery" role="tabpanel">
-            <ServiceDiscoveryPanel
-              :host-id="selectedHost.sshConnectionId"
-              :candidates="selectedHost.candidates"
-              :kubernetes-configs="selectedHost.kubernetesConfigs"
-              :services="payload.services"
-              :managed-keys="discoveryManagedKeys"
-              :can-configure="payload.canConfigure"
-              :can-operate="payload.canOperate"
-              :target-service-id="discoveryTargetServiceId"
-              @enroll="beginCandidateEnrollment"
-              @update:target-service-id="assignDiscoveryTarget"
-              @create-service="openServiceCreate(true)"
-              @configure-kubernetes="openKubernetesConfiguration"
-            />
-          </div>
-        </section>
+        <MaintenanceDiscoveryDrawer v-else-if="activeWorkspace === 'host' && selectedHost" :m="maintenance" />
         <div v-else-if="activeWorkspace === 'host'" class="workspace-empty"><Server :size="26" /><strong>{{ $t('尚未关联 SSH 主机') }}</strong></div>
         <div v-else class="workspace-empty"><Wrench :size="26" /><strong>{{ $t('尚未录入服务') }}</strong><el-button v-if="payload.canConfigure" type="primary" @click="openServiceCreate()"><Plus :size="16" />{{ $t('录入服务') }}</el-button></div>
       </main>
@@ -749,35 +554,12 @@ onBeforeUnmount(() => {
       <template #footer><el-button @click="alertSettingsDialog = false">{{ $t('取消') }}</el-button><el-button type="primary" :loading="savingAlertSettings" @click="saveAlertSettings">{{ $t('保存告警设置') }}</el-button></template>
     </el-dialog>
 
-    <div v-if="payload.canOperate && selectedDeploymentIds.length && activeWorkspace === 'service'" class="maintenance-batch-bar">
-      <strong>{{ selectedDeploymentIds.length }} {{ $t('节点') }}</strong>
-      <el-button @click="clearDeploymentSelection">{{ $t('取消选择') }}</el-button>
-      <el-button :disabled="runningAction !== ''" @click="runBatchMaintenanceAction('start')">{{ $t('批量启动') }}</el-button>
-      <el-button :disabled="runningAction !== ''" @click="runBatchMaintenanceAction('stop')">{{ $t('批量停止') }}</el-button>
-      <el-button type="primary" :disabled="runningAction !== ''" @click="runBatchMaintenanceAction('restart')">{{ $t('批量重启') }}</el-button>
-    </div>
-
-    <el-dialog v-model="batchDialog" align-center class="envman-dialog" :title="$t('批量操作进度')" width="720px">
-      <section v-if="batchOperation" class="script-action-results">
-        <header :class="batchOperation.failed ? 'is-warning' : 'is-success'">
-          <span><Check v-if="!batchOperation.failed" :size="18" /><CircleAlert v-else :size="18" /></span>
-          <div><strong>{{ batchOperation.status }}</strong><p>{{ batchOperation.succeeded }} / {{ batchOperation.failed }}</p></div>
-        </header>
-        <article v-for="result in batchOperation.targets" :key="result.deploymentId" :class="result.ok ? 'is-success' : 'is-error'">
-          <header><span><Check v-if="result.ok" :size="15" /><CircleAlert v-else :size="15" /></span><div><strong>{{ result.targetName }}</strong><small>{{ result.durationMs }} ms</small></div></header>
-          <p v-if="result.message" class="script-action-result__message">{{ localizeMessage(result.message) }}</p>
-        </article>
-      </section>
-      <template #footer>
-        <el-button @click="batchDialog = false">{{ $t('关闭') }}</el-button>
-        <el-button v-if="batchOperation?.failed" type="primary" :disabled="runningAction !== ''" @click="retryFailedBatchTargets">{{ $t('重试失败节点') }}</el-button>
-      </template>
-    </el-dialog>
+    <MaintenanceBatchProgress :m="maintenance" />
 
   </section>
 </template>
 
-<style scoped>
+<style>
 .maintenance-batch-bar {
   position: sticky;
   bottom: 0;
@@ -912,9 +694,9 @@ onBeforeUnmount(() => {
 }
 .maintenance-toolbar__identity p { margin: .1875rem 0 0; color: var(--ink-400); font-size: .625rem; }
 
-.maintenance-toolbar :deep(.el-button) { white-space: nowrap; }
+.maintenance-toolbar .el-button { white-space: nowrap; }
 .maintenance-toolbar__actions { display: flex; align-items: center; gap: .5rem; }
-.maintenance-toolbar__actions :deep(.el-button + .el-button) { margin-left: 0; }
+.maintenance-toolbar__actions .el-button + .el-button { margin-left: 0; }
 
 .maintenance-summary {
   min-width: 0;
@@ -1224,7 +1006,7 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 .host-observatory__actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-xs); }
-.host-observatory__actions :deep(.el-button) { margin: 0; }
+.host-observatory__actions .el-button { margin: 0; }
 .host-observatory__more {
   width: 2.25rem;
   height: 2.25rem;
@@ -1428,23 +1210,23 @@ onBeforeUnmount(() => {
 .deployment-form-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-sm); }
 .log-dialog-intro { margin: 0 0 var(--space-sm); color: var(--color-muted); font-size: var(--text-sm); }
 .service-log-options { display: grid; gap: var(--space-xs); }
-.service-log-options :deep(.el-checkbox) { height: auto; margin: 0; padding: var(--space-sm); border: 1px solid var(--color-rule); border-radius: var(--radius-control); align-items: flex-start; }
-.service-log-options :deep(.el-checkbox__label) { min-width: 0; }
+.service-log-options .el-checkbox { height: auto; margin: 0; padding: var(--space-sm); border: 1px solid var(--color-rule); border-radius: var(--radius-control); align-items: flex-start; }
+.service-log-options .el-checkbox__label { min-width: 0; }
 .service-log-options span { min-width: 0; display: grid; gap: var(--space-2xs); }
 .service-log-options strong { font-size: var(--text-sm); }
 .service-log-options small { overflow-wrap: anywhere; color: var(--color-muted); font-size: var(--text-xs); }
 .service-log-options__empty { padding: var(--space-lg); border: 1px dashed var(--color-rule-strong); border-radius: var(--radius-control); text-align: center; color: var(--color-muted); font-size: var(--text-xs); }
 .kubernetes-dialog__intro { margin: 0 0 var(--space-md); color: var(--color-muted); font-size: var(--text-sm); line-height: 1.6; }
 .kubernetes-context-options { max-height: min(28rem, 55dvh); overflow: auto; display: grid; gap: var(--space-xs); }
-.kubernetes-context-options :deep(.el-checkbox) { width: 100%; height: auto; margin: 0; padding: var(--space-sm); border: 1px solid var(--color-rule); border-radius: var(--radius-control); align-items: flex-start; }
-.kubernetes-context-options :deep(.el-checkbox__label) { min-width: 0; flex: 1; }
-.kubernetes-context-options :deep(.el-checkbox__label > span) { min-width: 0; display: grid; gap: var(--space-2xs); }
+.kubernetes-context-options .el-checkbox { width: 100%; height: auto; margin: 0; padding: var(--space-sm); border: 1px solid var(--color-rule); border-radius: var(--radius-control); align-items: flex-start; }
+.kubernetes-context-options .el-checkbox__label { min-width: 0; flex: 1; }
+.kubernetes-context-options .el-checkbox__label > span { min-width: 0; display: grid; gap: var(--space-2xs); }
 .kubernetes-context-options strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-ink-soft); font-size: var(--text-sm); }
 .kubernetes-context-options strong small { margin-inline-start: var(--space-xs); color: var(--color-info); font-size: var(--text-2xs); }
 .kubernetes-context-options code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-muted); font-family: var(--font-mono); font-size: var(--text-2xs); }
 .kubernetes-context-options span > small { color: var(--color-muted); font-size: var(--text-2xs); }
-:deep(.script-action-manager-dialog .el-dialog__body),
-:deep(.script-action-result-dialog .el-dialog__body) { max-height: calc(100dvh - 10rem); overflow: auto; }
+.script-action-manager-dialog .el-dialog__body,
+.script-action-result-dialog .el-dialog__body { max-height: calc(100dvh - 10rem); overflow: auto; }
 .script-action-manager { display: grid; gap: var(--space-md); }
 .script-action-manager > header { min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-md); }
 .script-action-manager > header > div { min-width: 0; }
@@ -1491,7 +1273,7 @@ onBeforeUnmount(() => {
 .script-icon-picker { display: flex; flex-wrap: wrap; gap: var(--space-xs); }
 .script-icon-picker button { width: 2.5rem; height: 2.5rem; padding: 0; border: 1px solid var(--color-rule); border-radius: var(--radius-control); display: grid; place-items: center; background: var(--color-paper-raised); color: var(--color-muted); cursor: pointer; }
 .script-icon-picker button.is-active { border-color: var(--color-accent); background: var(--color-accent-soft); color: var(--color-accent-strong); box-shadow: 0 0 0 2px var(--color-paper-raised), 0 0 0 4px color-mix(in srgb, var(--color-accent) 25%, transparent); }
-.script-body-input :deep(textarea) { min-height: 14rem; font-family: var(--font-mono); font-size: var(--text-xs); line-height: 1.6; tab-size: 2; }
+.script-body-input textarea { min-height: 14rem; font-family: var(--font-mono); font-size: var(--text-xs); line-height: 1.6; tab-size: 2; }
 .script-action-editor__hint { display: block; margin-block-start: var(--space-xs); color: var(--color-muted); font-size: var(--text-2xs); line-height: 1.5; }
 .script-action-editor > footer { display: flex; justify-content: flex-end; gap: var(--space-xs); }
 .script-action-results { display: grid; gap: var(--space-sm); }
@@ -1517,7 +1299,7 @@ onBeforeUnmount(() => {
 .script-action-results details > div { padding: var(--space-sm); border-block-start: 1px solid var(--color-rule); background: var(--color-ink); color: var(--color-sidebar-ink); }
 .script-action-results details > div > strong { color: var(--color-muted); font-family: var(--font-mono); font-size: var(--text-2xs); text-transform: uppercase; }
 .script-action-results pre { max-height: 18rem; margin: var(--space-xs) 0 0; overflow: auto; color: inherit; font-family: var(--font-mono); font-size: var(--text-xs); line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
-:deep(.monitor-install-progress-dialog .el-dialog__body) { max-height: calc(100dvh - 10rem); overflow: auto; }
+.monitor-install-progress-dialog .el-dialog__body { max-height: calc(100dvh - 10rem); overflow: auto; }
 .monitor-install-progress { display: grid; gap: var(--space-md); }
 .monitor-install-progress__summary {
   min-width: 0;
@@ -1545,7 +1327,7 @@ onBeforeUnmount(() => {
 .monitor-install-progress__target dd { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-ink-soft); font-size: var(--text-xs); }
 .monitor-install-progress__target code { font-family: var(--font-mono); font-size: var(--text-2xs); }
 .monitor-install-progress__bar { padding-inline: var(--space-xs); }
-.monitor-install-progress__bar :deep(.el-progress__text) { min-width: 2.75rem; color: var(--color-ink-soft); font-family: var(--font-mono); font-size: var(--text-xs) !important; }
+.monitor-install-progress__bar .el-progress__text { min-width: 2.75rem; color: var(--color-ink-soft); font-family: var(--font-mono); font-size: var(--text-xs) !important; }
 .monitor-install-steps { margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-xs); list-style: none; }
 .monitor-install-steps li { min-width: 0; min-height: 4rem; padding: var(--space-sm); border: 1px solid var(--color-rule); border-radius: var(--radius-control); display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: var(--space-xs); background: var(--color-paper); color: var(--color-muted); }
 .monitor-install-steps li > span { width: 1.5rem; height: 1.5rem; border: 1px solid var(--color-rule-strong); border-radius: 50%; display: grid; place-items: center; background: var(--color-paper-muted); color: var(--color-muted); }
@@ -1604,9 +1386,9 @@ onBeforeUnmount(() => {
 .monitor-alert-rule-list article.is-switch-rule > span { grid-column: 2 / -1; }
 .monitor-alert-rule-list article.is-named-rule > strong { color: var(--ink-800); font-size: .875rem; font-weight: 650; }
 .monitor-alert-rule-list article.is-named-rule > span { grid-column: 3; justify-self: end; }
-.monitor-alert-rule-list article.is-named-rule :deep(.el-select) { grid-column: 4; justify-self: start; width: 7rem; }
-.monitor-alert-rule-list article :deep(.animated-counter) { grid-column: 4; justify-self: start; }
-.monitor-alert-settings :deep(.el-select) { width: 100%; }
+.monitor-alert-rule-list article.is-named-rule .el-select { grid-column: 4; justify-self: start; width: 7rem; }
+.monitor-alert-rule-list article .animated-counter { grid-column: 4; justify-self: start; }
+.monitor-alert-settings .el-select { width: 100%; }
 .monitor-alert-exclusions {
   display: grid;
   gap: .75rem;
@@ -1644,7 +1426,7 @@ onBeforeUnmount(() => {
 @media (pointer: coarse) {
   .directory-row__grip,
   .directory-row__menu { opacity: 1; }
-  .maintenance-console :deep(.el-button),
+  .maintenance-console .el-button,
   .service-log-ribbon button,
   .script-action-button,
   .script-action-add,
@@ -1665,24 +1447,24 @@ onBeforeUnmount(() => {
 
 @media (max-width: 39.999rem) {
   .maintenance-toolbar__actions { grid-column: 1 / -1; width: 100%; }
-  .maintenance-toolbar__actions :deep(.el-button) { flex: 1; }
+  .maintenance-toolbar__actions .el-button { flex: 1; }
   .monitor-alert-rule-list { grid-template-columns: minmax(0, 1fr); }
   .monitor-alert-rule-list article,
   .monitor-alert-rule-list article.is-switch-rule { grid-template-columns: minmax(0, 1fr); justify-items: start; }
   .monitor-alert-rule-list article:not(.is-switch-rule) > span,
   .monitor-alert-rule-list article.is-switch-rule > span,
   .monitor-alert-rule-list article.is-named-rule > span { grid-column: auto; justify-self: start; }
-  .monitor-alert-rule-list article.is-named-rule :deep(.el-select) { grid-column: auto; justify-self: start; }
-  .monitor-alert-rule-list article :deep(.animated-counter) { grid-column: auto; justify-self: start; }
+  .monitor-alert-rule-list article.is-named-rule .el-select { grid-column: auto; justify-self: start; }
+  .monitor-alert-rule-list article .animated-counter { grid-column: auto; justify-self: start; }
   .host-observatory > header,
   .host-observatory__actions { width: 100%; }
-  .host-observatory__actions :deep(.el-button) { flex: 1 1 100%; }
+  .host-observatory__actions .el-button { flex: 1 1 100%; }
   .monitor-install-progress__summary { grid-template-columns: auto minmax(0, 1fr); }
   .monitor-install-progress__summary > time { grid-column: 2; }
   .monitor-install-progress__target,
   .monitor-install-steps { grid-template-columns: minmax(0, 1fr); }
   .script-action-manager > header { align-items: stretch; flex-direction: column; }
-  .script-action-manager > header :deep(.el-button) { width: 100%; }
+  .script-action-manager > header .el-button { width: 100%; }
   .script-action-manager__list article { grid-template-columns: 2.125rem minmax(0, 1fr) 2.25rem 2.25rem; padding-inline: var(--space-xs); }
 }
 

@@ -18,7 +18,7 @@ import {
 import { MonitorInstallTaskConflictError, sanitizeMonitorInstallOutput, type MonitorInstallTaskReporter } from "../monitor-install-task-manager.js";
 import { parseBody } from "../validation.js";
 import { requireAdmin } from "./auth.js";
-import { loadServiceDeploymentsPayload } from "../service-deployments-payload.js";
+import { loadServiceDeploymentsPayload, ServiceDeploymentsPayloadError } from "../service-deployments-payload.js";
 import {
   ServiceOperationError,
   beginServiceOperation,
@@ -31,6 +31,7 @@ import {
   SERVICE_OPERATION_CONCURRENCY,
   SERVICE_OPERATION_OUTPUT_LIMIT,
   capabilityDisabledReason,
+  clipUtf8,
   deploymentCapabilities,
   kubernetesController,
 } from "../../shared/service-operations.js";
@@ -310,10 +311,10 @@ async function executeDeploymentAction(
       ok,
       exitCode: result.exitCode,
       durationMs: result.durationMs,
-      stdout: result.stdout.slice(0, SERVICE_OPERATION_OUTPUT_LIMIT),
-      stderr: result.stderr.slice(0, SERVICE_OPERATION_OUTPUT_LIMIT),
-      truncated: result.truncated || result.stdout.length > SERVICE_OPERATION_OUTPUT_LIMIT || result.stderr.length > SERVICE_OPERATION_OUTPUT_LIMIT,
-      message: ok ? "" : (result.stderr.trim() || result.stdout.trim() || "远程维护命令执行失败").slice(0, 500),
+      stdout: clipUtf8(result.stdout, SERVICE_OPERATION_OUTPUT_LIMIT).text,
+      stderr: clipUtf8(result.stderr, SERVICE_OPERATION_OUTPUT_LIMIT).text,
+      truncated: result.truncated || clipUtf8(result.stdout, SERVICE_OPERATION_OUTPUT_LIMIT).truncated || clipUtf8(result.stderr, SERVICE_OPERATION_OUTPUT_LIMIT).truncated,
+      message: ok ? "" : clipUtf8(result.stderr.trim() || result.stdout.trim() || "远程维护命令执行失败", 500).text,
       errorCode: ok ? "" : "MAINTENANCE_ACTION_FAILED",
     };
   } catch (error) {
@@ -350,7 +351,14 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
       if (!await requireEnvironment(app, request, reply, request.params.environmentId)) return;
       const query = deploymentsQuerySchema.safeParse(request.query);
       if (!query.success) return reply.code(400).send({ error: "INVALID_QUERY", message: "分页参数无效" });
-      return await loadServiceDeploymentsPayload(app, request, request.params.environmentId, query.data);
+      try {
+        return await loadServiceDeploymentsPayload(app, request, request.params.environmentId, query.data);
+      } catch (error) {
+        if (error instanceof ServiceDeploymentsPayloadError) {
+          return reply.code(error.statusCode).send({ error: error.code, message: error.message });
+        }
+        throw error;
+      }
     },
   );
 
@@ -363,7 +371,14 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
       reply.header("Link", `</api/v1/environments/${request.params.environmentId}/service-deployments>; rel="successor-version"`);
       const query = deploymentsQuerySchema.safeParse(request.query);
       if (!query.success) return reply.code(400).send({ error: "INVALID_QUERY", message: "分页参数无效" });
-      return await loadServiceDeploymentsPayload(app, request, request.params.environmentId, query.data);
+      try {
+        return await loadServiceDeploymentsPayload(app, request, request.params.environmentId, query.data);
+      } catch (error) {
+        if (error instanceof ServiceDeploymentsPayloadError) {
+          return reply.code(error.statusCode).send({ error: error.code, message: error.message });
+        }
+        throw error;
+      }
     },
   );
 
@@ -880,9 +895,9 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
         resourceKeys: selected.map((item) => `deployment:${item.id}`),
       });
       if (started.created) {
-        void runServiceOperation(app, started.operation.id, async (onProgress) => {
+        void runServiceOperation(app, started.operation.id, async (onProgress, helpers) => {
           let current = 0;
-          const results = await mapWithConcurrency(selected, SERVICE_OPERATION_CONCURRENCY, async (target) => {
+          const assigned = await mapWithConcurrency(selected, SERVICE_OPERATION_CONCURRENCY, async (target) => {
             const deploymentId = String(target.id);
             const targetName = String(target.display_name || target.external_id || target.ssh_connection_name);
             const connectionId = target.ssh_connection_id ? String(target.ssh_connection_id) : "";
@@ -902,10 +917,10 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
                   ok,
                   exitCode: output.exitCode,
                   durationMs: output.durationMs,
-                  stdout: output.stdout.slice(0, SERVICE_OPERATION_OUTPUT_LIMIT),
-                  stderr: output.stderr.slice(0, SERVICE_OPERATION_OUTPUT_LIMIT),
-                  truncated: output.truncated || output.stdout.length > SERVICE_OPERATION_OUTPUT_LIMIT,
-                  message: ok ? "" : (output.stderr.trim() || output.stdout.trim() || "脚本执行失败").slice(0, 500),
+                  stdout: clipUtf8(output.stdout, SERVICE_OPERATION_OUTPUT_LIMIT).text,
+                  stderr: clipUtf8(output.stderr, SERVICE_OPERATION_OUTPUT_LIMIT).text,
+                  truncated: output.truncated || clipUtf8(output.stdout, SERVICE_OPERATION_OUTPUT_LIMIT).truncated || clipUtf8(output.stderr, SERVICE_OPERATION_OUTPUT_LIMIT).truncated,
+                  message: ok ? "" : clipUtf8(output.stderr.trim() || output.stdout.trim() || "脚本执行失败", 500).text,
                   errorCode: ok ? "" : "SCRIPT_ACTION_FAILED",
                 };
               } catch (error) {
@@ -923,6 +938,18 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
             current += 1;
             await onProgress(current, selected.length);
             return result;
+          }, { shouldContinue: helpers.shouldContinue });
+          const results = selected.map((target, index) => assigned[index] ?? {
+            deploymentId: String(target.id),
+            targetName: String(target.display_name || target.external_id || target.ssh_connection_name),
+            connectionId: target.ssh_connection_id ? String(target.ssh_connection_id) : "",
+            connectionName: String(target.ssh_connection_name ?? ""),
+            ok: false,
+            exitCode: null,
+            durationMs: 0,
+            truncated: false,
+            message: "未在时限内启动或完成",
+            errorCode: "OPERATION_TIMEOUT",
           });
           const failed = results.filter((item) => !item.ok).length;
           await writeAudit(app.db, {
@@ -934,7 +961,7 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
             request,
           });
           return results;
-        });
+        }, request);
       }
       return reply.code(202).send({ item: started.operation });
     } catch (error) {
@@ -1224,13 +1251,25 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
           details: { action: body.action, targetCount: deployments.length },
           request,
         });
-        void runServiceOperation(app, started.operation.id, async (onProgress) => {
+        void runServiceOperation(app, started.operation.id, async (onProgress, helpers) => {
           let current = 0;
-          const results = await mapWithConcurrency(deployments, SERVICE_OPERATION_CONCURRENCY, async (deployment) => {
+          const assigned = await mapWithConcurrency(deployments, SERVICE_OPERATION_CONCURRENCY, async (deployment) => {
             const result = await executeDeploymentAction(app, request, deployment, body.action);
             current += 1;
             await onProgress(current, deployments.length);
             return result;
+          }, { shouldContinue: helpers.shouldContinue });
+          const results = deployments.map((deployment, index) => assigned[index] ?? {
+            deploymentId: String(deployment.id),
+            targetName: String(deployment.display_name || deployment.external_id || deployment.ssh_connection_name),
+            connectionId: deployment.ssh_connection_id ? String(deployment.ssh_connection_id) : "",
+            connectionName: String(deployment.ssh_connection_name ?? ""),
+            ok: false,
+            exitCode: null,
+            durationMs: 0,
+            truncated: false,
+            message: "未在时限内启动或完成",
+            errorCode: "OPERATION_TIMEOUT",
           });
           try {
             await writeAudit(app.db, {
@@ -1243,7 +1282,7 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
             });
           } catch { /* keep target results even if audit fails */ }
           return results;
-        });
+        }, request);
       }
       return reply.code(202).send({ item: started.operation });
     } catch (error) {
@@ -1302,7 +1341,7 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
             });
           } catch { /* keep target result even if audit fails */ }
           return [result];
-        });
+        }, request);
       }
       return reply.code(202).send({ item: started.operation });
     } catch (error) {

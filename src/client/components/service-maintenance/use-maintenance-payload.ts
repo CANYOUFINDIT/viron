@@ -29,7 +29,6 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
       services: [],
       logs: [],
       hosts: [],
-      tlsEndpoints: [],
   });
 
   const selectedServiceId = ref("");
@@ -188,7 +187,6 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
               ...response,
               alertSettings: payload.value.alertSettings,
               hosts: discoveryHosts,
-              tlsEndpoints: [],
           }) as MaintenancePayload;
           if (!payload.value.services.some((item) => item.id === selectedServiceId.value))
               selectedServiceId.value = payload.value.services[0]?.id ?? "";
@@ -196,7 +194,7 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
               discoveryTargetServiceId.value = "";
           if (!payload.value.hosts.some((item) => item.sshConnectionId === selectedHostId.value))
               selectedHostId.value = payload.value.hosts[0]?.sshConnectionId ?? "";
-          if (activeWorkspace.value === "certificate" || (activeWorkspace.value !== "service" && activeWorkspace.value !== "host"))
+          if (activeWorkspace.value !== "service" && activeWorkspace.value !== "host")
               activeWorkspace.value = "service";
           if (activeWorkspace.value === "service" && !payload.value.services.length && payload.value.hosts.length)
               activeWorkspace.value = "host";

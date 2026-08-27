@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { isUniqueConstraintError } from "./database-errors.js";
 import { canAccessEnvironment, workspaceParams } from "./access-control.js";
+import { writeAudit } from "./audit.js";
 import {
   SERVICE_OPERATION_BATCH_LIMIT,
   SERVICE_OPERATION_COMMAND_TIMEOUT_MS,
@@ -11,6 +12,8 @@ import {
   SERVICE_OPERATION_RESULT_LIMIT,
   SERVICE_OPERATION_RETENTION_DAYS,
   SERVICE_OPERATION_TOTAL_TIMEOUT_MS,
+  clipUtf8,
+  utf8ByteLength,
   type ServiceOperationDto,
   type ServiceOperationStatus,
   type ServiceOperationTargetResult,
@@ -208,64 +211,108 @@ export async function beginServiceOperation(
 export async function runServiceOperation(
   app: FastifyInstance,
   operationId: string,
-  execute: (onProgress: (current: number, total: number) => Promise<void>) => Promise<ServiceOperationTargetResult[]>,
+  execute: (
+    onProgress: (current: number, total: number) => Promise<void>,
+    helpers: { shouldContinue: () => boolean; deadline: number },
+  ) => Promise<ServiceOperationTargetResult[]>,
+  request?: FastifyRequest,
 ): Promise<void> {
   const started = new Date().toISOString();
+  const operation = await loadOperation(app, operationId);
   await app.db.prepare(`
     UPDATE service_operation_runs SET status = 'running', started_at = ?, updated_at = ? WHERE id = ? AND status = 'queued'
   `).run(started, started, operationId);
+  if (request) {
+    await writeAudit(app.db, {
+      action: "service_operation.started",
+      resourceType: "service_operation",
+      resourceId: operationId,
+      summary: `开始服务操作 ${operation?.operationType ?? "operation"}`,
+      details: { operationType: operation?.operationType, environmentId: operation?.environmentId },
+      request,
+    }).catch(() => undefined);
+  }
   const deadline = Date.now() + SERVICE_OPERATION_TOTAL_TIMEOUT_MS;
+  const shouldContinue = () => Date.now() <= deadline;
+  let targets: ServiceOperationTargetResult[] = [];
+  let failure: unknown;
   try {
-    const targets = await execute(async (current, total) => {
-      if (Date.now() > deadline) throw new ServiceOperationError("OPERATION_TIMEOUT", "批量操作超过 10 分钟限制", 504);
+    targets = await execute(async (current, total) => {
       await app.db.prepare(`
         UPDATE service_operation_runs SET progress_json = ?, updated_at = ? WHERE id = ?
       `).run(JSON.stringify({ current, total }), new Date().toISOString(), operationId);
-    });
-    const succeeded = targets.filter((item) => item.ok).length;
-    const failed = targets.length - succeeded;
-    const compact = capOperationResult(targets);
-    const status: ServiceOperationStatus = failed === 0 ? "succeeded" : succeeded === 0 ? "failed" : "partial";
-    const completed = new Date().toISOString();
-    await app.db.prepare(`
-      UPDATE service_operation_runs SET
-        status = ?, progress_json = ?, result_json = ?, error_code = ?, completed_at = ?, updated_at = ?
-      WHERE id = ?
-    `).run(
-      status,
-      JSON.stringify({ current: targets.length, total: targets.length }),
-      JSON.stringify(compact),
-      status === "succeeded" ? "" : status === "partial" ? "OPERATION_PARTIAL" : "OPERATION_FAILED",
-      completed,
-      completed,
-      operationId,
-    );
+    }, { shouldContinue, deadline });
   } catch (error) {
-    const timedOut = error instanceof ServiceOperationError && error.code === "OPERATION_TIMEOUT";
-    const completed = new Date().toISOString();
-    await app.db.prepare(`
-      UPDATE service_operation_runs SET status = ?, error_code = ?, completed_at = ?, updated_at = ?
-      WHERE id = ? AND status IN ('queued', 'running')
-    `).run(
-      timedOut ? "timed_out" : "failed",
-      timedOut ? "OPERATION_TIMEOUT" : "OPERATION_FAILED",
-      completed,
-      completed,
-      operationId,
-    );
-  } finally {
-    await releaseLocks(app, operationId);
+    failure = error;
   }
+  const compact = capOperationResult(targets);
+  const timedOut = !shouldContinue() || targets.some((item) => item.errorCode === "OPERATION_TIMEOUT")
+    || (failure instanceof ServiceOperationError && failure.code === "OPERATION_TIMEOUT");
+  const succeeded = compact.targets.filter((item) => item.ok).length;
+  const failed = compact.targets.length - succeeded;
+  const status: ServiceOperationStatus = timedOut
+    ? "timed_out"
+    : failure
+      ? "failed"
+      : failed === 0
+        ? "succeeded"
+        : succeeded === 0
+          ? "failed"
+          : "partial";
+  const completed = new Date().toISOString();
+  const errorCode = status === "succeeded"
+    ? ""
+    : status === "timed_out"
+      ? "OPERATION_TIMEOUT"
+      : status === "partial"
+        ? "OPERATION_PARTIAL"
+        : "OPERATION_FAILED";
+  await app.db.prepare(`
+    UPDATE service_operation_runs SET
+      status = ?, progress_json = ?, result_json = ?, error_code = ?, completed_at = ?, updated_at = ?
+    WHERE id = ? AND status IN ('queued', 'running')
+  `).run(
+    status,
+    JSON.stringify({ current: compact.targets.length, total: Math.max(compact.targets.length, operation?.progress.total ?? compact.targets.length) }),
+    JSON.stringify(compact),
+    errorCode,
+    completed,
+    completed,
+    operationId,
+  );
+  if (request) {
+    await writeAudit(app.db, {
+      action: status === "succeeded" ? "service_operation.completed" : `service_operation.${status}`,
+      resourceType: "service_operation",
+      resourceId: operationId,
+      summary: `服务操作 ${status}`,
+      details: {
+        status,
+        errorCode,
+        targetCount: compact.targets.length,
+        succeeded,
+        failed,
+        durationMs: Date.parse(completed) - Date.parse(started),
+      },
+      request,
+    }).catch(() => undefined);
+  }
+  await releaseLocks(app, operationId);
 }
 
 function capOperationResult(targets: ServiceOperationTargetResult[]): ServiceOperationDto["result"] {
-  const clipped = targets.map((item) => ({
-    ...item,
-    stdout: item.stdout?.slice(0, SERVICE_OPERATION_OUTPUT_LIMIT),
-    stderr: item.stderr?.slice(0, SERVICE_OPERATION_OUTPUT_LIMIT),
-    truncated: Boolean(item.truncated || (item.stdout?.length ?? 0) > SERVICE_OPERATION_OUTPUT_LIMIT || (item.stderr?.length ?? 0) > SERVICE_OPERATION_OUTPUT_LIMIT),
-    message: item.message.slice(0, 500),
-  }));
+  const clipped = targets.filter(Boolean).map((item) => {
+    const stdout = item.stdout == null ? undefined : clipUtf8(item.stdout, SERVICE_OPERATION_OUTPUT_LIMIT);
+    const stderr = item.stderr == null ? undefined : clipUtf8(item.stderr, SERVICE_OPERATION_OUTPUT_LIMIT);
+    const message = clipUtf8(item.message, 500);
+    return {
+      ...item,
+      stdout: stdout?.text,
+      stderr: stderr?.text,
+      truncated: Boolean(item.truncated || stdout?.truncated || stderr?.truncated),
+      message: message.text,
+    };
+  });
   const pack = (items: ServiceOperationTargetResult[], truncated: boolean) => ({
     succeeded: items.filter((item) => item.ok).length,
     failed: items.filter((item) => !item.ok).length,
@@ -273,33 +320,47 @@ function capOperationResult(targets: ServiceOperationTargetResult[]): ServiceOpe
     targets: items,
   });
   const full = pack(clipped, clipped.some((item) => item.truncated));
-  if (JSON.stringify(full).length <= SERVICE_OPERATION_RESULT_LIMIT) return full;
+  if (utf8ByteLength(JSON.stringify(full)) <= SERVICE_OPERATION_RESULT_LIMIT) return full;
   return pack(clipped.map(({ stdout: _stdout, stderr: _stderr, ...rest }) => rest), true);
 }
 
 export async function interruptStaleServiceOperations(app: FastifyInstance): Promise<void> {
   const now = new Date().toISOString();
   const rows = await app.db.prepare(`
-    SELECT id FROM service_operation_runs WHERE status IN ('queued', 'running')
-  `).all() as Array<{ id: string }>;
+    SELECT id, operation_type, environment_id FROM service_operation_runs WHERE status IN ('queued', 'running')
+  `).all() as Array<{ id: string; operation_type: string; environment_id: string }>;
   for (const row of rows) {
     await app.db.prepare(`
       UPDATE service_operation_runs SET status = 'interrupted', error_code = 'INTERRUPTED_BY_RESTART', completed_at = ?, updated_at = ?
       WHERE id = ?
     `).run(now, now, row.id);
+    await writeAudit(app.db, {
+      action: "service_operation.interrupted",
+      resourceType: "service_operation",
+      resourceId: row.id,
+      summary: "服务操作因进程重启中断",
+      details: { errorCode: "INTERRUPTED_BY_RESTART", operationType: row.operation_type, environmentId: row.environment_id },
+    }).catch(() => undefined);
     await releaseLocks(app, row.id);
   }
   const cutoff = new Date(Date.now() - SERVICE_OPERATION_RETENTION_DAYS * 86_400_000).toISOString();
   await app.db.prepare("DELETE FROM service_operation_runs WHERE created_at < ? AND status NOT IN ('queued', 'running')").run(cutoff);
 }
 
-export async function mapWithConcurrency<T, R>(items: T[], limit: number, mapper: (item: T) => Promise<R>): Promise<R[]> {
-  const results = new Array<R>(items.length);
+export async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  mapper: (item: T) => Promise<R>,
+  options: { shouldContinue?: () => boolean } = {},
+): Promise<Array<R | undefined>> {
+  const results = new Array<R | undefined>(items.length);
   let next = 0;
-  await Promise.all(Array.from({ length: Math.min(limit, items.length || 1) }, async () => {
-    while (next < items.length) {
+  await Promise.all(Array.from({ length: Math.min(limit, Math.max(items.length, 1)) }, async () => {
+    while (true) {
+      if (options.shouldContinue && !options.shouldContinue()) return;
       const index = next;
       next += 1;
+      if (index >= items.length) return;
       results[index] = await mapper(items[index]!);
     }
   }));

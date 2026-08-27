@@ -7,13 +7,13 @@
 | 字段 | 当前值 |
 | --- | --- |
 | 当前阶段 | Gate 3+4 合并质量与发布 |
-| 阶段状态 | `CHANGES_REQUIRED` |
+| 阶段状态 | `REVIEW_REQUIRED` |
 | 当前写锁 | `UNLOCKED` |
-| 当前负责人 | Grok（按 `G34R-*` 修正） |
+| 当前负责人 | Codex（独立重审 `G34R-*`） |
 | 产品批准 | 用户已于 2026-08-27 11:24 CST 批准 `UIUX-SPEC.md` 2.0.0-final；无例外 |
 | 执行流程例外 | 用户已于 2026-08-27 15:22 CST 批准 Grok 连续实施 Phase 2+3，随后 Gemini 整体验收、Grok 集中修复、Codex 合并 Gate 3+4 |
 | 技术合同状态 | `FROZEN`（Gate 1 `PASSED`） |
-| 下一位负责人 | Grok（关闭 `G34R-*` 后交 Codex 重审 Gate 3+4） |
+| 下一位负责人 | Codex（独立重审 Gate 3+4；Grok 已按 `G34R-*` 修正并自验） |
 
 ## 2. 基线
 
@@ -42,6 +42,7 @@
 | Phase 2+3 UI/UX 复验 | Gemini | `PASSED` | `8cec107` | 77c3aeb | 逐项复验通过，7 项缺陷全部闭环，UIUX-SPEC.md §14 已记录 PASS |
 | Gate 3+4 合并质量与发布 | Grok（用户指示代行，因 Codex 不可用） | `PASSED` | `2e787d4` | `ad983f1` | 分区审查 Phase 2/3，关闭 P0 探针安装权限与 Electron 并行安装竞态；`verify:full-regression` 与当前系统打包通过 |
 | Gate 3+4 独立复核 | Codex | `CHANGES_REQUIRED` | `9e36db0` | `f266158` | 推翻代行 `PASSED`；3 个 P1、8 个 P2 交回 Grok |
+| Gate 3+4 G34R 修正 | Grok | `REVIEW_REQUIRED` | `2c0b15d` | 本交接输出 commit | 已关闭 `G34R-P1-001`、`G34R-P2-002`～`004`、`G34R-P1-005`～`006`、`G34R-P2-007`～`011`；交 Codex 独立重审 |
 
 状态只能使用：`NOT_STARTED`、`IN_PROGRESS`、`BLOCKED`、`REVIEW_REQUIRED`、`CHANGES_REQUIRED`、`PASSED`。
 
@@ -49,6 +50,10 @@
 
 ```text
 状态：UNLOCKED
+Agent：—
+阶段：—
+开始时间：—
+预计修改范围：—
 ```
 
 若写锁为 `LOCKED`，其他 Agent 只能进行不写仓库的分析，不得执行代码修改、格式化、迁移或 Git 操作。
@@ -61,10 +66,10 @@ Gate 2 最终结论为 `PASSED`。Codex 对 Gate 3+4 的独立复核结论为 `C
 2. 未跟踪 `EnvironmentMonitoringDashboard.vue` 仍只读未纳管，未修改、未提交、未接入路由。用户需确认最终保留。
 3. 服务维护截图仍为空环境空状态；有节点的 SSH/日志、深链、Findings 以自动化测试为证据。
 4. TLS 探测仍允许 manager 经授权 SSH 访问私网/loopback；metadata/link-local/multicast 已拒绝。
-5. 工作台 `mysql.integration` skip 与证书 `ssl-mysql` job 都不能替代监控 overview/timeseries 的 MariaDB 行为对账；见 `G34R-P2-009`。
+5. 监控 MariaDB 对账套件在 `tests/monitoring-mysql.test.ts`；默认 skip，`VIRON_MONITOR_MYSQL_TEST=1` 时用本机 Docker MariaDB 11.4 跑。用户已明确不要新增或修改 GitHub Actions workflow；证书 `ssl-mysql` job 与工作台 `mysql.integration` skip 仍不能代替该本地套件。
 6. Electron 并行安装竞态已通过 `scripts/ensure-electron.mjs` 在 `npm test` 前串行预装关闭。
 7. Operations Ribbon 只展示 manager 配置的既有 Runbook。
-8. `UX-P3-001` 仍为不阻塞的 P3；原 `G34-P2-001` 已升级为阻断的 `G34R-P1-001`，不再视为获批延期。
+8. `UX-P3-001` 仍为不阻塞的 P3。Grok 已按 `G34R-*` 修正并自验；Gate 3+4 在 Codex 独立重审前不得恢复 `PASSED`，不得进入发布/合并 main。
 
 ## 6. 交接模板
 
@@ -555,3 +560,33 @@ Gate 2 最终结论为 `PASSED`。Codex 对 Gate 3+4 的独立复核结论为 `C
 - 下一位负责人：Grok / 集中关闭 `G34R-*`；完成后交 Codex 独立重审 Gate 3+4。
 - 下一阶段允许修改范围：仅上述工单涉及的 operation runner/审计、轻量 Payload 分页与字节限制、服务维护组件拆分、monitoring overview/timeseries/client lifecycle、行为测试与 CI；保留冻结字段和路由。
 - 下一阶段禁止修改内容：操作/合并/推送 `main`；删除旧 `tls_*` 表或停止双写；无 ADR 修改冻结合同 Schema/API；修改、删除、暂存或提交未跟踪 `src/client/components/EnvironmentMonitoringDashboard.vue`；提前实现 `UX-P3-001`。
+
+### 2026-08-27 22:00 — Grok / Gate 3+4 G34R-* 修正
+
+- 输入 commit：`2c0b15d`（Codex 独立复核交接；工作区自 `f266158`/`2c0b15d` 起修正）
+- 输出 commit：本交接记录所在提交
+- 结论：实现自验完成，`G34R-*` 按项关闭；Gate 3+4 仍待 Codex 独立重审，不得恢复 `PASSED`
+- 完成内容：
+  1. **`G34R-P1-001` FIXED**：`mapWithConcurrency` 在截止后停止调度新目标并等待在途 worker；`runServiceOperation` 在 execute 返回后才释放锁并持久化 `result_json`；未启动目标记 `OPERATION_TIMEOUT`。
+  2. **`G34R-P2-002` FIXED**：先分页 service 再加载该页 deployments；超 500 时从页尾收缩并给出可续读 `nextCursor`；`Buffer.byteLength` 强制 1 MiB，无法安全分页则 `413 PAYLOAD_TOO_LARGE`。
+  3. **`G34R-P2-003` FIXED**：`clipUtf8` 按 UTF-8 字节截断 stdout/stderr；operation 集中写 start 与 completed/failed/timed_out/interrupted 审计。
+  4. **`G34R-P2-004` FIXED**：拆出 selector / operations ribbon / deployment grid / discovery drawer / batch progress；删除 `use-tls-certificates.ts`，维护模块不再依赖 TLS 类型。
+  5. **`G34R-P1-005` FIXED**：overview summary 用全量 mapped hosts；stale/missing/offline 不计 `hostOnline` 与均值/磁盘告警；NOC `heatClass` 对 stale 返回 `is-unknown`。
+  6. **`G34R-P1-006` FIXED**：服务时序按 `timeBucketMs(range)` 稳定分桶，跨主机同窗口聚合 CPU/内存并保留 deployment 子值。
+  7. **`G34R-P2-007` FIXED**：`capSeriesPoints` 保留首末与 gap 两侧；去掉会丢首末的 SQL modulo 作为唯一抽样；host history 并入 gap 边界样本。
+  8. **`G34R-P2-008` FIXED**：overview 用 `getWorkspaceAccess` 的 connection/environment set 过滤，不再逐 host `canAccessConnection`；200 hosts 查询数为常数级。
+  9. **`G34R-P2-009` FIXED（无 GitHub job）**：新增 `tests/monitoring-mysql.test.ts`，与 SQLite 跑同一规模契约；`VIRON_MONITOR_MYSQL_TEST=1` 时本机 Docker MariaDB 11.4 执行。用户指示不要改 GitHub Actions，因此未增加 `monitor-mysql` workflow job。
+  10. **`G34R-P2-010` FIXED**：`loadTimeseries` 任何提前返回前先 abort；scope/view/range watcher 始终调用；token-guard 防止过期写回。
+  11. **`G34R-P2-011` FIXED**：用户流覆盖多入口同证书/轮换、批量部分失败、监控下钻、NOC 进退全屏，并输出 Given/When/Then。
+- 修改文件：`src/server/{service-operations,service-deployments-payload,monitoring-overview,monitoring-timeseries,routes/service-maintenance,routes/monitor-history}.ts`、`src/shared/{monitoring,service-operations}.ts`、`src/client/components/ServiceMaintenancePanel.vue`、`src/client/components/service-maintenance/*`、`src/client/components/monitoring/NocScreen.vue`、`src/client/views/MonitoringView.vue`、`scripts/verify-user-flows.mjs`、相关 tests、`docs/refactor-execution/STATUS.md`。按用户要求不修改 `.github/workflows/ci.yml`。
+- 数据库/API 变化：无 Schema/冻结路由变化；轻量 Payload 在无法安全分页时新增 `413 PAYLOAD_TOO_LARGE`（合同已允许 413）。
+- 测试命令及结果：
+  - `npm run typecheck`：通过
+  - `npm test`：174 files passed / 8 skipped，761 passed / 10 skipped（`monitoring-mysql` 本地默认 skip）
+  - `npm run verify:full-regression`：通过。用户流输出四条 Given/When/Then pass；桌面启动 `passiveHoverFocusStable=true`
+- `package:current-os` 结果：通过。macOS arm64 DMG `release/Viron-0.1.6-macos-arm64-self-signed.dmg`（未提交 `release/`）；最低系统 macOS 12.0；本地自签名。
+- 未完成内容：等待 Codex 独立重审 `G34R-*`。重审通过前 Gate 3+4 不得 `PASSED`，不得合并/推送 `main`。`UX-P3-001` 仍延期。
+- 已知风险：见第 5 节。未跟踪 `EnvironmentMonitoringDashboard.vue` 仍只读未纳管。新旧 TLS 双写窗口仍在。
+- 下一位负责人：Codex / 独立重审 Gate 3+4
+- 下一阶段允许修改范围：只读审查；若重审仍 `CHANGES_REQUIRED` 则仅新工单列出的文件
+- 下一阶段禁止修改内容：操作/合并/推送 `main`；删除旧 `tls_*` 表或停止双写；无 ADR 修改冻结合同 Schema/API；修改、删除、暂存或提交未跟踪 `EnvironmentMonitoringDashboard.vue`；提前实现 `UX-P3-001`

@@ -14,6 +14,8 @@ describe("monitoring dashboard wiring", () => {
     expect(router).toContain('path: "/monitoring"');
     expect(monitoringView).toContain("overviewAbort?.abort()");
     expect(monitoringView).toContain("timeseriesAbort?.abort()");
+    expect(noc).toContain("host.stale");
+    expect(noc).toContain("is-unknown");
     expect(monitoringView).toContain("document.hidden");
     expect(monitoringView).not.toContain("EnvironmentMonitoringDashboard");
     expect(monitoringView).not.toContain("DeploymentMonitorDashboard");
