@@ -6,14 +6,14 @@
 
 | 字段 | 当前值 |
 | --- | --- |
-| 当前阶段 | Phase 2+3 UI/UX 整体验收 |
-| 阶段状态 | `REVIEW_REQUIRED` |
+| 当前阶段 | Phase 2+3 UI/UX 修正 |
+| 阶段状态 | `CHANGES_REQUIRED` |
 | 当前写锁 | `UNLOCKED` |
-| 当前负责人 | Gemini |
+| 当前负责人 | Grok |
 | 产品批准 | 用户已于 2026-08-27 11:24 CST 批准 `UIUX-SPEC.md` 2.0.0-final；无例外 |
 | 执行流程例外 | 用户已于 2026-08-27 15:22 CST 批准 Grok 连续实施 Phase 2+3，随后 Gemini 整体验收、Grok 集中修复、Codex 合并 Gate 3+4 |
 | 技术合同状态 | `FROZEN`（Gate 1 `PASSED`） |
-| 下一位负责人 | Gemini / Phase 2+3 整体 UI/UX 验收 |
+| 下一位负责人 | Grok / Phase 2+3 UI/UX 修正（集中修复 P1/P2 问题） |
 
 ## 2. 基线
 
@@ -37,8 +37,8 @@
 | Gate 2 Phase 1 审查 | Codex | `PASSED` | `02e67d1` / `107db93` / `b15b64f` | `63628c9` | `G2-*` 与 `G2R-*` 全部关闭；允许进入 Phase 2 |
 | Phase 2 服务维护瘦身 | Grok | `REVIEW_REQUIRED` | `6167333`（生产代码基线 `63628c9`） | `75daf80` | 内部自验通过并独立提交；不经 Gate 3，待 Gemini/Codex 分区审查 |
 | Phase 3 监控大盘 | Grok | `REVIEW_REQUIRED` | `75daf80` | `f68e0a9` | 内部自验、截图与当前系统打包完成；待 Gemini 整体 UI/UX 验收 |
-| Phase 2+3 UI/UX 验收 | Gemini | `IN_PROGRESS` | `f68e0a9` | 待填 | 运行截图已提供；只读验收，不修改生产代码 |
-| Phase 2+3 UI/UX 修正 | Grok | `BLOCKED` | Gemini 验收输出 commit | 待填 | 等待 Gemini 问题清单；P0/P1/P2 集中关闭 |
+| Phase 2+3 UI/UX 验收 | Gemini | `CHANGES_REQUIRED` | `f68e0a9` | `3fc67ac` | 验收完成，发现 3 个 P1、4 个 P2 交互缺陷，详见 UIUX-SPEC.md §14 |
+| Phase 2+3 UI/UX 修正 | Grok | `REVIEW_REQUIRED` | `3fc67ac` | 待填 | 等待 Grok 集中关闭 UX-P1-001~UX-P2-004 |
 | Gate 3+4 合并质量与发布 | Codex | `BLOCKED` | Phase 2+3 最终修正输出 commit | 待填 | 等待实现、Gemini 验收及修正完成 |
 
 状态只能使用：`NOT_STARTED`、`IN_PROGRESS`、`BLOCKED`、`REVIEW_REQUIRED`、`CHANGES_REQUIRED`、`PASSED`。
@@ -403,3 +403,32 @@ Gate 2 最终结论为 `PASSED`。Phase 2+3 实现已提交并完成内部自验
 - 下一位负责人：Gemini / Phase 2+3 整体 UI/UX 验收
 - 下一阶段允许修改范围：只读审查 UI/UX 规格符合性、截图与实现；仅更新 `STATUS.md` 与验收记录。不修改生产代码。
 - 下一阶段禁止修改内容：生产代码、Schema/API、未跟踪监控草稿、`main`、把草稿 `git add`
+
+### 2026-08-27 17:15 — Gemini / Phase 2+3 UI/UX 整体验收
+
+- 输入 commit：`f68e0a9`（Phase 3 实现；Phase 2 独立 commit 为 `75daf80`）
+- 输出 commit：`3fc67ac`
+- 完成内容：
+  1. 完整审查 Phase 2+3 运行截图（`phase2-service-maintenance.png`、`phase3-monitoring-hosts.png`、`phase3-monitoring-services.png`、`phase3-monitoring-noc.png`），验证了瘦身隔离、空状态非 0%、三视图切换与 NOC 沉浸黑屏。
+  2. 走查凭据中心、Web 入口 Popover、服务维护面板、监控大盘（主机/APM/NOC）、告警抽屉与主机时序实现的交互链路与深链参数。
+  3. 确认无 P0 阻断性缺陷；发现 3 个 P1 与 4 个 P2 交互缺陷、1 个 P3 优化建议，完整编制验收记录与缺陷清单，已写入 `UIUX-SPEC.md` 第 14 节。
+  4. 保持未跟踪 `src/client/components/EnvironmentMonitoringDashboard.vue` 只读未纳管，严格禁止修改生产代码、测试代码或构建脚本。
+- 修改文件：`docs/refactor-execution/UIUX-SPEC.md`、`docs/refactor-execution/STATUS.md`
+- 数据库/API 变化：无（纯文档验收）
+- 缺陷摘要（详见 `UIUX-SPEC.md` §14）：
+  - `UX-P1-001` (P1 / Phase 2 & 跨模块): 服务维护节点卡片缺少直连 SSH 与日志一键直达按钮。
+  - `UX-P1-002` (P1 / 跨模块导航): 深链参数名不一致 (`maintenanceServiceId` vs `serviceId`) 导致服务无法自动聚焦。
+  - `UX-P1-003` (P1 / NOC): NOC 监控大屏告警流硬编码为空数组 (`:alerts="[]"` 未拉取真实告警)。
+  - `UX-P2-001` (P2 / APM): APM 服务健康矩阵空数据时缺失居中空态文字。
+  - `UX-P2-002` (P2 / NOC): NOC 大屏空数据时多个子区块缺乏暗色空态文字引导。
+  - `UX-P2-003` (P2 / 跨模块 & Phase 3): APM 高负载节点与基础设施 Findings 缺少一键直达服务维护的治理链接。
+  - `UX-P2-004` (P2 / 跨模块 & Phase 1): 凭据中心首次深链加载时未能自动滚动居中高亮证书。
+  - `UX-P3-001` (P3 / NOC 建议): NOC 大屏后续可补充网络与磁盘水位排行。
+- 测试命令及结果：纯文档性验收，不修改代码；测试保持 Grok 基线 `171 files passed`。
+- `package:current-os` 结果：纯文档修改，按 `AGENTS.md` 规则免打包。
+- 未完成内容：Grok 集中修复 P1/P2 缺陷；Codex 进行 Gate 3+4 合并质量与最终发布。
+- 已知风险：见第 5 节。
+- 下一位负责人：Grok / Phase 2+3 UI/UX 修正
+- 下一阶段允许修改范围：针对 `UX-P1-001` 至 `UX-P2-004` 缺陷修改 `src/client/` 相应组件与视图交互逻辑；增补对应前端/端到端回归测试；更新 `STATUS.md`。
+- 下一阶段禁止修改内容：改变已冻结的数据库 Schema 与核心 REST 路由协议；删除旧 TLS 表；修改/暂存/提交/删除未跟踪 `EnvironmentMonitoringDashboard.vue`；操作或合并 `main` 分支。
+
