@@ -3,9 +3,9 @@ import { RefreshCw, Search, ShieldCheck, Trash2 } from "@lucide/vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { api } from "../../api";
+import { ApiError, api } from "../../api";
 import { translate as tr } from "../../i18n";
-import { formatFingerprint, type SslCertificateAsset } from "../../../shared/tls-certificates";
+import { formatFingerprint, TLS_MANUAL_PROBE_COOLDOWN_MS, type SslCertificateAsset } from "../../../shared/tls-certificates";
 
 interface EnvironmentOption { id: string; name: string }
 interface SshOption { id: string; name: string; environmentIds: string[] }
@@ -22,6 +22,18 @@ const query = reactive({ q: "", status: "", environmentId: "", sort: "expiry" as
 const createDialog = ref(false);
 const createForm = reactive({ host: "", port: 443, sni: "", environmentId: "", sshConnectionId: "" as string | null, observeEnabled: true });
 const highlighted = computed(() => String(route.query.fingerprint ?? "").replace(/[^0-9a-f]/gi, "").toLowerCase());
+const batch = reactive({
+  running: false,
+  current: 0,
+  total: 0,
+  succeeded: 0,
+  failed: 0,
+  cooldownUntil: 0,
+  failures: [] as Array<{ id: string; name: string; message: string }>,
+});
+const batchBusy = computed(() => batch.running || saving.value);
+const batchPercent = computed(() => batch.total ? Math.round((batch.current / batch.total) * 100) : 0);
+const batchSummaryText = computed(() => `${tr("正在重新探测 {{0}} / {{1}}", [batch.current, batch.total])} · ${tr("成功 {{0}}", [batch.succeeded])} · ${tr("失败 {{0}}", [batch.failed])}`);
 
 const sshOptions = computed(() => sshConnections.value.filter((item) => !createForm.environmentId || item.environmentIds.includes(createForm.environmentId)));
 
@@ -86,30 +98,72 @@ async function createEndpoint() {
   }
 }
 
+function probeErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) return error.message;
+  if (error instanceof Error && error.message) return error.message;
+  return tr("重新探测失败");
+}
+
 async function probeAsset(asset: SslCertificateAsset) {
+  if (batch.running) return;
   saving.value = true;
   try {
     await api(`/api/v1/certificates/${asset.id}/probe`, { method: "POST" });
     ElMessage.success(tr("证书探测已完成"));
     await load();
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : tr("重新探测失败"));
+    ElMessage.error(probeErrorMessage(error));
   } finally {
     saving.value = false;
   }
 }
 
-async function probeAll() {
-  saving.value = true;
-  try {
-    for (const asset of items.value) {
-      await api(`/api/v1/certificates/${asset.id}/probe`, { method: "POST" }).catch(() => undefined);
-    }
-    ElMessage.success(tr("批量重新探测已完成"));
-    await load();
-  } finally {
-    saving.value = false;
+async function probeAll(targets?: SslCertificateAsset[]) {
+  if (batch.running) return;
+  const now = Date.now();
+  if (now < batch.cooldownUntil) {
+    const seconds = Math.ceil((batch.cooldownUntil - now) / 1000);
+    ElMessage.warning(tr("批量重新探测冷却中，请 {{0}} 秒后再试", [seconds]));
+    return;
   }
+  const queue = (targets?.length ? targets : items.value).slice();
+  if (!queue.length) return;
+  batch.running = true;
+  batch.current = 0;
+  batch.total = queue.length;
+  batch.succeeded = 0;
+  batch.failed = 0;
+  batch.failures = [];
+  batch.cooldownUntil = now + TLS_MANUAL_PROBE_COOLDOWN_MS;
+  try {
+    for (const asset of queue) {
+      try {
+        await api(`/api/v1/certificates/${asset.id}/probe`, { method: "POST" });
+        batch.succeeded += 1;
+      } catch (error) {
+        batch.failed += 1;
+        batch.failures.push({
+          id: asset.id,
+          name: asset.leafCn || asset.fingerprintSha256.slice(0, 16),
+          message: probeErrorMessage(error),
+        });
+      } finally {
+        batch.current += 1;
+      }
+    }
+    await load();
+    if (batch.failed === 0) ElMessage.success(tr("批量重新探测已完成"));
+    else if (batch.succeeded === 0) ElMessage.error(tr("批量重新探测全部失败"));
+    else ElMessage.warning(tr("批量重新探测部分完成：成功 {{0}}，失败 {{1}}", [batch.succeeded, batch.failed]));
+  } finally {
+    batch.running = false;
+  }
+}
+
+async function retryFailed() {
+  const failedIds = new Set(batch.failures.map((item) => item.id));
+  const targets = items.value.filter((item) => failedIds.has(item.id));
+  await probeAll(targets);
 }
 
 async function removeAsset(asset: SslCertificateAsset) {
@@ -151,7 +205,7 @@ onMounted(async () => {
   await load();
 });
 
-defineExpose({ openCreate, probeAll });
+defineExpose({ openCreate, probeAll, retryFailed, batchBusy });
 </script>
 
 <template>
@@ -162,6 +216,23 @@ defineExpose({ openCreate, probeAll });
       <article class="is-expiring"><strong>{{ summary.expiring }}</strong><span>{{ $t('即将到期') }}</span></article>
       <article class="is-expired"><strong>{{ summary.expired + summary.error }}</strong><span>{{ $t('已过期 / 异常') }}</span></article>
     </section>
+
+    <div v-if="batch.total" class="cert-batch-progress" role="status" :aria-busy="batch.running" data-testid="certificate-batch-progress">
+      <div class="cert-batch-progress__bar">
+        <progress :max="batch.total" :value="batch.current" />
+        <strong>{{ batchPercent }}%</strong>
+      </div>
+      <p data-testid="certificate-batch-summary">{{ batchSummaryText }}</p>
+      <ul v-if="batch.failures.length" data-testid="certificate-batch-failures">
+        <li v-for="item in batch.failures" :key="item.id">{{ item.name }}：{{ item.message }}</li>
+      </ul>
+      <el-button
+        v-if="batch.failures.length && !batch.running"
+        data-testid="certificate-batch-retry"
+        :disabled="Date.now() < batch.cooldownUntil"
+        @click="retryFailed"
+      >{{ $t('重试失败项') }}</el-button>
+    </div>
 
     <div class="cert-toolbar">
       <el-input v-model="query.q" clearable :placeholder="$t('搜索域名、颁发者或指纹')" :prefix-icon="Search" />
@@ -208,7 +279,7 @@ defineExpose({ openCreate, probeAll });
         </ul>
         <p v-else>{{ $t('待关联 Web 入口') }}</p>
         <footer>
-          <el-button text :loading="saving" @click="probeAsset(asset)"><RefreshCw :size="14" />{{ $t('重新探测全部端点') }}</el-button>
+          <el-button text :loading="batchBusy" :disabled="batch.running" @click="probeAsset(asset)"><RefreshCw :size="14" />{{ $t('重新探测全部端点') }}</el-button>
           <el-button text class="is-danger" @click="removeAsset(asset)"><Trash2 :size="14" />{{ $t('删除证书记录') }}</el-button>
         </footer>
       </article>
@@ -252,6 +323,11 @@ defineExpose({ openCreate, probeAll });
 .cert-metrics .is-valid strong { color: var(--teal-700); }
 .cert-metrics .is-expiring strong { color: var(--amber-600, #b46b0d); }
 .cert-metrics .is-expired strong { color: var(--red-600, #b7473f); }
+.cert-batch-progress { margin-bottom: 14px; padding: 12px 14px; border: 1px solid var(--ink-100); border-radius: 12px; background: var(--surface); display: grid; gap: 8px; }
+.cert-batch-progress__bar { display: flex; align-items: center; gap: 10px; }
+.cert-batch-progress progress { flex: 1; height: 8px; }
+.cert-batch-progress p, .cert-batch-progress li { margin: 0; color: var(--ink-500); font-size: 12px; }
+.cert-batch-progress ul { margin: 0; padding-left: 16px; }
 .cert-toolbar { display: grid; grid-template-columns: minmax(0, 1.4fr) 160px 180px 140px; gap: 8px; margin-bottom: 14px; }
 .cert-list { display: grid; gap: 12px; }
 .cert-card { padding: 16px 18px; border: 1px solid var(--ink-100); border-radius: 12px; background: var(--surface); display: grid; gap: 8px; }

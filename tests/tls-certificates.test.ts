@@ -10,6 +10,7 @@ import {
   parseSubjectCommonName,
   tlsConnectTarget,
   tlsDaysRemaining,
+  tlsEndpointIsStale,
   tlsProbeDueAt,
   tlsWebEntryBadge,
 } from "../src/shared/tls-certificates.js";
@@ -117,5 +118,44 @@ describe("TLS certificate helpers", () => {
     expect(tlsProbeDueAt(endpoint, 14, Date.parse("2026-08-26T00:10:00.000Z"))).toBeGreaterThan(Date.parse(endpoint.probedAt!));
     expect(parseSubjectCommonName("CN=app.example.com")).toBe("app.example.com");
     expect(parseSubjectAltNames("DNS:app.example.com, DNS:*.example.com")).toEqual(["app.example.com", "*.example.com"]);
+  });
+
+  it("marks a retained snapshot stale immediately after a failed probe", () => {
+    const successAt = "2026-08-27T00:00:00.000Z";
+    const now = Date.parse("2026-08-27T00:10:00.000Z");
+    const base = {
+      observeEnabled: true,
+      sshConnectionId: "ssh",
+      probedAt: successAt,
+      lastSuccessAt: successAt,
+      daysRemaining: 30,
+      certificateId: "cert-1",
+    };
+    expect(tlsEndpointIsStale({ ...base, probeStatus: "ok" }, 14, now)).toBe(false);
+    expect(tlsEndpointIsStale({ ...base, probeStatus: "connect_failed", probedAt: "2026-08-27T00:10:00.000Z" }, 14, now)).toBe(true);
+    expect(tlsEndpointIsStale({ ...base, probeStatus: "timeout", probedAt: "2026-08-27T00:10:00.000Z" }, 14, now)).toBe(true);
+    expect(tlsEndpointIsStale({
+      observeEnabled: true,
+      sshConnectionId: "ssh",
+      probeStatus: "connect_failed",
+      probedAt: "2026-08-27T00:10:00.000Z",
+      lastSuccessAt: null,
+      daysRemaining: null,
+      certificateId: null,
+    }, 14, now)).toBe(false);
+    expect(tlsEndpointIsStale({ ...base, probeStatus: "ok" }, 14, now)).toBe(false);
+    expect(tlsWebEntryBadge([{
+      id: "endpoint-1",
+      certificateId: "cert-1",
+      sshConnectionId: "ssh",
+      probeStatus: "connect_failed",
+      probeError: "connect failed",
+      probedAt: "2026-08-27T00:10:00.000Z",
+      lastSuccessAt: successAt,
+      daysRemaining: 30,
+      hostnameMatch: true,
+      fingerprintSha256: "aa".repeat(32),
+      stale: false,
+    }], 14)).toMatchObject({ status: "error", stale: true });
   });
 });

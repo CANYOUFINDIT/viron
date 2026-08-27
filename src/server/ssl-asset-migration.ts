@@ -50,9 +50,20 @@ interface LegacyEndpointRow {
   workspace_id: string | null;
 }
 
+interface LegacyLinkRow {
+  endpoint_id: string;
+  web_entry_id: string;
+  endpoint_environment_id: string;
+  entry_environment_id: string;
+}
+
 function flag(value: number | string | null | undefined): number | null {
   if (value == null || value === "") return null;
   return Number(value) ? 1 : 0;
+}
+
+function countTotal(row: { total: number | string } | undefined): number {
+  return Number(row?.total ?? 0);
 }
 
 async function migrationApplied(db: EnvmanDatabase): Promise<boolean> {
@@ -62,6 +73,21 @@ async function migrationApplied(db: EnvmanDatabase): Promise<boolean> {
     throw new SslAssetMigrationError(`schema_migrations checksum mismatch for ${SSL_ASSET_MIGRATION_ID}`);
   }
   return true;
+}
+
+async function wipeNewTables(db: EnvmanDatabase): Promise<void> {
+  await db.prepare("DELETE FROM ssl_endpoint_web_entries").run();
+  await db.prepare("DELETE FROM ssl_endpoints").run();
+  await db.prepare("DELETE FROM ssl_certificates").run();
+}
+
+async function recoverMigratedEndpointAlerts(db: EnvmanDatabase, environmentId: string, endpointId: string, now: string): Promise<void> {
+  await db.prepare(`
+    UPDATE monitor_alerts SET status = 'recovered', recovered_at = ?, updated_at = ?
+    WHERE environment_id = ? AND target_type = 'tls_endpoint' AND target_id = ? AND status = 'active'
+  `).run(now, now, environmentId, endpointId);
+  await db.prepare("DELETE FROM monitor_alert_states WHERE environment_id = ? AND target_type = 'tls_endpoint' AND target_id = ?")
+    .run(environmentId, endpointId);
 }
 
 async function upsertCertificate(
@@ -111,25 +137,116 @@ async function upsertCertificate(
   return id;
 }
 
-async function backfill(db: EnvmanDatabase): Promise<void> {
-  const endpoints = await db.prepare(`
+function duplicateJunctionIds(links: LegacyLinkRow[]): string[] {
+  const byEntry = new Map<string, string[]>();
+  for (const row of links) {
+    const items = byEntry.get(row.web_entry_id) ?? [];
+    items.push(`${row.endpoint_id}:${row.web_entry_id}`);
+    byEntry.set(row.web_entry_id, items);
+  }
+  return [...byEntry.values()].filter((items) => items.length > 1).flat();
+}
+
+async function loadLegacyEndpoints(db: EnvmanDatabase): Promise<LegacyEndpointRow[]> {
+  return await db.prepare(`
     SELECT e.*, env.workspace_type, env.workspace_id
     FROM tls_endpoints e
     LEFT JOIN environments env ON env.id = e.environment_id
     ORDER BY e.created_at, e.id
   `).all() as LegacyEndpointRow[];
+}
+
+async function loadLegacyLinks(db: EnvmanDatabase): Promise<LegacyLinkRow[]> {
+  return await db.prepare(`
+    SELECT l.endpoint_id, l.web_entry_id, e.environment_id AS endpoint_environment_id, w.environment_id AS entry_environment_id
+    FROM tls_endpoint_web_entries l
+    JOIN tls_endpoints e ON e.id = l.endpoint_id
+    JOIN web_entries w ON w.id = l.web_entry_id
+  `).all() as LegacyLinkRow[];
+}
+
+async function upsertEndpoint(
+  db: EnvmanDatabase,
+  row: LegacyEndpointRow,
+  certificateId: string | null,
+  lastSuccessAt: string | null,
+): Promise<void> {
+  await db.prepare(`
+    INSERT INTO ssl_endpoints (
+      id, environment_id, certificate_id, ssh_connection_id, ssh_bind_key, host, port, sni, source,
+      observe_enabled, customized, sort_order, probe_status, probe_error, probed_at, last_success_at,
+      hostname_match, chain_complete, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      environment_id = excluded.environment_id,
+      certificate_id = excluded.certificate_id,
+      ssh_connection_id = excluded.ssh_connection_id,
+      ssh_bind_key = excluded.ssh_bind_key,
+      host = excluded.host,
+      port = excluded.port,
+      sni = excluded.sni,
+      source = excluded.source,
+      observe_enabled = excluded.observe_enabled,
+      customized = excluded.customized,
+      sort_order = excluded.sort_order,
+      probe_status = excluded.probe_status,
+      probe_error = excluded.probe_error,
+      probed_at = excluded.probed_at,
+      last_success_at = excluded.last_success_at,
+      hostname_match = excluded.hostname_match,
+      chain_complete = excluded.chain_complete,
+      updated_at = excluded.updated_at
+  `).run(
+    row.id,
+    row.environment_id,
+    certificateId,
+    row.ssh_connection_id,
+    row.ssh_bind_key ?? "",
+    row.host,
+    Number(row.port),
+    row.sni ?? "",
+    row.source,
+    Number(row.observe_enabled) ? 1 : 0,
+    Number(row.customized) ? 1 : 0,
+    Number(row.sort_order),
+    row.probe_status,
+    row.probe_error ?? "",
+    row.probed_at,
+    lastSuccessAt,
+    flag(row.hostname_match),
+    flag(row.chain_complete),
+    row.created_at,
+    row.updated_at,
+  );
+}
+
+async function reconcile(db: EnvmanDatabase): Promise<void> {
+  const endpoints = await loadLegacyEndpoints(db);
   const missingEnvironment = endpoints.filter((row) => !row.workspace_type || row.workspace_id == null);
   if (missingEnvironment.length) {
     throw new SslAssetMigrationError("tls_endpoints 缺少可派生的工作空间", missingEnvironment.map((row) => row.id));
   }
 
+  const links = await loadLegacyLinks(db);
+  const invalidLinks = links.filter((row) => row.endpoint_environment_id !== row.entry_environment_id);
+  if (invalidLinks.length) {
+    throw new SslAssetMigrationError("tls_endpoint_web_entries 存在跨环境关联", invalidLinks.map((row) => `${row.endpoint_id}:${row.web_entry_id}`));
+  }
+  const duplicateLinks = duplicateJunctionIds(links);
+  if (duplicateLinks.length) {
+    throw new SslAssetMigrationError("tls_endpoint_web_entries 存在同一 Web 入口关联多个端点", duplicateLinks);
+  }
+
   const certificateIds = new Map<string, string>();
+  const seenEndpointIds = new Set<string>();
   for (const row of endpoints) {
+    seenEndpointIds.add(row.id);
     const fingerprint = canonicalFingerprint(row.fingerprint_sha256 ?? "");
-    const seenAt = row.probed_at || row.updated_at || row.created_at;
+    const probeOk = row.probe_status === "ok";
     let certificateId: string | null = null;
-    if (fingerprint && row.not_before && row.not_after) {
+    if (probeOk && fingerprint && row.not_before && row.not_after) {
       const cacheKey = `${row.workspace_type}:${row.workspace_id}:${fingerprint}`;
+      const seenAt = row.probed_at || row.updated_at || row.created_at;
       certificateId = certificateIds.get(cacheKey) ?? await upsertCertificate(db, {
         workspaceType: row.workspace_type!,
         workspaceId: row.workspace_id!,
@@ -146,51 +263,19 @@ async function backfill(db: EnvmanDatabase): Promise<void> {
       });
       certificateIds.set(cacheKey, certificateId);
     }
-    const lastSuccessAt = fingerprint && row.probe_status === "ok" ? row.probed_at : fingerprint ? row.probed_at : null;
-    await db.prepare(`
-      INSERT INTO ssl_endpoints (
-        id, environment_id, certificate_id, ssh_connection_id, ssh_bind_key, host, port, sni, source,
-        observe_enabled, customized, sort_order, probe_status, probe_error, probed_at, last_success_at,
-        hostname_match, chain_complete, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      row.id,
-      row.environment_id,
-      certificateId,
-      row.ssh_connection_id,
-      row.ssh_bind_key ?? "",
-      row.host,
-      Number(row.port),
-      row.sni ?? "",
-      row.source,
-      Number(row.observe_enabled) ? 1 : 0,
-      Number(row.customized) ? 1 : 0,
-      Number(row.sort_order),
-      row.probe_status,
-      row.probe_error ?? "",
-      row.probed_at,
-      lastSuccessAt,
-      flag(row.hostname_match),
-      flag(row.chain_complete),
-      row.created_at,
-      row.updated_at,
-    );
+    await upsertEndpoint(db, row, certificateId, probeOk ? row.probed_at : null);
   }
 
-  const links = await db.prepare(`
-    SELECT l.endpoint_id, l.web_entry_id, e.environment_id AS endpoint_environment_id, w.environment_id AS entry_environment_id
-    FROM tls_endpoint_web_entries l
-    JOIN tls_endpoints e ON e.id = l.endpoint_id
-    JOIN web_entries w ON w.id = l.web_entry_id
-  `).all() as Array<{ endpoint_id: string; web_entry_id: string; endpoint_environment_id: string; entry_environment_id: string }>;
-  const invalidLinks = links.filter((row) => row.endpoint_environment_id !== row.entry_environment_id);
-  if (invalidLinks.length) {
-    throw new SslAssetMigrationError("tls_endpoint_web_entries 存在跨环境关联", invalidLinks.map((row) => `${row.endpoint_id}:${row.web_entry_id}`));
+  const extras = await db.prepare("SELECT id, environment_id FROM ssl_endpoints").all() as Array<{ id: string; environment_id: string }>;
+  const now = new Date().toISOString();
+  for (const row of extras) {
+    if (seenEndpointIds.has(row.id)) continue;
+    await recoverMigratedEndpointAlerts(db, row.environment_id, row.id, now);
+    await db.prepare("DELETE FROM ssl_endpoints WHERE id = ?").run(row.id);
   }
-  const seenEntries = new Set<string>();
+
+  await db.prepare("DELETE FROM ssl_endpoint_web_entries").run();
   for (const row of links) {
-    if (seenEntries.has(row.web_entry_id)) continue;
-    seenEntries.add(row.web_entry_id);
     await db.prepare("INSERT INTO ssl_endpoint_web_entries (endpoint_id, web_entry_id) VALUES (?, ?)").run(row.endpoint_id, row.web_entry_id);
   }
 }
@@ -198,14 +283,74 @@ async function backfill(db: EnvmanDatabase): Promise<void> {
 async function validate(db: EnvmanDatabase): Promise<void> {
   const oldEndpoints = await db.prepare("SELECT COUNT(*) AS total FROM tls_endpoints").get() as { total: number | string };
   const newEndpoints = await db.prepare("SELECT COUNT(*) AS total FROM ssl_endpoints").get() as { total: number | string };
-  if (Number(oldEndpoints.total) !== Number(newEndpoints.total)) {
+  if (countTotal(oldEndpoints) !== countTotal(newEndpoints)) {
     throw new SslAssetMigrationError(`endpoint 数量不一致: tls=${oldEndpoints.total} ssl=${newEndpoints.total}`);
   }
-  const oldLinks = await db.prepare("SELECT COUNT(DISTINCT web_entry_id) AS total FROM tls_endpoint_web_entries").get() as { total: number | string };
+  const oldLinks = await db.prepare("SELECT COUNT(*) AS total FROM tls_endpoint_web_entries").get() as { total: number | string };
   const newLinks = await db.prepare("SELECT COUNT(*) AS total FROM ssl_endpoint_web_entries").get() as { total: number | string };
-  if (Number(oldLinks.total) !== Number(newLinks.total)) {
+  if (countTotal(oldLinks) !== countTotal(newLinks)) {
     throw new SslAssetMigrationError(`web entry 关联数量不一致: tls=${oldLinks.total} ssl=${newLinks.total}`);
   }
+
+  const mappings = await db.prepare(`
+    SELECT e.id, e.probe_status, e.fingerprint_sha256, se.certificate_id, cert.fingerprint_sha256 AS cert_fingerprint
+    FROM tls_endpoints e
+    JOIN ssl_endpoints se ON se.id = e.id
+    LEFT JOIN ssl_certificates cert ON cert.id = se.certificate_id
+  `).all() as Array<{
+    id: string;
+    probe_status: string;
+    fingerprint_sha256: string;
+    certificate_id: string | null;
+    cert_fingerprint: string | null;
+  }>;
+  const mappingFailures: string[] = [];
+  for (const row of mappings) {
+    const fingerprint = canonicalFingerprint(row.fingerprint_sha256 ?? "");
+    if (row.probe_status === "ok" && fingerprint) {
+      if (!row.certificate_id || canonicalFingerprint(row.cert_fingerprint ?? "") !== fingerprint) {
+        mappingFailures.push(row.id);
+      }
+    } else if (row.certificate_id) {
+      mappingFailures.push(row.id);
+    }
+  }
+  if (mappingFailures.length) {
+    throw new SslAssetMigrationError("成功探测指纹未正确映射到证书资产，或失败行仍引用证书", mappingFailures);
+  }
+
+  const duplicateFingerprints = await db.prepare(`
+    SELECT workspace_type, workspace_id, fingerprint_sha256
+    FROM ssl_certificates
+    GROUP BY workspace_type, workspace_id, fingerprint_sha256
+    HAVING COUNT(*) > 1
+  `).all() as Array<{ workspace_type: string; workspace_id: string; fingerprint_sha256: string }>;
+  if (duplicateFingerprints.length) {
+    throw new SslAssetMigrationError(
+      "ssl_certificates 工作空间指纹唯一约束被破坏",
+      duplicateFingerprints.map((row) => `${row.workspace_type}:${row.workspace_id}:${row.fingerprint_sha256}`),
+    );
+  }
+
+  const oldWorkspaceCounts = await db.prepare(`
+    SELECT env.workspace_type, env.workspace_id, COUNT(*) AS total
+    FROM tls_endpoints e
+    JOIN environments env ON env.id = e.environment_id
+    GROUP BY env.workspace_type, env.workspace_id
+    ORDER BY env.workspace_type, env.workspace_id
+  `).all() as Array<{ workspace_type: string; workspace_id: string; total: number | string }>;
+  const newWorkspaceCounts = await db.prepare(`
+    SELECT env.workspace_type, env.workspace_id, COUNT(*) AS total
+    FROM ssl_endpoints e
+    JOIN environments env ON env.id = e.environment_id
+    GROUP BY env.workspace_type, env.workspace_id
+    ORDER BY env.workspace_type, env.workspace_id
+  `).all() as Array<{ workspace_type: string; workspace_id: string; total: number | string }>;
+  if (JSON.stringify(oldWorkspaceCounts.map((row) => ({ ...row, total: countTotal(row) })))
+    !== JSON.stringify(newWorkspaceCounts.map((row) => ({ ...row, total: countTotal(row) })))) {
+    throw new SslAssetMigrationError("按工作空间的 endpoint 计数不一致");
+  }
+
   if (db.dialect === "sqlite") {
     const violations = await db.prepare("PRAGMA foreign_key_check").all() as Array<{ table: string; rowid: number }>;
     const sslViolations = violations.filter((row) => String(row.table).startsWith("ssl_"));
@@ -216,30 +361,21 @@ async function validate(db: EnvmanDatabase): Promise<void> {
 }
 
 export async function migrateSslAssets(db: EnvmanDatabase): Promise<void> {
-  if (await migrationApplied(db)) return;
-  const existing = await db.prepare("SELECT COUNT(*) AS total FROM ssl_endpoints").get() as { total: number | string };
+  const applied = await migrationApplied(db);
   try {
     await db.transaction(async () => {
-      if (Number(existing.total) === 0) await backfill(db);
-      else {
-        const oldEndpoints = await db.prepare("SELECT COUNT(*) AS total FROM tls_endpoints").get() as { total: number | string };
-        if (Number(oldEndpoints.total) !== Number(existing.total)) {
-          throw new SslAssetMigrationError("中断的 ssl_endpoints 回填与旧表数量不一致，拒绝激活");
-        }
-      }
+      await reconcile(db);
       await validate(db);
-      await db.prepare("INSERT INTO schema_migrations (id, checksum, applied_at) VALUES (?, ?, ?)").run(
-        SSL_ASSET_MIGRATION_ID,
-        SSL_ASSET_MIGRATION_CHECKSUM,
-        new Date().toISOString(),
-      );
+      if (!applied) {
+        await db.prepare("INSERT INTO schema_migrations (id, checksum, applied_at) VALUES (?, ?, ?)").run(
+          SSL_ASSET_MIGRATION_ID,
+          SSL_ASSET_MIGRATION_CHECKSUM,
+          new Date().toISOString(),
+        );
+      }
     })();
   } catch (error) {
-    if (Number(existing.total) === 0) {
-      await db.prepare("DELETE FROM ssl_endpoint_web_entries").run();
-      await db.prepare("DELETE FROM ssl_endpoints").run();
-      await db.prepare("DELETE FROM ssl_certificates").run();
-    }
+    if (!applied) await wipeNewTables(db);
     throw error;
   }
 }

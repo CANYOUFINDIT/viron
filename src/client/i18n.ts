@@ -13,7 +13,7 @@ export const LANGUAGE_STORAGE_KEY = "envman-language";
 
 function initialLanguage(): Language {
   if (typeof window === "undefined") return "zh-CN";
-  const stored = normalizeLanguage(window.localStorage.getItem(LANGUAGE_STORAGE_KEY));
+  const stored = normalizeLanguage(window.localStorage?.getItem(LANGUAGE_STORAGE_KEY) ?? null);
   return stored ?? detectLanguage(navigator.languages?.length ? navigator.languages : navigator.language);
 }
 
