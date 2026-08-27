@@ -38,8 +38,8 @@
 | Phase 2 服务维护瘦身 | Grok | `REVIEW_REQUIRED` | `6167333`（生产代码基线 `63628c9`） | `75daf80` | 内部自验通过并独立提交；不经 Gate 3，待 Gemini/Codex 分区审查 |
 | Phase 3 监控大盘 | Grok | `REVIEW_REQUIRED` | `75daf80` | `f68e0a9` | 内部自验、截图与当前系统打包完成；待 Gemini 整体 UI/UX 验收 |
 | Phase 2+3 UI/UX 验收 | Gemini | `CHANGES_REQUIRED` | `f68e0a9` | `c26b6c2` | 验收完成，发现 3 个 P1、4 个 P2 交互缺陷，详见 UIUX-SPEC.md §14。交接文档曾写 `3fc67ac`，实际 origin/dev 提交为 `c26b6c2` |
-| Phase 2+3 UI/UX 修正 | Grok | `REVIEW_REQUIRED` | `c26b6c2` | 待填 | 已关闭 UX-P1-001～UX-P2-004；UX-P3-001 按验收意见延期。待 Gemini 复验 |
-| Phase 2+3 UI/UX 复验 | Gemini | `REVIEW_REQUIRED` | Grok 本批次输出 commit | 待填 | 对照截图与交互走查确认 P1/P2 关闭，不得改生产代码 |
+| Phase 2+3 UI/UX 修正 | Grok | `REVIEW_REQUIRED` | `c26b6c2` | `8cec107` | 已关闭 UX-P1-001～UX-P2-004；UX-P3-001 按验收意见延期。待 Gemini 复验 |
+| Phase 2+3 UI/UX 复验 | Gemini | `REVIEW_REQUIRED` | `8cec107` | 待填 | 对照截图与交互走查确认 P1/P2 关闭，不得改生产代码 |
 | Gate 3+4 合并质量与发布 | Codex | `BLOCKED` | Phase 2+3 最终修正输出 commit | 待填 | 等待 Gemini 复验通过后再执行合并 Gate |
 
 状态只能使用：`NOT_STARTED`、`IN_PROGRESS`、`BLOCKED`、`REVIEW_REQUIRED`、`CHANGES_REQUIRED`、`PASSED`。
@@ -437,7 +437,7 @@ Gate 2 最终结论为 `PASSED`。Phase 2+3 实现与 P1/P2 UX 修正已提交�
 ### 2026-08-27 17:30 — Grok / Phase 2+3 UI/UX 修正
 
 - 输入 commit：`c26b6c2`（Gemini 验收记录；交接文档曾写 `3fc67ac`）
-- 输出 commit：本批次提交（commit 后回填 hash）
+- 输出 commit：`8cec107`
 - 完成内容：
   1. **`UX-P1-001`**：部署节点卡片操作区一等公民露出「直连 SSH」「节点日志」；Member 可点。`openServiceSsh` 切到 SSH 页签并写入 `connectionId`，不走会删掉 connectionId 的 `selectWorkspaceTab`。
   2. **`UX-P1-002`**：维护面板同时接受 `maintenanceServiceId||serviceId`、`maintenanceHostId||hostId`、`maintenanceDeploymentId||deploymentId`、`maintenanceEndpointId||endpointId`。
