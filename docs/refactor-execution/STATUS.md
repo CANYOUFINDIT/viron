@@ -31,8 +31,8 @@
 | --- | --- | --- | --- | --- | --- |
 | Phase 0A 现状审计 | Grok | `PASSED` | `e250733` | `8357549` | Codex Gate 1 已复核并采用审计输入 |
 | Phase 0B UI/UX 规格 | Gemini | `PASSED` | `e250733` | `0695956` | 用户于 2026-08-27 11:24 CST 批准 2.0.0-final；无例外 |
-| Gate 1 技术合同 | Codex | `PASSED` | `2677bbe` | `[GATE1_OUTPUT_COMMIT]` | 技术合同已冻结，验收矩阵已完善，无阻断问题 |
-| Phase 1 凭据与证书 | Grok | `NOT_STARTED` | `[GATE1_OUTPUT_COMMIT]` | 待填 | 仅允许执行合同中的 Phase 1 范围 |
+| Gate 1 技术合同 | Codex | `PASSED` | `2677bbe` | `9526f92` | 技术合同已冻结，验收矩阵已完善，无阻断问题 |
+| Phase 1 凭据与证书 | Grok | `NOT_STARTED` | `9526f92` | 待填 | 仅允许执行合同中的 Phase 1 范围 |
 | Gate 2 Phase 1 审查 | Codex | `BLOCKED` | 待填 | 待填 | 待填 |
 | Phase 2 服务维护瘦身 | Grok | `BLOCKED` | 待填 | 待填 | 等待 Gate 2 |
 | Gate 3 Phase 2 审查 | Codex | `BLOCKED` | 待填 | 待填 | 待填 |
@@ -160,7 +160,7 @@ Agent：无
 ### 2026-08-27 11:39 — Codex / Gate 1 技术合同
 
 - 输入 commit：`2677bbea80ad5aa3e9e7f8b5436ad75a909985da`（开始时与 `origin/dev` 一致）
-- 输出 commit：`[GATE1_OUTPUT_COMMIT]`
+- 输出 commit：`9526f920b5ee114012fb8f05de3008465665b0b8`
 - 结论：`PASSED`
 - 完成内容：
   1. 记录用户对 `UIUX-SPEC.md` 2.0.0-final 的正式批准，无例外。
