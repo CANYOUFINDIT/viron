@@ -30,7 +30,7 @@
 | 阶段 | 负责人 | 状态 | 输入 commit | 输出 commit | 审查结论 |
 | --- | --- | --- | --- | --- | --- |
 | Phase 0A 现状审计 | Grok | `REVIEW_REQUIRED` | `e250733` | `8357549` | 审计已写入 `CURRENT-STATE-AUDIT.md` |
-| Phase 0B UI/UX 规格 | Gemini | `REVIEW_REQUIRED` | `e250733` | 待 0B 自己的提交 | 规格已全量输出，待用户批准 |
+| Phase 0B UI/UX 规格 | Gemini | `REVIEW_REQUIRED` | `e250733` | `0695956` | 规格已全量输出，待用户批准 |
 | Gate 1 技术合同 | Codex | `BLOCKED` | 待填 | 待填 | 等待用户批准 0B；0A 审计已可供引用 |
 | Phase 1 凭据与证书 | Grok | `BLOCKED` | 待填 | 待填 | 等待 Gate 1 |
 | Gate 2 Phase 1 审查 | Codex | `BLOCKED` | 待填 | 待填 | 待填 |
@@ -90,7 +90,7 @@ Agent：无
 ### 2026-08-27 10:58 — Gemini / Phase 0B UI/UX 规格
 
 - 输入 commit：`e250733`
-- 输出 commit：待本次提交生成
+- 输出 commit：`0695956`
 - 完成内容：
   1. 完成全套 UI/UX 交互规格文档编制 (`docs/refactor-execution/UIUX-SPEC.md`)。
   2. 定义全局导航演进（AppShell「SSH 密钥」升级为「密钥与证书」、新增「监控大盘」一级入口）。
