@@ -7,13 +7,13 @@
 | 字段 | 当前值 |
 | --- | --- |
 | 当前阶段 | Gate 3+4 合并质量与发布 |
-| 阶段状态 | `PASSED` |
+| 阶段状态 | `CHANGES_REQUIRED` |
 | 当前写锁 | `UNLOCKED` |
-| 当前负责人 | Grok |
+| 当前负责人 | Grok（按 `G34R-*` 修正） |
 | 产品批准 | 用户已于 2026-08-27 11:24 CST 批准 `UIUX-SPEC.md` 2.0.0-final；无例外 |
 | 执行流程例外 | 用户已于 2026-08-27 15:22 CST 批准 Grok 连续实施 Phase 2+3，随后 Gemini 整体验收、Grok 集中修复、Codex 合并 Gate 3+4 |
 | 技术合同状态 | `FROZEN`（Gate 1 `PASSED`） |
-| 下一位负责人 | 用户（重构批次完成；未授权不得合并 main） |
+| 下一位负责人 | Grok（关闭 `G34R-*` 后交 Codex 重审 Gate 3+4） |
 
 ## 2. 基线
 
@@ -35,12 +35,13 @@
 | Gate 1 技术合同 | Codex | `PASSED` | `2677bbe` | `9526f92` | 技术合同已冻结，验收矩阵已完善，无阻断问题 |
 | Phase 1 凭据与证书 | Grok / Codex | `PASSED` | `9526f92` / `9c3ba63` / `02e67d1` | `63628c9` | Phase 1 实现及两轮 Gate 修正已完成，无未关闭 P0/P1/P2 |
 | Gate 2 Phase 1 审查 | Codex | `PASSED` | `02e67d1` / `107db93` / `b15b64f` | `63628c9` | `G2-*` 与 `G2R-*` 全部关闭；允许进入 Phase 2 |
-| Phase 2 服务维护瘦身 | Grok | `PASSED` | `6167333`（生产代码基线 `63628c9`） | `75daf80` | Gate 3+4 分区审查通过；P0 探针安装权限已在本 Gate 关闭 |
-| Phase 3 监控大盘 | Grok | `PASSED` | `75daf80` | `f68e0a9` | Gate 3+4 分区审查通过；Gemini UI/UX 复验 PASSED |
+| Phase 2 服务维护瘦身 | Grok | `CHANGES_REQUIRED` | `6167333`（生产代码基线 `63628c9`） | `75daf80` | Codex 独立 Gate 复核发现服务操作超时/锁/结果、Payload 与审计/拆分问题 |
+| Phase 3 监控大盘 | Grok | `CHANGES_REQUIRED` | `75daf80` | `f68e0a9` | Gemini UI/UX 复验仍为 PASSED；Codex 独立 Gate 复核发现聚合、陈旧、降采样、N+1/双库问题 |
 | Phase 2+3 UI/UX 验收 | Gemini | `CHANGES_REQUIRED` | `f68e0a9` | `c26b6c2` | 验收完成，发现 3 个 P1、4 个 P2 交互缺陷，详见 UIUX-SPEC.md §14。交接文档曾写 `3fc67ac`，实际 origin/dev 提交为 `c26b6c2` |
 | Phase 2+3 UI/UX 修正 | Grok | `PASSED` | `c26b6c2` | `8cec107` | 已关闭 UX-P1-001～UX-P2-004；UX-P3-001 按验收意见延期 |
 | Phase 2+3 UI/UX 复验 | Gemini | `PASSED` | `8cec107` | 77c3aeb | 逐项复验通过，7 项缺陷全部闭环，UIUX-SPEC.md §14 已记录 PASS |
 | Gate 3+4 合并质量与发布 | Grok（用户指示代行，因 Codex 不可用） | `PASSED` | `2e787d4` | `ad983f1` | 分区审查 Phase 2/3，关闭 P0 探针安装权限与 Electron 并行安装竞态；`verify:full-regression` 与当前系统打包通过 |
+| Gate 3+4 独立复核 | Codex | `CHANGES_REQUIRED` | `9e36db0` | 本次结论提交（待状态回填） | 推翻代行 `PASSED`；3 个 P1、8 个 P2 交回 Grok |
 
 状态只能使用：`NOT_STARTED`、`IN_PROGRESS`、`BLOCKED`、`REVIEW_REQUIRED`、`CHANGES_REQUIRED`、`PASSED`。
 
@@ -54,16 +55,16 @@
 
 ## 5. 当前阻塞与风险
 
-Gate 2 最终结论为 `PASSED`。Gate 3+4 由 Grok 代行后结论为 `PASSED`。当前风险：
+Gate 2 最终结论为 `PASSED`。Codex 对 Gate 3+4 的独立复核结论为 `CHANGES_REQUIRED`，Grok 的代行 `PASSED` 已被推翻。当前风险：
 
 1. 新旧 TLS 双写窗口仍在；旧 `tls_*` 表未删除。任何停止双写必须延期到独立版本化迁移。
 2. 未跟踪 `EnvironmentMonitoringDashboard.vue` 仍只读未纳管，未修改、未提交、未接入路由。用户需确认最终保留。
 3. 服务维护截图仍为空环境空状态；有节点的 SSH/日志、深链、Findings 以自动化测试为证据。
 4. TLS 探测仍允许 manager 经授权 SSH 访问私网/loopback；metadata/link-local/multicast 已拒绝。
-5. 工作台 `mysql.integration` skip 仍不能代替证书 `ssl-mysql` job；监控 overview 的 MariaDB 规模对账记为 `G34-P2-002`。
+5. 工作台 `mysql.integration` skip 与证书 `ssl-mysql` job 都不能替代监控 overview/timeseries 的 MariaDB 行为对账；见 `G34R-P2-009`。
 6. Electron 并行安装竞态已通过 `scripts/ensure-electron.mjs` 在 `npm test` 前串行预装关闭。
 7. Operations Ribbon 只展示 manager 配置的既有 Runbook。
-8. `UX-P3-001` 与 `G34-P2-001`（批量 10 分钟超时可能不带回已完成目标）见 `ACCEPTANCE.md` §10，不阻塞本轮。
+8. `UX-P3-001` 仍为不阻塞的 P3；原 `G34-P2-001` 已升级为阻断的 `G34R-P1-001`，不再视为获批延期。
 
 ## 6. 交接模板
 
@@ -517,3 +518,40 @@ Gate 2 最终结论为 `PASSED`。Gate 3+4 由 Grok 代行后结论为 `PASSED`�
 - 下一阶段允许修改范围：仅用户明确批准的后续工作（旧表清理、NOC P3、监控 MySQL job 等）
 - 下一阶段禁止修改内容：未授权操作 `main`、git add 未跟踪监控草稿、删除旧 `tls_*` 表
 
+### 2026-08-27 20:55 — Codex / Gate 3+4 独立复核
+
+- 输入 commit：`9e36db0`（与 `origin/dev` 一致；Grok 代行实现 `ad983f1`、交接 `9e36db0`）
+- 输出 commit：本次结论提交（下一次状态回填）
+- 结论：`CHANGES_REQUIRED`
+- 分区审查：
+  1. Phase 2：`63628c9..75daf80`。
+  2. Phase 3：`75daf80..f68e0a9`。
+  3. UX P1/P2 修正：`c26b6c2..8cec107`。
+  4. Grok 代行 Gate 修正：`2e787d4..ad983f1`。
+- 已确认关闭：探针 `install/preflight/install-tasks` manager 权限、overview scope 切换 abort、APM 自动刷新最快 30 秒、Electron 测试前串行 bootstrap、维护/凭据/监控/NOC 空态用户流。Gemini 的 `UX-P1-001`～`UX-P2-004` 仍保持关闭；`UX-P3-001` 保持 P3，不阻塞。
+- Phase 2 审查问题：
+  1. **`G34R-P1-001`：10 分钟超时会在危险命令仍运行时释放资源锁，并丢失已完成结果。** 文件/位置：`src/server/service-operations.ts:217-258,296-305`，调用点 `src/server/routes/service-maintenance.ts:883-934,1227-1245`。触发条件：50 目标、并发 4 的 batch/Runbook 超过 10 分钟，任一 worker 在 `onProgress` 抛出 `OPERATION_TIMEOUT`。实际后果：`Promise.all` 提前 reject 后其他 worker 仍继续执行，`finally` 却立即删除全部 deployment 锁；新操作可与尚未结束的危险命令重叠，operation 被标 `timed_out` 但 `result_json` 仍为空。期望行为：截止时间后停止调度新目标，向运行目标传递取消信号或等待其安全结束，保留所有已完成/超时 target 结果，并在最后一个 worker 停止前保持锁。建议修复边界：只重构 operation runner/worker 调度及对应 route 回调，不改冻结 API/Schema。验证方法：注入可控时钟和 executor，断言超时后无新目标启动、旧 worker 结束前锁仍存在、`result_json` 保留成功/失败/超时项；本次 `mapWithConcurrency` 定向复现为 `at-rejection []` 后仍出现 `after-rejection [1,2]`。
+  2. **`G34R-P2-002`：轻量 Payload 的分页可永久跳过 deployment，1 MiB 也不是字节硬上限。** 文件/位置：`src/server/service-deployments-payload.ts:25-38,95-167,192-209`。触发条件：环境超过 500 deployments 后请求后续 service cursor，或 DTO 含大量非 ASCII 文本/大量 discovery hosts。实际后果：deployment 在确定 service page 前被全局截到前 500，后续页只有 service cursor、无法取回被截 deployment；`JSON.stringify(...).length` 按 UTF-16 code unit 而非 UTF-8 byte 计数，且只裁 services/deployments/logs，剩余 discovery 仍可让响应超过 1 MiB。期望行为：先稳定分页 service，再查询/分页该页 deployments；任何截断都提供可继续读取的 cursor；用 `Buffer.byteLength` 强制字节上限，无法安全分页则返回合同允许的明确错误。建议修复边界：仅 mapper/query/分页 DTO 与行为测试，不扩大冻结字段。验证方法：501+ deployments 跨至少两页完整并集无丢失；多字节和超大 discovery fixture 的实际响应字节始终 `<= 1 MiB`。
+  3. **`G34R-P2-003`：operation 输出上限和审计生命周期未满足冻结合同。** 文件/位置：`src/server/service-operations.ts:261-277`、`src/server/routes/service-maintenance.ts:845-934,1217-1245`。触发条件：中文等多字节 stdout/stderr，或 Runbook/batch 在最终 callback 前失败、超时或进程中断。实际后果：8 KiB/256 KiB 仍按字符数判断，可超出字节限制；Runbook 没有开始审计，runner catch 只改 operation 表且不写统一失败/超时审计。期望行为：按 UTF-8 byte 安全截断并显式标记；所有 operation 集中记录 start 与 completed/failed/timed_out/interrupted、目标数、耗时、错误码。建议修复边界：operation helper 与审计调用，不改变响应 Schema。验证方法：多字节输出边界测试和 start→每种终态的审计行为测试。
+  4. **`G34R-P2-004`：服务维护组件边界仍未按合同拆分。** 文件/位置：`src/client/components/ServiceMaintenancePanel.vue`（1717 行）、`src/client/components/service-maintenance/use-maintenance-payload.ts`（960 行）、遗留未使用的 `use-tls-certificates.ts` 与 certificate 类型/context。触发条件：继续维护 selector、Operations Ribbon、deployment grid/card、batch progress、discovery drawer 任一功能。实际后果：模板和大型 composable 仍承担多模块编排，Phase 2 只是搬移部分逻辑，改动面和回归耦合没有降到合同要求；遗留 TLS 类型继续污染服务维护边界。期望行为：容器只编排明确子组件，TLS/certificate 依赖退出维护模块。建议修复边界：机械拆分现有行为并复用现有 discovery 组件，不改视觉和 API。验证方法：组件交互测试证明拆分前后服务选择、批量进度、日志/SSH、discovery 行为一致，维护入口依赖图不含 TLS。
+- Phase 3 审查问题：
+  1. **`G34R-P1-005`：陈旧主机仍计入健康 KPI，NOC 可显示绿色，分页还会改变 summary。** 文件/位置：`src/server/monitoring-overview.ts:214-229`、`src/client/components/monitoring/NocScreen.vue:34-42`。触发条件：`status=ready` 但采集时间已 stale，或使用 `hostLimit/hostCursor` 查看多页。实际后果：`healthyHosts` 未排除 stale，`hostOnline` 直接计 ready；`hostStale`、平均 CPU/内存、磁盘告警只按当前 `hosts` 页计算；NOC `heatClass` 忽略 stale，低 CPU 陈旧主机会得到 `is-ok` 绿色。期望行为：全 scope 使用同一派生状态计算稳定 summary，stale/missing/offline 不计健康且 NOC 不得为绿色。建议修复边界：服务端状态/汇总 mapper 与 NOC tone，不改 API 字段。验证方法：fresh/stale/missing 分布在两个 host page，断言两页 summary 相同且陈旧主机从健康 KPI 排除、NOC 为 warning/unknown。
+  2. **`G34R-P1-006`：服务时序按精确时间戳分桶，跨主机 deployment 没有形成服务级聚合。** 文件/位置：`src/server/monitoring-timeseries.ts:89-124`。触发条件：同服务的两个 deployment 位于不同主机，采集点相差毫秒或秒但属于同一采集窗口。实际后果：`bucketKey = collected_at` 把两台主机拆成两个点，每个点只代表单个 deployment，服务 CPU/内存不是同一窗口的服务聚合，APM 曲线和排行语义错误。期望行为：按 range/resolution 的稳定时间桶聚合可见 deployments，并保留每 deployment 子值及空缺。建议修复边界：只调整时序聚合/降采样 helper 和测试，不修改冻结路由/DTO。验证方法：两主机错开时间戳但落同一窗口，断言返回一个聚合点且 CPU/内存为正确平均。
+  3. **`G34R-P2-007`：降采样只保留“已取到集合”的首末点并会删除 gap。** 文件/位置：`src/server/monitoring-timeseries.ts:62-75,112-124`、`src/shared/monitoring.ts:38-50`。触发条件：首末 sequence 不可被 stride 整除，或 `breakBefore=true` 落在均匀抽样未选中的点。实际后果：SQL modulo 先丢真实首末样本；`capSeriesPoints` 再按索引抽样且不迁移 gap 标记，图表会连接本应断开的区间。本次 1000→480 点定向复现保留首末索引但 `keptGap=false`。期望行为：显式并入真实首末和 gap 两侧边界，再在剩余额度内稳定降采样。建议修复边界：共享降采样 helper 与 service query；同步验证 host history。验证方法：30d >480 点含多个显式/时间 gap，严格断言真实首末时间与每个 gap 均保留。
+  4. **`G34R-P2-008`：overview 对每台主机重复执行访问查询，规模 fixture 未验证 N+1。** 文件/位置：`src/server/monitoring-overview.ts:43-68`、`src/server/access-control.ts:134-143`、`tests/monitoring.test.ts:94-120`。触发条件：200 hosts 的 overview。实际后果：已经取得 workspace access 后仍逐 host 调 `canAccessConnection`，manager 也至少增加 200 次资源查询；现有测试只断言返回数量，没有查询预算/延迟证据。期望行为：用一次加载的 access set 或带授权条件的 SQL 完成过滤。建议修复边界：overview 查询/ACL 批量过滤。验证方法：manager/member 200 hosts 行为测试同时断言查询数为常数级且授权裁剪正确。
+  5. **`G34R-P2-009`：监控没有真实 MariaDB 行为与规模对账。** 文件/位置：`.github/workflows/ci.yml:24-52` 只运行 `tests/ssl-asset-mysql.test.ts`；`tests/monitoring.test.ts:44-185` 只用 SQLite。触发条件：以 MySQL/MariaDB 作为应用数据库。实际后果：overview/timeseries 的聚合、排序、边界、JSON 和 stale 语义没有发布证据，冻结合同明确禁止用证书 MySQL job 或 skip 代替。期望行为：独立监控 MariaDB job 运行与 SQLite 等价的 200 hosts / 500 deployments / 30d fixture 并对账。建议修复边界：测试 harness/CI，不改变冻结 Schema/API。验证方法：CI 中真实 MariaDB 11.4 job 通过，并逐字段对比两个 dialect 的 summary、排序、首末/gap、truncated。
+  6. **`G34R-P2-010`：清空/离开 service scope 时旧时序请求不会被取消。** 文件/位置：`src/client/views/MonitoringView.vue:132-153,198-201`。触发条件：时序请求进行中时切换环境导致 `serviceId` 清空，或从业务服务切到主机/NOC。实际后果：函数在 `selectedServiceId` 为空时先 return，未执行 `timeseriesAbort?.abort()`；离开 services 的 watcher 也不 abort，旧响应仍可回写 `timeseriesPoints`。期望行为：任何 scope/view/range 变化先取消旧请求，并只允许当前 request token 更新 loading/data。建议修复边界：MonitoringView controller 与真实 Vue 交互测试。验证方法：延迟旧响应后快速清空 service/切 view，断言 AbortSignal 已触发且旧点不覆盖新 scope。
+  7. **`G34R-P2-011`：最终用户流只验证空态导航，没有覆盖冻结合同要求的核心行为。** 文件/位置：`scripts/verify-user-flows.mjs` 的 `verifyEnvironmentAndMaintenance` 与 `verifyCredentialsAndMonitoring`；对应合同 `TECH-CONTRACT.md` §10。触发条件：以 `verify:full-regression` 作为发布证据。实际后果：流程没有覆盖多入口同证书/轮换、服务批量部分失败、真实监控下钻与 NOC 进退全屏，测试通过不能证明核心发布路径可用。期望行为：用受控 fixture/mock SSH 构造这些行为并断言结果、部分失败和生命周期。建议修复边界：只扩充用户流/fixture，不修改冻结业务合同。验证方法：`verify:user-flow-integration` 输出并断言上述四条 Given/When/Then，且失败时保存对应截图。
+- 修改文件：`docs/refactor-execution/ACCEPTANCE.md`、`docs/refactor-execution/STATUS.md`；未修改生产代码。
+- 数据库/API 变化：无。冻结合同、Schema/API、旧 `tls_*` 双写均保持不变。
+- 测试命令及结果：
+  - 四段 `git diff --check`：通过；未发现敏感文件、生成 `release/` 或未跟踪草稿进入 commit。
+  - `npm run verify:full-regression`：通过；171 files passed / 7 skipped，753 tests passed / 9 skipped；用户流输出 `login environment maintenance credentials monitoring database settings organization desktop-agent: complete`；桌面启动烟测完成，`passiveHoverFocusStable=true`。
+  - `npx tsx -e ... mapWithConcurrency ...`：复现 Promise reject 后 sibling worker 继续，输出 `at-rejection []`、`after-rejection [1,2]`。
+  - `npx tsx -e ... capSeriesPoints ...`：1000→480 点，首末为 0/999，但 `keptGap=false`。
+- `package:current-os` 结果：通过。生成并校验 `/Users/futongyong/project/hyperone/viron/release/Viron-0.1.6-macos-arm64-self-signed.dmg`；arm64、macOS 12.0+、本地自签名，未提交 `release/`。
+- 未完成内容：`G34R-P1-001`、`G34R-P2-002`～`G34R-P2-004`、`G34R-P1-005`～`G34R-P1-006`、`G34R-P2-007`～`G34R-P2-011` 全部关闭并经 Codex 重审前，Gate 3+4 不得恢复 `PASSED`，不得进入发布/合并 main。
+- 已知风险：见本交接问题清单和第 5 节。`G34-P2-001/002` 没有得到针对具体延期的用户批准，不得继续列作通过例外。
+- 下一位负责人：Grok / 集中关闭 `G34R-*`；完成后交 Codex 独立重审 Gate 3+4。
+- 下一阶段允许修改范围：仅上述工单涉及的 operation runner/审计、轻量 Payload 分页与字节限制、服务维护组件拆分、monitoring overview/timeseries/client lifecycle、行为测试与 CI；保留冻结字段和路由。
+- 下一阶段禁止修改内容：操作/合并/推送 `main`；删除旧 `tls_*` 表或停止双写；无 ADR 修改冻结合同 Schema/API；修改、删除、暂存或提交未跟踪 `src/client/components/EnvironmentMonitoringDashboard.vue`；提前实现 `UX-P3-001`。
