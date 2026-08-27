@@ -142,7 +142,7 @@ async function verifyEnvironmentAndMaintenance(page) {
 
   await page.getByRole("button", { name: /服务维护/ }).click();
   await expectVisible(page.locator(".maintenance-console"), "服务维护工作台");
-  await expectVisible(page.getByText("当前环境还没有可维护资源", { exact: true }), "服务维护空状态");
+  await expectVisible(page.getByText("尚未录入服务", { exact: true }).first(), "服务维护空状态");
 
   await page.locator(".maintenance-toolbar").getByRole("button", { name: "录入服务", exact: true }).click();
   const serviceDialog = page.getByRole("dialog", { name: "录入服务" });
@@ -158,6 +158,29 @@ async function verifyEnvironmentAndMaintenance(page) {
   await alertDialog.getByRole("button", { name: "取消", exact: true }).click();
   await expectNoRouteError(page, "环境与服务维护流程");
   return environmentId;
+}
+
+async function verifyCredentialsAndMonitoring(page) {
+  const expandSidebar = page.getByRole("button", { name: "展开左侧菜单" });
+  if (await expandSidebar.count()) await expandSidebar.click();
+  await page.locator(".primary-menu").getByRole("button", { name: "密钥与证书" }).click();
+  await page.waitForURL((url) => url.pathname === "/ssh-keys", { timeout: 20_000 });
+  await expectVisible(page.getByRole("heading", { name: "密钥与证书" }), "密钥与证书页");
+  await expectVisible(page.getByRole("tab", { name: /SSH 密钥/ }), "SSH 密钥 Tab");
+  await page.getByRole("tab", { name: "SSL/TLS 证书" }).click();
+  await expectVisible(page.locator(".certificate-center"), "证书中心");
+  await expectVisible(page.getByText("当前空间还没有 SSL 证书", { exact: true }), "证书空状态");
+
+  await page.locator(".primary-menu").getByRole("button", { name: "监控大盘" }).click();
+  await page.waitForURL((url) => url.pathname === "/monitoring", { timeout: 20_000 });
+  await expectVisible(page.getByRole("heading", { name: "监控大盘" }), "监控大盘页");
+  await expectVisible(page.getByText("暂无监控主机", { exact: true }), "主机空状态");
+  await page.getByRole("tab", { name: "业务服务" }).click();
+  await expectVisible(page.getByText("暂无服务时序").first(), "APM 空状态");
+  await page.getByRole("tab", { name: "NOC 全屏" }).click();
+  await expectVisible(page.getByText("暂无活动告警", { exact: true }), "NOC 告警空状态");
+  await page.getByRole("button", { name: "退出全屏" }).click();
+  await expectNoRouteError(page, "凭据中心与监控大盘流程");
 }
 
 async function installDatabaseFixture(page) {
@@ -588,6 +611,7 @@ async function main() {
     await loginThroughUi(page, baseUrl);
     const environmentId = await verifyEnvironmentAndMaintenance(page);
     assert(environmentId, "环境流程未返回环境 ID");
+    await verifyCredentialsAndMonitoring(page);
     await verifyDatabaseWorkbench(page, baseUrl);
     await verifySettings(page, baseUrl);
     await verifyOrganization(page, baseUrl);
@@ -596,7 +620,7 @@ async function main() {
 
     await verifyDesktopAgent(browser, baseUrl, failures);
     assert.deepEqual(failures, [], `全流程测试捕获到运行时错误：\n${failures.join("\n")}`);
-    process.stdout.write("VIRON_USER_FLOW login environment maintenance database settings organization desktop-agent: complete\n");
+    process.stdout.write("VIRON_USER_FLOW login environment maintenance credentials monitoring database settings organization desktop-agent: complete\n");
   } catch (error) {
     if (activePage && !activePage.isClosed()) {
       const screenshotPath = resolve(artifactDirectory, `failure-${Date.now()}.png`);

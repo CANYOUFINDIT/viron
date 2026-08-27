@@ -32,4 +32,9 @@ describe("current OS desktop packaging", () => {
   it("exposes an npm script for agents to package the current OS after each task", () => {
     expect(packageJson.scripts["package:current-os"]).toBe("node scripts/package-current-os.mjs");
   });
+
+  it("installs Electron once before the test suite to avoid parallel download races", () => {
+    expect(packageJson.scripts.test.startsWith("node scripts/ensure-electron.mjs")).toBe(true);
+    expect(packageJson.scripts["ensure-electron"]).toBe("node scripts/ensure-electron.mjs");
+  });
 });

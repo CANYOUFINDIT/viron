@@ -32,6 +32,8 @@ describe("release packaging", () => {
     expect(source).toContain('relative_artifact="${artifact#$ROOT_DIR/}"');
     expect(source).toContain("for required_platform in linux/amd64 linux/arm64");
     expect(source.indexOf('const electronPath = require("electron")')).toBeLessThan(source.indexOf("npm test"));
+    const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+    expect(packageJson.scripts.test).toContain("ensure-electron.mjs");
   });
 
   it("persists Docker build caches and supports explicit refreshes", () => {

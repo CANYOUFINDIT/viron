@@ -189,15 +189,23 @@ export async function loadServiceDeploymentsPayload(
     },
   };
 
-  const encoded = JSON.stringify(payload);
-  if (encoded.length > SERVICE_DEPLOYMENTS_MAX_BYTES) {
-    return {
-      ...payload,
-      truncated: true,
-      hasMore: true,
-      services: payload.services.slice(0, Math.max(1, Math.floor(payload.services.length / 2))),
-      partialFailures: ["payload_truncated"],
-    };
+  let encoded = JSON.stringify(payload);
+  while (encoded.length > SERVICE_DEPLOYMENTS_MAX_BYTES) {
+    payload.truncated = true;
+    payload.hasMore = true;
+    if (!payload.partialFailures.includes("payload_truncated")) payload.partialFailures.push("payload_truncated");
+    const firstService = payload.services[0];
+    if (payload.services.length > 1) {
+      payload.services = payload.services.slice(0, Math.max(1, Math.floor(payload.services.length / 2)));
+    } else if (firstService && firstService.deployments.length > 1) {
+      firstService.deployments = firstService.deployments.slice(0, Math.max(1, Math.floor(firstService.deployments.length / 2)));
+    } else if (payload.logs.length) {
+      payload.logs = [];
+    } else {
+      break;
+    }
+    payload.nextCursor = payload.services.length ? String(payload.services[payload.services.length - 1]!.id) : null;
+    encoded = JSON.stringify(payload);
   }
   return payload;
 }

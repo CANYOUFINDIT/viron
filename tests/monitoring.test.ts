@@ -143,6 +143,42 @@ describe("monitoring overview and service timeseries", () => {
       expect(series.json().points[0].cpuUsedPercent).toBe(8);
       expect((await app.inject({ method: "GET", url: `/api/v1/monitoring/services/${randomUUID()}/timeseries?range=1h`, cookies })).statusCode).toBe(404);
       expect(other.statusCode).toBe(201);
+
+      const stamped = new Date().toISOString();
+      for (let index = 0; index < 501; index += 1) {
+        await db.prepare(`
+          INSERT INTO service_deployments (
+            id, service_id, ssh_connection_id, ssh_connection_name, provider_type, external_id,
+            display_name, origin, status, state_detail, latest_metrics_json, created_at, updated_at
+          ) VALUES (?, ?, ?, 'host-a', 'systemd', ?, ?, 'manual', 'running', '', '{}', ?, ?)
+        `).run(randomUUID(), service.json().id, first.json().id, `unit-${index}.service`, `unit-${index}`, stamped, stamped);
+      }
+      const crowded = await app.inject({ method: "GET", url: `/api/v1/monitoring/services/${service.json().id}/timeseries?range=30d`, cookies });
+      expect(crowded.statusCode).toBe(200);
+      expect(crowded.json().truncated).toBe(true);
+      expect(crowded.json().deployments.length).toBeLessThanOrEqual(50);
+
+      const agentId = randomUUID();
+      for (let index = 0; index < 600; index += 1) {
+        const collected = new Date(Date.now() - index * 60 * 60 * 1000).toISOString();
+        await db.prepare(`
+          INSERT INTO monitor_samples (
+            ssh_connection_id, agent_id, sequence_start, sequence_end, collected_at, resolution_seconds, payload_json, received_at
+          ) VALUES (?, ?, ?, ?, ?, 30, ?, ?)
+        `).run(first.json().id, agentId, index + 2, index + 2, collected, JSON.stringify({
+          collectedAt: collected,
+          host: { cpuUsedPercent: 12, topProcesses: Array.from({ length: 8 }, (_, processIndex) => ({ pid: processIndex + 1, name: `proc-${processIndex}`, cpuUsedPercent: 1 })) },
+          candidates: [{ provider: "systemd", externalId: "api.service", cpuUsedPercent: 8, memoryBytes: 128 }],
+        }), collected);
+      }
+      const month = await app.inject({ method: "GET", url: `/api/v1/monitoring/services/${service.json().id}/timeseries?range=30d`, cookies });
+      expect(month.statusCode).toBe(200);
+      expect(month.json().sampledPointCount).toBeLessThanOrEqual(480);
+      expect(month.json().points.length).toBeLessThanOrEqual(480);
+      if (month.json().points.length) {
+        expect(month.json().points[0].at).toBeTruthy();
+        expect(month.json().points.at(-1).at).toBeTruthy();
+      }
     } finally {
       await app.close();
     }

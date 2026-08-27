@@ -7,13 +7,13 @@
 | 字段 | 当前值 |
 | --- | --- |
 | 当前阶段 | Gate 3+4 合并质量与发布 |
-| 阶段状态 | `REVIEW_REQUIRED` |
+| 阶段状态 | `PASSED` |
 | 当前写锁 | `UNLOCKED` |
-| 当前负责人 | Codex |
+| 当前负责人 | Grok |
 | 产品批准 | 用户已于 2026-08-27 11:24 CST 批准 `UIUX-SPEC.md` 2.0.0-final；无例外 |
 | 执行流程例外 | 用户已于 2026-08-27 15:22 CST 批准 Grok 连续实施 Phase 2+3，随后 Gemini 整体验收、Grok 集中修复、Codex 合并 Gate 3+4 |
 | 技术合同状态 | `FROZEN`（Gate 1 `PASSED`） |
-| 下一位负责人 | Codex / Gate 3+4 合并质量与发布 |
+| 下一位负责人 | 用户（重构批次完成；未授权不得合并 main） |
 
 ## 2. 基线
 
@@ -35,12 +35,12 @@
 | Gate 1 技术合同 | Codex | `PASSED` | `2677bbe` | `9526f92` | 技术合同已冻结，验收矩阵已完善，无阻断问题 |
 | Phase 1 凭据与证书 | Grok / Codex | `PASSED` | `9526f92` / `9c3ba63` / `02e67d1` | `63628c9` | Phase 1 实现及两轮 Gate 修正已完成，无未关闭 P0/P1/P2 |
 | Gate 2 Phase 1 审查 | Codex | `PASSED` | `02e67d1` / `107db93` / `b15b64f` | `63628c9` | `G2-*` 与 `G2R-*` 全部关闭；允许进入 Phase 2 |
-| Phase 2 服务维护瘦身 | Grok | `REVIEW_REQUIRED` | `6167333`（生产代码基线 `63628c9`） | `75daf80` | 内部自验通过并独立提交；不经 Gate 3，待 Gemini/Codex 分区审查 |
-| Phase 3 监控大盘 | Grok | `REVIEW_REQUIRED` | `75daf80` | `f68e0a9` | 内部自验、截图与当前系统打包完成；待 Gemini 整体 UI/UX 验收 |
+| Phase 2 服务维护瘦身 | Grok | `PASSED` | `6167333`（生产代码基线 `63628c9`） | `75daf80` | Gate 3+4 分区审查通过；P0 探针安装权限已在本 Gate 关闭 |
+| Phase 3 监控大盘 | Grok | `PASSED` | `75daf80` | `f68e0a9` | Gate 3+4 分区审查通过；Gemini UI/UX 复验 PASSED |
 | Phase 2+3 UI/UX 验收 | Gemini | `CHANGES_REQUIRED` | `f68e0a9` | `c26b6c2` | 验收完成，发现 3 个 P1、4 个 P2 交互缺陷，详见 UIUX-SPEC.md §14。交接文档曾写 `3fc67ac`，实际 origin/dev 提交为 `c26b6c2` |
 | Phase 2+3 UI/UX 修正 | Grok | `PASSED` | `c26b6c2` | `8cec107` | 已关闭 UX-P1-001～UX-P2-004；UX-P3-001 按验收意见延期 |
 | Phase 2+3 UI/UX 复验 | Gemini | `PASSED` | `8cec107` | 77c3aeb | 逐项复验通过，7 项缺陷全部闭环，UIUX-SPEC.md §14 已记录 PASS |
-| Gate 3+4 合并质量与发布 | Codex | `REVIEW_REQUIRED` | `8cec107` | 待填 | UI/UX 复验通过，待 Codex 执行合并 Gate 3+4 质量审查与最终发布 |
+| Gate 3+4 合并质量与发布 | Grok（用户指示代行，因 Codex 不可用） | `PASSED` | `2e787d4` | 待填 | 分区审查 Phase 2/3，关闭 P0 探针安装权限与 Electron 并行安装竞态；`verify:full-regression` 与当前系统打包通过 |
 
 状态只能使用：`NOT_STARTED`、`IN_PROGRESS`、`BLOCKED`、`REVIEW_REQUIRED`、`CHANGES_REQUIRED`、`PASSED`。
 
@@ -54,16 +54,16 @@
 
 ## 5. 当前阻塞与风险
 
-Gate 2 最终结论为 `PASSED`。Phase 2+3 实现与 P1/P2 UX 修正已提交并完成内部自验，当前风险：
+Gate 2 最终结论为 `PASSED`。Gate 3+4 由 Grok 代行后结论为 `PASSED`。当前风险：
 
 1. 新旧 TLS 双写窗口仍在；旧 `tls_*` 表未删除。任何停止双写必须延期到独立版本化迁移。
-2. 未跟踪 `EnvironmentMonitoringDashboard.vue` 仍只读未纳管，未修改、未提交、未接入路由。
-3. 服务维护截图仍为空环境空状态（无部署节点，因此卡片上的 SSH/日志按钮看不到）；有节点的 SSH/日志、深链聚焦、告警流、Findings 下钻以自动化测试为证据。监控 APM/NOC 空态截图已按修复后文案重拍。
+2. 未跟踪 `EnvironmentMonitoringDashboard.vue` 仍只读未纳管，未修改、未提交、未接入路由。用户需确认最终保留。
+3. 服务维护截图仍为空环境空状态；有节点的 SSH/日志、深链、Findings 以自动化测试为证据。
 4. TLS 探测仍允许 manager 经授权 SSH 访问私网/loopback；metadata/link-local/multicast 已拒绝。
-5. 本地真实 MariaDB 11.4 与独立 CI job（`.github/workflows/ci.yml` 的 `ssl-mysql`）已补齐；工作台 `mysql.integration` skip 仍不能代替。
-6. 首次缺失 Electron 二进制时的并行安装竞态仍须在合并 Gate 3+4 关闭。本轮 `package:current-os` 已成功生成并校验 macOS arm64 DMG。
-7. Phase 2 的 Operations Ribbon 继续只展示 manager 配置的既有 Runbook，未自动植入平滑重启/体检/清缓存脚本。
-8. `UX-P3-001`（NOC 网络/磁盘水位排行）按 Gemini 验收意见延期，不阻塞本轮复验。
+5. 工作台 `mysql.integration` skip 仍不能代替证书 `ssl-mysql` job；监控 overview 的 MariaDB 规模对账记为 `G34-P2-002`。
+6. Electron 并行安装竞态已通过 `scripts/ensure-electron.mjs` 在 `npm test` 前串行预装关闭。
+7. Operations Ribbon 只展示 manager 配置的既有 Runbook。
+8. `UX-P3-001` 与 `G34-P2-001`（批量 10 分钟超时可能不带回已完成目标）见 `ACCEPTANCE.md` §10，不阻塞本轮。
 
 ## 6. 交接模板
 
@@ -491,4 +491,29 @@ Gate 2 最终结论为 `PASSED`。Phase 2+3 实现与 P1/P2 UX 修正已提交�
 - 下一阶段允许修改范围：执行最终 Gate 3+4 全量质量审查、多数据库集成验证、安装包验证与发布准备；更新相关文档。
 - 下一阶段禁止修改内容：破坏已验证的 UI/UX 行为、未授权修改/删除/提交未跟踪草稿、操作或合并 `main` 分支。
 
+### 2026-08-27 19:18 — Grok / Gate 3+4 合并质量与发布（代行 Codex）
+
+- 输入 commit：`2e787d4`（Gemini 复验 PASSED；STATUS 曾写 `77c3aeb`）
+- 输出 commit：本批次提交（commit 后回填 hash）
+- 结论：`PASSED`
+- 完成内容：
+  1. 用户确认 Codex 不可用，由 Grok 代行合并 Gate 3+4。分区审查 Phase 2 `75daf80`、Phase 3 `f68e0a9`、UX 修正 `8cec107`。
+  2. **P0 关闭**：`POST .../install` 与 `.../install/preflight` 补 `requireManager`；member 返回 `403 WORKSPACE_ADMIN_REQUIRED`（`tests/monitor-installer.test.ts`）。
+  3. **1 MiB Payload**：超出上限时循环裁剪 services/deployments/logs，直到体积合规或不可再裁。
+  4. **监控竞态**：overview 切换 scope 先 abort 旧请求；APM 时序刷新最快 30 秒。
+  5. **Electron 竞态**：`scripts/ensure-electron.mjs` 在 `npm test` 前串行预装。
+  6. **用户流**：维护空态改为「尚未录入服务」；补凭据中心与监控/NOC 空态冒烟。
+  7. **规模 fixture**：overview 200 hosts；timeseries 501 deployments → truncated≤50；30d 序列 ≤480 点。
+  8. 未跟踪 `EnvironmentMonitoringDashboard.vue` 未修改、未提交、未接入。未删旧 `tls_*`，未操作 `main`。
+- 修改文件：`src/server/routes/service-maintenance.ts`、`service-deployments-payload.ts`、`MonitoringView.vue`、`scripts/{ensure-electron,verify-user-flows}.mjs`、`package.json`、相关 tests、`ACCEPTANCE.md`、`STATUS.md`
+- 数据库/API 变化：无新表；探针安装写路径权限收紧为 manager（原合同要求）。
+- 测试命令及结果：
+  - `npm run typecheck`：通过
+  - `npm run verify:full-regression`：通过。171 files passed / 7 skipped，753 passed / 9 skipped；用户流含 credentials/monitoring；桌面启动冒烟通过（`passiveHoverFocusStable=true`）
+- `package:current-os` 结果：通过。macOS arm64 DMG `release/Viron-0.1.6-macos-arm64-self-signed.dmg`（未提交 `release/`）；最低系统 macOS 12.0；本地自签名。
+- 未完成内容：`ACCEPTANCE.md` §10 的 P2 后续项；旧 TLS 双写清理；未跟踪草稿最终处置需用户确认。
+- 已知风险：见第 5 节。
+- 下一位负责人：用户。本重构批次在 `dev` 完成。不得合并或推送 `main`，除非用户明确要求。
+- 下一阶段允许修改范围：仅用户明确批准的后续工作（旧表清理、NOC P3、监控 MySQL job 等）
+- 下一阶段禁止修改内容：未授权操作 `main`、git add 未跟踪监控草稿、删除旧 `tls_*` 表
 
