@@ -6,13 +6,13 @@
 
 | 字段 | 当前值 |
 | --- | --- |
-| 当前阶段 | Phase 0：0A 现状审计已交付；0B UI/UX 规格待用户批准 |
-| 阶段状态 | `REVIEW_REQUIRED` |
+| 当前阶段 | Phase 1：凭据与证书（待 Grok 开始） |
+| 阶段状态 | `NOT_STARTED` |
 | 当前写锁 | `UNLOCKED` |
 | 当前负责人 | 无 |
-| 产品批准 | UI/UX 规格尚未用户批准 |
-| 技术合同状态 | 未冻结 |
-| 下一位负责人 | 用户批准 `UIUX-SPEC.md`；随后 Codex 执行 Gate 1 |
+| 产品批准 | 用户已于 2026-08-27 11:24 CST 批准 `UIUX-SPEC.md` 2.0.0-final；无例外 |
+| 技术合同状态 | `FROZEN`（Gate 1 `PASSED`） |
+| 下一位负责人 | Grok 执行 Phase 1 |
 
 ## 2. 基线
 
@@ -22,17 +22,17 @@
 | 实施基线 commit | `e2507331451ac18a49cf140d617ed26286d6e12b`（Phase 0A 审计时 HEAD；无生产代码改动） |
 | 当前分支 | `dev` |
 | 远端 | `origin/dev` |
-| 工作区已知改动 | 未跟踪 `src/client/components/EnvironmentMonitoringDashboard.vue`。另有已暂存、不在 0A 提交中的执行手册打包策略修订与 Phase 0B `UIUX-SPEC.md`。 |
-| 未跟踪文件处置 | **拆分复用**（审计建议）。Gate 1 ADR-006 由用户确认前保持未跟踪，禁止删除、禁止接入路由、禁止无说明覆盖。 |
+| 工作区预期遗留 | 仅保留已知未跟踪 `src/client/components/EnvironmentMonitoringDashboard.vue`；Gate 1 批次只修改四份批准/合同/验收/状态文档。 |
+| 未跟踪文件处置 | **拆分复用、原文件只读且不纳管**（ADR-006）。Phase 3 只能在新 tracked 文件重写，未经用户另行授权不得修改、删除或 `git add` 原文件。 |
 
 ## 3. 阶段看板
 
 | 阶段 | 负责人 | 状态 | 输入 commit | 输出 commit | 审查结论 |
 | --- | --- | --- | --- | --- | --- |
-| Phase 0A 现状审计 | Grok | `REVIEW_REQUIRED` | `e250733` | `8357549` | 审计已写入 `CURRENT-STATE-AUDIT.md` |
-| Phase 0B UI/UX 规格 | Gemini | `REVIEW_REQUIRED` | `e250733` | `0695956` | 规格已全量输出，待用户批准 |
-| Gate 1 技术合同 | Codex | `BLOCKED` | 待填 | 待填 | 等待用户批准 0B；0A 审计已可供引用 |
-| Phase 1 凭据与证书 | Grok | `BLOCKED` | 待填 | 待填 | 等待 Gate 1 |
+| Phase 0A 现状审计 | Grok | `PASSED` | `e250733` | `8357549` | Codex Gate 1 已复核并采用审计输入 |
+| Phase 0B UI/UX 规格 | Gemini | `PASSED` | `e250733` | `0695956` | 用户于 2026-08-27 11:24 CST 批准 2.0.0-final；无例外 |
+| Gate 1 技术合同 | Codex | `PASSED` | `2677bbe` | `[GATE1_OUTPUT_COMMIT]` | 技术合同已冻结，验收矩阵已完善，无阻断问题 |
+| Phase 1 凭据与证书 | Grok | `NOT_STARTED` | `[GATE1_OUTPUT_COMMIT]` | 待填 | 仅允许执行合同中的 Phase 1 范围 |
 | Gate 2 Phase 1 审查 | Codex | `BLOCKED` | 待填 | 待填 | 待填 |
 | Phase 2 服务维护瘦身 | Grok | `BLOCKED` | 待填 | 待填 | 等待 Gate 2 |
 | Gate 3 Phase 2 审查 | Codex | `BLOCKED` | 待填 | 待填 | 待填 |
@@ -56,13 +56,15 @@ Agent：无
 
 ## 5. 当前阻塞与风险
 
-1. 未跟踪 `EnvironmentMonitoringDashboard.vue`：审计建议「拆分复用」；调用了不存在的 `/service-maintenance`，字段与真实 payload 不一致。Gate 1 前禁止接入路由或删除。
-2. 现有数据模型以 `tls_endpoints` 为中心，原始方案提出 `ssl_certificates + ssl_endpoints`；必须由 Codex 在 Gate 1 决定最终迁移路径（开放问题 A-001～A-003）。
-3. `ServiceMaintenancePanel.vue` 同时包含服务、主机和证书功能，拆分时需要保护现有服务操作与 `service-discovery-layout` 等源码断言测试。
-4. `GET /maintenance` 含 hosts snapshot/candidates 与 `tlsEndpoints`，客户端 10s 刷新；`DeploymentMonitorDashboard` 对多主机无并发上限。
-5. 启停/脚本/TLS 探测/探针安装在服务端不要求 workspace manager（与部分错误文案不一致）；需 Gate 1 确认（A-006）。
-6. `npm test` 全量曾因并行下载 Electron 在 `desktop-local-web.integration.test.ts` 顶层 `require("electron")` 失败；二进制到位后该文件 skip。属既有环境竞态（A-013）。
-7. Phase 0A 与 0B 曾并行写仓库，违反单写者规则；0A 交接保留 0B 历史记录，未覆盖 `UIUX-SPEC.md`。
+当前没有阻断 Phase 1 的前置问题。已知实施风险如下：
+
+1. Phase 1 必须在不删除旧 `tls_*` 表的前提下完成新模型迁移、校验和兼容双写；任何静默丢行或跨空间归并均为阻断问题。
+2. 未跟踪 `EnvironmentMonitoringDashboard.vue` 为只读外部草稿；仍调用错误 API/字段。Phase 1 禁止接入、修改、删除或提交。
+3. `ServiceMaintenancePanel.vue` 的拆分、轻量 Payload 和服务 operation 属 Phase 2；Phase 1 不得提前移除维护页证书/监控能力。
+4. `DeploymentMonitorDashboard` 无并发上限、告警环境过滤和 NOC 生命周期属 Phase 3；Phase 1 不得顺手扩展。
+5. 现有 member 可执行 TLS 探测；Phase 1 必须按 ADR-007 收紧为 manager，并补权限矩阵测试。
+6. 真实应用 MySQL schema/迁移 job 是 Gate 2 必选证据，现有工作台 `mysql.integration` skip 不能替代。
+7. Electron 并行安装竞态不阻断 Phase 1，但 Gate 4 发布前必须以确定性 bootstrap/预安装解决。
 
 ## 6. 交接模板
 
@@ -154,3 +156,32 @@ Agent：无
 - 下一位负责人：用户（批准 `UIUX-SPEC.md` 或提出修改意见）；批准完成后交 Codex 重新执行 Gate 1
 - 下一阶段允许修改范围：批准前仅允许处理 `UIUX-SPEC.md` 的用户意见与批准记录；批准后 Gate 1 仅允许修改 `TECH-CONTRACT.md`、`ACCEPTANCE.md`、`STATUS.md` 及合同明确需要的文档
 - 下一阶段禁止修改内容：生产代码、Schema/API、未跟踪监控组件、Phase 1–3 实现，以及任何对 `TECH-CONTRACT.md` 的提前冻结
+
+### 2026-08-27 11:39 — Codex / Gate 1 技术合同
+
+- 输入 commit：`2677bbea80ad5aa3e9e7f8b5436ad75a909985da`（开始时与 `origin/dev` 一致）
+- 输出 commit：`[GATE1_OUTPUT_COMMIT]`
+- 结论：`PASSED`
+- 完成内容：
+  1. 记录用户对 `UIUX-SPEC.md` 2.0.0-final 的正式批准，无例外。
+  2. 复核现有 SQLite/MySQL schema、迁移机制、TLS/Web 入口关联、workspace ACL、服务操作、监控 history 和告警实现。
+  3. 将 `TECH-CONTRACT.md` 冻结为 `FROZEN`，完成 ADR-001～ADR-011，闭环审计 A-001～A-014。
+  4. 冻结独立证书资产/端点模型、工作空间指纹唯一、旧表幂等迁移/兼容双写/回滚、生命周期和 API 合同。
+  5. 冻结 manager 权限、TLS SSRF/注入边界、服务 operation 幂等/锁/超时/部分成功/重启恢复合同。
+  6. 冻结服务维护轻量 Payload、监控 overview/时序/降采样/刷新/并发、组件拆分和 NOC 生命周期。
+  7. 完善 `ACCEPTANCE.md` 的 Phase 1–3、Gate 2–4 和最终发布逐项验收矩阵。
+- 修改文件：`docs/refactor-execution/UIUX-SPEC.md`、`TECH-CONTRACT.md`、`ACCEPTANCE.md`、`STATUS.md`
+- 数据库/API 变化：无生产实现；仅冻结后续必须实现的数据模型、迁移、API、权限和性能合同
+- 测试命令及结果：
+  - `git diff --check`：通过
+  - 文档状态/占位符/开放问题定向扫描：通过；冻结合同无待定项
+  - 未运行代码测试：Gate 1 只有文档改动，未修改生产代码
+- `package:current-os` 结果：不适用（纯文档性 Gate 1）
+- 未完成内容：无；Gate 1 合同和验收矩阵已冻结。Phase 1 尚未开始。
+- 已知风险：
+  1. Phase 1 的最高风险是新旧 TLS 模型迁移与双写；Gate 2 必须同时取得 SQLite 和真实 MySQL 行为证据。
+  2. 证书探测允许 manager 对授权 SSH 可达的私网/loopback TLS 端点执行探测；metadata/link-local 等被禁止，剩余 DNS rebinding 风险已在合同中接受并由权限、固定 TLS 协议、限流和审计约束。
+  3. 未跟踪监控草稿保持只读未提交，Phase 1 不得触碰。
+- 下一位负责人：Grok / Phase 1 凭据与证书
+- 下一阶段允许修改范围：仅 `TECH-CONTRACT.md` §11 的 Phase 1 文件；实现证书模型迁移/兼容 API、密钥与证书中心、Web 入口 TLS 联动及相应行为测试
+- 下一阶段禁止修改内容：服务维护瘦身、operation run、全局监控大盘/NOC、监控 overview、未跟踪监控草稿，以及对冻结合同的无 ADR 偏离
