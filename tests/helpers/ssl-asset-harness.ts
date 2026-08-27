@@ -166,6 +166,41 @@ export async function runSslMigrationBehaviorTests(db: EnvmanDatabase, workspace
   });
   const originalCertId = okRow.certificate_id;
 
+  const failedAt = new Date(Date.parse(now) + 60_000).toISOString();
+  await db.prepare(`
+    UPDATE tls_endpoints
+    SET probe_status = 'connect_failed', probe_error = 'connection refused', probed_at = ?, updated_at = ?
+    WHERE id = ?
+  `).run(failedAt, failedAt, okId);
+  await db.prepare(`
+    UPDATE ssl_endpoints
+    SET probe_status = 'connect_failed', probe_error = 'connection refused', probed_at = ?, updated_at = ?
+    WHERE id = ?
+  `).run(failedAt, failedAt, okId);
+  await migrateSslAssets(db);
+  expect(await db.prepare(`
+    SELECT certificate_id, last_success_at, probe_status FROM ssl_endpoints WHERE id = ?
+  `).get(okId)).toEqual({
+    certificate_id: originalCertId,
+    last_success_at: now,
+    probe_status: "connect_failed",
+  });
+
+  await db.prepare(`
+    UPDATE tls_endpoints
+    SET host = 'rotated.example.com', sni = 'rotated.example.com', updated_at = ?
+    WHERE id = ?
+  `).run(failedAt, okId);
+  await migrateSslAssets(db);
+  expect(await db.prepare(`
+    SELECT host, certificate_id, last_success_at, probe_status FROM ssl_endpoints WHERE id = ?
+  `).get(okId)).toEqual({
+    host: "rotated.example.com",
+    certificate_id: null,
+    last_success_at: null,
+    probe_status: "connect_failed",
+  });
+
   const extraId = randomUUID();
   await insertLegacyEndpoint(db, {
     id: extraId,

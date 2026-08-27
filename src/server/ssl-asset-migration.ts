@@ -1,6 +1,13 @@
 import { createHash } from "node:crypto";
 import type { EnvmanDatabase } from "./database-client.js";
-import { canonicalFingerprint } from "../shared/tls-certificates.js";
+import {
+  canonicalFingerprint,
+  isTlsEndpointSource,
+  isTlsProbeStatus,
+  isValidTlsHost,
+  isValidTlsPort,
+  isValidTlsSni,
+} from "../shared/tls-certificates.js";
 
 export const SSL_ASSET_MIGRATION_ID = "20260827_ssl_asset_v1";
 export const SSL_ASSET_MIGRATION_CHECKSUM = createHash("sha256")
@@ -26,7 +33,7 @@ interface LegacyEndpointRow {
   host: string;
   port: number | string;
   sni: string;
-  source: "web_entry" | "manual";
+  source: string;
   observe_enabled: number | string;
   customized: number | string;
   sort_order: number | string;
@@ -57,6 +64,19 @@ interface LegacyLinkRow {
   entry_environment_id: string;
 }
 
+interface ExistingSslEndpointRow {
+  id: string;
+  environment_id: string;
+  certificate_id: string | null;
+  ssh_bind_key: string;
+  host: string;
+  port: number | string;
+  sni: string;
+  last_success_at: string | null;
+  certificate_workspace_type: string | null;
+  certificate_workspace_id: string | null;
+}
+
 function flag(value: number | string | null | undefined): number | null {
   if (value == null || value === "") return null;
   return Number(value) ? 1 : 0;
@@ -64,6 +84,34 @@ function flag(value: number | string | null | undefined): number | null {
 
 function countTotal(row: { total: number | string } | undefined): number {
   return Number(row?.total ?? 0);
+}
+
+function isStorageBoolean(value: number | string | null, nullable = false): boolean {
+  if (nullable && value == null) return true;
+  return value === 0 || value === 1 || value === "0" || value === "1";
+}
+
+function legacyEndpointHasValidDomain(row: LegacyEndpointRow): boolean {
+  const port = Number(row.port);
+  return (row.workspace_type === "personal" || row.workspace_type === "organization")
+    && isTlsEndpointSource(row.source)
+    && isTlsProbeStatus(row.probe_status)
+    && isValidTlsHost(row.host)
+    && isValidTlsPort(port)
+    && isValidTlsSni(row.sni ?? "")
+    && isStorageBoolean(row.observe_enabled)
+    && isStorageBoolean(row.customized)
+    && isStorageBoolean(row.is_self_signed)
+    && isStorageBoolean(row.hostname_match, true)
+    && isStorageBoolean(row.chain_complete, true);
+}
+
+function endpointIdentityMatches(row: LegacyEndpointRow, existing: ExistingSslEndpointRow): boolean {
+  return row.environment_id === existing.environment_id
+    && (row.ssh_bind_key ?? "") === (existing.ssh_bind_key ?? "")
+    && row.host === existing.host
+    && Number(row.port) === Number(existing.port)
+    && (row.sni ?? "") === (existing.sni ?? "");
 }
 
 async function migrationApplied(db: EnvmanDatabase): Promise<boolean> {
@@ -220,11 +268,15 @@ async function upsertEndpoint(
   );
 }
 
-async function reconcile(db: EnvmanDatabase): Promise<void> {
+async function reconcile(db: EnvmanDatabase, applied: boolean): Promise<void> {
   const endpoints = await loadLegacyEndpoints(db);
   const missingEnvironment = endpoints.filter((row) => !row.workspace_type || row.workspace_id == null);
   if (missingEnvironment.length) {
     throw new SslAssetMigrationError("tls_endpoints 缺少可派生的工作空间", missingEnvironment.map((row) => row.id));
+  }
+  const invalidDomainRows = endpoints.filter((row) => !legacyEndpointHasValidDomain(row));
+  if (invalidDomainRows.length) {
+    throw new SslAssetMigrationError("tls_endpoints 存在非法领域值", invalidDomainRows.map((row) => row.id));
   }
 
   const links = await loadLegacyLinks(db);
@@ -239,11 +291,19 @@ async function reconcile(db: EnvmanDatabase): Promise<void> {
 
   const certificateIds = new Map<string, string>();
   const seenEndpointIds = new Set<string>();
+  const existingRows = await db.prepare(`
+    SELECT e.id, e.environment_id, e.certificate_id, e.ssh_bind_key, e.host, e.port, e.sni, e.last_success_at,
+      cert.workspace_type AS certificate_workspace_type, cert.workspace_id AS certificate_workspace_id
+    FROM ssl_endpoints e
+    LEFT JOIN ssl_certificates cert ON cert.id = e.certificate_id
+  `).all() as ExistingSslEndpointRow[];
+  const existingById = new Map(existingRows.map((row) => [row.id, row]));
   for (const row of endpoints) {
     seenEndpointIds.add(row.id);
     const fingerprint = canonicalFingerprint(row.fingerprint_sha256 ?? "");
     const probeOk = row.probe_status === "ok";
     let certificateId: string | null = null;
+    let lastSuccessAt: string | null = null;
     if (probeOk && fingerprint && row.not_before && row.not_after) {
       const cacheKey = `${row.workspace_type}:${row.workspace_id}:${fingerprint}`;
       const seenAt = row.probed_at || row.updated_at || row.created_at;
@@ -262,8 +322,20 @@ async function reconcile(db: EnvmanDatabase): Promise<void> {
         seenAt,
       });
       certificateIds.set(cacheKey, certificateId);
+      lastSuccessAt = row.probed_at;
+    } else if (applied) {
+      const existing = existingById.get(row.id);
+      if (existing
+        && endpointIdentityMatches(row, existing)
+        && existing.certificate_id
+        && existing.last_success_at
+        && existing.certificate_workspace_type === row.workspace_type
+        && existing.certificate_workspace_id === row.workspace_id) {
+        certificateId = existing.certificate_id;
+        lastSuccessAt = existing.last_success_at;
+      }
     }
-    await upsertEndpoint(db, row, certificateId, probeOk ? row.probed_at : null);
+    await upsertEndpoint(db, row, certificateId, lastSuccessAt);
   }
 
   const extras = await db.prepare("SELECT id, environment_id FROM ssl_endpoints").all() as Array<{ id: string; environment_id: string }>;
@@ -280,7 +352,7 @@ async function reconcile(db: EnvmanDatabase): Promise<void> {
   }
 }
 
-async function validate(db: EnvmanDatabase): Promise<void> {
+async function validate(db: EnvmanDatabase, applied: boolean): Promise<void> {
   const oldEndpoints = await db.prepare("SELECT COUNT(*) AS total FROM tls_endpoints").get() as { total: number | string };
   const newEndpoints = await db.prepare("SELECT COUNT(*) AS total FROM ssl_endpoints").get() as { total: number | string };
   if (countTotal(oldEndpoints) !== countTotal(newEndpoints)) {
@@ -293,7 +365,8 @@ async function validate(db: EnvmanDatabase): Promise<void> {
   }
 
   const mappings = await db.prepare(`
-    SELECT e.id, e.probe_status, e.fingerprint_sha256, se.certificate_id, cert.fingerprint_sha256 AS cert_fingerprint
+    SELECT e.id, e.probe_status, e.fingerprint_sha256, se.certificate_id, se.last_success_at,
+      cert.fingerprint_sha256 AS cert_fingerprint
     FROM tls_endpoints e
     JOIN ssl_endpoints se ON se.id = e.id
     LEFT JOIN ssl_certificates cert ON cert.id = se.certificate_id
@@ -302,6 +375,7 @@ async function validate(db: EnvmanDatabase): Promise<void> {
     probe_status: string;
     fingerprint_sha256: string;
     certificate_id: string | null;
+    last_success_at: string | null;
     cert_fingerprint: string | null;
   }>;
   const mappingFailures: string[] = [];
@@ -311,12 +385,18 @@ async function validate(db: EnvmanDatabase): Promise<void> {
       if (!row.certificate_id || canonicalFingerprint(row.cert_fingerprint ?? "") !== fingerprint) {
         mappingFailures.push(row.id);
       }
-    } else if (row.certificate_id) {
-      mappingFailures.push(row.id);
+    } else {
+      const hasRetainedSnapshot = Boolean(row.certificate_id || row.last_success_at);
+      const retainedSnapshotValid = applied
+        && Boolean(row.certificate_id)
+        && Boolean(row.last_success_at)
+        && Boolean(fingerprint)
+        && canonicalFingerprint(row.cert_fingerprint ?? "") === fingerprint;
+      if (hasRetainedSnapshot && !retainedSnapshotValid) mappingFailures.push(row.id);
     }
   }
   if (mappingFailures.length) {
-    throw new SslAssetMigrationError("成功探测指纹未正确映射到证书资产，或失败行仍引用证书", mappingFailures);
+    throw new SslAssetMigrationError("成功探测指纹未正确映射，或失败行的最后成功快照不完整", mappingFailures);
   }
 
   const duplicateFingerprints = await db.prepare(`
@@ -364,8 +444,8 @@ export async function migrateSslAssets(db: EnvmanDatabase): Promise<void> {
   const applied = await migrationApplied(db);
   try {
     await db.transaction(async () => {
-      await reconcile(db);
-      await validate(db);
+      await reconcile(db, applied);
+      await validate(db, applied);
       if (!applied) {
         await db.prepare("INSERT INTO schema_migrations (id, checksum, applied_at) VALUES (?, ?, ?)").run(
           SSL_ASSET_MIGRATION_ID,

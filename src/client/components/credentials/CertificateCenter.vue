@@ -1,15 +1,19 @@
 <script setup lang="ts">
 import { RefreshCw, Search, ShieldCheck, Trash2 } from "@lucide/vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ApiError, api } from "../../api";
 import { translate as tr } from "../../i18n";
-import { formatFingerprint, TLS_MANUAL_PROBE_COOLDOWN_MS, type SslCertificateAsset } from "../../../shared/tls-certificates";
+import {
+  formatFingerprint,
+  TLS_MANUAL_PROBE_COOLDOWN_MS,
+  type CertificateProbeResponse,
+  type SslCertificateAsset,
+} from "../../../shared/tls-certificates";
 
 interface EnvironmentOption { id: string; name: string }
 interface SshOption { id: string; name: string; environmentIds: string[] }
-
 const route = useRoute();
 const router = useRouter();
 const loading = ref(false);
@@ -29,9 +33,12 @@ const batch = reactive({
   succeeded: 0,
   failed: 0,
   cooldownUntil: 0,
-  failures: [] as Array<{ id: string; name: string; message: string }>,
+  failures: [] as Array<{ id: string; name: string; message: string; asset: SslCertificateAsset }>,
 });
+const cooldownNow = ref(Date.now());
+let cooldownTimer: ReturnType<typeof setInterval> | null = null;
 const batchBusy = computed(() => batch.running || saving.value);
+const batchCooldownActive = computed(() => cooldownNow.value < batch.cooldownUntil);
 const batchPercent = computed(() => batch.total ? Math.round((batch.current / batch.total) * 100) : 0);
 const batchSummaryText = computed(() => `${tr("正在重新探测 {{0}} / {{1}}", [batch.current, batch.total])} · ${tr("成功 {{0}}", [batch.succeeded])} · ${tr("失败 {{0}}", [batch.failed])}`);
 
@@ -104,15 +111,47 @@ function probeErrorMessage(error: unknown): string {
   return tr("重新探测失败");
 }
 
+function stopCooldownTimer() {
+  if (cooldownTimer) clearInterval(cooldownTimer);
+  cooldownTimer = null;
+}
+
+function startBatchCooldown(now: number) {
+  batch.cooldownUntil = now + TLS_MANUAL_PROBE_COOLDOWN_MS;
+  cooldownNow.value = now;
+  stopCooldownTimer();
+  cooldownTimer = setInterval(() => {
+    cooldownNow.value = Date.now();
+    if (!batchCooldownActive.value) stopCooldownTimer();
+  }, 250);
+}
+
+function probeResponseError(response: CertificateProbeResponse): string | null {
+  const failures = response.results?.filter((result) => result.status === "failed") ?? [];
+  if (!(response.failed ?? failures.length)) return null;
+  const messages = failures
+    .map((result) => result.message || result.error)
+    .filter((message): message is string => Boolean(message));
+  return messages.length ? [...new Set(messages)].join("；") : tr("重新探测失败");
+}
+
+async function requestCertificateProbe(asset: SslCertificateAsset): Promise<CertificateProbeResponse> {
+  const response = await api<CertificateProbeResponse>(`/api/v1/certificates/${asset.id}/probe`, { method: "POST" });
+  const failure = probeResponseError(response);
+  if (failure) throw new Error(failure);
+  return response;
+}
+
 async function probeAsset(asset: SslCertificateAsset) {
   if (batch.running) return;
   saving.value = true;
   try {
-    await api(`/api/v1/certificates/${asset.id}/probe`, { method: "POST" });
+    await requestCertificateProbe(asset);
     ElMessage.success(tr("证书探测已完成"));
     await load();
   } catch (error) {
     ElMessage.error(probeErrorMessage(error));
+    await load();
   } finally {
     saving.value = false;
   }
@@ -121,7 +160,8 @@ async function probeAsset(asset: SslCertificateAsset) {
 async function probeAll(targets?: SslCertificateAsset[]) {
   if (batch.running) return;
   const now = Date.now();
-  if (now < batch.cooldownUntil) {
+  cooldownNow.value = now;
+  if (batchCooldownActive.value) {
     const seconds = Math.ceil((batch.cooldownUntil - now) / 1000);
     ElMessage.warning(tr("批量重新探测冷却中，请 {{0}} 秒后再试", [seconds]));
     return;
@@ -134,11 +174,11 @@ async function probeAll(targets?: SslCertificateAsset[]) {
   batch.succeeded = 0;
   batch.failed = 0;
   batch.failures = [];
-  batch.cooldownUntil = now + TLS_MANUAL_PROBE_COOLDOWN_MS;
+  startBatchCooldown(now);
   try {
     for (const asset of queue) {
       try {
-        await api(`/api/v1/certificates/${asset.id}/probe`, { method: "POST" });
+        await requestCertificateProbe(asset);
         batch.succeeded += 1;
       } catch (error) {
         batch.failed += 1;
@@ -146,6 +186,7 @@ async function probeAll(targets?: SslCertificateAsset[]) {
           id: asset.id,
           name: asset.leafCn || asset.fingerprintSha256.slice(0, 16),
           message: probeErrorMessage(error),
+          asset,
         });
       } finally {
         batch.current += 1;
@@ -161,8 +202,7 @@ async function probeAll(targets?: SslCertificateAsset[]) {
 }
 
 async function retryFailed() {
-  const failedIds = new Set(batch.failures.map((item) => item.id));
-  const targets = items.value.filter((item) => failedIds.has(item.id));
+  const targets = [...new Map(batch.failures.map((item) => [item.id, item.asset])).values()];
   await probeAll(targets);
 }
 
@@ -204,6 +244,7 @@ onMounted(async () => {
   await loadLookups();
   await load();
 });
+onUnmounted(stopCooldownTimer);
 
 defineExpose({ openCreate, probeAll, retryFailed, batchBusy });
 </script>
@@ -229,7 +270,7 @@ defineExpose({ openCreate, probeAll, retryFailed, batchBusy });
       <el-button
         v-if="batch.failures.length && !batch.running"
         data-testid="certificate-batch-retry"
-        :disabled="Date.now() < batch.cooldownUntil"
+        :disabled="batchCooldownActive"
         @click="retryFailed"
       >{{ $t('重试失败项') }}</el-button>
     </div>

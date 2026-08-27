@@ -140,6 +140,17 @@ describe("certificate assets API", () => {
       expect(await db.prepare("SELECT COUNT(*) AS total FROM tls_endpoints").get()).toEqual({ total: 2 });
       expect(await db.prepare("SELECT COUNT(*) AS total FROM ssl_endpoints").get()).toEqual({ total: 2 });
 
+      const rateLimitedBatch = await app.inject({
+        method: "POST",
+        url: `/api/v1/certificates/${listed.json().items[0].id}/probe`,
+        cookies,
+      });
+      expect(rateLimitedBatch.statusCode).toBe(200);
+      expect(rateLimitedBatch.json()).toMatchObject({ probed: 2, succeeded: 0, failed: 2 });
+      expect(rateLimitedBatch.json().results).toEqual(expect.arrayContaining([
+        expect.objectContaining({ status: "failed", error: "TLS_PROBE_RATE_LIMIT" }),
+      ]));
+
       expect((await app.inject({
         method: "POST", url: `/api/v1/environments/${envA.json().id}/tls-endpoints`, cookies,
         payload: { host: "169.254.169.254", port: 443, sshConnectionId: sshA.json().id },

@@ -18,6 +18,25 @@ export type TlsProbeStatus =
   | "probe_unavailable"
   | "skipped";
 
+const TLS_ENDPOINT_SOURCE_VALUES = new Set<string>(["web_entry", "manual"]);
+const TLS_PROBE_STATUS_VALUES = new Set<string>([
+  "never",
+  "ok",
+  "connect_failed",
+  "handshake_failed",
+  "timeout",
+  "probe_unavailable",
+  "skipped",
+]);
+
+export function isTlsEndpointSource(value: unknown): value is TlsEndpointSource {
+  return typeof value === "string" && TLS_ENDPOINT_SOURCE_VALUES.has(value);
+}
+
+export function isTlsProbeStatus(value: unknown): value is TlsProbeStatus {
+  return typeof value === "string" && TLS_PROBE_STATUS_VALUES.has(value);
+}
+
 export interface TlsHttpsOrigin {
   host: string;
   port: number;
@@ -135,6 +154,21 @@ export interface TlsWebEntryBadge {
   probedAt: string | null;
   stale: boolean;
   probeError: string;
+}
+
+export interface CertificateProbeTargetResult {
+  endpointId: string;
+  status: "succeeded" | "failed";
+  probeStatus?: TlsProbeStatus;
+  error?: string;
+  message?: string;
+}
+
+export interface CertificateProbeResponse {
+  probed: number;
+  succeeded: number;
+  failed: number;
+  results: CertificateProbeTargetResult[];
 }
 
 const DNS_HOST = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;

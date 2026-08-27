@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -37,6 +38,29 @@ describe("ssl asset migration", () => {
     await ensureAdmin(db, config);
     const user = await db.prepare("SELECT id FROM admin_users LIMIT 1").get() as { id: string };
     await runDuplicateJunctionFailureTest(db, user.id);
+    await db.close();
+  });
+
+  it("enforces the SQLite endpoint domains that MariaDB validates in the migration", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "viron-ssl-domain-"));
+    directories.push(directory);
+    const config = sslTestConfig(directory);
+    const db = await openDatabase(config);
+    await ensureAdmin(db, config);
+    const user = await db.prepare("SELECT id FROM admin_users LIMIT 1").get() as { id: string };
+    const now = new Date().toISOString();
+    const envId = randomUUID();
+    await db.prepare(`
+      INSERT INTO environments (id, workspace_type, workspace_id, name, short_name, description, status, owner, tags_json, sort_order, created_at, updated_at)
+      VALUES (?, 'personal', ?, 'Domain check', '', '', 'active', '', '[]', 0, ?, ?)
+    `).run(envId, user.id, now, now);
+    await expect(db.prepare(`
+      INSERT INTO tls_endpoints (
+        id, environment_id, ssh_bind_key, host, port, sni, source, observe_enabled, customized, sort_order,
+        probe_status, probe_error, leaf_sans_json, created_at, updated_at
+      ) VALUES (?, ?, '', 'invalid.example.com', 443, 'invalid.example.com', 'unknown', 1, 0, 0,
+        'not_a_status', '', '[]', ?, ?)
+    `).run(randomUUID(), envId, now, now)).rejects.toThrow();
     await db.close();
   });
 });
