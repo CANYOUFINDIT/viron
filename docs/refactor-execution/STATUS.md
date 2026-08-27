@@ -40,7 +40,7 @@
 | Phase 2+3 UI/UX 验收 | Gemini | `CHANGES_REQUIRED` | `f68e0a9` | `c26b6c2` | 验收完成，发现 3 个 P1、4 个 P2 交互缺陷，详见 UIUX-SPEC.md §14。交接文档曾写 `3fc67ac`，实际 origin/dev 提交为 `c26b6c2` |
 | Phase 2+3 UI/UX 修正 | Grok | `PASSED` | `c26b6c2` | `8cec107` | 已关闭 UX-P1-001～UX-P2-004；UX-P3-001 按验收意见延期 |
 | Phase 2+3 UI/UX 复验 | Gemini | `PASSED` | `8cec107` | 77c3aeb | 逐项复验通过，7 项缺陷全部闭环，UIUX-SPEC.md §14 已记录 PASS |
-| Gate 3+4 合并质量与发布 | Grok（用户指示代行，因 Codex 不可用） | `PASSED` | `2e787d4` | 待填 | 分区审查 Phase 2/3，关闭 P0 探针安装权限与 Electron 并行安装竞态；`verify:full-regression` 与当前系统打包通过 |
+| Gate 3+4 合并质量与发布 | Grok（用户指示代行，因 Codex 不可用） | `PASSED` | `2e787d4` | `ad983f1` | 分区审查 Phase 2/3，关闭 P0 探针安装权限与 Electron 并行安装竞态；`verify:full-regression` 与当前系统打包通过 |
 
 状态只能使用：`NOT_STARTED`、`IN_PROGRESS`、`BLOCKED`、`REVIEW_REQUIRED`、`CHANGES_REQUIRED`、`PASSED`。
 
@@ -494,7 +494,7 @@ Gate 2 最终结论为 `PASSED`。Gate 3+4 由 Grok 代行后结论为 `PASSED`�
 ### 2026-08-27 19:18 — Grok / Gate 3+4 合并质量与发布（代行 Codex）
 
 - 输入 commit：`2e787d4`（Gemini 复验 PASSED；STATUS 曾写 `77c3aeb`）
-- 输出 commit：本批次提交（commit 后回填 hash）
+- 输出 commit：`ad983f1`
 - 结论：`PASSED`
 - 完成内容：
   1. 用户确认 Codex 不可用，由 Grok 代行合并 Gate 3+4。分区审查 Phase 2 `75daf80`、Phase 3 `f68e0a9`、UX 修正 `8cec107`。
