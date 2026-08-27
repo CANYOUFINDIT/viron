@@ -61,5 +61,8 @@ describe("service discovery layout", () => {
     expect(maintenancePanel).toContain("$t('清理监控数据')");
     expect(maintenancePanel).toContain("$t('扫描并拉取')");
     expect(maintenancePanel).toContain("$t('刷新')");
+    expect(maintenancePanel).toContain("$t('直连 SSH')");
+    expect(maintenancePanel).toContain("$t('节点日志')");
+    expect(maintenancePanel).toContain('emit(\'open-ssh\'');
   });
 });

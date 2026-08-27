@@ -121,6 +121,43 @@ describe("certificate center UI", () => {
     vi.restoreAllMocks();
   });
 
+  it("scrolls the fingerprint deep-link into view after certificates load", async () => {
+    mockListAndLookups();
+    const scrollIntoView = vi.fn();
+    vi.spyOn(document, "getElementById").mockImplementation((id: string) => {
+      if (id.startsWith("certificate-")) return { scrollIntoView } as unknown as HTMLElement;
+      return null;
+    });
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: "/:pathMatch(.*)*", component: { template: "<div />" } }],
+    });
+    await router.push(`/ssh-keys?tab=ssl&fingerprint=${assets[0]!.fingerprintSha256}`);
+    const wrapper = mount(CertificateCenter, {
+      global: {
+        plugins: [router, i18nPlugin],
+        stubs: {
+          "el-button": stubButton(),
+          "el-input": true,
+          "el-select": true,
+          "el-option": true,
+          "el-dialog": true,
+          "el-form": true,
+          "el-form-item": true,
+          "el-input-number": true,
+          RefreshCw: true,
+          Search: true,
+          ShieldCheck: true,
+          Trash2: true,
+        },
+        directives: { loading: () => undefined },
+      },
+    });
+    await flushPromises();
+    expect(scrollIntoView).toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
   it("keeps the credentials entry and does not import the untracked monitoring dashboard", async () => {
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");

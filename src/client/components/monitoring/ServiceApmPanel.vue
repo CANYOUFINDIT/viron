@@ -21,6 +21,7 @@ export interface MonitoringServiceCard {
 export interface MonitoringProblemNode {
   serviceId: string;
   serviceName: string;
+  environmentId: string;
   id: string;
   name: unknown;
   status: unknown;
@@ -65,10 +66,11 @@ function formatPercent(value: number | null) {
       </article>
       <article>
         <h3>{{ $t('高负载节点') }}</h3>
-        <button v-for="node in problemNodes" :key="String(node.id)" type="button" @click="emit('inspect', node)">
+        <div v-for="node in problemNodes" :key="String(node.id)" class="problem-node">
           <strong>{{ node.serviceName }} / {{ String(node.name ?? "") }}</strong>
           <small>{{ String(node.sshConnectionName ?? "") }} · CPU {{ formatPercent(typeof node.cpuUsedPercent === "number" ? node.cpuUsedPercent : null) }}</small>
-        </button>
+          <button type="button" class="problem-node__inspect" @click="emit('inspect', node)">{{ $t('立即排查') }}</button>
+        </div>
         <p v-if="!problemNodes.length" class="is-empty">{{ $t('暂无服务时序') }}</p>
       </article>
     </div>
@@ -79,6 +81,7 @@ function formatPercent(value: number | null) {
           {{ service.name }}
           <small>{{ service.runningCount }}/{{ service.deploymentCount }}</small>
         </button>
+        <p v-if="!services.length" class="is-empty">{{ $t('暂无服务时序') }}</p>
       </div>
     </div>
     <MonitorTimeSeriesChart
@@ -97,12 +100,18 @@ function formatPercent(value: number | null) {
 <style scoped>
 .service-apm { display: grid; gap: 1rem; }
 .service-apm__columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
-.service-apm article, .service-apm__matrix { padding: 1rem; border: 1px solid var(--ink-100); border-radius: 12px; background: var(--surface); }
+.service-apm__columns > article, .service-apm__matrix { padding: 1rem; border: 1px solid var(--ink-100); border-radius: 12px; background: var(--surface); }
 .service-apm h3 { margin: 0 0 .75rem; font-size: .8125rem; }
 .service-apm button { width: 100%; margin: 0 0 .5rem; padding: .625rem .75rem; border: 1px solid var(--ink-100); border-radius: 8px; display: grid; gap: .25rem; background: transparent; text-align: start; cursor: pointer; }
 .service-apm button.is-active { border-color: var(--teal-500); }
 .service-apm strong { font-size: .8125rem; }
 .service-apm small, .is-empty { color: var(--ink-400); font-size: .6875rem; }
+.problem-node {
+  position: relative; margin: 0 0 .5rem; padding: .625rem .75rem 2rem; border: 1px solid var(--ink-100); border-radius: 8px; display: grid; gap: .25rem;
+}
+.problem-node__inspect {
+  position: absolute; right: .75rem; bottom: .5rem; width: auto !important; margin: 0 !important; border: 0; padding: 0 !important; display: inline-flex !important; background: transparent; color: var(--teal-700); font-size: .6875rem; font-weight: 650; cursor: pointer;
+}
 .health-chip { width: auto !important; display: inline-flex !important; align-items: center; gap: .375rem; margin: 0 .5rem .5rem 0 !important; }
 .health-chip.is-running { color: var(--color-accent-strong); }
 .health-chip.is-degraded { color: var(--color-warning); }
