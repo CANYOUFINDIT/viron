@@ -7,12 +7,12 @@
 | 字段 | 当前值 |
 | --- | --- |
 | 当前阶段 | Phase 1：凭据与证书修正 |
-| 阶段状态 | `CHANGES_REQUIRED` |
+| 阶段状态 | `REVIEW_REQUIRED` |
 | 当前写锁 | `UNLOCKED` |
 | 当前负责人 | 无 |
 | 产品批准 | 用户已于 2026-08-27 11:24 CST 批准 `UIUX-SPEC.md` 2.0.0-final；无例外 |
 | 技术合同状态 | `FROZEN`（Gate 1 `PASSED`） |
-| 下一位负责人 | Grok 修正 Gate 2 问题；修正后重新交 Codex 审查 |
+| 下一位负责人 | Codex 重审 Gate 2（审查 `107db93`） |
 
 ## 2. 基线
 
@@ -32,8 +32,8 @@
 | Phase 0A 现状审计 | Grok | `PASSED` | `e250733` | `8357549` | Codex Gate 1 已复核并采用审计输入 |
 | Phase 0B UI/UX 规格 | Gemini | `PASSED` | `e250733` | `0695956` | 用户于 2026-08-27 11:24 CST 批准 2.0.0-final；无例外 |
 | Gate 1 技术合同 | Codex | `PASSED` | `2677bbe` | `9526f92` | 技术合同已冻结，验收矩阵已完善，无阻断问题 |
-| Phase 1 凭据与证书 | Grok | `CHANGES_REQUIRED` | `9526f92` / `9c3ba63` | `0ec3ab9` | Gate 2 发现迁移、生命周期、分页和 UI/测试阻断项，须在 Phase 1 内修正 |
-| Gate 2 Phase 1 审查 | Codex | `CHANGES_REQUIRED` | `9c3ba63` | `3e2e448` | 审查实现 `0ec3ab9`；详见 2026-08-27 12:31 交接；不得进入 Phase 2 |
+| Phase 1 凭据与证书 | Grok | `REVIEW_REQUIRED` | `9526f92` / `9c3ba63` / `02e67d1` | `107db93` | Gate 2 问题已在 Phase 1 内修正，等待 Codex 重审 |
+| Gate 2 Phase 1 审查 | Codex | `REVIEW_REQUIRED` | `9c3ba63` / `02e67d1` | 待填 | 请审查修正 commit `107db93`；未通过前不得进入 Phase 2 |
 | Phase 2 服务维护瘦身 | Grok | `BLOCKED` | 待填 | 待填 | 等待 Gate 2 |
 | Gate 3 Phase 2 审查 | Codex | `BLOCKED` | 待填 | 待填 | 待填 |
 | Phase 3 监控大盘 | Grok | `BLOCKED` | 待填 | 待填 | 等待 Gate 3 |
@@ -56,15 +56,15 @@ Agent：无
 
 ## 5. 当前阻塞与风险
 
-Gate 2 结论为 `CHANGES_REQUIRED`，Phase 2 继续阻塞。当前阻断与风险：
+Gate 2 修正已提交 `107db93`，等待 Codex 重审。Phase 2 继续阻塞。当前风险：
 
-1. `G2-P1-001`～`G2-P1-007` 与 `G2-P2-001`～`G2-P2-002` 未关闭；触发条件、后果、修复边界和验证方法见 2026-08-27 12:31 交接。
+1. `G2-P1-001`～`G2-P2-002` 已在 Phase 1 内修复并补测试，但须 Codex 复核后才能关闭并进入 Phase 2。
 2. 新旧 TLS 双写窗口仍在；旧 `tls_*` 表未删除。任何停止双写必须延期到独立版本化迁移。
 3. 未跟踪 `EnvironmentMonitoringDashboard.vue` 仍只读未纳管，未修改、未提交、未接入路由。
-4. 服务维护证书/监控 UI 与重型 `/maintenance` Payload 按合同保留到 Phase 2；修正 Gate 2 时不得提前瘦身。
+4. 服务维护证书/监控 UI 与重型 `/maintenance` Payload 按合同保留到 Phase 2。
 5. TLS 探测仍允许 manager 经授权 SSH 访问私网/loopback；metadata/link-local/multicast 已拒绝。
-6. 本地真实 MariaDB 11.4 测试已执行通过，但仓库没有独立 MySQL CI job，且现有 MySQL 测试未覆盖合同要求的 CRUD/级联/事务回滚等价性。
-7. Electron 并行安装竞态仍存在，不阻断 Gate 2，Gate 4 前需解决。
+6. 本地真实 MariaDB 11.4 与独立 CI job（`.github/workflows/ci.yml` 的 `ssl-mysql`）已补齐；工作台 `mysql.integration` skip 仍不能代替。
+7. Electron 并行安装竞态仍存在。本轮 `package:current-os` 已生成并签名 `Viron.app`，但启动烟测两次均因既有活动环境坞 `passiveHoverFocusStable=false` 失败，DMG 未写出；与证书修正无关，Gate 4 前需解决。
 
 ## 6. 交接模板
 
@@ -245,3 +245,34 @@ Gate 2 结论为 `CHANGES_REQUIRED`，Phase 2 继续阻塞。当前阻断与风�
 - 下一位负责人：Grok / Phase 1 修正；完成后将状态改回 `REVIEW_REQUIRED` 并重新交 Codex Gate 2。
 - 下一阶段允许修改范围：仅修复 `G2-P1-001`～`G2-P2-002` 所需的 Phase 1 migration、TLS/API、证书中心和测试/CI 文件；更新本状态记录。
 - 下一阶段禁止修改内容：Phase 2 服务维护瘦身/operation run、Phase 3 监控大盘/NOC、删除旧 `tls_*` 表、修改/纳管未跟踪监控草稿、操作或合并 `main`。
+
+### 2026-08-27 13:03 — Grok / Phase 1 Gate 2 修正
+
+- 输入 commit：`02e67d168a79422ba5fcca35f4751d12dd203002`
+- 输出 commit：`107db9325dd4f33256727154f1f153fbda7e486c`
+- 完成内容：
+  1. `G2-P1-001`：一入口多端点 junction 停止激活，错误含全部冲突行 ID，无 marker，旧表不变，新表回滚。
+  2. `G2-P1-002`：即使已有 marker 也幂等 upsert/对账；补齐指纹映射、唯一键和工作空间计数校验。
+  3. `G2-P1-003`：仅 `probe_status=ok` 回填 `certificate_id`/`last_success_at`；never/connect_failed/timeout 保持空。
+  4. `G2-P1-004`：创建（含 `observeEnabled=false`）单事务双写；身份变化清空探测/证书；显式解绑 `ssh_bind_key=''`；第二侧写失败整体回滚。
+  5. `G2-P1-005`：自动删除 web_entry endpoint 前 `recoverEndpointAlerts`；证书 orphan，Web 入口按请求保留。
+  6. `G2-P1-006`：证书列表在 DB 过滤/排序/count/分页；详情按 workspace+ID 直查，1001 项可 GET/DELETE。
+  7. `G2-P1-007`：批量探测展示进度、成功/失败数、失败列表和重试；不再吞掉 429/错误；60 秒冷却。
+  8. `G2-P2-001`：失败且保留快照时立即 stale；无历史成功不标陈旧；成功后清除。
+  9. `G2-P2-002`：SQLite/MariaDB 行为测试、Vue 渲染/交互测试、`.github/workflows/ci.yml` 独立 `ssl-mysql` job。
+  10. 未修改、未删除、未提交、未接入 `EnvironmentMonitoringDashboard.vue`。未进入 Phase 2/3。
+- 修改文件：`src/server/ssl-asset-migration.ts`、`src/server/tls-certificates.ts`、`src/shared/tls-certificates.ts`、`src/client/components/credentials/CertificateCenter.vue`、`src/client/views/SshKeysView.vue`、`src/client/i18n.ts`、`src/shared/i18n-messages.ts`、相关 tests、`tests/helpers/ssl-asset-harness.ts`、`.github/workflows/ci.yml`、`package.json`、`package-lock.json`、本状态文件
+- 数据库/API 变化：无新公开 API/DTO。迁移对账语义修正；endpoint 写入原子性与 stale 派生修正。
+- 测试命令及结果：
+  - `npm run typecheck`：通过
+  - 定向：ssl-asset-migration / ssl-asset-mysql / certificates-api / tls-certificates / certificate-center-ui / i18n：通过
+  - `tests/ssl-asset-mysql.test.ts`（Docker MariaDB 11.4）：通过
+  - `npm test`：175 files，740 passed / 9 skipped（含既有 skip 的桌面本地集成与工作台 mysql.integration）
+  - `npm run build`：通过
+- `package:current-os` 结果：失败（两次）。App 已打包并签名 `dist/macos/Viron-darwin-arm64/Viron.app`；启动烟测因既有活动环境坞 `passiveHoverFocusStable=false` 退出 1，DMG 未写出。未提交 `release/`。与本轮证书修正无关。
+- 未完成内容：等待 Codex 关闭 Gate 2；Phase 2/3；旧 TLS 表清理；桌面烟测 `passiveHoverFocusStable` 与 Electron 并行安装竞态
+- 已知风险：见第 5 节
+- 下一位负责人：Codex / Gate 2 重审
+- 下一阶段允许修改范围：Gate 2 只审查 `02e67d1..107db93` 及本状态记录；通过后才能授权 Phase 2
+- 下一阶段禁止修改内容：Phase 2 服务维护瘦身/operation run、Phase 3 监控大盘/NOC、删除旧 `tls_*` 表、修改/纳管未跟踪监控草稿、操作或合并 `main`
+
