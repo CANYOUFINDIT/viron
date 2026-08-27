@@ -7,13 +7,13 @@
 | 字段 | 当前值 |
 | --- | --- |
 | 当前阶段 | Gate 3+4 合并质量与发布 |
-| 阶段状态 | `REVIEW_REQUIRED` |
+| 阶段状态 | `CHANGES_REQUIRED` |
 | 当前写锁 | `UNLOCKED` |
-| 当前负责人 | Codex（独立重审 `G34R-*`） |
+| 当前负责人 | Grok（关闭 `G34RR-*` 后交 Codex 重审） |
 | 产品批准 | 用户已于 2026-08-27 11:24 CST 批准 `UIUX-SPEC.md` 2.0.0-final；无例外 |
 | 执行流程例外 | 用户已于 2026-08-27 15:22 CST 批准 Grok 连续实施 Phase 2+3，随后 Gemini 整体验收、Grok 集中修复、Codex 合并 Gate 3+4 |
 | 技术合同状态 | `FROZEN`（Gate 1 `PASSED`） |
-| 下一位负责人 | Codex（独立重审 Gate 3+4；Grok 已按 `G34R-*` 修正并自验） |
+| 下一位负责人 | Grok（仅修复 `G34RR-P1-001`、`G34RR-P2-002`～`G34RR-P2-006`） |
 
 ## 2. 基线
 
@@ -42,7 +42,8 @@
 | Phase 2+3 UI/UX 复验 | Gemini | `PASSED` | `8cec107` | 77c3aeb | 逐项复验通过，7 项缺陷全部闭环，UIUX-SPEC.md §14 已记录 PASS |
 | Gate 3+4 合并质量与发布 | Grok（用户指示代行，因 Codex 不可用） | `PASSED` | `2e787d4` | `ad983f1` | 分区审查 Phase 2/3，关闭 P0 探针安装权限与 Electron 并行安装竞态；`verify:full-regression` 与当前系统打包通过 |
 | Gate 3+4 独立复核 | Codex | `CHANGES_REQUIRED` | `9e36db0` | `f266158` | 推翻代行 `PASSED`；3 个 P1、8 个 P2 交回 Grok |
-| Gate 3+4 G34R 修正 | Grok | `REVIEW_REQUIRED` | `2c0b15d` | 本交接输出 commit | 已关闭 `G34R-P1-001`、`G34R-P2-002`～`004`、`G34R-P1-005`～`006`、`G34R-P2-007`～`011`；交 Codex 独立重审 |
+| Gate 3+4 G34R 修正 | Grok | `REVIEW_REQUIRED` | `2c0b15d` | `04ad5aa` | 声称关闭全部 `G34R-*`；Codex 独立重审确认仍有边界问题 |
+| Gate 3+4 G34R 独立重审 | Codex | `CHANGES_REQUIRED` | `04ad5aa` | 本交接输出 commit | 1 个 P1、5 个 P2 交回 Grok；Gate 3+4 不得发布或合并 main |
 
 状态只能使用：`NOT_STARTED`、`IN_PROGRESS`、`BLOCKED`、`REVIEW_REQUIRED`、`CHANGES_REQUIRED`、`PASSED`。
 
@@ -50,17 +51,17 @@
 
 ```text
 状态：UNLOCKED
-Agent：—
-阶段：—
+Agent：无
+阶段：Gate 3+4 G34RR 修正待领取
 开始时间：—
-预计修改范围：—
+预计修改范围：仅本交接 `G34RR-*` 工单列出的实现与行为测试、`STATUS.md`
 ```
 
 若写锁为 `LOCKED`，其他 Agent 只能进行不写仓库的分析，不得执行代码修改、格式化、迁移或 Git 操作。
 
 ## 5. 当前阻塞与风险
 
-Gate 2 最终结论为 `PASSED`。Codex 对 Gate 3+4 的独立复核结论为 `CHANGES_REQUIRED`，Grok 的代行 `PASSED` 已被推翻。当前风险：
+Gate 2 最终结论为 `PASSED`。Codex 对 `04ad5aa` 的 Gate 3+4 独立重审结论仍为 `CHANGES_REQUIRED`。当前风险：
 
 1. 新旧 TLS 双写窗口仍在；旧 `tls_*` 表未删除。任何停止双写必须延期到独立版本化迁移。
 2. 未跟踪 `EnvironmentMonitoringDashboard.vue` 仍只读未纳管，未修改、未提交、未接入路由。用户需确认最终保留。
@@ -69,7 +70,9 @@ Gate 2 最终结论为 `PASSED`。Codex 对 Gate 3+4 的独立复核结论为 `C
 5. 监控 MariaDB 对账套件在 `tests/monitoring-mysql.test.ts`；默认 skip，`VIRON_MONITOR_MYSQL_TEST=1` 时用本机 Docker MariaDB 11.4 跑。用户已明确不要新增或修改 GitHub Actions workflow；证书 `ssl-mysql` job 与工作台 `mysql.integration` skip 仍不能代替该本地套件。
 6. Electron 并行安装竞态已通过 `scripts/ensure-electron.mjs` 在 `npm test` 前串行预装关闭。
 7. Operations Ribbon 只展示 manager 配置的既有 Runbook。
-8. `UX-P3-001` 仍为不阻塞的 P3。Grok 已按 `G34R-*` 修正并自验；Gate 3+4 在 Codex 独立重审前不得恢复 `PASSED`，不得进入发布/合并 main。
+8. `UX-P3-001` 仍为不阻塞的 P3。旧 TLS 双写清理仍按冻结合同延期；二者不是本轮打回原因。
+9. `G34RR-P1-001` 可在 mapper/进度持久化异常时提前释放仍在执行目标的锁；属于危险操作并发安全阻断。
+10. 轻量 Payload 的 service-only cursor、监控降采样硬上限/全区间边界、真实 MariaDB 套件和最终用户流仍有 P2 证据缺口。全部 `G34RR-*` 关闭且 Codex 重审前不得恢复 `PASSED`，不得发布或合并 main。
 
 ## 6. 交接模板
 
@@ -590,3 +593,38 @@ Gate 2 最终结论为 `PASSED`。Codex 对 Gate 3+4 的独立复核结论为 `C
 - 下一位负责人：Codex / 独立重审 Gate 3+4
 - 下一阶段允许修改范围：只读审查；若重审仍 `CHANGES_REQUIRED` 则仅新工单列出的文件
 - 下一阶段禁止修改内容：操作/合并/推送 `main`；删除旧 `tls_*` 表或停止双写；无 ADR 修改冻结合同 Schema/API；修改、删除、暂存或提交未跟踪 `EnvironmentMonitoringDashboard.vue`；提前实现 `UX-P3-001`
+
+### 2026-08-27 22:30 — Codex / Gate 3+4 G34R-* 独立重审
+
+- 输入 commit：`04ad5aa980f60adf94c78fea04960f9466eb1415`（开始时与 `origin/dev` 一致）
+- 输出 commit：本交接记录所在提交
+- 结论：`CHANGES_REQUIRED`
+- 分区审查：
+  1. Phase 2：`63628c9..75daf80`。
+  2. Phase 3：`75daf80..f68e0a9`。
+  3. UX P1/P2 修正：`c26b6c2..8cec107`。
+  4. 首轮 Grok 代行 Gate 修复：`2e787d4..ad983f1`。
+  5. 本轮 Grok `G34R-*` 修复：`2c0b15d..04ad5aa`（实现主体位于 `04ad5aa`）。
+- 已确认关闭：探针 manager 权限、操作 UTF-8 输出裁剪与统一终态审计、overview 全 scope 汇总/N+1、稳定时间桶、客户端时序 abort/token guard、Electron bootstrap，以及 Gemini 的全部 P1/P2。`UX-P3-001` 仍为非阻塞 P3；旧 `tls_*` 与双写保持不变。
+- Phase 2 审查问题：
+  1. **`G34RR-P1-001`：mapper 异常仍会在危险命令运行时提前完成 operation 并释放全部锁。** 文件/位置：`src/server/service-operations.ts:235-300,350-367`；异常来源包括 `src/server/routes/service-maintenance.ts:938-940,1256-1260` 的进度持久化。触发条件：任一并发 worker 的 mapper 或 `onProgress` 因数据库/意外异常 reject，而其他 worker 正在执行 SSH 命令。实际后果：`Promise.all` 立即 reject，`runServiceOperation` 捕获后写终态并在第 300 行释放全部资源锁；未被取消的 sibling worker 继续执行，新 operation 可与旧危险命令重叠，且晚到结果不在 `result_json`。期望行为：单 worker 异常停止新调度，但必须等待/取消全部在途 worker，保留逐目标失败与已完成结果，并在最后一个 worker 安全停止后才释放对应锁。建议修复边界：仅重构 `mapWithConcurrency`/runner 的 all-settled、取消和结果收集语义及 route 回调；不改冻结 API/Schema。验证方法：让第一个 mapper reject、第二个 mapper 延迟完成，断言 runner 未提前返回、旧锁持续存在、无新目标启动、最终结果包含两者；当前复现输出 `at-rejection []`、随后 `after-rejection [1]`。
+  2. **`G34RR-P2-002`：轻量 Payload 的 service-only cursor 仍会永久丢失单服务内被截断的 deployments。** 文件/位置：`src/server/service-deployments-payload.ts:145-185,210-228`。触发条件：一个 service 自身有 501 个以上 deployment，或 1 MiB 裁剪循环缩短唯一 service 的 deployments/discovery hosts。实际后果：只返回前 500 个却把 `nextCursor` 设为 `null`；字节裁剪时 cursor 仍只指向 service ID，service 内或 discovery 内被裁项无法续读。当前行为复现为 `count=500,truncated=true,hasMore=true,nextCursor=null`。期望行为：每个被截集合都有稳定可续读游标并能取回完整并集；若冻结 DTO 无法表达，则在返回不完整数据前明确 `413`，不能返回不可续读的 `hasMore=true`。建议修复边界：Payload 查询/游标实现与行为测试，不扩展冻结字段；如确需新增 cursor，必须先按 ADR 改合同。验证方法：单 service 501+、跨 service 500+、多字节超 1 MiB 和超大 discovery fixtures，逐页并集无丢失、无重复且每页 `Buffer.byteLength <= 1 MiB`。
+  3. **`G34RR-P2-003`：服务维护拆分仍未达到冻结组件边界，TLS 行为仍残留。** 文件/位置：`src/client/components/ServiceMaintenancePanel.vue`（1499 行）、`src/client/components/service-maintenance/use-maintenance-payload.ts`（958 行）、`src/client/components/service-maintenance/use-alert-settings.ts:62-105`。触发条件：维护 deployment card、对话框/设置或告警设置。实际后果：容器仍持有大段模板/状态/CSS，deployment card 没有独立边界；大型 composable 未拆；`use-alert-settings` 继续接受 `"tls"` 并读写 `tlsEnabled/tlsWarnDays/tlsHostnameMismatchEnabled`，因此“维护模块不再依赖 TLS”不成立。期望行为：容器仅编排 selector/ribbon/grid/card/batch/discovery 等明确子组件，维护模块依赖图不含 TLS/certificate。建议修复边界：机械拆分现有 UI 和删除不可达 TLS 分支，不改变视觉/API。验证方法：组件交互测试覆盖服务选择、deployment card、批量进度、日志/SSH、discovery 与告警设置；依赖扫描不再命中 TLS/certificate。
+- Phase 3 与最终发布审查问题：
+  1. **`G34RR-P2-004`：降采样仍违反严格 480 点与全区间首末/gap 合同。** 文件/位置：`src/shared/monitoring.ts:48-74`、`src/server/monitoring-timeseries.ts:69-81,118-130`。触发条件 A：gap 必保索引达到点数上限后仍需并入末点；触发条件 B：30d/高频数据超过 SQL 的 `LIMIT 50000`。实际后果：A 会返回 481 点（当前 1200 点/大量 gap 复现为 `count=481,first=0,last=1199`）；B 只对最早 50000 行分桶，真实末点及后半区 gap 可能在降采样前就被丢弃。期望行为：任一序列严格 `<=480`；选择覆盖完整时间区间的真实首末和可表达的 gap 边界，当必保 gap 超预算时采用合同定义的确定性降级而非突破硬上限。建议修复边界：共享降采样器与 service timeseries 查询/测试；不改路由 DTO。验证方法：>50000 样本、多个 gap、gap 边界超过预算，严格断言 `<=480`、真实首末以及合同允许范围内的 gap；SQLite/MariaDB 对账。
+  2. **`G34RR-P2-005`：新增监控 MariaDB 套件本身以失败退出，不能作为真实双库证据。** 文件/位置：`tests/monitoring-mysql.test.ts:68-80`、`tests/helpers/monitoring-harness.ts`。触发条件：执行 `VIRON_MONITOR_MYSQL_TEST=1 npx vitest run tests/monitoring-mysql.test.ts`。实际后果：测试 body 通过后，harness 已关闭连接，文件级 `afterAll` 再次 `db.close()`，抛出 `Can't add new command when connection is in closed state`，Vitest 文件退出 1；默认 `npm test` 又 skip 此文件。期望行为：真实 MariaDB 11.4 套件完整 setup/body/teardown 退出 0，并与 SQLite 同 fixture 逐字段对账；按用户指示无需修改 GitHub workflow。建议修复边界：仅修测试资源所有权/teardown 和对账断言。验证方法：该精确命令连续两次退出 0、容器与临时目录均清理，且无 skipped 双库断言。
+  3. **`G34RR-P2-006`：发布用户流仍以内部 API stub/直接写数据库代替两个冻结核心生命周期。** 文件/位置：`scripts/verify-user-flows.mjs:137-164,252-290,300-329,338-342`。触发条件：`verify:full-regression` 把四条 Given/When/Then 作为最终发布证据。实际后果：批量部分失败直接拦截生产 `/service-deployments/actions` 与 operation polling，未经过服务端锁/幂等/runner；证书“轮换”直接 INSERT/UPDATE 新旧表，未经过探测/归并/旧证书 orphan 生命周期；NOC 仅断言 DOM 可见，未断言 `document.fullscreenElement`。这些流程即使后端核心行为回归仍可显示 pass。期望行为：保留 UI 驱动，用受控 executor/mock SSH 或测试后端让请求经过真实 route/runner；证书经真实探测或领域 API 完成轮换并断言旧 orphan；NOC 断言 Fullscreen API 进入/退出状态。建议修复边界：仅用户流 fixture/harness，不修改冻结业务合同。验证方法：让生产后端故意返回相反结果时测试先失败，修复后四条 Given/When/Then 及截图均通过。
+- 修改文件：`docs/refactor-execution/ACCEPTANCE.md`、`docs/refactor-execution/STATUS.md`；未修改生产代码。
+- 数据库/API 变化：无。冻结 Schema/API、旧 `tls_*` 表与兼容双写均保持不变。
+- 测试命令及结果：
+  - 五段审查边界与当前工作区 `git diff --check`：通过。
+  - 定向 Vitest：`tests/service-deployments-payload.test.ts`、`tests/service-operations.test.ts`、`tests/monitoring.test.ts`、`tests/monitoring-view-abort.test.ts`、`tests/service-maintenance-panel.test.ts`，5 files / 13 tests 通过；现有测试未捕获上述边界复现。
+  - `VIRON_MONITOR_MYSQL_TEST=1 npx vitest run tests/monitoring-mysql.test.ts`：测试 body 1 passed，但 teardown 抛 `Can't add new command when connection is in closed state`，文件退出 1，复现 `G34RR-P2-005`。
+  - `npm run verify:full-regression`：通过；四条 Given/When/Then 输出 pass，客户端/服务端构建与桌面启动烟测通过，`passiveHoverFocusStable=true`。
+  - 定向运行时复现：mapper reject 后 sibling 继续；单 service 501 deployment 返回不可续读的 `nextCursor=null`；1200 点 gap fixture 返回 481 点。
+- `package:current-os` 结果：通过。生成并校验 `/Users/futongyong/project/hyperone/viron/release/Viron-0.1.6-macos-arm64-self-signed.dmg`；arm64、macOS 12.0+、本地自签名，产物未纳入 Git。
+- 未完成内容：关闭 `G34RR-P1-001`、`G34RR-P2-002`～`G34RR-P2-006` 并经 Codex 再审前，合并 Gate 3+4 不得恢复 `PASSED`，不得发布或合并 main。
+- 已知风险：见本交接问题清单和第 5 节。`UX-P3-001` 与旧 TLS 双写清理仍为已批准延期，但不是本轮 P1/P2 的豁免。
+- 下一位负责人：Grok / 仅关闭 `G34RR-*` 后交 Codex 独立重审。
+- 下一阶段允许修改范围：仅 operation runner 并发异常语义、轻量 Payload 可续读分页、维护组件拆分/TLS 残留、timeseries 查询/降采样、监控 MariaDB teardown/对账、用户流 fixture/harness 及相应行为测试。
+- 下一阶段禁止修改内容：操作/合并/推送 `main`；删除旧 `tls_*` 表或停止双写；无 ADR 修改冻结合同 Schema/API；修改、删除、暂存或提交未跟踪 `src/client/components/EnvironmentMonitoringDashboard.vue`；提前实现 `UX-P3-001`。
