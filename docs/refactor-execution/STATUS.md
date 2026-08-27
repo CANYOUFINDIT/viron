@@ -33,7 +33,7 @@
 | Phase 0B UI/UX 规格 | Gemini | `PASSED` | `e250733` | `0695956` | 用户于 2026-08-27 11:24 CST 批准 2.0.0-final；无例外 |
 | Gate 1 技术合同 | Codex | `PASSED` | `2677bbe` | `9526f92` | 技术合同已冻结，验收矩阵已完善，无阻断问题 |
 | Phase 1 凭据与证书 | Grok | `CHANGES_REQUIRED` | `9526f92` / `9c3ba63` | `0ec3ab9` | Gate 2 发现迁移、生命周期、分页和 UI/测试阻断项，须在 Phase 1 内修正 |
-| Gate 2 Phase 1 审查 | Codex | `CHANGES_REQUIRED` | `9c3ba63` | `0ec3ab9` / 待回填审查记录 commit | 详见 2026-08-27 12:31 交接；不得进入 Phase 2 |
+| Gate 2 Phase 1 审查 | Codex | `CHANGES_REQUIRED` | `9c3ba63` | `3e2e448` | 审查实现 `0ec3ab9`；详见 2026-08-27 12:31 交接；不得进入 Phase 2 |
 | Phase 2 服务维护瘦身 | Grok | `BLOCKED` | 待填 | 待填 | 等待 Gate 2 |
 | Gate 3 Phase 2 审查 | Codex | `BLOCKED` | 待填 | 待填 | 待填 |
 | Phase 3 监控大盘 | Grok | `BLOCKED` | 待填 | 待填 | 等待 Gate 3 |
@@ -215,7 +215,7 @@ Gate 2 结论为 `CHANGES_REQUIRED`，Phase 2 继续阻塞。当前阻断与风�
 
 - 输入 commit：`9c3ba63`（Phase 1 实现前状态记录；冻结合同输出为 `9526f92`）
 - 审查 commit：`0ec3ab9`
-- 输出 commit：本次 Gate 2 审查记录提交，随后回填精确 commit
+- 输出 commit：`3e2e448`
 - 结论：`CHANGES_REQUIRED`
 - 完成内容：
   1. 严格只审查 `9c3ba63..0ec3ab9`，复核 Schema、迁移、SQLite/MySQL、双写、API、权限、TLS 探测、删除生命周期、客户端状态和测试证据。
