@@ -130,26 +130,30 @@ async function loadAlerts() {
 }
 
 async function loadTimeseries() {
-  if (!selectedServiceId.value) {
-    timeseriesPoints.value = [];
-    return;
-  }
   timeseriesAbort?.abort();
   timeseriesAbort = new AbortController();
+  const signal = timeseriesAbort.signal;
+  const serviceId = selectedServiceId.value;
+  if (!serviceId || view.value !== "services") {
+    timeseriesPoints.value = [];
+    loadingTimeseries.value = false;
+    return;
+  }
   loadingTimeseries.value = true;
   try {
     const response = await api<{ points: typeof timeseriesPoints.value }>(
-      `/api/v1/monitoring/services/${selectedServiceId.value}/timeseries?range=${range.value}`,
-      { signal: timeseriesAbort.signal },
+      `/api/v1/monitoring/services/${serviceId}/timeseries?range=${range.value}`,
+      { signal },
     );
+    if (signal.aborted || selectedServiceId.value !== serviceId || view.value !== "services") return;
     timeseriesPoints.value = response.points;
     lastTimeseriesAt = Date.now();
   } catch (caught) {
-    if ((caught as { name?: string }).name === "AbortError") return;
+    if ((caught as { name?: string }).name === "AbortError" || signal.aborted) return;
     timeseriesPoints.value = [];
     ElMessage.warning(caught instanceof Error ? caught.message : tr("暂无服务时序"));
   } finally {
-    loadingTimeseries.value = false;
+    if (timeseriesAbort?.signal === signal) loadingTimeseries.value = false;
   }
 }
 
@@ -197,7 +201,7 @@ onBeforeUnmount(() => {
 
 watch([environmentId, view], () => { void loadOverview(true); });
 watch([selectedServiceId, range, view], () => {
-  if (view.value === "services") void loadTimeseries();
+  void loadTimeseries();
 });
 watch(refreshSeconds, () => startRefresh());
 

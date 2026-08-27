@@ -35,17 +35,41 @@ export function isMonitorStale(lastCollectedAt: string | null | undefined, resol
   return now - collected > MONITORING_STALE_CYCLES * cycleMs;
 }
 
-export function capSeriesPoints<T>(points: T[], max = MONITORING_MAX_POINTS): T[] {
+export function timeBucketMs(range: MonitoringRange): number {
+  return Math.max(1000, Math.floor(rangeMilliseconds[range] / MONITORING_MAX_POINTS));
+}
+
+export function bucketTimestamp(at: string, bucketMs: number): string {
+  const time = Date.parse(at);
+  if (!Number.isFinite(time)) return at;
+  return new Date(Math.floor(time / bucketMs) * bucketMs).toISOString();
+}
+
+export function capSeriesPoints<T>(points: T[], max = MONITORING_MAX_POINTS, isGap?: (point: T) => boolean): T[] {
   if (points.length <= max) return points;
   if (max <= 2) return [points[0]!, points[points.length - 1]!].slice(0, max);
   const lastIndex = points.length - 1;
+  const required = new Set<number>([0, lastIndex]);
+  for (let index = 0; index < points.length; index += 1) {
+    const gap = isGap ? isGap(points[index]!) : Boolean((points[index] as { breakBefore?: boolean }).breakBefore);
+    if (!gap) continue;
+    if (index > 0) required.add(index - 1);
+    required.add(index);
+  }
   const selected = new Map<number, T>();
+  const requiredIndexes = [...required].sort((left, right) => left - right);
+  for (const index of requiredIndexes) {
+    if (selected.size >= max && index !== 0 && index !== lastIndex) continue;
+    selected.set(index, points[index]!);
+  }
   selected.set(0, points[0]!);
   selected.set(lastIndex, points[lastIndex]!);
-  const inner = max - 2;
-  for (let slot = 1; slot <= inner; slot += 1) {
-    const index = Math.round((slot * lastIndex) / (inner + 1));
-    selected.set(index, points[index]!);
+  const remaining = max - selected.size;
+  if (remaining > 0) {
+    for (let slot = 1; slot <= remaining; slot += 1) {
+      const index = Math.round((slot * lastIndex) / (remaining + 1));
+      selected.set(index, points[index]!);
+    }
   }
   return [...selected.entries()].sort((left, right) => left[0] - right[0]).map((entry) => entry[1]);
 }

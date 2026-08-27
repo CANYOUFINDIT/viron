@@ -175,7 +175,6 @@ export type ScriptActionsApi = MaintenancePart<
 
 export type AlertSettingsApi = MaintenancePart<
   | "alertSettingsDialog"
-  | "certificateAlertDialog"
   | "savingAlertSettings"
   | "alertSettingsForm"
   | "cpuVisualThreshold"
@@ -183,33 +182,7 @@ export type AlertSettingsApi = MaintenancePart<
   | "diskVisualThreshold"
   | "monitorDiskOptions"
   | "openAlertSettings"
-  | "openCertificateAlertSettings"
   | "saveAlertSettings"
-  | "saveCertificateAlertSettings"
->;
-
-export type TlsCertificatesApi = MaintenancePart<
-  | "certificateDialog"
-  | "editingEndpointId"
-  | "probingEndpointIds"
-  | "selectedCertificateKey"
-  | "certificateForm"
-  | "certificateGroups"
-  | "selectedCertificate"
-  | "expiringCertificates"
-  | "expiredCertificates"
-  | "unboundCertificates"
-  | "selectCertificate"
-  | "certificateTone"
-  | "certificateSummary"
-  | "endpointStatusLabel"
-  | "fingerprintLabel"
-  | "openCertificateCreate"
-  | "openCertificateEdit"
-  | "saveCertificate"
-  | "removeCertificate"
-  | "probeCertificate"
-  | "applyCertificateFocus"
 >;
 
 export interface MaintenanceContext {
@@ -218,11 +191,10 @@ export interface MaintenanceContext {
   monitorInstall: MonitorInstallApi | null;
   scriptActions: ScriptActionsApi | null;
   alertSettings: AlertSettingsApi | null;
-  tls: TlsCertificatesApi | null;
 }
 
 export function createMaintenanceContext(): MaintenanceContext {
-  return { payload: null, directory: null, monitorInstall: null, scriptActions: null, alertSettings: null, tls: null };
+  return { payload: null, directory: null, monitorInstall: null, scriptActions: null, alertSettings: null };
 }
 
 export function requireMaintenancePart<Key extends keyof MaintenanceContext>(ctx: MaintenanceContext, key: Key): NonNullable<MaintenanceContext[Key]> {

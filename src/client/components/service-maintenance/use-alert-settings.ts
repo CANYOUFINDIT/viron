@@ -18,7 +18,6 @@ export function useAlertSettings(ctx: MaintenanceContext, props: Readonly<Mainte
   const $monitorInstall = deferMaintenancePart(ctx, "monitorInstall");
   const $scriptActions = deferMaintenancePart(ctx, "scriptActions");
   const alertSettingsDialog = ref(false);
-  const certificateAlertDialog = ref(false);
 
   const savingAlertSettings = ref(false);
 
@@ -60,11 +59,6 @@ export function useAlertSettings(ctx: MaintenanceContext, props: Readonly<Mainte
       alertSettingsDialog.value = true;
   }
 
-  function openCertificateAlertSettings() {
-      copyAlertSettingsForm();
-      certificateAlertDialog.value = true;
-  }
-
   function monitorSettingsBody(section: "monitor" | "tls") {
       const monitor = section === "monitor" ? alertSettingsForm : $payload.payload.value.alertSettings;
       const tls = section === "tls" ? alertSettingsForm : $payload.payload.value.alertSettings;
@@ -104,7 +98,6 @@ export function useAlertSettings(ctx: MaintenanceContext, props: Readonly<Mainte
           });
           $payload.payload.value.alertSettings = response.item;
           if (section === "tls") {
-              certificateAlertDialog.value = false;
               ElMessage.success(response.item.tlsEnabled ? tr("证书告警已启用") : tr("证书告警已关闭"));
               return;
           }
@@ -120,13 +113,8 @@ export function useAlertSettings(ctx: MaintenanceContext, props: Readonly<Mainte
       await putAlertSettings("monitor");
   }
 
-  async function saveCertificateAlertSettings() {
-      await putAlertSettings("tls");
-  }
-
   return {
     alertSettingsDialog,
-    certificateAlertDialog,
     savingAlertSettings,
     alertSettingsForm,
     cpuVisualThreshold,
@@ -134,9 +122,7 @@ export function useAlertSettings(ctx: MaintenanceContext, props: Readonly<Mainte
     diskVisualThreshold,
     monitorDiskOptions,
     openAlertSettings,
-    openCertificateAlertSettings,
     saveAlertSettings,
-    saveCertificateAlertSettings,
   };
 }
 

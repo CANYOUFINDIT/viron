@@ -306,29 +306,58 @@ export async function registerMonitorHistoryRoutes(app: FastifyInstance): Promis
       const sourceSampleCount = Number(countRow.sample_count);
       const maximumPoints = MONITORING_MAX_POINTS;
       const stride = Math.max(1, Math.ceil(sourceSampleCount / maximumPoints));
-      const sampledRows = await app.db.prepare(`
+      const sampleKeySql = `
         SELECT agent_id, sequence_end, MAX(collected_at) AS collected_at,
           MAX(resolution_seconds) AS resolution_seconds
         FROM monitor_samples
         WHERE agent_id IN (${placeholders}) AND collected_at >= ? AND collected_at <= ?
           AND ${scopeClause}
+      `;
+      const sampledRows = await app.db.prepare(`
+        ${sampleKeySql}
           AND (sequence_end % ?) = 0
         GROUP BY agent_id, sequence_end
         ORDER BY collected_at
         LIMIT 520
       `).all(...agentIds, ...bounds, ...scopeParameters, stride) as StoredSampleKeyRow[];
       const boundaryRows = await Promise.all(["ASC", "DESC"].map(async (direction) => await app.db.prepare(`
-        SELECT agent_id, sequence_end, MAX(collected_at) AS collected_at,
-          MAX(resolution_seconds) AS resolution_seconds
-        FROM monitor_samples
-        WHERE agent_id IN (${placeholders}) AND collected_at >= ? AND collected_at <= ?
-          AND ${scopeClause}
+        ${sampleKeySql}
         GROUP BY agent_id, sequence_end
         ORDER BY collected_at ${direction}
         LIMIT 1
       `).get(...agentIds, ...bounds, ...scopeParameters) as StoredSampleKeyRow | undefined));
+      const gaps = await app.db.prepare(`
+        SELECT agent_id, sequence_end, MIN(started_at) AS started_at, MAX(ended_at) AS ended_at, MAX(reason) AS reason
+        FROM monitor_sequence_gaps
+        WHERE agent_id IN (${placeholders}) AND ended_at >= ? AND started_at <= ?
+          AND ${scopeClause}
+        GROUP BY agent_id, sequence_end
+        ORDER BY ended_at
+      `).all(...agentIds, ...bounds, ...scopeParameters) as StoredGapRow[];
+      const gapBoundaryRows = (await Promise.all(gaps.flatMap((gap) => [
+        app.db.prepare(`
+          SELECT agent_id, sequence_end, MAX(collected_at) AS collected_at,
+            MAX(resolution_seconds) AS resolution_seconds
+          FROM monitor_samples
+          WHERE agent_id = ? AND collected_at <= ? AND collected_at >= ? AND collected_at <= ?
+            AND ${scopeClause}
+          GROUP BY agent_id, sequence_end
+          ORDER BY collected_at DESC
+          LIMIT 1
+        `).get(gap.agent_id, gap.started_at, ...bounds, ...scopeParameters) as Promise<StoredSampleKeyRow | undefined>,
+        app.db.prepare(`
+          SELECT agent_id, sequence_end, MAX(collected_at) AS collected_at,
+            MAX(resolution_seconds) AS resolution_seconds
+          FROM monitor_samples
+          WHERE agent_id = ? AND collected_at >= ? AND collected_at >= ? AND collected_at <= ?
+            AND ${scopeClause}
+          GROUP BY agent_id, sequence_end
+          ORDER BY collected_at ASC
+          LIMIT 1
+        `).get(gap.agent_id, gap.ended_at, ...bounds, ...scopeParameters) as Promise<StoredSampleKeyRow | undefined>,
+      ]))).filter((row): row is StoredSampleKeyRow => Boolean(row));
       const sampleKeys = new Map(sampledRows.map((row) => [`${row.agent_id}:${row.sequence_end}`, row]));
-      for (const row of boundaryRows) if (row) sampleKeys.set(`${row.agent_id}:${row.sequence_end}`, row);
+      for (const row of [...boundaryRows, ...gapBoundaryRows]) if (row) sampleKeys.set(`${row.agent_id}:${row.sequence_end}`, row);
       const selectedKeys = [...sampleKeys.values()];
 
       const deployments = await app.db.prepare(`
@@ -340,15 +369,8 @@ export async function registerMonitorHistoryRoutes(app: FastifyInstance): Promis
         ORDER BY s.name, d.display_name, d.external_id
       `).all(environmentId, ...agentIds) as DeploymentTarget[];
       const targets = new Map(deployments.map((target) => [`${target.provider_type}:${target.external_id}`, target]));
-      const boundaryConditions = boundaryRows.filter((row): row is StoredSampleKeyRow => Boolean(row));
-      const selectionSql = (sequenceColumn: string, agentColumn: string) => [
-        `(${sequenceColumn} % ?) = 0`,
-        ...boundaryConditions.map(() => `(${agentColumn} = ? AND ${sequenceColumn} = ?)`),
-      ].join(" OR ");
-      const selectionParameters = [
-        stride,
-        ...boundaryConditions.flatMap((row) => [row.agent_id, Number(row.sequence_end)]),
-      ];
+      const selectedPlaceholders = selectedKeys.map(() => "(?, ?)").join(",");
+      const selectedKeyParams = selectedKeys.flatMap((row) => [row.agent_id, Number(row.sequence_end)]);
       let selectedRows: StoredSampleRow[] = [];
       let storedDeploymentMetrics: StoredDeploymentMetric[] | undefined;
       if (selectedKeys.length && app.db.dialect === "mysql") {
@@ -362,12 +384,12 @@ export async function registerMonitorHistoryRoutes(app: FastifyInstance): Promis
               'candidates', JSON_ARRAY()
             ) AS CHAR) AS payload_json
           FROM monitor_samples
-          WHERE agent_id IN (${placeholders}) AND collected_at >= ? AND collected_at <= ?
+          WHERE (agent_id, sequence_end) IN (${selectedPlaceholders})
+            AND collected_at >= ? AND collected_at <= ?
             AND ${scopeClause}
-            AND (${selectionSql("sequence_end", "agent_id")})
           ORDER BY collected_at, received_at
           LIMIT 1040
-        `).all(...agentIds, ...bounds, ...scopeParameters, ...selectionParameters) as StoredSampleRow[];
+        `).all(...selectedKeyParams, ...bounds, ...scopeParameters) as StoredSampleRow[];
         storedDeploymentMetrics = [];
         if (deployments.length) {
           const targetSql = deployments.map(() => "(candidate.provider = ? AND candidate.external_id = ?)").join(" OR ");
@@ -385,31 +407,26 @@ export async function registerMonitorHistoryRoutes(app: FastifyInstance): Promis
               restart_count DOUBLE PATH '$.restartCount' NULL ON EMPTY,
               uptime_seconds DOUBLE PATH '$.uptimeSeconds' NULL ON EMPTY
             )) candidate
-            WHERE samples.agent_id IN (${placeholders})
+            WHERE (samples.agent_id, samples.sequence_end) IN (${selectedPlaceholders})
               AND samples.collected_at >= ? AND samples.collected_at <= ?
               AND samples.ssh_connection_id IN (
                 SELECT id FROM ssh_connections WHERE workspace_type = ? AND workspace_id = ?
               )
-              AND (${selectionSql("samples.sequence_end", "samples.agent_id")})
               AND (${targetSql})
             ORDER BY samples.collected_at, samples.received_at
           `).all(
-            ...agentIds, ...bounds, ...scopeParameters, ...selectionParameters,
+            ...selectedKeyParams, ...bounds, ...scopeParameters,
             ...deployments.flatMap((deployment) => [deployment.provider_type, deployment.external_id]),
           ) as StoredDeploymentMetric[];
         }
       } else if (selectedKeys.length) {
-        const selectedPlaceholders = selectedKeys.map(() => "(?, ?)").join(",");
         selectedRows = await app.db.prepare(`
           SELECT agent_id, sequence_end, collected_at, resolution_seconds, payload_json
           FROM monitor_samples
           WHERE (agent_id, sequence_end) IN (${selectedPlaceholders})
             AND ${scopeClause}
           ORDER BY collected_at, received_at
-        `).all(
-          ...selectedKeys.flatMap((row) => [row.agent_id, Number(row.sequence_end)]),
-          ...scopeParameters,
-        ) as StoredSampleRow[];
+        `).all(...selectedKeyParams, ...scopeParameters) as StoredSampleRow[];
       }
       const rowsByKey = new Map(selectedRows.map((row) => [`${row.agent_id}:${row.sequence_end}`, row]));
       const rows = [...rowsByKey.values()].sort((left, right) => left.collected_at.localeCompare(right.collected_at));
@@ -420,20 +437,13 @@ export async function registerMonitorHistoryRoutes(app: FastifyInstance): Promis
         items.push(metric);
         deploymentMetricsBySample.set(key, items);
       }
-      const gaps = await app.db.prepare(`
-        SELECT agent_id, sequence_end, MIN(started_at) AS started_at, MAX(ended_at) AS ended_at, MAX(reason) AS reason
-        FROM monitor_sequence_gaps
-        WHERE agent_id IN (${placeholders}) AND ended_at >= ? AND started_at <= ?
-          AND ${scopeClause}
-        GROUP BY agent_id, sequence_end
-        ORDER BY ended_at
-      `).all(...agentIds, ...bounds, ...scopeParameters) as StoredGapRow[];
       const parsed = rows.map((row) => parseSample(
         row,
         targets,
         storedDeploymentMetrics === undefined ? undefined : deploymentMetricsBySample.get(`${row.agent_id}:${row.sequence_end}`) ?? [],
       )).filter((point) => point !== null);
-      const points = capSeriesPoints(markDiscontinuities(parsed, gaps), MONITORING_MAX_POINTS);
+      const marked = markDiscontinuities(parsed, gaps);
+      const points = capSeriesPoints(marked, MONITORING_MAX_POINTS, (point) => point.breakBefore);
       const diagnostics = buildMonitorDiagnostics(points);
       const summary = summarizeMonitorPerformance(points);
 

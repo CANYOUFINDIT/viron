@@ -3,9 +3,11 @@ import { canAccessEnvironment } from "./access-control.js";
 import {
   MONITORING_MAX_POINTS,
   MONITORING_MAX_SERVICE_DEPLOYMENTS,
+  bucketTimestamp,
   capSeriesPoints,
   finiteMetric,
   rangeMilliseconds,
+  timeBucketMs,
   type MonitoringRange,
 } from "../shared/monitoring.js";
 
@@ -22,6 +24,11 @@ export class MonitoringQueryError extends Error {
     super(message);
     this.name = "MonitoringQueryError";
   }
+}
+
+function average(values: number[]): number | null {
+  if (!values.length) return null;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
 export async function loadServiceTimeseries(
@@ -64,15 +71,14 @@ export async function loadServiceTimeseries(
     WHERE ssh_connection_id IN (${placeholders}) AND collected_at >= ? AND collected_at <= ?
   `).get(...connectionIds, from, to) as { sample_count: number | string };
   const sourceSampleCount = Number(countRow.sample_count);
-  const stride = Math.max(1, Math.ceil(sourceSampleCount / MONITORING_MAX_POINTS));
+  const bucketMs = timeBucketMs(range);
   const rows = await app.db.prepare(`
     SELECT ssh_connection_id, collected_at, payload_json
     FROM monitor_samples
     WHERE ssh_connection_id IN (${placeholders}) AND collected_at >= ? AND collected_at <= ?
-      AND (sequence_end % ?) = 0
     ORDER BY collected_at
-    LIMIT 2000
-  `).all(...connectionIds, from, to, stride) as Array<{ ssh_connection_id: string; collected_at: string; payload_json: string }>;
+    LIMIT 50000
+  `).all(...connectionIds, from, to) as Array<{ ssh_connection_id: string; collected_at: string; payload_json: string }>;
   const buckets = new Map<string, {
     at: string;
     cpu: number[];
@@ -90,8 +96,8 @@ export async function loadServiceTimeseries(
     const payload = parseJson<Record<string, unknown>>(row.payload_json, {});
     const candidates = Array.isArray(payload.candidates) ? payload.candidates as Array<Record<string, unknown>> : [];
     const targets = deploymentByConnection.get(row.ssh_connection_id) ?? [];
-    const bucketKey = row.collected_at;
-    const bucket = buckets.get(bucketKey) ?? { at: row.collected_at, cpu: [], memory: [], deployments: {} };
+    const bucketKey = bucketTimestamp(row.collected_at, bucketMs);
+    const bucket = buckets.get(bucketKey) ?? { at: bucketKey, cpu: [], memory: [], deployments: {} };
     for (const target of targets) {
       const candidate = candidates.find((item) => String(item.provider ?? "") === target.provider && String(item.externalId ?? "") === target.externalId);
       const cpu = finiteMetric(candidate?.cpuUsedPercent);
@@ -110,18 +116,18 @@ export async function loadServiceTimeseries(
     buckets.set(bucketKey, bucket);
   }
   const sortedBuckets = [...buckets.values()].sort((left, right) => left.at.localeCompare(right.at));
-  const gapMs = Math.max(rangeMilliseconds[range] / MONITORING_MAX_POINTS * 4, 60_000);
+  const gapMs = Math.max(bucketMs * 4, 60_000);
   const rawPoints = sortedBuckets.map((bucket, index) => ({
     at: bucket.at,
     breakBefore: index > 0 && Date.parse(bucket.at) - Date.parse(sortedBuckets[index - 1]!.at) > gapMs,
-    cpuUsedPercent: bucket.cpu.length ? bucket.cpu.reduce((sum, value) => sum + value, 0) / bucket.cpu.length : null,
-    memoryBytes: bucket.memory.length ? bucket.memory.reduce((sum, value) => sum + value, 0) / bucket.memory.length : null,
+    cpuUsedPercent: average(bucket.cpu),
+    memoryBytes: average(bucket.memory),
     deployments: Object.fromEntries(Object.entries(bucket.deployments).map(([id, series]) => [id, {
-      cpuUsedPercent: series.cpu.length ? series.cpu.reduce((sum, value) => sum + value, 0) / series.cpu.length : null,
-      memoryBytes: series.memory.length ? series.memory.reduce((sum, value) => sum + value, 0) / series.memory.length : null,
+      cpuUsedPercent: average(series.cpu),
+      memoryBytes: average(series.memory),
     }])),
   }));
-  const points = capSeriesPoints(rawPoints);
+  const points = capSeriesPoints(rawPoints, MONITORING_MAX_POINTS, (point) => point.breakBefore);
   return {
     range,
     from,

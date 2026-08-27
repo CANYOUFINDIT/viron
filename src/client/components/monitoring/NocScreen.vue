@@ -34,6 +34,7 @@ function formatPercent(value: number | null) {
 
 function heatClass(host: MonitoringHostCard) {
   if (host.offline || host.missing) return "is-down";
+  if (host.stale) return "is-unknown";
   const cpu = host.cpuUsedPercent;
   if (cpu === null) return "is-unknown";
   if (cpu >= 90) return "is-critical";

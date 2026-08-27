@@ -1,11 +1,10 @@
 import type { Component } from "vue";
 import type { CandidateStatus, MonitorCandidate, Provider } from "../../service-candidate-tree";
 import type { MonitorAlertSettings } from "../../../shared/monitor-alerts";
-import type { TlsCertificateGroup, TlsEndpoint, TlsWebEntryBadge } from "../../../shared/tls-certificates";
 
 export type HostFocusMetric = "cpu" | "memory" | "disk" | "network" | "load" | "io" | "pressure" | "swap" | "uptime" | "temperature";
 
-export type MaintenanceWorkspace = "service" | "host" | "certificate";
+export type MaintenanceWorkspace = "service" | "host";
 
 export type HostWorkspaceTab = "monitor" | "discovery";
 
@@ -245,10 +244,7 @@ export interface MaintenancePayload {
     discovery?: { hosts: DiscoveryHostSummary[] };
     generatedAt?: string;
     truncated?: boolean;
-    tlsEndpoints: TlsEndpoint[];
 }
-
-export type { TlsCertificateGroup, TlsEndpoint, TlsWebEntryBadge };
 
 export interface MaintenanceDeploymentResponse extends Omit<Deployment, "scriptActions"> {
     scriptActions?: ScriptAction[];

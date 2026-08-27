@@ -1,11 +1,12 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { canAccessConnection, canManageWorkspace } from "./access-control.js";
+import { canManageWorkspace, getWorkspaceAccess } from "./access-control.js";
 import {
   SERVICE_DEPLOYMENTS_MAX_BYTES,
   SERVICE_DEPLOYMENTS_MAX_DEPLOYMENTS,
   SERVICE_DEPLOYMENTS_MAX_SERVICES,
   capabilityDisabledReason,
   deploymentCapabilities,
+  utf8ByteLength,
 } from "../shared/service-operations.js";
 
 function parseJson<T>(value: unknown, fallback: T): T {
@@ -16,26 +17,39 @@ function parseJson<T>(value: unknown, fallback: T): T {
   }
 }
 
+export class ServiceDeploymentsPayloadError extends Error {
+  constructor(readonly code: string, message: string, readonly statusCode = 413) {
+    super(message);
+    this.name = "ServiceDeploymentsPayloadError";
+  }
+}
+
 export async function loadServiceDeploymentsPayload(
   app: FastifyInstance,
   request: FastifyRequest,
   environmentId: string,
   query: { cursor?: string; limit?: number } = {},
 ): Promise<Record<string, unknown>> {
-  const [serviceRows, deploymentRows, scriptActionRows, logLinkRows, logRows, connectionRowsRaw] = await Promise.all([
-    app.db.prepare("SELECT * FROM services WHERE environment_id = ? ORDER BY sort_order, updated_at DESC, name").all(environmentId) as Promise<Record<string, unknown>[]>,
-    app.db.prepare(`
+  const access = await getWorkspaceAccess(app.db, request.admin!);
+  const serviceRows = await app.db.prepare("SELECT * FROM services WHERE environment_id = ? ORDER BY sort_order, updated_at DESC, name").all(environmentId) as Record<string, unknown>[];
+  const limit = Math.min(Math.max(1, query.limit ?? SERVICE_DEPLOYMENTS_MAX_SERVICES), SERVICE_DEPLOYMENTS_MAX_SERVICES);
+  const cursorIndex = query.cursor ? serviceRows.findIndex((row) => String(row.id) === query.cursor) : -1;
+  const start = cursorIndex >= 0 ? cursorIndex + 1 : 0;
+  const pageRows = serviceRows.slice(start, start + limit);
+  const serviceIds = pageRows.map((row) => String(row.id));
+  const servicePlaceholders = serviceIds.map(() => "?").join(",") || "NULL";
+  const [deploymentRows, scriptActionRows, logLinkRows, logRows, connectionRowsRaw] = await Promise.all([
+    serviceIds.length ? app.db.prepare(`
       SELECT d.*, c.host, c.port, c.username, c.source_deleted,
         CASE WHEN c.id IS NULL THEN 0 ELSE EXISTS(
           SELECT 1 FROM ssh_connection_environments ce
           WHERE ce.connection_id = c.id AND ce.environment_id = ?
         ) END AS connection_available
       FROM service_deployments d
-      JOIN services s ON s.id = d.service_id
       LEFT JOIN ssh_connections c ON c.id = d.ssh_connection_id
-      WHERE s.environment_id = ?
+      WHERE d.service_id IN (${servicePlaceholders})
       ORDER BY d.created_at
-    `).all(environmentId, environmentId) as Promise<Record<string, unknown>[]>,
+    `).all(environmentId, ...serviceIds) as Promise<Record<string, unknown>[]> : Promise.resolve([]),
     app.db.prepare(`
       SELECT a.id, a.service_id, a.deployment_id, a.name, a.icon, a.created_at, a.updated_at
       FROM service_script_actions a
@@ -62,10 +76,7 @@ export async function loadServiceDeploymentsPayload(
     `).all(environmentId) as Promise<Record<string, unknown>[]>,
   ]);
 
-  const connectionRows: Record<string, unknown>[] = [];
-  for (const row of connectionRowsRaw) {
-    if (await canAccessConnection(app.db, request.admin!, "ssh", String(row.id))) connectionRows.push(row);
-  }
+  const connectionRows = connectionRowsRaw.filter((row) => access.canManage || access.sshConnectionIds.has(String(row.id)));
   const visibleConnectionIds = new Set(connectionRows.map((row) => String(row.id)));
   const manager = canManageWorkspace(request);
   const scriptActionsByService = new Map<string, Record<string, unknown>[]>();
@@ -92,13 +103,7 @@ export async function loadServiceDeploymentsPayload(
   }
 
   const deploymentsByService = new Map<string, Record<string, unknown>[]>();
-  let deploymentCount = 0;
-  let truncated = false;
   for (const row of deploymentRows) {
-    if (deploymentCount >= SERVICE_DEPLOYMENTS_MAX_DEPLOYMENTS) {
-      truncated = true;
-      break;
-    }
     const connectionVisible = visibleConnectionIds.has(String(row.ssh_connection_id));
     const metrics = connectionVisible ? parseJson<Record<string, unknown>>(row.latest_metrics_json, {}) : {};
     const provider = String(row.provider_type);
@@ -128,7 +133,6 @@ export async function loadServiceDeploymentsPayload(
     const items = deploymentsByService.get(String(row.service_id)) ?? [];
     items.push(deployment);
     deploymentsByService.set(String(row.service_id), items);
-    deploymentCount += 1;
   }
 
   const logIdsByService = new Map<string, string[]>();
@@ -138,12 +142,26 @@ export async function loadServiceDeploymentsPayload(
     logIdsByService.set(row.service_id, ids);
   }
 
-  const limit = Math.min(Math.max(1, query.limit ?? SERVICE_DEPLOYMENTS_MAX_SERVICES), SERVICE_DEPLOYMENTS_MAX_SERVICES);
-  const cursorIndex = query.cursor ? serviceRows.findIndex((row) => String(row.id) === query.cursor) : -1;
-  const start = cursorIndex >= 0 ? cursorIndex + 1 : 0;
-  const pageRows = serviceRows.slice(start, start + limit);
-  if (start + pageRows.length < serviceRows.length) truncated = true;
-  const services = pageRows.map((row) => ({
+  const includedRows: Record<string, unknown>[] = [];
+  let deploymentCount = 0;
+  let truncated = start + pageRows.length < serviceRows.length;
+  for (const row of pageRows) {
+    const deps = deploymentsByService.get(String(row.id)) ?? [];
+    if (includedRows.length && deploymentCount + deps.length > SERVICE_DEPLOYMENTS_MAX_DEPLOYMENTS) {
+      truncated = true;
+      break;
+    }
+    let used = deps;
+    if (deps.length > SERVICE_DEPLOYMENTS_MAX_DEPLOYMENTS) {
+      used = deps.slice(0, SERVICE_DEPLOYMENTS_MAX_DEPLOYMENTS);
+      deploymentsByService.set(String(row.id), used);
+      truncated = true;
+    }
+    includedRows.push(row);
+    deploymentCount += used.length;
+  }
+  if (includedRows.length < pageRows.length) truncated = true;
+  const services = includedRows.map((row) => ({
     id: row.id,
     environmentId: row.environment_id,
     name: row.name,
@@ -156,14 +174,14 @@ export async function loadServiceDeploymentsPayload(
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }));
-  if (serviceRows.length > SERVICE_DEPLOYMENTS_MAX_SERVICES) truncated = true;
+  const pageContinues = start + includedRows.length < serviceRows.length || includedRows.length < pageRows.length;
 
   const payload = {
     canConfigure: manager,
     canOperate: manager,
     generatedAt: new Date().toISOString(),
     truncated,
-    nextCursor: truncated && services.length ? String(services[services.length - 1]!.id) : null,
+    nextCursor: pageContinues && services.length ? String(services[services.length - 1]!.id) : null,
     hasMore: truncated,
     partialFailures: [] as string[],
     services,
@@ -190,7 +208,7 @@ export async function loadServiceDeploymentsPayload(
   };
 
   let encoded = JSON.stringify(payload);
-  while (encoded.length > SERVICE_DEPLOYMENTS_MAX_BYTES) {
+  while (utf8ByteLength(encoded) > SERVICE_DEPLOYMENTS_MAX_BYTES) {
     payload.truncated = true;
     payload.hasMore = true;
     if (!payload.partialFailures.includes("payload_truncated")) payload.partialFailures.push("payload_truncated");
@@ -201,8 +219,10 @@ export async function loadServiceDeploymentsPayload(
       firstService.deployments = firstService.deployments.slice(0, Math.max(1, Math.floor(firstService.deployments.length / 2)));
     } else if (payload.logs.length) {
       payload.logs = [];
+    } else if (payload.discovery.hosts.length) {
+      payload.discovery.hosts = payload.discovery.hosts.slice(0, Math.max(0, Math.floor(payload.discovery.hosts.length / 2)));
     } else {
-      break;
+      throw new ServiceDeploymentsPayloadError("PAYLOAD_TOO_LARGE", "服务维护载荷无法在 1 MiB 内安全分页");
     }
     payload.nextCursor = payload.services.length ? String(payload.services[payload.services.length - 1]!.id) : null;
     encoded = JSON.stringify(payload);

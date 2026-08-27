@@ -4,7 +4,6 @@ import type { MessageHandler } from "element-plus";
 
 import type { CandidateStatus, MonitorCandidate, Provider } from "../../service-candidate-tree";
 import type { MonitorAlertSettings } from "../../../shared/monitor-alerts";
-import type { TlsCertificateGroup, TlsEndpoint } from "../../../shared/tls-certificates";
 import type { DirectoryDropTarget, DirectoryMoveDirection, EnvironmentLog, HostFocusMetric, HostSnapshot, HostWorkspaceTab, KubernetesConfigDiscovery, MaintenanceCounts, MaintenanceDeploymentResponse, MaintenanceDirectory, MaintenancePayload, MaintenancePayloadResponse, MaintenanceServiceResponse, MaintenanceWorkspace, MonitorHost, MonitorInstallPreflight, MonitorInstallTask, MonitorInstallTaskPhase, MonitorInstallTaskStatus, ScriptAction, ScriptActionExecution, ScriptActionExecutionResult, ScriptActionIcon, ServiceItem, Deployment } from "./types";
 
 export interface MaintenanceApi {
@@ -168,7 +167,6 @@ export interface MaintenanceApi {
   "formatScriptDuration": (milliseconds: number) => string;
   "scriptExecutionSummary": (execution: ScriptActionExecution) => string;
   "alertSettingsDialog": Ref<boolean, boolean>;
-  "certificateAlertDialog": Ref<boolean, boolean>;
   "savingAlertSettings": Ref<boolean, boolean>;
   "alertSettingsForm": MonitorAlertSettings;
   "cpuVisualThreshold": ComputedRef<number>;
@@ -176,29 +174,6 @@ export interface MaintenanceApi {
   "diskVisualThreshold": ComputedRef<number>;
   "monitorDiskOptions": ComputedRef<{ key: string; label: string; }[]>;
   "openAlertSettings": () => void;
-  "openCertificateAlertSettings": () => void;
   "saveAlertSettings": () => Promise<void>;
-  "saveCertificateAlertSettings": () => Promise<void>;
-  "certificateDialog": Ref<boolean, boolean>;
-  "editingEndpointId": Ref<string, string>;
-  "probingEndpointIds": Ref<Set<string>, Set<string>>;
-  "selectedCertificateKey": Ref<string, string>;
-  "certificateForm": { host: string; port: number; sni: string; sshConnectionId: string | null; observeEnabled: boolean };
-  "certificateGroups": ComputedRef<TlsCertificateGroup[]>;
-  "selectedCertificate": ComputedRef<TlsCertificateGroup | null>;
-  "expiringCertificates": ComputedRef<number>;
-  "expiredCertificates": ComputedRef<number>;
-  "unboundCertificates": ComputedRef<number>;
-  "selectCertificate": (key: string) => void;
-  "certificateTone": (group: TlsCertificateGroup) => string;
-  "certificateSummary": (group: TlsCertificateGroup) => string;
-  "endpointStatusLabel": (endpoint: TlsEndpoint) => string;
-  "fingerprintLabel": (value: string) => string;
-  "openCertificateCreate": () => void;
-  "openCertificateEdit": (endpoint: TlsEndpoint) => void;
-  "saveCertificate": () => Promise<unknown>;
-  "removeCertificate": (endpoint: TlsEndpoint) => Promise<void>;
-  "probeCertificate": (endpoint: TlsEndpoint) => Promise<void>;
-  "applyCertificateFocus": () => boolean;
 }
 
