@@ -52,16 +52,16 @@ Gate 2：Codex 审查；Grok 修复；Codex 复核
           ↓
 Phase 2：Grok 瘦身服务维护
           ↓
-Gate 3：Codex 审查；Grok 修复；Codex 复核
+Phase 3：同一 Grok 会话继续实现监控大盘与 NOC 模式
           ↓
-Phase 3：Grok 实现监控大盘与 NOC 模式
+Gemini 基于运行截图对 Phase 2+3 做整体视觉/交互验收
           ↓
-Gemini 基于运行截图做视觉/交互验收；Grok 修复
+Grok 集中修复 Gemini 验收问题
           ↓
-Gate 4：Codex 全量回归、最终验收和安装包验证
+Gate 3+4：Codex 合并审查 Phase 2+3、全量回归、最终验收和安装包验证
 ```
 
-任何 Gate 未通过，不得开始下一阶段。
+用户已于 2026-08-27 15:22 CST 明确批准本次执行流程例外：取消 Phase 2 与 Phase 3 之间的独立 Gate 3，不改变 `TECH-CONTRACT.md` 的技术边界和两个 Phase 各自的验收项。Grok 必须先完成 Phase 2 的内部自验再继续 Phase 3，并用独立 commit 保留阶段边界；最终由 Codex 对两个阶段实施合并 Gate 3+4。Gate 2 之前的历史流程和结论不受影响。
 
 ## 4. 单写者规则
 
@@ -108,7 +108,7 @@ Gate 4：Codex 全量回归、最终验收和安装包验证
 1. 查看 `STATUS.md`，确认下一位 Agent 和当前阶段。
 2. 把对应 Agent 任务书完整交给该 Agent，并要求其执行 `STATUS.md` 中当前阶段。
 3. Agent 完成后，检查其是否填写 commit、测试结果、打包结果、风险和下一位负责人。
-4. 只有验收条件满足时才把下一份任务书交给下一位 Agent。
+4. 当前合并批次中，Grok 完成 Phase 2+3 后直接交 Gemini；Gemini 验收后交 Grok 集中修复，最后交 Codex 合并执行 Gate 3+4。
 
 若 Agent 请求改变已经冻结的数据模型、API 或产品方向，停止当前任务，由用户决定是否退回 Gemini 或 Codex 重新开决策记录。不要让实现 Agent 私自扩大范围。
 
@@ -136,4 +136,12 @@ Gate 4：Codex 全量回归、最终验收和安装包验证
 请打开并完整执行 docs/refactor-execution/CODEX-ARCHITECTURE-QA-AGENT.md。
 根据 STATUS.md 自动判断当前 Gate，只处理该 Gate，不提前实施后续阶段。
 完成后给出 PASSED、CHANGES_REQUIRED 或 BLOCKED 的明确结论并完成交接。
+```
+
+当前合并批次交给 Grok：
+
+```text
+请打开并完整执行 docs/refactor-execution/GROK-IMPLEMENTATION-AGENT.md。
+根据 STATUS.md 执行用户已批准的 Phase 2+3 合并批次：先完成并内部自验 Phase 2，再在同一会话继续 Phase 3；两个阶段分别提交，但中间不交 Codex Gate 3。
+完成 Phase 2+3 全量验证、当前系统打包和运行截图后，更新 STATUS.md、推送 origin/dev，并交给 Gemini 做整体 UI/UX 验收。不得超出 TECH-CONTRACT.md 对 Phase 2/3 的允许范围。
 ```

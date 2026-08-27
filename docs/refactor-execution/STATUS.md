@@ -6,13 +6,14 @@
 
 | 字段 | 当前值 |
 | --- | --- |
-| 当前阶段 | Phase 2：服务维护瘦身 |
+| 当前阶段 | Phase 2+3：服务维护瘦身与监控大盘合并实施 |
 | 阶段状态 | `NOT_STARTED` |
 | 当前写锁 | `UNLOCKED` |
 | 当前负责人 | 无 |
 | 产品批准 | 用户已于 2026-08-27 11:24 CST 批准 `UIUX-SPEC.md` 2.0.0-final；无例外 |
+| 执行流程例外 | 用户已于 2026-08-27 15:22 CST 批准 Grok 连续实施 Phase 2+3，随后 Gemini 整体验收、Grok 集中修复、Codex 合并 Gate 3+4 |
 | 技术合同状态 | `FROZEN`（Gate 1 `PASSED`） |
-| 下一位负责人 | Grok / Phase 2 服务维护瘦身 |
+| 下一位负责人 | Grok / Phase 2+3 合并实施 |
 
 ## 2. 基线
 
@@ -34,11 +35,11 @@
 | Gate 1 技术合同 | Codex | `PASSED` | `2677bbe` | `9526f92` | 技术合同已冻结，验收矩阵已完善，无阻断问题 |
 | Phase 1 凭据与证书 | Grok / Codex | `PASSED` | `9526f92` / `9c3ba63` / `02e67d1` | `63628c9` | Phase 1 实现及两轮 Gate 修正已完成，无未关闭 P0/P1/P2 |
 | Gate 2 Phase 1 审查 | Codex | `PASSED` | `02e67d1` / `107db93` / `b15b64f` | `63628c9` | `G2-*` 与 `G2R-*` 全部关闭；允许进入 Phase 2 |
-| Phase 2 服务维护瘦身 | Grok | `NOT_STARTED` | `63628c9` | 待填 | Gate 2 已通过，可开始实施 |
-| Gate 3 Phase 2 审查 | Codex | `BLOCKED` | 待填 | 待填 | 待填 |
-| Phase 3 监控大盘 | Grok | `BLOCKED` | 待填 | 待填 | 等待 Gate 3 |
-| Phase 3 UI/UX 验收 | Gemini | `BLOCKED` | 待填 | 待填 | 待填 |
-| Gate 4 最终质量与发布 | Codex | `BLOCKED` | 待填 | 待填 | 待填 |
+| Phase 2 服务维护瘦身 | Grok | `NOT_STARTED` | `63628c9` | 待填 | 合并批次第一段；内部自验并独立提交后直接继续 Phase 3 |
+| Phase 3 监控大盘 | Grok | `NOT_STARTED` | Phase 2 输出 commit | 待填 | 合并批次第二段；不再等待独立 Gate 3 |
+| Phase 2+3 UI/UX 验收 | Gemini | `BLOCKED` | Phase 3 输出 commit | 待填 | 等待 Grok 提供完整实现与运行截图 |
+| Phase 2+3 UI/UX 修正 | Grok | `BLOCKED` | Gemini 验收输出 commit | 待填 | 等待 Gemini 问题清单；P0/P1/P2 集中关闭 |
+| Gate 3+4 合并质量与发布 | Codex | `BLOCKED` | Phase 2+3 最终修正输出 commit | 待填 | 等待实现、Gemini 验收及修正完成 |
 
 状态只能使用：`NOT_STARTED`、`IN_PROGRESS`、`BLOCKED`、`REVIEW_REQUIRED`、`CHANGES_REQUIRED`、`PASSED`。
 
@@ -56,15 +57,15 @@ Agent：无
 
 ## 5. 当前阻塞与风险
 
-Gate 2 最终结论为 `PASSED`，Phase 2 可以开始。当前风险：
+Gate 2 最终结论为 `PASSED`。用户已批准 Phase 2+3 合并实施，当前风险：
 
 1. `G2-P1-001`～`G2-P1-007`、`G2-P2-001`～`G2-P2-002` 及二次重审 `G2R-P1-001`、`G2R-P2-001`～`G2R-P2-002` 已有 SQLite/MariaDB/API/Vue 行为证据并全部关闭。
 2. 新旧 TLS 双写窗口仍在；旧 `tls_*` 表未删除。任何停止双写必须延期到独立版本化迁移。
 3. 未跟踪 `EnvironmentMonitoringDashboard.vue` 仍只读未纳管，未修改、未提交、未接入路由。
-4. 服务维护证书/监控 UI 与重型 `/maintenance` Payload 已按合同保留至 Phase 2；下一阶段须同批切换轻量 DTO 与客户端。
+4. Grok 必须在同一会话内保持 Phase 2、Phase 3 的独立 commit 和内部验收证据；合并执行不等于混合技术边界，Phase 2 失败时不得继续 Phase 3。
 5. TLS 探测仍允许 manager 经授权 SSH 访问私网/loopback；metadata/link-local/multicast 已拒绝。
 6. 本地真实 MariaDB 11.4 与独立 CI job（`.github/workflows/ci.yml` 的 `ssl-mysql`）已补齐；工作台 `mysql.integration` skip 仍不能代替。
-7. Codex 基于 `63628c9` 复验 `package:current-os`，已成功生成并校验 macOS arm64 DMG。首次缺失 Electron 二进制时的并行安装竞态仍按合同留待 Gate 4 关闭；依赖就绪后的全量测试已干净通过。
+7. Codex 基于 `63628c9` 复验 `package:current-os`，已成功生成并校验 macOS arm64 DMG。首次缺失 Electron 二进制时的并行安装竞态仍须在合并 Gate 3+4 关闭；依赖就绪后的全量测试已干净通过。
 
 ## 6. 交接模板
 
@@ -332,3 +333,23 @@ Gate 2 最终结论为 `PASSED`，Phase 2 可以开始。当前风险：
 - 下一位负责人：Grok / Phase 2 服务维护瘦身；完成后置为 `REVIEW_REQUIRED` 并交 Codex 执行 Gate 3。
 - 下一阶段允许修改范围：`ServiceMaintenancePanel.vue`、`service-maintenance/*`、`ServiceDiscoveryPanel.vue` 及轻量 route/operation helper/schema；移除维护页 TLS 与 Host/Deployment history 挂载，切换轻量 Payload，实现 operation run/lock、provider capabilities 和相应行为测试/深链。
 - 下一阶段禁止修改内容：全局监控路由/大盘、删除 Host/Deployment/TimeSeries 复用资产、停止 TLS 旧表双写、修改/纳管未跟踪监控草稿、删除旧 `tls_*` 表、操作或合并 `main`。
+
+### 2026-08-27 15:23 — Codex / Phase 2+3 执行流程合并
+
+- 输入 commit：`bf978b98cb61cc7318acacb8fb7c61faff304cd5`
+- 输出 commit：`待本次流程文档提交`
+- 完成内容：
+  1. 记录用户于 2026-08-27 15:22 CST 的明确批准：Grok 连续实施 Phase 2+3，取消二者之间的独立 Gate 3。
+  2. 新流程固定为：Grok Phase 2+3 → Gemini 整体 UI/UX 验收 → Grok 集中修复 → Codex 合并 Gate 3+4。
+  3. 要求 Grok 在同一会话中仍以独立 commit 和内部测试证据分隔 Phase 2/3；Phase 2 出现 P0、合同冲突或安全证据不足时必须停止，不得借合并流程越过阻塞。
+  4. 要求 Codex 在最终合并 Gate 中按两个 commit 边界分区审查，保留全部 Phase 2/3 验收标准，只合并交接和审查时点。
+  5. 要求 Gemini 同时验收服务维护、监控大盘、NOC 及跨模块导航，不修改生产代码。
+- 修改文件：`README.md`、`GROK-IMPLEMENTATION-AGENT.md`、`GEMINI-UIUX-AGENT.md`、`CODEX-ARCHITECTURE-QA-AGENT.md`、`ACCEPTANCE.md`、`STATUS.md`
+- 数据库/API 变化：无；`TECH-CONTRACT.md` 的冻结技术边界、权限、Schema、API 和性能合同均未改变。
+- 测试命令及结果：纯执行文档调整；执行 `git diff --check` 和流程关键字一致性扫描，不运行代码测试。
+- `package:current-os` 结果：不适用（纯文档性改动）。
+- 未完成内容：Phase 2+3 实现、Gemini 整体验收、Grok 验收修正、Codex 合并 Gate 3+4。
+- 已知风险：合并批次 diff 更大、问题定位和回滚成本高于原流程；通过阶段独立 commit、Phase 2 内部自验和最终分区审查控制该风险。
+- 下一位负责人：Grok / Phase 2+3 合并实施。
+- 下一阶段允许修改范围：严格合并 `TECH-CONTRACT.md` §11 的 Phase 2 与 Phase 3 允许范围；Phase 2 和 Phase 3 分别提交，最终提供运行截图和完整验证证据。
+- 下一阶段禁止修改内容：改变冻结 Schema/API/权限、停止 TLS 旧表双写、删除 Host/Deployment/TimeSeries 复用资产、修改/暂存/提交/删除未跟踪 `EnvironmentMonitoringDashboard.vue`、自动植入或猜测业务脚本、操作或合并 `main`。

@@ -125,12 +125,12 @@
 - [ ] 输出截断、operation retention、开始/完成/失败审计符合合同。
 - [ ] 页面刷新/切换不重复提交，过期响应不覆盖新状态。
 
-## 7. Gate 3 Phase 2 审查
+## 7. 合并 Gate 3+4 的 Phase 2 审查项
 
-- [ ] 只审查 `STATUS.md` 记录的 Phase 2 输入/输出 commit diff。
+- [ ] Codex 按 `STATUS.md` 记录的独立 Phase 2 commit 边界审查对应 diff。
 - [ ] 所有 Phase 2 验收项均有行为证据。
 - [ ] 维护 Payload、服务操作安全、幂等和故障恢复不存在 P0/P1/P2。
-- [ ] Gate 3 明确结论为 `PASSED`，并记录 commit/测试/打包/交接。
+- [ ] Phase 2 审查结果已记录进合并 Gate 3+4，不因 Phase 3 已完成而降低标准。
 
 ## 8. Phase 3 监控大盘验收
 
@@ -160,10 +160,11 @@
 - [ ] 新实现位于 tracked 文件；原未跟踪草稿未修改、未提交、未删除。
 - [ ] Gemini 的 P0/P1/P2 实现验收问题全部关闭。
 
-## 9. Gate 4 最终发布验收
+## 9. 合并 Gate 3+4 最终发布验收
 
 - [ ] 原始方案中所有范围均为已实现或经用户批准延期。
-- [ ] Gate 2、3 及 Phase 3 UI/UX 验收均为 `PASSED`。
+- [ ] Gate 2 及 Phase 2+3 整体 UI/UX 验收均为 `PASSED`。
+- [ ] 合并 Gate 中 Phase 2 与 Phase 3 审查项均无未关闭 P0/P1/P2。
 - [ ] `npm run verify:full-regression` 通过。
 - [ ] Electron bootstrap/安装竞态已消除，发布不依赖偶发重跑。
 - [ ] `npm run package:current-os` 通过。
@@ -173,9 +174,11 @@
 - [ ] 未提交 private/、密钥、`.env`、本地数据或生成的 release 产物。
 - [ ] 未合并或推送 `main`。
 - [ ] 已知限制、旧 TLS 双写窗口和延期清理项已记录。
-- [ ] Gate 4 明确结论为 `PASSED`。
+- [ ] 合并 Gate 3+4 明确结论为 `PASSED`。
 
 ## 10. 延期与例外
+
+用户已于 2026-08-27 15:22 CST 批准执行顺序例外：Grok 连续完成 Phase 2+3，Gemini 整体验收，Grok 集中修复，Codex 合并执行 Gate 3+4。该例外只合并交接和审查时点，不豁免本文件任何 Phase 2、Phase 3 或最终发布验收条目。
 
 任何未通过但希望延期的条目必须在 Gate 前记录并取得用户批准：
 
