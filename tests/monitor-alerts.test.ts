@@ -479,6 +479,10 @@ describe("monitor alerts", () => {
         cookies: memberCookies,
         payload: defaultMonitorAlertSettings,
       })).statusCode).toBe(403);
+      const filtered = await app.inject({ method: "GET", url: `/api/v1/monitor-alerts?environmentId=${environmentId}`, cookies: ownerCookies });
+      expect(filtered.statusCode).toBe(200);
+      expect(filtered.json().items.every((item: { environmentId: string }) => item.environmentId === environmentId)).toBe(true);
+      expect((await app.inject({ method: "GET", url: `/api/v1/monitor-alerts?environmentId=${hiddenEnvironmentId}`, cookies: memberCookies })).statusCode).toBe(404);
 
       for (const cookies of [ownerCookies, memberCookies]) {
         const switched = await app.inject({

@@ -58,6 +58,7 @@ import { registerServiceMaintenanceRoutes } from "./routes/service-maintenance.j
 import { registerCertificateRoutes } from "./routes/certificates.js";
 import { registerMonitorHistoryRoutes } from "./routes/monitor-history.js";
 import { registerMonitorAlertRoutes } from "./routes/monitor-alerts.js";
+import { registerMonitoringRoutes } from "./routes/monitoring.js";
 import { McpOperationStore } from "./mcp/operation-store.js";
 import { migrateDatabaseTlsCredentials } from "./database-credentials.js";
 import { startMonitorHostPuller } from "./service-monitor.js";
@@ -157,6 +158,7 @@ export async function buildApp(options: BuildAppOptions) {
   await interruptStaleServiceOperations(app);
   await app.register(registerCertificateRoutes);
   await app.register(registerMonitorHistoryRoutes);
+  await app.register(registerMonitoringRoutes);
   await app.register(registerMonitorAlertRoutes);
   await app.register(registerDesktopDeviceRoutes);
   await app.register(registerWebEntryRoutes);
