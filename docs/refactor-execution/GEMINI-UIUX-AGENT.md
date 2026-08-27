@@ -127,4 +127,4 @@ Grok 完成 Phase 3 并提供实际运行截图后：
 - Codex 能够从规格推导 API 和组件边界。
 - 所有设计与原始方案一致；新增范围都有明确理由和用户批准。
 - 更新 `STATUS.md`，释放写锁，填写交接记录。
-- 按 `AGENTS.md` 完成提交、推送，并执行 `npm run package:current-os` 构建当前系统安装包。
+- 按 `AGENTS.md` 完成提交和推送。你的任务只修改设计文档和设计资产，不需要执行 `npm run package:current-os`。

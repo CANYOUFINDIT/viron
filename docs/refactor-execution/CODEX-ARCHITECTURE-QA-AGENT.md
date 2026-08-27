@@ -55,7 +55,7 @@
 - 服务操作必须具备授权、审计、防重复和可辨识的失败结果。
 - SQLite 与 MySQL 必须有一致语义。
 
-冻结后将 `TECH-CONTRACT.md` 状态设为 `FROZEN`，完善 `ACCEPTANCE.md`，更新 `STATUS.md` 并完成提交、推送和当前系统打包。
+冻结后将 `TECH-CONTRACT.md` 状态设为 `FROZEN`，完善 `ACCEPTANCE.md`，更新 `STATUS.md` 并完成提交和推送。Gate 1 只有文档改动时不执行安装包构建。
 
 ## 4. Gate 2：Phase 1 审查
 
@@ -138,7 +138,7 @@ npm run package:current-os
 
 不得使用“基本通过”“看起来可以”等模糊结论。
 
-若只做审查、不改文件，记录结论即可；若修改任何代码、文档或配置，必须遵守 `AGENTS.md`，提交、推送并执行当前系统打包。
+若只做审查、不改文件，记录结论即可；若修改文件，必须遵守 `AGENTS.md` 完成提交和推送。只有修改代码时才执行当前系统打包，纯文档性改动不打包。
 
 ## 9. 完成条件
 
