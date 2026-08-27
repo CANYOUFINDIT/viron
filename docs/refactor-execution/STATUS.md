@@ -29,7 +29,7 @@
 
 | 阶段 | 负责人 | 状态 | 输入 commit | 输出 commit | 审查结论 |
 | --- | --- | --- | --- | --- | --- |
-| Phase 0A 现状审计 | Grok | `REVIEW_REQUIRED` | `e250733` | 本批次提交后填写 | 审计已写入 `CURRENT-STATE-AUDIT.md` |
+| Phase 0A 现状审计 | Grok | `REVIEW_REQUIRED` | `e250733` | `8357549` | 审计已写入 `CURRENT-STATE-AUDIT.md` |
 | Phase 0B UI/UX 规格 | Gemini | `REVIEW_REQUIRED` | `e250733` | 待 0B 自己的提交 | 规格已全量输出，待用户批准 |
 | Gate 1 技术合同 | Codex | `BLOCKED` | 待填 | 待填 | 等待用户批准 0B；0A 审计已可供引用 |
 | Phase 1 凭据与证书 | Grok | `BLOCKED` | 待填 | 待填 | 等待 Gate 1 |
@@ -113,7 +113,7 @@ Agent：无
 ### 2026-08-27 11:15 — Grok / Phase 0A 现状审计
 
 - 输入 commit：`e2507331451ac18a49cf140d617ed26286d6e12b`
-- 输出 commit：提交后回填
+- 输出 commit：`8357549`
 - 完成内容：
   1. 只读审计代码、Schema、API、测试与未跟踪监控组件。
   2. 完整填写 `CURRENT-STATE-AUDIT.md`（需求矩阵、可复用资产、tls_endpoints 与目标模型差异、SQLite/MySQL、监控/权限/测试基线、Phase 1–3 建议范围、开放问题 A-001～A-014）。
