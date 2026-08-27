@@ -1201,4 +1201,71 @@ CREATE TABLE IF NOT EXISTS tls_endpoint_web_entries (
   CONSTRAINT tls_endpoint_web_entries_endpoint_fk FOREIGN KEY (endpoint_id) REFERENCES tls_endpoints(id) ON DELETE CASCADE,
   CONSTRAINT tls_endpoint_web_entries_entry_fk FOREIGN KEY (web_entry_id) REFERENCES web_entries(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  id VARCHAR(64) PRIMARY KEY,
+  checksum CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  applied_at VARCHAR(32) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ssl_certificates (
+  id VARCHAR(64) PRIMARY KEY,
+  workspace_type VARCHAR(20) NOT NULL,
+  workspace_id VARCHAR(64) NOT NULL,
+  fingerprint_sha256 CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  leaf_cn VARCHAR(255) NOT NULL DEFAULT '',
+  leaf_sans_json LONGTEXT NOT NULL,
+  issuer VARCHAR(512) NOT NULL DEFAULT '',
+  serial VARCHAR(128) NOT NULL DEFAULT '',
+  signature_algorithm VARCHAR(128) NOT NULL DEFAULT '',
+  not_before VARCHAR(32) NOT NULL,
+  not_after VARCHAR(32) NOT NULL,
+  is_self_signed TINYINT NOT NULL DEFAULT 0,
+  first_seen_at VARCHAR(32) NOT NULL,
+  last_seen_at VARCHAR(32) NOT NULL,
+  created_at VARCHAR(32) NOT NULL,
+  updated_at VARCHAR(32) NOT NULL,
+  UNIQUE KEY ssl_certificates_workspace_fingerprint_idx (workspace_type, workspace_id, fingerprint_sha256),
+  KEY ssl_certificates_workspace_expiry_idx (workspace_type, workspace_id, not_after),
+  KEY ssl_certificates_workspace_cn_idx (workspace_type, workspace_id, leaf_cn)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ssl_endpoints (
+  id VARCHAR(64) PRIMARY KEY,
+  environment_id VARCHAR(64) NOT NULL,
+  certificate_id VARCHAR(64) NULL,
+  ssh_connection_id VARCHAR(64) NULL,
+  ssh_bind_key VARCHAR(64) NOT NULL DEFAULT '',
+  host VARCHAR(253) NOT NULL,
+  port INT NOT NULL,
+  sni VARCHAR(253) NOT NULL DEFAULT '',
+  source VARCHAR(16) NOT NULL,
+  observe_enabled TINYINT NOT NULL DEFAULT 1,
+  customized TINYINT NOT NULL DEFAULT 0,
+  sort_order INT NOT NULL DEFAULT 0,
+  probe_status VARCHAR(32) NOT NULL DEFAULT 'never',
+  probe_error TEXT NOT NULL,
+  probed_at VARCHAR(32) NULL,
+  last_success_at VARCHAR(32) NULL,
+  hostname_match TINYINT NULL,
+  chain_complete TINYINT NULL,
+  created_at VARCHAR(32) NOT NULL,
+  updated_at VARCHAR(32) NOT NULL,
+  UNIQUE KEY ssl_endpoints_identity_idx (environment_id, ssh_bind_key, host, port, sni),
+  KEY ssl_endpoints_environment_idx (environment_id, sort_order, updated_at),
+  KEY ssl_endpoints_connection_idx (ssh_connection_id, probed_at),
+  KEY ssl_endpoints_certificate_idx (certificate_id),
+  CONSTRAINT ssl_endpoints_environment_fk FOREIGN KEY (environment_id) REFERENCES environments(id) ON DELETE CASCADE,
+  CONSTRAINT ssl_endpoints_certificate_fk FOREIGN KEY (certificate_id) REFERENCES ssl_certificates(id) ON DELETE SET NULL,
+  CONSTRAINT ssl_endpoints_connection_fk FOREIGN KEY (ssh_connection_id) REFERENCES ssh_connections(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ssl_endpoint_web_entries (
+  endpoint_id VARCHAR(64) NOT NULL,
+  web_entry_id VARCHAR(64) NOT NULL,
+  PRIMARY KEY (endpoint_id, web_entry_id),
+  UNIQUE KEY ssl_endpoint_web_entries_entry_uidx (web_entry_id),
+  CONSTRAINT ssl_endpoint_web_entries_endpoint_fk FOREIGN KEY (endpoint_id) REFERENCES ssl_endpoints(id) ON DELETE CASCADE,
+  CONSTRAINT ssl_endpoint_web_entries_entry_fk FOREIGN KEY (web_entry_id) REFERENCES web_entries(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 `;

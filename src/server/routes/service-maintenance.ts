@@ -24,8 +24,10 @@ import {
   TlsCertificateError,
   createTlsEndpoint,
   deleteTlsEndpoint,
+  getTlsEndpoint,
   listTlsEndpoints,
   probeTlsEndpoint,
+  replaceEndpointWebEntries,
   updateTlsEndpoint,
 } from "../tls-certificates.js";
 
@@ -467,6 +469,7 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
       }
       try {
         const id = await createTlsEndpoint(app, request.params.environmentId, body);
+        const item = await getTlsEndpoint(app, id);
         await writeAudit(app.db, {
           action: "tls_endpoint.created",
           resourceType: "tls_endpoint",
@@ -475,7 +478,7 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
           details: { host: body.host, port: body.port, sni: body.sni, sshConnectionId: body.sshConnectionId ?? null },
           request,
         });
-        return reply.code(201).send({ id });
+        return reply.code(201).send({ id, item });
       } catch (error) {
         if (error instanceof TlsCertificateError) return reply.code(error.statusCode).send({ error: error.code, message: error.message });
         throw error;
@@ -491,14 +494,14 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
       const body = parseBody(tlsEndpointSchema, request.body, reply);
       if (!body) return;
       try {
-        const row = await app.db.prepare("SELECT environment_id FROM tls_endpoints WHERE id = ?").get(request.params.id) as { environment_id: string } | undefined;
+        const row = await app.db.prepare("SELECT environment_id FROM ssl_endpoints WHERE id = ?").get(request.params.id) as { environment_id: string } | undefined;
         if (!row || !await canAccessEnvironment(app.db, request.admin!, row.environment_id)) {
           return reply.code(404).send({ error: "TLS_ENDPOINT_NOT_FOUND", message: "证书端点不存在" });
         }
         if (body.sshConnectionId && !await canAccessConnection(app.db, request.admin!, "ssh", body.sshConnectionId)) {
           return reply.code(404).send({ error: "SSH_CONNECTION_NOT_FOUND", message: "SSH 连接不存在" });
         }
-        await updateTlsEndpoint(app, request.params.id, body);
+        const item = await updateTlsEndpoint(app, request.params.id, body);
         await writeAudit(app.db, {
           action: "tls_endpoint.updated",
           resourceType: "tls_endpoint",
@@ -507,7 +510,7 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
           details: { host: body.host, port: body.port, sni: body.sni, sshConnectionId: body.sshConnectionId ?? null },
           request,
         });
-        return { ok: true };
+        return { ok: true, item };
       } catch (error) {
         if (error instanceof TlsCertificateError) return reply.code(error.statusCode).send({ error: error.code, message: error.message });
         throw error;
@@ -520,7 +523,7 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     { preHandler: requireAdmin },
     async (request, reply) => {
       if (!requireManager(request, reply)) return;
-      const row = await app.db.prepare("SELECT environment_id, host, port FROM tls_endpoints WHERE id = ?").get(request.params.id) as
+      const row = await app.db.prepare("SELECT environment_id, host, port FROM ssl_endpoints WHERE id = ?").get(request.params.id) as
         | { environment_id: string; host: string; port: number | string }
         | undefined;
       if (!row || !await canAccessEnvironment(app.db, request.admin!, row.environment_id)) {
@@ -544,11 +547,41 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     },
   );
 
+  app.put<{ Params: { id: string } }>(
+    "/api/v1/tls-endpoints/:id/web-entries",
+    { preHandler: requireAdmin },
+    async (request, reply) => {
+      if (!requireManager(request, reply)) return;
+      const body = parseBody(z.object({ webEntryIds: z.array(z.string().uuid()).max(100) }), request.body, reply);
+      if (!body) return;
+      const row = await app.db.prepare("SELECT environment_id FROM ssl_endpoints WHERE id = ?").get(request.params.id) as { environment_id: string } | undefined;
+      if (!row || !await canAccessEnvironment(app.db, request.admin!, row.environment_id)) {
+        return reply.code(404).send({ error: "TLS_ENDPOINT_NOT_FOUND", message: "证书端点不存在" });
+      }
+      try {
+        const item = await replaceEndpointWebEntries(app, request.params.id, body.webEntryIds);
+        await writeAudit(app.db, {
+          action: "tls_endpoint.web_entries_updated",
+          resourceType: "tls_endpoint",
+          resourceId: request.params.id,
+          summary: "更新 TLS 端点关联的 Web 入口",
+          details: { webEntryIds: body.webEntryIds },
+          request,
+        });
+        return { item };
+      } catch (error) {
+        if (error instanceof TlsCertificateError) return reply.code(error.statusCode).send({ error: error.code, message: error.message });
+        throw error;
+      }
+    },
+  );
+
   app.post<{ Params: { id: string } }>(
     "/api/v1/tls-endpoints/:id/probe",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      const row = await app.db.prepare("SELECT environment_id, ssh_connection_id, host, port FROM tls_endpoints WHERE id = ?").get(request.params.id) as
+      if (!requireManager(request, reply)) return;
+      const row = await app.db.prepare("SELECT environment_id, ssh_connection_id, host, port FROM ssl_endpoints WHERE id = ?").get(request.params.id) as
         | { environment_id: string; ssh_connection_id: string | null; host: string; port: number | string }
         | undefined;
       if (!row || !await canAccessEnvironment(app.db, request.admin!, row.environment_id)) {

@@ -1146,4 +1146,77 @@ CREATE TABLE IF NOT EXISTS tls_endpoint_web_entries (
 
 CREATE INDEX IF NOT EXISTS tls_endpoint_web_entries_entry_idx
   ON tls_endpoint_web_entries(web_entry_id);
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  id TEXT PRIMARY KEY,
+  checksum TEXT NOT NULL,
+  applied_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ssl_certificates (
+  id TEXT PRIMARY KEY,
+  workspace_type TEXT NOT NULL CHECK(workspace_type IN ('personal','organization')),
+  workspace_id TEXT NOT NULL,
+  fingerprint_sha256 TEXT NOT NULL,
+  leaf_cn TEXT NOT NULL DEFAULT '',
+  leaf_sans_json TEXT NOT NULL DEFAULT '[]',
+  issuer TEXT NOT NULL DEFAULT '',
+  serial TEXT NOT NULL DEFAULT '',
+  signature_algorithm TEXT NOT NULL DEFAULT '',
+  not_before TEXT NOT NULL,
+  not_after TEXT NOT NULL,
+  is_self_signed INTEGER NOT NULL DEFAULT 0,
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ssl_certificates_workspace_fingerprint_idx
+  ON ssl_certificates(workspace_type, workspace_id, fingerprint_sha256);
+CREATE INDEX IF NOT EXISTS ssl_certificates_workspace_expiry_idx
+  ON ssl_certificates(workspace_type, workspace_id, not_after);
+CREATE INDEX IF NOT EXISTS ssl_certificates_workspace_cn_idx
+  ON ssl_certificates(workspace_type, workspace_id, leaf_cn);
+
+CREATE TABLE IF NOT EXISTS ssl_endpoints (
+  id TEXT PRIMARY KEY,
+  environment_id TEXT NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
+  certificate_id TEXT REFERENCES ssl_certificates(id) ON DELETE SET NULL,
+  ssh_connection_id TEXT REFERENCES ssh_connections(id) ON DELETE SET NULL,
+  ssh_bind_key TEXT NOT NULL DEFAULT '',
+  host TEXT NOT NULL,
+  port INTEGER NOT NULL,
+  sni TEXT NOT NULL DEFAULT '',
+  source TEXT NOT NULL CHECK(source IN ('web_entry','manual')),
+  observe_enabled INTEGER NOT NULL DEFAULT 1,
+  customized INTEGER NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  probe_status TEXT NOT NULL DEFAULT 'never' CHECK(probe_status IN ('never','ok','connect_failed','handshake_failed','timeout','probe_unavailable','skipped')),
+  probe_error TEXT NOT NULL DEFAULT '',
+  probed_at TEXT,
+  last_success_at TEXT,
+  hostname_match INTEGER,
+  chain_complete INTEGER,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ssl_endpoints_identity_idx
+  ON ssl_endpoints(environment_id, ssh_bind_key, host, port, sni);
+CREATE INDEX IF NOT EXISTS ssl_endpoints_environment_idx
+  ON ssl_endpoints(environment_id, sort_order, updated_at DESC);
+CREATE INDEX IF NOT EXISTS ssl_endpoints_connection_idx
+  ON ssl_endpoints(ssh_connection_id, probed_at);
+CREATE INDEX IF NOT EXISTS ssl_endpoints_certificate_idx
+  ON ssl_endpoints(certificate_id);
+
+CREATE TABLE IF NOT EXISTS ssl_endpoint_web_entries (
+  endpoint_id TEXT NOT NULL REFERENCES ssl_endpoints(id) ON DELETE CASCADE,
+  web_entry_id TEXT NOT NULL REFERENCES web_entries(id) ON DELETE CASCADE,
+  PRIMARY KEY(endpoint_id, web_entry_id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ssl_endpoint_web_entries_entry_uidx
+  ON ssl_endpoint_web_entries(web_entry_id);
 `;

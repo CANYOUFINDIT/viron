@@ -55,6 +55,7 @@ export interface TlsWebEntryLink {
 export interface TlsEndpoint {
   id: string;
   environmentId: string;
+  certificateId: string | null;
   sshConnectionId: string | null;
   sshConnectionName: string;
   sshHost: string;
@@ -68,6 +69,7 @@ export interface TlsEndpoint {
   probeStatus: TlsProbeStatus;
   probeError: string;
   probedAt: string | null;
+  lastSuccessAt: string | null;
   leafCn: string;
   leafSans: string[];
   issuer: string;
@@ -80,9 +82,35 @@ export interface TlsEndpoint {
   hostnameMatch: boolean | null;
   chainComplete: boolean | null;
   daysRemaining: number | null;
+  stale: boolean;
   webEntries: TlsWebEntryLink[];
   createdAt: string;
   updatedAt: string;
+}
+
+export type SslCertificateStatus = "valid" | "expiring" | "expired" | "error" | "orphan";
+export type TlsWebEntryStatus = "unconfigured" | "probing" | "valid" | "expiring" | "expired" | "mismatch" | "error";
+
+export interface SslCertificateAsset {
+  id: string;
+  fingerprintSha256: string;
+  leafCn: string;
+  leafSans: string[];
+  issuer: string;
+  serial: string;
+  signatureAlgorithm: string;
+  notBefore: string;
+  notAfter: string;
+  isSelfSigned: boolean;
+  status: SslCertificateStatus;
+  daysRemaining: number | null;
+  orphan: boolean;
+  endpointCount: number;
+  webEntryCount: number;
+  endpoints: TlsEndpoint[];
+  webEntries: Array<TlsWebEntryLink & { environmentId: string; environmentName: string }>;
+  firstSeenAt: string;
+  lastSeenAt: string;
 }
 
 export interface TlsCertificateGroup {
@@ -99,10 +127,14 @@ export interface TlsCertificateGroup {
 }
 
 export interface TlsWebEntryBadge {
-  status: "ok" | "expiring" | "expired" | "mismatch" | "unbound" | "unknown";
+  status: TlsWebEntryStatus;
   daysRemaining: number | null;
   endpointId: string | null;
-  fingerprintSha256: string;
+  certificateId: string | null;
+  fingerprintSha256: string | null;
+  probedAt: string | null;
+  stale: boolean;
+  probeError: string;
 }
 
 const DNS_HOST = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
@@ -124,8 +156,44 @@ export function normalizeTlsHost(value: string): string {
 
 export function isValidTlsHost(value: string): boolean {
   const host = normalizeTlsHost(value);
-  if (!host || host.length > 253 || /[\s\0\r\n;|&$`'<>\\"]/.test(host)) return false;
+  if (!host || host.length > 253 || /[\s\0\r\n;|&$`'<>\\"%]/.test(host)) return false;
   return DNS_HOST.test(host) || IPV4.test(host) || (host.includes(":") && IPV6.test(host));
+}
+
+const FORBIDDEN_METADATA_HOSTS = new Set([
+  "metadata",
+  "metadata.google.internal",
+  "metadata.google.com",
+  "metadata.internal",
+  "instance-data",
+  "instance-data.ec2.internal",
+]);
+
+function ipv4Octets(host: string): number[] | null {
+  if (!IPV4.test(host)) return null;
+  return host.split(".").map((part) => Number(part));
+}
+
+export function isForbiddenTlsProbeTarget(value: string): boolean {
+  const host = normalizeTlsHost(value);
+  if (FORBIDDEN_METADATA_HOSTS.has(host)) return true;
+  if (host === "100.100.100.200" || host === "169.254.169.254") return true;
+  const octets = ipv4Octets(host);
+  if (octets) {
+    const [a, b] = octets;
+    if (a === 0) return true;
+    if (a === 169 && b === 254) return true;
+    if (a >= 224 && a <= 239) return true;
+    if (a === 255 && octets.every((part) => part === 255)) return true;
+    return false;
+  }
+  if (host.includes(":")) {
+    const compact = host.replace(/^\[|\]$/g, "");
+    if (compact === "::" || compact === "0:0:0:0:0:0:0:0") return true;
+    if (compact.startsWith("fe8") || compact.startsWith("fe9") || compact.startsWith("fea") || compact.startsWith("feb")) return true;
+    if (compact.startsWith("ff")) return true;
+  }
+  return false;
 }
 
 export function isValidTlsSni(value: string): boolean {
@@ -169,8 +237,14 @@ export function normalizeFingerprint(value: string): string {
   return value.replace(/[^0-9a-f]/gi, "").toLowerCase();
 }
 
-export function formatFingerprint(value: string): string {
+export function canonicalFingerprint(value: string): string | null {
   const hex = normalizeFingerprint(value);
+  return /^[0-9a-f]{64}$/.test(hex) ? hex : null;
+}
+
+export function formatFingerprint(value: string): string {
+  const hex = canonicalFingerprint(value) ?? normalizeFingerprint(value);
+  if (!hex) return "";
   return hex.replace(/(.{2})(?=.)/g, "$1:").toUpperCase();
 }
 
@@ -205,26 +279,77 @@ export function tlsEndpointAttention(endpoint: Pick<TlsEndpoint, "sshConnectionI
   return null;
 }
 
-export function tlsWebEntryBadge(
-  endpoints: Array<Pick<TlsEndpoint, "id" | "sshConnectionId" | "probeStatus" | "daysRemaining" | "hostnameMatch" | "fingerprintSha256">>,
+export function tlsEndpointIsStale(
+  endpoint: Pick<TlsEndpoint, "observeEnabled" | "sshConnectionId" | "probeStatus" | "probedAt" | "lastSuccessAt" | "daysRemaining">,
   warnDays = DEFAULT_TLS_WARN_DAYS,
+  now = Date.now(),
+): boolean {
+  const reference = endpoint.lastSuccessAt || endpoint.probedAt;
+  if (!reference) return false;
+  const dueAt = tlsProbeDueAt(endpoint, warnDays, Date.parse(reference));
+  if (dueAt == null) return false;
+  const interval = Math.max(TLS_PROBE_MIN_INTERVAL_MS, dueAt - Date.parse(reference));
+  return now - Date.parse(reference) > interval * 2;
+}
+
+export function deriveCertificateStatus(
+  asset: Pick<SslCertificateAsset, "daysRemaining" | "orphan" | "endpoints">,
+  warnDays = DEFAULT_TLS_WARN_DAYS,
+): SslCertificateStatus {
+  if (asset.orphan || !asset.endpoints.length) return "orphan";
+  if (asset.daysRemaining != null && asset.daysRemaining < 0) return "expired";
+  if (asset.endpoints.some((item) => item.probeStatus !== "ok" && item.probeStatus !== "never" && item.probeStatus !== "skipped")) return "error";
+  if (asset.daysRemaining != null && asset.daysRemaining <= warnDays) return "expiring";
+  if (asset.endpoints.some((item) => item.hostnameMatch === false)) return "error";
+  return "valid";
+}
+
+function badgeFromEndpoint(
+  endpoint: Pick<TlsEndpoint, "id" | "certificateId" | "sshConnectionId" | "probeStatus" | "probeError" | "probedAt" | "daysRemaining" | "hostnameMatch" | "fingerprintSha256" | "stale">,
+  probing = false,
+): TlsWebEntryBadge {
+  const fingerprint = canonicalFingerprint(endpoint.fingerprintSha256);
+  const base = {
+    daysRemaining: endpoint.daysRemaining,
+    endpointId: endpoint.id,
+    certificateId: endpoint.certificateId,
+    fingerprintSha256: fingerprint,
+    probedAt: endpoint.probedAt,
+    stale: Boolean(endpoint.stale),
+    probeError: endpoint.probeError ?? "",
+  };
+  if (probing) return { ...base, status: "probing" };
+  if (!endpoint.sshConnectionId) return { ...base, status: "unconfigured" };
+  if (endpoint.daysRemaining != null && endpoint.daysRemaining < 0) return { ...base, status: "expired" };
+  if (endpoint.hostnameMatch === false) return { ...base, status: "mismatch" };
+  if (endpoint.probeStatus !== "ok" && endpoint.probeStatus !== "never" && endpoint.probeStatus !== "skipped") {
+    return { ...base, status: "error" };
+  }
+  if (endpoint.probeStatus === "never" || endpoint.probeStatus === "skipped") return { ...base, status: "unconfigured" };
+  if (endpoint.daysRemaining != null && endpoint.daysRemaining <= DEFAULT_TLS_WARN_DAYS) return { ...base, status: "expiring" };
+  return { ...base, status: "valid" };
+}
+
+export function tlsWebEntryBadge(
+  endpoints: Array<Pick<TlsEndpoint, "id" | "certificateId" | "sshConnectionId" | "probeStatus" | "probeError" | "probedAt" | "daysRemaining" | "hostnameMatch" | "fingerprintSha256" | "stale">>,
+  warnDays = DEFAULT_TLS_WARN_DAYS,
+  probingEndpointIds: Iterable<string> = [],
 ): TlsWebEntryBadge | null {
   if (!endpoints.length) return null;
+  const probing = new Set(probingEndpointIds);
+  const probingHit = endpoints.find((item) => probing.has(item.id));
+  if (probingHit) return badgeFromEndpoint(probingHit, true);
   const bound = endpoints.filter((item) => item.sshConnectionId);
-  if (!bound.length) {
-    return { status: "unbound", daysRemaining: null, endpointId: endpoints[0]?.id ?? null, fingerprintSha256: "" };
+  const chosen = (bound.length ? bound : endpoints).slice().sort((left, right) => {
+    const leftDays = left.daysRemaining ?? Number.POSITIVE_INFINITY;
+    const rightDays = right.daysRemaining ?? Number.POSITIVE_INFINITY;
+    return leftDays - rightDays;
+  })[0]!;
+  const badge = badgeFromEndpoint({ ...chosen, stale: chosen.stale || tlsEndpointIsStale(chosen as TlsEndpoint, warnDays) });
+  if (badge.status === "valid" && chosen.daysRemaining != null && chosen.daysRemaining <= warnDays) {
+    return { ...badge, status: "expiring" };
   }
-  const expired = bound.find((item) => item.daysRemaining != null && item.daysRemaining < 0);
-  if (expired) return { status: "expired", daysRemaining: expired.daysRemaining, endpointId: expired.id, fingerprintSha256: expired.fingerprintSha256 };
-  const expiring = bound
-    .filter((item) => item.daysRemaining != null && item.daysRemaining <= warnDays)
-    .sort((left, right) => (left.daysRemaining ?? 0) - (right.daysRemaining ?? 0))[0];
-  if (expiring) return { status: "expiring", daysRemaining: expiring.daysRemaining, endpointId: expiring.id, fingerprintSha256: expiring.fingerprintSha256 };
-  const mismatch = bound.find((item) => item.hostnameMatch === false);
-  if (mismatch) return { status: "mismatch", daysRemaining: mismatch.daysRemaining, endpointId: mismatch.id, fingerprintSha256: mismatch.fingerprintSha256 };
-  const ok = bound.find((item) => item.probeStatus === "ok");
-  if (ok) return { status: "ok", daysRemaining: ok.daysRemaining, endpointId: ok.id, fingerprintSha256: ok.fingerprintSha256 };
-  return { status: "unknown", daysRemaining: null, endpointId: bound[0]?.id ?? null, fingerprintSha256: bound[0]?.fingerprintSha256 ?? "" };
+  return badge;
 }
 
 export function groupTlsEndpoints(endpoints: TlsEndpoint[]): TlsCertificateGroup[] {

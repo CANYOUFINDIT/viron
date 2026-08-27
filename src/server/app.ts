@@ -55,6 +55,7 @@ import { registerMcpRoutes } from "./routes/mcp.js";
 import { registerMcpActionRoutes } from "./routes/mcp-actions.js";
 import { registerMcpOperationRoutes } from "./routes/mcp-operations.js";
 import { registerServiceMaintenanceRoutes } from "./routes/service-maintenance.js";
+import { registerCertificateRoutes } from "./routes/certificates.js";
 import { registerMonitorHistoryRoutes } from "./routes/monitor-history.js";
 import { registerMonitorAlertRoutes } from "./routes/monitor-alerts.js";
 import { McpOperationStore } from "./mcp/operation-store.js";
@@ -152,6 +153,7 @@ export async function buildApp(options: BuildAppOptions) {
   await app.register(registerKnowledgeBaseRoutes);
   await app.register(registerEnvironmentLogRoutes);
   await app.register(registerServiceMaintenanceRoutes);
+  await app.register(registerCertificateRoutes);
   await app.register(registerMonitorHistoryRoutes);
   await app.register(registerMonitorAlertRoutes);
   await app.register(registerDesktopDeviceRoutes);
