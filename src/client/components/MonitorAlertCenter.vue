@@ -14,7 +14,6 @@ import { monitorAlertBody, monitorAlertRuleLabel, monitorAlertTitle } from "../m
 import { session, switchWorkspace } from "../session";
 import { MONITOR_ALERT_TOAST_DURATION_MS } from "../monitor-alert-toasts";
 import {
-  monitorAlertNavigationQuery,
   type DesktopMonitorAlertNotification,
   type MonitorAlertItem,
   type MonitorAlertListResponse,
@@ -52,7 +51,18 @@ type MonitorAlertNavigationTarget = Pick<
 >;
 
 function navigationTarget(alert: Pick<MonitorAlertItem, "environmentId" | "sshConnectionId" | "serviceId" | "deploymentId" | "targetType" | "targetId">) {
-  return { name: "environment" as const, params: { id: alert.environmentId }, query: monitorAlertNavigationQuery(alert) };
+  if (alert.targetType === "tls_endpoint") {
+    return { name: "ssh-keys" as const, query: { tab: "ssl" } };
+  }
+  return {
+    name: "monitoring" as const,
+    query: {
+      environmentId: alert.environmentId,
+      view: alert.serviceId ? "services" : "hosts",
+      ...(alert.sshConnectionId ? { hostId: alert.sshConnectionId } : {}),
+      ...(alert.serviceId ? { serviceId: alert.serviceId } : {}),
+    },
+  };
 }
 
 async function markRead(alertId: string) {

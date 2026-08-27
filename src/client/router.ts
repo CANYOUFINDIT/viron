@@ -27,6 +27,7 @@ export const router = createRouter({
     { path: "/knowledge", name: "knowledge", component: () => import("./views/KnowledgeBaseView.vue") },
     { path: "/connections", name: "connections", component: () => import("./views/ConnectionPoolView.vue") },
     { path: "/ssh-keys", name: "ssh-keys", component: () => import("./views/SshKeysView.vue"), meta: { managerOnly: true } },
+    { path: "/monitoring", name: "monitoring", component: () => import("./views/MonitoringView.vue") },
     { path: "/connections/tools", name: "connection-tools", component: () => import("./views/ConnectionToolsView.vue") },
     { path: "/connection-tools", redirect: (to) => ({ name: "connection-tools", query: to.query }) },
     { path: "/connection-sources", redirect: { name: "connection-tools", query: { tab: "sync" } } },

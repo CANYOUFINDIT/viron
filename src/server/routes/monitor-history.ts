@@ -7,6 +7,7 @@ import {
   type MonitorProcessSnapshot,
 } from "../../shared/monitor-performance.js";
 import { canAccessConnection, canAccessEnvironment } from "../access-control.js";
+import { MONITORING_MAX_POINTS, MONITORING_TOP_PROCESSES, capSeriesPoints } from "../../shared/monitoring.js";
 import { requireAdmin } from "./auth.js";
 
 const historyQuerySchema = z.object({
@@ -98,7 +99,7 @@ function processValues(value: unknown): MonitorProcessSnapshot[] {
     workloadProvider: process.workloadProvider ? String(process.workloadProvider) : undefined,
     workloadId: process.workloadId ? String(process.workloadId) : undefined,
     workloadName: process.workloadName ? String(process.workloadName) : undefined,
-  })).filter((process) => process.pid > 0 && process.name);
+  })).filter((process) => process.pid > 0 && process.name).slice(0, MONITORING_TOP_PROCESSES);
 }
 
 function parseSample(
@@ -303,7 +304,7 @@ export async function registerMonitorHistoryRoutes(app: FastifyInstance): Promis
         ) unique_samples
       `).get(...agentIds, ...bounds, ...scopeParameters) as { sample_count: number | string };
       const sourceSampleCount = Number(countRow.sample_count);
-      const maximumPoints = 480;
+      const maximumPoints = MONITORING_MAX_POINTS;
       const stride = Math.max(1, Math.ceil(sourceSampleCount / maximumPoints));
       const sampledRows = await app.db.prepare(`
         SELECT agent_id, sequence_end, MAX(collected_at) AS collected_at,
@@ -432,7 +433,7 @@ export async function registerMonitorHistoryRoutes(app: FastifyInstance): Promis
         targets,
         storedDeploymentMetrics === undefined ? undefined : deploymentMetricsBySample.get(`${row.agent_id}:${row.sequence_end}`) ?? [],
       )).filter((point) => point !== null);
-      const points = markDiscontinuities(parsed, gaps);
+      const points = capSeriesPoints(markDiscontinuities(parsed, gaps), MONITORING_MAX_POINTS);
       const diagnostics = buildMonitorDiagnostics(points);
       const summary = summarizeMonitorPerformance(points);
 

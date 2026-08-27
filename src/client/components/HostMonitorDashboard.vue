@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Activity, CircleGauge, Clock3, Cpu, Gauge, HardDrive, MemoryStick, RefreshCw, Thermometer } from "@lucide/vue";
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import type {
   MonitorDiagnosticFinding,
   MonitorPerformanceHostSnapshot,
@@ -127,6 +127,7 @@ const history = ref<HistoryResponse>({
 const selectedDisk = ref("");
 let requestSequence = 0;
 let loadedContext = "";
+let historyAbort: AbortController | null = null;
 
 const ranges: Array<{ value: HistoryRange; label: string }> = [
   { value: "1h", label: tr("1 小时") }, { value: "6h", label: tr("6 小时") }, { value: "24h", label: tr("24 小时") },
@@ -170,6 +171,9 @@ async function loadHistory() {
       range: DEFAULT_MONITOR_HISTORY_RANGE, from: "", to: "", sourceSampleCount: 0, points: [], diagnostics: [], summary: emptySummary, gaps: [],
     };
   }
+  historyAbort?.abort();
+  historyAbort = new AbortController();
+  const signal = historyAbort.signal;
   const targetRange = range.value;
   const loadPlan = monitorHistoryLoadPlan(targetRange, Boolean(history.value.from || history.value.to));
   loading.value = true;
@@ -179,12 +183,12 @@ async function loadHistory() {
     if (sequence !== requestSequence) return;
     loadingRange.value = requestedRange;
     try {
-      const response = await api<HistoryResponse>(`/api/v1/environments/${props.environmentId}/monitor-hosts/${props.hostId}/history?range=${requestedRange}`);
+      const response = await api<HistoryResponse>(`/api/v1/environments/${props.environmentId}/monitor-hosts/${props.hostId}/history?range=${requestedRange}`, { signal });
       if (sequence !== requestSequence) return;
       history.value = response;
       lastError = "";
     } catch (caught) {
-      if (sequence !== requestSequence) return;
+      if (signal.aborted || sequence !== requestSequence) return;
       lastError = caught instanceof Error ? caught.message : tr("监控历史加载失败");
     }
   }
@@ -198,6 +202,10 @@ async function loadHistory() {
 watch([() => props.environmentId, () => props.hostId, () => props.lastCollectedAt, range], () => void loadHistory(), { immediate: true });
 watch(() => props.focusMetric, (value) => { if (value) selectedFocus.value = value; });
 watch(() => props.hostId, () => { showAllMetrics.value = false; });
+onBeforeUnmount(() => {
+  requestSequence += 1;
+  historyAbort?.abort();
+});
 
 function setFocus(value: HostFocusMetric) {
   selectedFocus.value = value;
