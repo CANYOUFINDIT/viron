@@ -32,7 +32,7 @@
 | Phase 0A 现状审计 | Grok | `PASSED` | `e250733` | `8357549` | Codex Gate 1 已复核并采用审计输入 |
 | Phase 0B UI/UX 规格 | Gemini | `PASSED` | `e250733` | `0695956` | 用户于 2026-08-27 11:24 CST 批准 2.0.0-final；无例外 |
 | Gate 1 技术合同 | Codex | `PASSED` | `2677bbe` | `9526f92` | 技术合同已冻结，验收矩阵已完善，无阻断问题 |
-| Phase 1 凭据与证书 | Grok | `REVIEW_REQUIRED` | `9526f92` / `9c3ba63` | 本批次提交后填写 | 仅执行合同 Phase 1 范围 |
+| Phase 1 凭据与证书 | Grok | `REVIEW_REQUIRED` | `9526f92` / `9c3ba63` | `0ec3ab9` | 仅执行合同 Phase 1 范围 |
 | Gate 2 Phase 1 审查 | Codex | `NOT_STARTED` | 待填 | 待填 | 待填 |
 | Phase 2 服务维护瘦身 | Grok | `BLOCKED` | 待填 | 待填 | 等待 Gate 2 |
 | Gate 3 Phase 2 审查 | Codex | `BLOCKED` | 待填 | 待填 | 待填 |
@@ -188,7 +188,7 @@ Phase 1 实现已交付，等待 Gate 2 审查。已知风险：
 ### 2026-08-27 12:16 — Grok / Phase 1 凭据与证书
 
 - 输入 commit：`9526f920b5ee114012fb8f05de3008465665b0b8`（开始时工作区 HEAD `9c3ba63`，其为 Gate 1 输出记录提交）
-- 输出 commit：提交后回填
+- 输出 commit：`0ec3ab9`
 - 完成内容：
   1. 新增 `ssl_certificates` / `ssl_endpoints` / `ssl_endpoint_web_entries` 与 `schema_migrations`，SQLite/MySQL 对齐；迁移 `20260827_ssl_asset_v1` 幂等、失败不激活。
   2. 运行时以新表为真相并双写旧 `tls_*`；同工作空间指纹归并，跨空间隔离 404。
