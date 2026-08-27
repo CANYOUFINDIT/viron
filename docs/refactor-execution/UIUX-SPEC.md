@@ -684,22 +684,22 @@ sequenceDiagram
 
 ---
 
-## 14. 实现验收记录 (Phase 2+3 整体验收)
+## 14. 实现验收记录 (Phase 2+3 整体验收与复验)
 
 > 验收执行人：Gemini (UI/UX Agent)  
-> 验收时间：2026-08-27  
-> 评估基线 commit：`f68e0a9`（Phase 3 实现；Phase 2 独立 commit 为 `75daf80`）  
-> 审查依据：已批准的 `UIUX-SPEC.md` 2.0.0-final 规格、4 份真实运行截图（`docs/refactor-execution/screenshots/`）及端到端实现走查。  
-> 综合验收结论：`CHANGES_REQUIRED`（无 P0 阻断；存在 3 项 P1、4 项 P2 体验缺陷需 Grok 集中修复；1 项 P3 建议后续迭代）
+> 首次验收时间：2026-08-27 (commit `c26b6c2`)  
+> 复验完成时间：2026-08-27 (复验基线 commit `8cec107` / 交接 commit `c5bc918`)  
+> 审查依据：已批准的 `UIUX-SPEC.md` 2.0.0-final 规格、4 份最新真实运行截图（`docs/refactor-execution/screenshots/`）及端到端实现与回归测试走查。  
+> 综合验收结论：`PASSED`（Grok 于 commit `8cec107` 已全部修复并关闭 `UX-P1-001`～`UX-P2-004` 共 7 项 P1/P2 体验缺陷；`UX-P3-001` 按设计决议延期至后续迭代；无未关闭 P0/P1/P2 缺陷，允许进入 Codex Gate 3+4 合并审查）
 
 ### 14.1 场景走查与总览矩阵
 
 | 场景编号 | 所属阶段 | 验收场景 | 运行截图 / 实现依据 | 验收判定 | 说明 |
 | --- | --- | --- | --- | --- | --- |
 | **UX-SC-01** | Phase 1 | 凭据中心多 Web 入口证书自动归并与查看 | CertificateCenter.vue / 测试证据 | `PASSED` | SHA-256 指纹归并、受保护入口清单与指标统计正常 |
-| **UX-SC-02** | Phase 1 | Web 入口证书状态感知与 Popover 联动 | TlsPopover.vue / 测试证据 | `PASSED` | 徽标色值/倒计时、就地重探与凭据中心跳转正常；深链滚动有 minor 体验缺陷 (UX-P2-004) |
-| **UX-SC-03** | Phase 2 | 服务维护纯粹化与一键运维 | phase2-service-maintenance.png | `CHANGES_REQUIRED` | 硬件时序与证书已剥离，启动/停止/重启与批量正常；缺少一键 SSH/日志按钮 (UX-P1-001) 及参数名不兼容 (UX-P1-002) |
-| **UX-SC-04** | Phase 3 | 监控大盘三视图切换与 NOC 沉浸全屏 | phase3-monitoring-*.png (3份截图) | `CHANGES_REQUIRED` | 3 视图切换、空状态缺失指标非 0%、全屏/Esc 正常；NOC 告警流为空 (UX-P1-003) 及部分空态/下钻断链 (UX-P2-001~003) |
+| **UX-SC-02** | Phase 1 | Web 入口证书状态感知与 Popover 联动 | TlsPopover.vue / 测试证据 | `PASSED` | 徽标色值/倒计时、就地重探与凭据中心跳转正常；深链滚动已在 8cec107 修复闭环 |
+| **UX-SC-03** | Phase 2 | 服务维护纯粹化与一键运维 | phase2-service-maintenance.png | `PASSED` | 硬件时序与证书已剥离，启动/停止/重启与批量正常；一键 SSH/日志已露出 (UX-P1-001) 及参数名兼容已闭环 (UX-P1-002) |
+| **UX-SC-04** | Phase 3 | 监控大盘三视图切换与 NOC 沉浸全屏 | phase3-monitoring-*.png (更新截图) | `PASSED` | 3 视图切换、空状态缺失指标非 0%、全屏/Esc 正常；NOC 真实告警流 (UX-P1-003)、空态与下钻已全部闭环 (UX-P2-001~003) |
 
 ---
 
@@ -707,14 +707,14 @@ sequenceDiagram
 
 | 问题编号 | 严重级别 | 所属范围 | 页面 / 组件 | 问题摘要 | 修复责任人 | 状态 |
 | --- | --- | --- | --- | --- | --- | --- |
-| **`UX-P1-001`** | `P1` | Phase 2 / 跨模块 | 环境详情 · 服务维护 | 部署节点卡片缺少直连 SSH 与容器/节点日志一键直达动作 | Grok | `FIXED` |
-| **`UX-P1-002`** | `P1` | 跨模块导航 | 环境详情 · 服务维护 | 跨模块深链查询参数名不一致导致服务自动聚焦失效 | Grok | `FIXED` |
-| **`UX-P1-003`** | `P1` | Phase 3 / NOC | 监控大盘 · NOC 全屏 | NOC 监控大屏左栏告警事件流数据源硬编码为空数组 | Grok | `FIXED` |
-| **`UX-P2-001`** | `P2` | Phase 3 / APM | 监控大盘 · 业务服务 | APM 视图「服务健康矩阵」在空数据时缺失居中空态提示 | Grok | `FIXED` |
-| **`UX-P2-002`** | `P2` | Phase 3 / NOC | 监控大盘 · NOC 全屏 | NOC 监控大屏在空数据场景下多个子区块缺失空态引导 | Grok | `FIXED` |
-| **`UX-P2-003`** | `P2` | 跨模块 / Phase 3 | 监控大盘 · 基础设施/APM | APM 高负载节点与基础设施 Findings 缺少一键下钻治理入口 | Grok | `FIXED` |
-| **`UX-P2-004`** | `P2` | 跨模块 / Phase 1 | 密钥与证书 · 证书 Tab | 携带 fingerprint 深链首次加载凭据中心时未能自动滚动定位 | Grok | `FIXED` |
-| **`UX-P3-001`** | `P3` | Phase 3 / NOC | 监控大盘 · NOC 全屏 | NOC 大屏右栏指标维度偏少（建议后续补充网络与磁盘容量水位） | 迭代建议 | `OPEN` |
+| **`UX-P1-001`** | `P1` | Phase 2 / 跨模块 | 环境详情 · 服务维护 | 部署节点卡片缺少直连 SSH 与容器/节点日志一键直达动作 | Grok | `VERIFIED_CLOSED` |
+| **`UX-P1-002`** | `P1` | 跨模块导航 | 环境详情 · 服务维护 | 跨模块深链查询参数名不一致导致服务自动聚焦失效 | Grok | `VERIFIED_CLOSED` |
+| **`UX-P1-003`** | `P1` | Phase 3 / NOC | 监控大盘 · NOC 全屏 | NOC 监控大屏左栏告警事件流数据源硬编码为空数组 | Grok | `VERIFIED_CLOSED` |
+| **`UX-P2-001`** | `P2` | Phase 3 / APM | 监控大盘 · 业务服务 | APM 视图「服务健康矩阵」在空数据时缺失居中空态提示 | Grok | `VERIFIED_CLOSED` |
+| **`UX-P2-002`** | `P2` | Phase 3 / NOC | 监控大盘 · NOC 全屏 | NOC 监控大屏在空数据场景下多个子区块缺失空态引导 | Grok | `VERIFIED_CLOSED` |
+| **`UX-P2-003`** | `P2` | 跨模块 / Phase 3 | 监控大盘 · 基础设施/APM | APM 高负载节点与基础设施 Findings 缺少一键下钻治理入口 | Grok | `VERIFIED_CLOSED` |
+| **`UX-P2-004`** | `P2` | 跨模块 / Phase 1 | 密钥与证书 · 证书 Tab | 携带 fingerprint 深链首次加载凭据中心时未能自动滚动定位 | Grok | `VERIFIED_CLOSED` |
+| **`UX-P3-001`** | `P3` | Phase 3 / NOC | 监控大盘 · NOC 全屏 | NOC 大屏右栏指标维度偏少（建议后续补充网络与磁盘容量水位） | 迭代建议 | `DEFERRED` |
 
 ---
 
