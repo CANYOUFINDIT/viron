@@ -190,3 +190,5 @@
 | `TLS-DUAL-WRITE` | 旧 `tls_*` 表双写与删除 | 冻结合同明确不在本项目删除 | 中 | Gate 1 | 独立版本化迁移 |
 
 2026-08-27 Codex 独立复核说明：用户对“由 Grok 代行 Gate 3+4”的授权不是对 `G34-P2-001`、`G34-P2-002` 两个具体 P1/P2 的延期批准；这两项恢复为本轮阻断工单。`UX-P3-001` 仍为 P3，`TLS-DUAL-WRITE` 仍按冻结合同延期，二者不阻断本轮。
+
+2026-08-27 Codex 对 `04ad5aa` 的第二次独立复核说明：`npm run verify:full-regression` 与 `npm run package:current-os` 均通过，但定向边界复现及真实 MariaDB 套件仍发现未关闭 P1/P2。故 §6 的 Payload/锁/timeout/部分结果/审计、§7 的 Phase 2 行为证据、§8 的严格 480 点/规模/双库/请求生命周期、§9 的无未关闭问题和最终 `PASSED` 继续保持未勾选；精确工单见 `STATUS.md` 的 `G34RR-*`。`UX-P3-001` 与 `TLS-DUAL-WRITE` 的既有延期判断不变。
