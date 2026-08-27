@@ -33,7 +33,7 @@
 | Phase 0B UI/UX 规格 | Gemini | `PASSED` | `e250733` | `0695956` | 用户于 2026-08-27 11:24 CST 批准 2.0.0-final；无例外 |
 | Gate 1 技术合同 | Codex | `PASSED` | `2677bbe` | `9526f92` | 技术合同已冻结，验收矩阵已完善，无阻断问题 |
 | Phase 1 凭据与证书 | Grok | `CHANGES_REQUIRED` | `9526f92` / `9c3ba63` / `02e67d1` | `107db93` | 二次重审仍有 1 个 P1、2 个 P2，须继续在 Phase 1 内修正 |
-| Gate 2 Phase 1 审查 | Codex | `CHANGES_REQUIRED` | `9c3ba63` / `02e67d1` | 本次状态提交 | `107db93` 未通过；Phase 2 继续阻塞 |
+| Gate 2 Phase 1 审查 | Codex | `CHANGES_REQUIRED` | `9c3ba63` / `02e67d1` | `aa5ac52` | `107db93` 未通过；Phase 2 继续阻塞 |
 | Phase 2 服务维护瘦身 | Grok | `BLOCKED` | 待填 | 待填 | 等待 Gate 2 |
 | Gate 3 Phase 2 审查 | Codex | `BLOCKED` | 待填 | 待填 | 待填 |
 | Phase 3 监控大盘 | Grok | `BLOCKED` | 待填 | 待填 | 等待 Gate 3 |
@@ -280,7 +280,7 @@ Gate 2 对 `107db93` 的二次重审结论为 `CHANGES_REQUIRED`。Phase 2 继�
 
 - 输入 commit：`02e67d168a79422ba5fcca35f4751d12dd203002`
 - 审查 commit：`107db9325dd4f33256727154f1f153fbda7e486c`
-- 输出 commit：本次状态提交（提交后回填）
+- 输出 commit：`aa5ac52b98c2c886b89500861cb34783a368ae31`
 - 结论：`CHANGES_REQUIRED`
 - 完成内容：
   1. 严格只审查 `02e67d1..107db93`，逐项复核 `G2-P1-001`～`G2-P2-002`，未实施 Phase 2/3。
