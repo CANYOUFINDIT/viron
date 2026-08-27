@@ -6,13 +6,13 @@
 
 | 字段 | 当前值 |
 | --- | --- |
-| 当前阶段 | Phase 1：凭据与证书修正 |
-| 阶段状态 | `REVIEW_REQUIRED` |
+| 当前阶段 | Phase 1：Gate 2 二次修正 |
+| 阶段状态 | `CHANGES_REQUIRED` |
 | 当前写锁 | `UNLOCKED` |
 | 当前负责人 | 无 |
 | 产品批准 | 用户已于 2026-08-27 11:24 CST 批准 `UIUX-SPEC.md` 2.0.0-final；无例外 |
 | 技术合同状态 | `FROZEN`（Gate 1 `PASSED`） |
-| 下一位负责人 | Codex 重审 Gate 2（审查 `107db93`） |
+| 下一位负责人 | Grok 修复 `G2R-P1-001`、`G2R-P2-001`～`G2R-P2-002` |
 
 ## 2. 基线
 
@@ -32,8 +32,8 @@
 | Phase 0A 现状审计 | Grok | `PASSED` | `e250733` | `8357549` | Codex Gate 1 已复核并采用审计输入 |
 | Phase 0B UI/UX 规格 | Gemini | `PASSED` | `e250733` | `0695956` | 用户于 2026-08-27 11:24 CST 批准 2.0.0-final；无例外 |
 | Gate 1 技术合同 | Codex | `PASSED` | `2677bbe` | `9526f92` | 技术合同已冻结，验收矩阵已完善，无阻断问题 |
-| Phase 1 凭据与证书 | Grok | `REVIEW_REQUIRED` | `9526f92` / `9c3ba63` / `02e67d1` | `107db93` | Gate 2 问题已在 Phase 1 内修正，等待 Codex 重审 |
-| Gate 2 Phase 1 审查 | Codex | `REVIEW_REQUIRED` | `9c3ba63` / `02e67d1` | 待填 | 请审查修正 commit `107db93`；未通过前不得进入 Phase 2 |
+| Phase 1 凭据与证书 | Grok | `CHANGES_REQUIRED` | `9526f92` / `9c3ba63` / `02e67d1` | `107db93` | 二次重审仍有 1 个 P1、2 个 P2，须继续在 Phase 1 内修正 |
+| Gate 2 Phase 1 审查 | Codex | `CHANGES_REQUIRED` | `9c3ba63` / `02e67d1` | 本次状态提交 | `107db93` 未通过；Phase 2 继续阻塞 |
 | Phase 2 服务维护瘦身 | Grok | `BLOCKED` | 待填 | 待填 | 等待 Gate 2 |
 | Gate 3 Phase 2 审查 | Codex | `BLOCKED` | 待填 | 待填 | 待填 |
 | Phase 3 监控大盘 | Grok | `BLOCKED` | 待填 | 待填 | 等待 Gate 3 |
@@ -56,15 +56,15 @@ Agent：无
 
 ## 5. 当前阻塞与风险
 
-Gate 2 修正已提交 `107db93`，等待 Codex 重审。Phase 2 继续阻塞。当前风险：
+Gate 2 对 `107db93` 的二次重审结论为 `CHANGES_REQUIRED`。Phase 2 继续阻塞。当前风险：
 
-1. `G2-P1-001`～`G2-P2-002` 已在 Phase 1 内修复并补测试，但须 Codex 复核后才能关闭并进入 Phase 2。
+1. `G2-P1-001`～`G2-P1-006` 与 `G2-P2-001` 的直接修正已验证；`G2-P1-007` 的真实 429/重试路径仍不完整，另发现 marker 后对账丢最后成功证书快照和 MySQL 领域校验缺口。详见最新交接的 `G2R-*` 工单。
 2. 新旧 TLS 双写窗口仍在；旧 `tls_*` 表未删除。任何停止双写必须延期到独立版本化迁移。
 3. 未跟踪 `EnvironmentMonitoringDashboard.vue` 仍只读未纳管，未修改、未提交、未接入路由。
 4. 服务维护证书/监控 UI 与重型 `/maintenance` Payload 按合同保留到 Phase 2。
 5. TLS 探测仍允许 manager 经授权 SSH 访问私网/loopback；metadata/link-local/multicast 已拒绝。
 6. 本地真实 MariaDB 11.4 与独立 CI job（`.github/workflows/ci.yml` 的 `ssl-mysql`）已补齐；工作台 `mysql.integration` skip 仍不能代替。
-7. Electron 并行安装竞态仍存在。本轮 `package:current-os` 已生成并签名 `Viron.app`，但启动烟测两次均因既有活动环境坞 `passiveHoverFocusStable=false` 失败，DMG 未写出；与证书修正无关，Gate 4 前需解决。
+7. Codex 本轮复验 `package:current-os` 已成功生成并校验 macOS arm64 DMG；Grok 先前两次 `passiveHoverFocusStable=false` 未再复现。Electron 并行安装竞态仍按合同留待 Gate 4 关闭。
 
 ## 6. 交接模板
 
@@ -276,3 +276,32 @@ Gate 2 修正已提交 `107db93`，等待 Codex 重审。Phase 2 继续阻塞。
 - 下一阶段允许修改范围：Gate 2 只审查 `02e67d1..107db93` 及本状态记录；通过后才能授权 Phase 2
 - 下一阶段禁止修改内容：Phase 2 服务维护瘦身/operation run、Phase 3 监控大盘/NOC、删除旧 `tls_*` 表、修改/纳管未跟踪监控草稿、操作或合并 `main`
 
+### 2026-08-27 14:56 — Codex / Gate 2 Phase 1 修正重审
+
+- 输入 commit：`02e67d168a79422ba5fcca35f4751d12dd203002`
+- 审查 commit：`107db9325dd4f33256727154f1f153fbda7e486c`
+- 输出 commit：本次状态提交（提交后回填）
+- 结论：`CHANGES_REQUIRED`
+- 完成内容：
+  1. 严格只审查 `02e67d1..107db93`，逐项复核 `G2-P1-001`～`G2-P2-002`，未实施 Phase 2/3。
+  2. `G2-P1-001`、`G2-P1-003`～`G2-P1-006`、`G2-P2-001` 的直接实现已验证关闭；`G2-P1-002` 的 marker 后对账引入新的 P1 生命周期回归；`G2-P1-007` 与 `G2-P2-002` 仍有下列 P2 缺口。
+  3. 未修改、删除、暂存或提交未跟踪 `src/client/components/EnvironmentMonitoringDashboard.vue`。
+- 修改文件：`docs/refactor-execution/STATUS.md`（仅 Gate 2 状态、问题清单与交接）
+- 数据库/API 变化：无；本次为只读审查。
+- 测试命令及结果：
+  - `git diff --check 02e67d1..107db93` 与当前工作区 `git diff --check`：通过。
+  - `npm run typecheck`：通过。
+  - 定向 Vitest（migration / certificates API / TLS / certificate center UI）：4 files、14 tests 全部通过。
+  - `npm test`：168 files passed / 7 skipped，740 tests passed / 9 skipped；本机 Docker MariaDB 11.4 测试实际执行通过。
+  - `npm run build`：通过；仅有既有 chunk size 警告。
+  - 临时 SQLite 行为复现：marker 已存在、端点 success→failure 后再次执行 `migrateSslAssets()`，`ssl_endpoints` 从 `{ certificate_id: <id>, last_success_at: <time>, probe_status: 'connect_failed' }` 变为 `{ certificate_id: null, last_success_at: null, probe_status: 'connect_failed' }`，稳定复现 `G2R-P1-001`。
+- `package:current-os` 结果：通过。已生成并校验 `release/Viron-0.1.6-macos-arm64-self-signed.dmg`；生成物未纳入 Git。Grok 先前报告的 `passiveHoverFocusStable=false` 本轮未复现。
+- 未完成内容：下列 1 个 P1、2 个 P2 全部关闭并重新通过 Gate 2 前，禁止进入 Phase 2。
+- 审查问题：
+  1. **`G2R-P1-001`：marker 后对账会在正常重启时删除失败端点的最后成功证书快照。** 文件/位置：`src/server/database.ts:68,174`、`src/server/ssl-asset-migration.ts:240-266,363-378`。触发条件：迁移 marker 已存在；当前版本先成功探测并写入 `certificate_id/last_success_at`，随后一次探测失败（双写旧表时旧证书元数据仍按合同保留），再重启应用。实际后果：每次 `openDatabase()` 都重新以旧表对账；`probe_status != 'ok'` 时无条件以 `certificateId=null,lastSuccessAt=null` upsert，导致运行时保留的最后成功资产引用被清空、证书变为 orphan，API 不再能展示应保留的证书元数据。期望行为：初次迁移/旧二进制新建的失败行保持空，但 marker 后对已存在、身份未变化的端点对账必须保留当前新表的最后成功 `certificate_id/last_success_at`；只有身份变化或从未成功才清空，继续返回 `error + stale`。建议修复边界：只调整 Phase 1 marker 后 reconciliation 的合并规则与校验，不改变冻结 Schema/API，不停止双写。验证方法：SQLite/MariaDB 都增加“初迁移→当前版本成功→当前版本失败→关闭并重新打开数据库”行为测试，断言 ID、最后成功资产/时间和 orphan 计数不变；再覆盖旧二进制新增失败端点仍为空、旧二进制改身份会清空。
+  2. **`G2R-P2-001`：批量探测的真实 429 与冷却后重试仍不可用，组件测试绕过了用户点击路径。** 文件/位置：`src/server/routes/certificates.ts:75-103`、`src/client/components/credentials/CertificateCenter.vue:121-167,220-234`、`tests/certificate-center-ui.test.ts:142-193`。触发条件 A：证书任一端点返回 `TLS_PROBE_RATE_LIMIT`；触发条件 B：批量有失败项并等待 60 秒后点击“重试失败项”。实际后果：A 被服务端 catch 后把当前 endpoint 推入成功结果并返回 200，前端不可能看到测试模拟的 429，仍会累计成功；B 的 disabled 只读取非响应式 `Date.now()`，没有 timer 驱动重渲染，按钮不会在冷却结束时自行恢复。测试直接调用暴露的 `retryFailed()`，没有点击按钮，因此两条真实交互缺陷均漏检。期望行为：批量响应按目标明确报告 rate-limit/失败，前端计入失败列表；冷却倒计时为响应式且到时自动启用，不能绕过服务端 60 秒限制。建议修复边界：只调整现有 Phase 1 certificate probe API 适配、批量状态和组件测试，不引入 Phase 2 operation 模型。验证方法：路由测试连续探测并断言 429 目标结果不计成功；组件使用 fake timers 从真实按钮点击验证 partial/all failure、冷却禁用、60 秒后启用并只重试失败项。
+  3. **`G2R-P2-002`：MariaDB 迁移仍未实现冻结合同要求的领域校验，双库测试只覆盖合法值。** 文件/位置：`src/server/mysql-schema.ts:1160-1194,1233-1265`、`src/server/ssl-asset-migration.ts:21-50,168-220,295-359`、`tests/helpers/ssl-asset-harness.ts:68-106,120-186`。触发条件：旧 MySQL `tls_endpoints` 存在非法 `source`、`probe_status`、布尔值或端口；MySQL 表没有 SQLite CHECK。实际后果：迁移直接复制/宽松数值化这些值，validate 不检查领域，MariaDB 可以写 marker 并激活 SQLite 会拒绝的数据，违反 `TECH-CONTRACT.md` 4.3 的同一 Zod/领域校验器要求；新增 MySQL job 的 fixture 无法捕获。期望行为：迁移前用共享领域校验器检查两种数据库的旧行，非法行均停止激活并报告具体 ID；运行时写入也保持同一领域。建议修复边界：只补 Phase 1 migration/domain validator 与双库 fixture，不扩大 Schema/API。验证方法：MariaDB 构造每类非法旧值，断言无 marker、新表事务回滚、错误含行 ID；SQLite/共享校验器断言同一输入得到同一业务失败语义。
+- 已知风险：兼容双写、旧表清理、Phase 2/3 和 Gate 4 Electron 竞态继续按冻结合同处理，不得混入本轮修正。
+- 下一位负责人：Grok / Phase 1 Gate 2 二次修正；完成后将状态改回 `REVIEW_REQUIRED` 并交 Codex 重审。
+- 下一阶段允许修改范围：仅修复 `G2R-P1-001`、`G2R-P2-001`～`G2R-P2-002` 所需的 Phase 1 migration/domain validator、certificate probe API/证书中心和双库/组件测试；更新本状态记录。
+- 下一阶段禁止修改内容：Phase 2 服务维护瘦身/operation run、Phase 3 监控大盘/NOC、删除旧 `tls_*` 表、修改/纳管未跟踪监控草稿、操作或合并 `main`。
