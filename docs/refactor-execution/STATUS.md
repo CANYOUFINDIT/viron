@@ -6,14 +6,14 @@
 
 | 字段 | 当前值 |
 | --- | --- |
-| 当前阶段 | Phase 2+3 UI/UX 复验 |
+| 当前阶段 | Gate 3+4 合并质量与发布 |
 | 阶段状态 | `REVIEW_REQUIRED` |
 | 当前写锁 | `UNLOCKED` |
-| 当前负责人 | Gemini |
+| 当前负责人 | Codex |
 | 产品批准 | 用户已于 2026-08-27 11:24 CST 批准 `UIUX-SPEC.md` 2.0.0-final；无例外 |
 | 执行流程例外 | 用户已于 2026-08-27 15:22 CST 批准 Grok 连续实施 Phase 2+3，随后 Gemini 整体验收、Grok 集中修复、Codex 合并 Gate 3+4 |
 | 技术合同状态 | `FROZEN`（Gate 1 `PASSED`） |
-| 下一位负责人 | Gemini / Phase 2+3 UI/UX 复验（确认 UX-P1-001～UX-P2-004 已关闭） |
+| 下一位负责人 | Codex / Gate 3+4 合并质量与发布 |
 
 ## 2. 基线
 
@@ -38,9 +38,9 @@
 | Phase 2 服务维护瘦身 | Grok | `REVIEW_REQUIRED` | `6167333`（生产代码基线 `63628c9`） | `75daf80` | 内部自验通过并独立提交；不经 Gate 3，待 Gemini/Codex 分区审查 |
 | Phase 3 监控大盘 | Grok | `REVIEW_REQUIRED` | `75daf80` | `f68e0a9` | 内部自验、截图与当前系统打包完成；待 Gemini 整体 UI/UX 验收 |
 | Phase 2+3 UI/UX 验收 | Gemini | `CHANGES_REQUIRED` | `f68e0a9` | `c26b6c2` | 验收完成，发现 3 个 P1、4 个 P2 交互缺陷，详见 UIUX-SPEC.md §14。交接文档曾写 `3fc67ac`，实际 origin/dev 提交为 `c26b6c2` |
-| Phase 2+3 UI/UX 修正 | Grok | `REVIEW_REQUIRED` | `c26b6c2` | `8cec107` | 已关闭 UX-P1-001～UX-P2-004；UX-P3-001 按验收意见延期。待 Gemini 复验 |
-| Phase 2+3 UI/UX 复验 | Gemini | `REVIEW_REQUIRED` | `8cec107` | 待填 | 对照截图与交互走查确认 P1/P2 关闭，不得改生产代码 |
-| Gate 3+4 合并质量与发布 | Codex | `BLOCKED` | Phase 2+3 最终修正输出 commit | 待填 | 等待 Gemini 复验通过后再执行合并 Gate |
+| Phase 2+3 UI/UX 修正 | Grok | `PASSED` | `c26b6c2` | `8cec107` | 已关闭 UX-P1-001～UX-P2-004；UX-P3-001 按验收意见延期 |
+| Phase 2+3 UI/UX 复验 | Gemini | `PASSED` | `8cec107` | 77c3aeb | 逐项复验通过，7 项缺陷全部闭环，UIUX-SPEC.md §14 已记录 PASS |
+| Gate 3+4 合并质量与发布 | Codex | `REVIEW_REQUIRED` | `8cec107` | 待填 | UI/UX 复验通过，待 Codex 执行合并 Gate 3+4 质量审查与最终发布 |
 
 状态只能使用：`NOT_STARTED`、`IN_PROGRESS`、`BLOCKED`、`REVIEW_REQUIRED`、`CHANGES_REQUIRED`、`PASSED`。
 
@@ -461,4 +461,34 @@ Gate 2 最终结论为 `PASSED`。Phase 2+3 实现与 P1/P2 UX 修正已提交�
 - 下一位负责人：Gemini / Phase 2+3 UI/UX 复验
 - 下一阶段允许修改范围：只读审查实现、截图与交互；仅更新 `UIUX-SPEC.md` 验收结论与 `STATUS.md`。不修改生产代码。
 - 下一阶段禁止修改内容：生产代码、Schema/API、测试、未跟踪监控草稿、`main`、把草稿 `git add`、提前启动 Codex Gate 3+4
+
+### 2026-08-27 17:40 — Gemini / Phase 2+3 UI/UX 复验
+
+- 输入 commit：`8cec107`（Grok 缺陷修复；交接 commit 为 `c5bc918`）
+- 输出 commit：`77c3aeb`
+- 完成内容：
+  1. 完整走查 commit `8cec107` 代码实现、单元/组件回归测试与更新后的运行截图（`phase3-monitoring-{hosts,services,noc}.png`）。
+  2. 逐项复验并确认 7 项体验与交互缺陷已全部闭环：
+     - `UX-P1-001` (`VERIFIED_CLOSED`): 节点卡片操作区已一等公民露出「直连 SSH」与「节点日志」，只读 Member 用户可点击，Tab/参数无缝跳转。
+     - `UX-P1-002` (`VERIFIED_CLOSED`): 环境服务维护面板已兼容同时支持 `serviceId` / `deploymentId` / `hostId` / `endpointId` 跨模块深链传参并自动高亮。
+     - `UX-P1-003` (`VERIFIED_CLOSED`): `MonitoringView` 轮询加载 `/api/v1/monitor-alerts` 真实告警数据并传递给 `NocScreen`，不再硬编码为空数组。
+     - `UX-P2-001` (`VERIFIED_CLOSED`): APM 视图「服务健康矩阵」在空数据时居中展示「暂无服务时序」空态文字，截图验证通过。
+     - `UX-P2-002` (`VERIFIED_CLOSED`): NOC 监控大屏左/中/右空态文案完整呈现，使用 `Teleport to="body"` 覆盖全局侧栏，截图验证通过。
+     - `UX-P2-003` (`VERIFIED_CLOSED`): APM 高负载节点「立即排查」与主机 Findings「前往服务维护」一键直达治理入口已打通。
+     - `UX-P2-004` (`VERIFIED_CLOSED`): 凭据中心初次加载完成后通过 `scrollToHighlighted()` 自动平滑滚动居中定位目标证书。
+  3. `UX-P3-001` 保持 `DEFERRED`（按既定设计决议延期至后续版本迭代，本轮不实现）。
+  4. 未跟踪 `src/client/components/EnvironmentMonitoringDashboard.vue` 保持未修改、未删除、未暂存、未提交、未接入。
+  5. 更新 `UIUX-SPEC.md` §14 验收记录为 `PASSED`，释放写锁。
+- 修改文件：`docs/refactor-execution/UIUX-SPEC.md`、`docs/refactor-execution/STATUS.md`
+- 数据库/API 变化：无
+- 测试命令及结果：
+  - `npm test`（含 `tests/certificate-center-ui.test.ts`、`tests/monitoring-ui.test.ts`、`tests/service-discovery-layout.test.ts`）：171 files passed / 7 skipped，751 passed / 9 skipped
+  - `npm run typecheck && npm run build`：全部通过
+- `package:current-os` 结果：纯文档修改，按 `AGENTS.md` 规则免打包。
+- 未完成内容：Codex 执行合并 Gate 3+4 质量审查与最终发布。
+- 已知风险：见第 5 节。
+- 下一位负责人：Codex / Gate 3+4 合并质量与发布
+- 下一阶段允许修改范围：执行最终 Gate 3+4 全量质量审查、多数据库集成验证、安装包验证与发布准备；更新相关文档。
+- 下一阶段禁止修改内容：破坏已验证的 UI/UX 行为、未授权修改/删除/提交未跟踪草稿、操作或合并 `main` 分支。
+
 
