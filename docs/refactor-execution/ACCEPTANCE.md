@@ -17,7 +17,7 @@
 - [ ] 需要时完成桌面用户流和启动验证。
 - [ ] 没有敏感信息、私有数据和 `release/` 进入提交。
 - [ ] 改动已提交到 `dev` 并推送 `origin/dev`。
-- [ ] `npm run package:current-os` 成功。
+- [ ] 本阶段包含代码修改时，`npm run package:current-os` 成功；纯文档性阶段标记为“不适用”。
 - [ ] `STATUS.md` 已记录提交、测试、打包、风险和交接。
 
 ## 2. Phase 0 验收

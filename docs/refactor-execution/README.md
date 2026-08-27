@@ -82,11 +82,11 @@ Gate 4：Codex 全量回归、最终验收和安装包验证
 - 只在 `dev` 开发，不创建主题分支，除非用户明确要求。
 - 工作区干净时才允许执行 `git pull --ff-only origin dev`。
 - 不覆盖、不清理来源不明的用户改动。
-- 每个完整任务批次完成后提交到 `dev`、推送 `origin/dev`，并执行 `npm run package:current-os`。
+- 每个完整任务批次完成后提交到 `dev` 并推送 `origin/dev`；只有批次修改了代码时才执行 `npm run package:current-os`，纯文档性改动不重新打包。
 - 不提交 `private/`、密钥、`.env`、本地数据或 `release/`。
 - 禁止直接操作 `main`。
 
-不要把“修改一个按钮”定义为单独任务批次。一个批次应当是 Phase 0A、0B、Gate 1、Phase 1、Gate 2 等可独立验收的完整单元，避免重复打包。
+不要把“修改一个按钮”定义为单独任务批次。一个批次应当是 Phase 0A、0B、Gate 1、Phase 1、Gate 2 等可独立验收的完整单元。Phase 0A、0B、只修改文档的 Gate 1 或只读审查不打包；包含代码修改的批次才打包。
 
 ## 6. 当前已知基线
 
@@ -119,7 +119,7 @@ Gate 4：Codex 全量回归、最终验收和安装包验证
 ```text
 请打开并完整执行 docs/refactor-execution/GROK-IMPLEMENTATION-AGENT.md。
 当前只执行 STATUS.md 指定的 Phase 0A，不得提前实施后续阶段。
-完成后按任务书更新共享文档、提交、推送、打包并交接。
+完成后按任务书更新共享文档、提交、推送并交接；本阶段只有文档改动，不需要打包。
 ```
 
 首次交给 Gemini：
@@ -127,7 +127,7 @@ Gate 4：Codex 全量回归、最终验收和安装包验证
 ```text
 请打开并完整执行 docs/refactor-execution/GEMINI-UIUX-AGENT.md。
 当前执行 STATUS.md 指定的 Phase 0B，不修改生产代码。
-完成后按任务书更新共享文档、提交、推送、打包并交接。
+完成后按任务书更新共享文档、提交、推送并交接；纯设计文档改动不需要打包。
 ```
 
 交给 Codex：

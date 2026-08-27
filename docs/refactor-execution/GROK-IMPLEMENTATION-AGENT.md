@@ -58,6 +58,8 @@
 
 审计允许执行只读命令、类型检查和测试；不得为了“让测试通过”修改生产代码。
 
+Phase 0A 只修改审计与状态文档，因此完成后不执行 `npm run package:current-os`。
+
 ## 4. Gate 1 之前的禁止事项
 
 在 `TECH-CONTRACT.md` 标记为 `FROZEN` 之前，禁止：
@@ -150,7 +152,7 @@
 6. 运行 `npm run build`；涉及桌面行为时运行桌面验证。
 7. 更新 `STATUS.md`，状态设为 `REVIEW_REQUIRED`。
 8. 提交说明性 commit 并推送 `origin/dev`。
-9. 执行 `npm run package:current-os`。
+9. 当前阶段修改了代码，因此执行 `npm run package:current-os`。
 10. 记录命令结果、输出 commit、风险和交接对象，释放写锁。
 
 不得以“测试太慢”为由跳过项目要求。若测试因既有问题失败，记录可复现证据并停止，不要顺手修复无关范围。
