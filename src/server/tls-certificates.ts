@@ -344,6 +344,7 @@ async function insertLegacyEndpoint(
     sshConnectionId: string | null;
     source: TlsEndpointSource;
     customized: boolean;
+    observeEnabled: boolean;
     sortOrder: number;
     now: string;
   },
@@ -353,7 +354,7 @@ async function insertLegacyEndpoint(
       id, environment_id, ssh_connection_id, ssh_bind_key, host, port, sni, source,
       observe_enabled, customized, sort_order, probe_status, probe_error, leaf_sans_json,
       created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 'never', '', '[]', ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'never', '', '[]', ?, ?)
   `).run(
     input.id,
     input.environmentId,
@@ -363,6 +364,7 @@ async function insertLegacyEndpoint(
     input.origin.port,
     input.origin.sni,
     input.source,
+    input.observeEnabled ? 1 : 0,
     input.customized ? 1 : 0,
     input.sortOrder,
     input.now,
@@ -378,6 +380,7 @@ async function insertEndpoint(
     sshConnectionId: string | null;
     source: TlsEndpointSource;
     customized?: boolean;
+    observeEnabled?: boolean;
   },
 ): Promise<string> {
   if (await endpointCount(app, input.environmentId) >= MAX_TLS_ENDPOINTS_PER_ENVIRONMENT) {
@@ -385,39 +388,47 @@ async function insertEndpoint(
   }
   const id = randomUUID();
   const now = new Date().toISOString();
+  const observeEnabled = input.observeEnabled !== false;
   const nextOrder = await app.db.prepare(`
     SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_sort_order FROM ssl_endpoints WHERE environment_id = ?
   `).get(input.environmentId) as { next_sort_order: number | string };
   const sortOrder = Number(nextOrder.next_sort_order);
-  await app.db.prepare(`
-    INSERT INTO ssl_endpoints (
-      id, environment_id, certificate_id, ssh_connection_id, ssh_bind_key, host, port, sni, source,
-      observe_enabled, customized, sort_order, probe_status, probe_error, created_at, updated_at
-    ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, 1, ?, ?, 'never', '', ?, ?)
-  `).run(
-    id,
-    input.environmentId,
-    input.sshConnectionId,
-    input.sshConnectionId ?? "",
-    input.origin.host,
-    input.origin.port,
-    input.origin.sni,
-    input.source,
-    input.customized ? 1 : 0,
-    sortOrder,
-    now,
-    now,
-  );
-  await insertLegacyEndpoint(app, {
-    id,
-    environmentId: input.environmentId,
-    origin: input.origin,
-    sshConnectionId: input.sshConnectionId,
-    source: input.source,
-    customized: Boolean(input.customized),
-    sortOrder,
-    now,
-  });
+  try {
+    await app.db.prepare(`
+      INSERT INTO ssl_endpoints (
+        id, environment_id, certificate_id, ssh_connection_id, ssh_bind_key, host, port, sni, source,
+        observe_enabled, customized, sort_order, probe_status, probe_error, created_at, updated_at
+      ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'never', '', ?, ?)
+    `).run(
+      id,
+      input.environmentId,
+      input.sshConnectionId,
+      input.sshConnectionId ?? "",
+      input.origin.host,
+      input.origin.port,
+      input.origin.sni,
+      input.source,
+      observeEnabled ? 1 : 0,
+      input.customized ? 1 : 0,
+      sortOrder,
+      now,
+      now,
+    );
+    await insertLegacyEndpoint(app, {
+      id,
+      environmentId: input.environmentId,
+      origin: input.origin,
+      sshConnectionId: input.sshConnectionId,
+      source: input.source,
+      customized: Boolean(input.customized),
+      observeEnabled,
+      sortOrder,
+      now,
+    });
+  } catch (error) {
+    if (isUniqueConstraintError(error)) throw new TlsCertificateError("TLS_ENDPOINT_EXISTS", "该 TLS 端点已经存在", 409);
+    throw error;
+  }
   return id;
 }
 
@@ -442,9 +453,9 @@ export async function createTlsEndpoint(
       origin,
       sshConnectionId: origin.sshConnectionId,
       source: "manual",
+      observeEnabled: input.observeEnabled !== false,
     });
   })();
-  if (input.observeEnabled === false) await updateTlsEndpoint(app, id, { ...input, observeEnabled: false });
   return id;
 }
 
@@ -471,7 +482,55 @@ export async function updateTlsEndpoint(
   const now = new Date().toISOString();
   const customized = row.source === "web_entry" && identityChanged ? 1 : Number(row.customized);
   const source = customized && row.source === "web_entry" ? "manual" : row.source;
-  await app.db.transaction(async () => {
+  const bindKey = origin.sshConnectionId ?? "";
+  const observeEnabled = input.observeEnabled === false ? 0 : 1;
+  try {
+    await app.db.transaction(async () => {
+    if (identityChanged) {
+      await app.db.prepare(`
+        UPDATE ssl_endpoints SET
+          ssh_connection_id = ?, ssh_bind_key = ?, host = ?, port = ?, sni = ?,
+          observe_enabled = ?, customized = ?, source = ?,
+          certificate_id = NULL, probe_status = 'never', probe_error = '',
+          probed_at = NULL, last_success_at = NULL, hostname_match = NULL, chain_complete = NULL,
+          updated_at = ?
+        WHERE id = ?
+      `).run(
+        origin.sshConnectionId,
+        bindKey,
+        origin.host,
+        origin.port,
+        origin.sni,
+        observeEnabled,
+        customized,
+        source,
+        now,
+        endpointId,
+      );
+      await app.db.prepare(`
+        UPDATE tls_endpoints SET
+          ssh_connection_id = ?, ssh_bind_key = ?, host = ?, port = ?, sni = ?,
+          observe_enabled = ?, customized = ?, source = ?,
+          probe_status = 'never', probe_error = '', probed_at = NULL,
+          leaf_cn = '', leaf_sans_json = '[]', issuer = '', serial = '', signature_algorithm = '',
+          not_before = NULL, not_after = NULL, fingerprint_sha256 = '', is_self_signed = 0,
+          hostname_match = NULL, chain_complete = NULL, days_remaining = NULL,
+          updated_at = ?
+        WHERE id = ?
+      `).run(
+        origin.sshConnectionId,
+        bindKey,
+        origin.host,
+        origin.port,
+        origin.sni,
+        observeEnabled,
+        customized,
+        source,
+        now,
+        endpointId,
+      );
+      return;
+    }
     await app.db.prepare(`
       UPDATE ssl_endpoints SET
         ssh_connection_id = ?, ssh_bind_key = ?, host = ?, port = ?, sni = ?,
@@ -479,11 +538,11 @@ export async function updateTlsEndpoint(
       WHERE id = ?
     `).run(
       origin.sshConnectionId,
-      origin.sshConnectionId ?? row.ssh_bind_key,
+      bindKey,
       origin.host,
       origin.port,
       origin.sni,
-      input.observeEnabled === false ? 0 : 1,
+      observeEnabled,
       customized,
       source,
       now,
@@ -496,17 +555,21 @@ export async function updateTlsEndpoint(
       WHERE id = ?
     `).run(
       origin.sshConnectionId,
-      origin.sshConnectionId ?? row.ssh_bind_key,
+      bindKey,
       origin.host,
       origin.port,
       origin.sni,
-      input.observeEnabled === false ? 0 : 1,
+      observeEnabled,
       customized,
       source,
       now,
       endpointId,
     );
   })();
+  } catch (error) {
+    if (isUniqueConstraintError(error)) throw new TlsCertificateError("TLS_ENDPOINT_EXISTS", "该 TLS 端点已经存在", 409);
+    throw error;
+  }
   const updated = await getTlsEndpoint(app, endpointId);
   if (!updated) throw new TlsCertificateError("TLS_ENDPOINT_NOT_FOUND", "证书端点不存在", 404);
   return updated;
@@ -549,12 +612,13 @@ async function unlinkWebEntry(app: FastifyInstance, webEntryId: string): Promise
 
 async function cleanupOrphanWebEntryEndpoints(app: FastifyInstance, endpointIds: string[]): Promise<void> {
   for (const endpointId of endpointIds) {
-    const row = await app.db.prepare("SELECT id, source, customized FROM ssl_endpoints WHERE id = ?").get(endpointId) as
-      | { id: string; source: TlsEndpointSource; customized: number | string }
+    const row = await app.db.prepare("SELECT id, environment_id, source, customized FROM ssl_endpoints WHERE id = ?").get(endpointId) as
+      | { id: string; environment_id: string; source: TlsEndpointSource; customized: number | string }
       | undefined;
     if (!row || row.source !== "web_entry" || Number(row.customized)) continue;
     const remaining = await app.db.prepare("SELECT COUNT(*) AS total FROM ssl_endpoint_web_entries WHERE endpoint_id = ?").get(endpointId) as { total: number | string };
     if (Number(remaining.total) === 0) {
+      await recoverEndpointAlerts(app, row.environment_id, endpointId);
       await app.db.prepare("DELETE FROM ssl_endpoints WHERE id = ?").run(endpointId);
       await app.db.prepare("DELETE FROM tls_endpoints WHERE id = ?").run(endpointId);
     }
@@ -862,23 +926,21 @@ function assetStatus(asset: Omit<SslCertificateAsset, "status">, warnDays: numbe
   return deriveCertificateStatus(asset, warnDays);
 }
 
-export async function listWorkspaceCertificates(
+function certificateListOrderBy(sort: string | undefined): string {
+  if (sort === "name") return "leaf_cn ASC, id ASC";
+  if (sort === "updated") return "last_seen_at DESC, id DESC";
+  return "not_after ASC, leaf_cn ASC, id ASC";
+}
+
+function isoPlusDays(now: number, days: number): string {
+  return new Date(now + days * 86_400_000).toISOString();
+}
+
+async function hydrateCertificateAssets(
   app: FastifyInstance,
-  workspace: { type: string; id: string },
-  query: {
-    page: number;
-    pageSize: number;
-    q?: string;
-    status?: string;
-    environmentId?: string;
-    sort?: string;
-    warnDays?: number;
-  },
-): Promise<{ items: SslCertificateAsset[]; pageInfo: { page: number; pageSize: number; total: number }; summary: Record<string, number> }> {
-  const warnDays = query.warnDays ?? DEFAULT_TLS_WARN_DAYS;
-  let certificates = await app.db.prepare(`
-    SELECT * FROM ssl_certificates WHERE workspace_type = ? AND workspace_id = ?
-  `).all(workspace.type, workspace.id) as Array<Record<string, unknown>>;
+  certificates: Array<Record<string, unknown>>,
+  warnDays: number,
+): Promise<SslCertificateAsset[]> {
   const certificateIds = certificates.map((row) => String(row.id));
   const endpoints = certificateIds.length
     ? await app.db.prepare(`${ENDPOINT_SELECT} WHERE e.certificate_id IN (${certificateIds.map(() => "?").join(", ")})`).all(...certificateIds) as SslEndpointRow[]
@@ -897,8 +959,7 @@ export async function listWorkspaceCertificates(
     items.push(mapped);
     endpointsByCert.set(row.certificate_id ?? "", items);
   }
-  const needle = query.q?.trim().toLowerCase() ?? "";
-  let assets: SslCertificateAsset[] = certificates.map((row) => {
+  return certificates.map((row) => {
     const mappedEndpoints = endpointsByCert.get(String(row.id)) ?? [];
     const webEntries = mappedEndpoints.flatMap((endpoint) => endpoint.webEntries.map((entry) => ({
       ...entry,
@@ -931,54 +992,111 @@ export async function listWorkspaceCertificates(
     if (asset.endpoints.some((item) => item.hostnameMatch === false) && asset.status === "valid") asset.status = "error";
     return asset;
   });
-  if (needle) {
-    assets = assets.filter((asset) => (
-      asset.leafCn.toLowerCase().includes(needle)
-      || asset.issuer.toLowerCase().includes(needle)
-      || asset.fingerprintSha256.includes(needle)
-      || asset.leafSans.some((name) => name.toLowerCase().includes(needle))
-    ));
-  }
-  if (query.environmentId) {
-    assets = assets.filter((asset) => asset.endpoints.some((item) => item.environmentId === query.environmentId));
-  }
-  if (query.status) {
-    assets = assets.filter((asset) => {
-      if (query.status === "30d") return asset.daysRemaining != null && asset.daysRemaining >= 0 && asset.daysRemaining <= 30;
-      if (query.status === "14d") return asset.daysRemaining != null && asset.daysRemaining >= 0 && asset.daysRemaining <= 14;
-      if (query.status === "7d") return asset.daysRemaining != null && asset.daysRemaining >= 0 && asset.daysRemaining <= 7;
-      if (query.status === "mismatch") return asset.endpoints.some((item) => item.hostnameMatch === false);
-      return asset.status === query.status;
-    });
-  }
-  const sort = query.sort ?? "expiry";
-  assets.sort((left, right) => {
-    if (sort === "name") return left.leafCn.localeCompare(right.leafCn);
-    if (sort === "updated") return right.lastSeenAt.localeCompare(left.lastSeenAt);
-    const leftDays = left.daysRemaining ?? Number.POSITIVE_INFINITY;
-    const rightDays = right.daysRemaining ?? Number.POSITIVE_INFINITY;
-    return leftDays - rightDays;
-  });
+}
+
+export async function listWorkspaceCertificates(
+  app: FastifyInstance,
+  workspace: { type: string; id: string },
+  query: {
+    page: number;
+    pageSize: number;
+    q?: string;
+    status?: string;
+    environmentId?: string;
+    sort?: string;
+    warnDays?: number;
+  },
+): Promise<{ items: SslCertificateAsset[]; pageInfo: { page: number; pageSize: number; total: number }; summary: Record<string, number> }> {
+  const warnDays = query.warnDays ?? DEFAULT_TLS_WARN_DAYS;
+  const now = Date.now();
+  const nowIso = new Date(now).toISOString();
+  const expiringCutoffIso = isoPlusDays(now, warnDays + 1);
+  const plus8Iso = isoPlusDays(now, 8);
+  const plus15Iso = isoPlusDays(now, 15);
+  const plus31Iso = isoPlusDays(now, 31);
+  const needle = query.q?.trim().toLowerCase() ?? "";
+  const like = `%${needle}%`;
+  const environmentId = query.environmentId ?? "";
+  const status = query.status ?? "";
+  const filteredSql = `
+    SELECT c.*,
+      CASE
+        WHEN COUNT(e.id) = 0 THEN 'orphan'
+        WHEN c.not_after < ? THEN 'expired'
+        WHEN SUM(CASE WHEN e.probe_status NOT IN ('ok', 'never', 'skipped') THEN 1 ELSE 0 END) > 0 THEN 'error'
+        WHEN c.not_after < ? THEN 'expiring'
+        WHEN SUM(CASE WHEN e.hostname_match = 0 THEN 1 ELSE 0 END) > 0 THEN 'error'
+        ELSE 'valid'
+      END AS derived_status,
+      MAX(CASE WHEN e.hostname_match = 0 THEN 1 ELSE 0 END) AS has_mismatch
+    FROM ssl_certificates c
+    LEFT JOIN ssl_endpoints e ON e.certificate_id = c.id
+    WHERE c.workspace_type = ? AND c.workspace_id = ?
+      AND (? = '' OR LOWER(c.leaf_cn) LIKE ? OR LOWER(c.issuer) LIKE ? OR LOWER(c.fingerprint_sha256) LIKE ? OR LOWER(c.leaf_sans_json) LIKE ?)
+      AND (? = '' OR EXISTS (SELECT 1 FROM ssl_endpoints scoped WHERE scoped.certificate_id = c.id AND scoped.environment_id = ?))
+    GROUP BY c.id
+    HAVING (
+      ? = ''
+      OR (? = 'mismatch' AND has_mismatch = 1)
+      OR (? IN ('30d', '14d', '7d') AND c.not_after >= ? AND c.not_after < CASE ? WHEN '7d' THEN ? WHEN '14d' THEN ? ELSE ? END)
+      OR (? NOT IN ('mismatch', '30d', '14d', '7d') AND derived_status = ?)
+    )
+  `;
+  const filterParams = [
+    nowIso,
+    expiringCutoffIso,
+    workspace.type,
+    workspace.id,
+    needle, like, like, like, like,
+    environmentId, environmentId,
+    status,
+    status,
+    status, nowIso, status, plus8Iso, plus15Iso, plus31Iso,
+    status, status,
+  ];
+  const summaryRows = await app.db.prepare(`
+    SELECT derived_status, COUNT(*) AS total, SUM(CASE WHEN has_mismatch = 1 THEN 1 ELSE 0 END) AS mismatch_total
+    FROM (${filteredSql}) filtered
+    GROUP BY derived_status
+  `).all(...filterParams) as Array<{ derived_status: string; total: number | string; mismatch_total: number | string }>;
   const summary = {
-    total: assets.length,
-    valid: assets.filter((item) => item.status === "valid").length,
-    expiring: assets.filter((item) => item.status === "expiring").length,
-    expired: assets.filter((item) => item.status === "expired").length,
-    error: assets.filter((item) => item.status === "error" || item.endpoints.some((endpoint) => endpoint.hostnameMatch === false)).length,
-    orphan: assets.filter((item) => item.orphan).length,
+    total: 0,
+    valid: 0,
+    expiring: 0,
+    expired: 0,
+    error: 0,
+    orphan: 0,
   };
-  const total = assets.length;
-  const start = Math.max(0, (query.page - 1) * query.pageSize);
+  for (const row of summaryRows) {
+    const total = Number(row.total);
+    summary.total += total;
+    if (row.derived_status === "valid") summary.valid = total;
+    if (row.derived_status === "expiring") summary.expiring = total;
+    if (row.derived_status === "expired") summary.expired = total;
+    if (row.derived_status === "error") summary.error += total;
+    if (row.derived_status === "orphan") summary.orphan = total;
+    if (row.derived_status !== "error") summary.error += Number(row.mismatch_total);
+  }
+  const offset = Math.max(0, (query.page - 1) * query.pageSize);
+  const pageRows = await app.db.prepare(`
+    SELECT * FROM (${filteredSql}) filtered
+    ORDER BY ${certificateListOrderBy(query.sort)}
+    LIMIT ? OFFSET ?
+  `).all(...filterParams, query.pageSize, offset) as Array<Record<string, unknown>>;
   return {
-    items: assets.slice(start, start + query.pageSize),
-    pageInfo: { page: query.page, pageSize: query.pageSize, total },
+    items: await hydrateCertificateAssets(app, pageRows, warnDays),
+    pageInfo: { page: query.page, pageSize: query.pageSize, total: summary.total },
     summary,
   };
 }
 
 export async function getWorkspaceCertificate(app: FastifyInstance, workspace: { type: string; id: string }, certificateId: string): Promise<SslCertificateAsset | null> {
-  const listed = await listWorkspaceCertificates(app, workspace, { page: 1, pageSize: 1000 });
-  return listed.items.find((item) => item.id === certificateId) ?? null;
+  const row = await app.db.prepare(`
+    SELECT * FROM ssl_certificates WHERE id = ? AND workspace_type = ? AND workspace_id = ?
+  `).get(certificateId, workspace.type, workspace.id) as Record<string, unknown> | undefined;
+  if (!row) return null;
+  const [asset] = await hydrateCertificateAssets(app, [row], DEFAULT_TLS_WARN_DAYS);
+  return asset ?? null;
 }
 
 export async function deleteWorkspaceCertificate(

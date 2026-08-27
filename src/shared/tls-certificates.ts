@@ -280,10 +280,12 @@ export function tlsEndpointAttention(endpoint: Pick<TlsEndpoint, "sshConnectionI
 }
 
 export function tlsEndpointIsStale(
-  endpoint: Pick<TlsEndpoint, "observeEnabled" | "sshConnectionId" | "probeStatus" | "probedAt" | "lastSuccessAt" | "daysRemaining">,
+  endpoint: Pick<TlsEndpoint, "observeEnabled" | "sshConnectionId" | "probeStatus" | "probedAt" | "lastSuccessAt" | "daysRemaining" | "certificateId">,
   warnDays = DEFAULT_TLS_WARN_DAYS,
   now = Date.now(),
 ): boolean {
+  const failed = endpoint.probeStatus !== "ok" && endpoint.probeStatus !== "never" && endpoint.probeStatus !== "skipped";
+  if (failed && (endpoint.lastSuccessAt || endpoint.certificateId)) return true;
   const reference = endpoint.lastSuccessAt || endpoint.probedAt;
   if (!reference) return false;
   const dueAt = tlsProbeDueAt(endpoint, warnDays, Date.parse(reference));

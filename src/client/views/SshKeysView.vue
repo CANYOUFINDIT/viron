@@ -25,7 +25,7 @@ interface SshKeyItem {
 
 const route = useRoute();
 const router = useRouter();
-const certificateCenter = ref<{ openCreate: () => void; probeAll: () => Promise<void> } | null>(null);
+const certificateCenter = ref<{ openCreate: () => void; probeAll: () => Promise<void>; batchBusy: boolean } | null>(null);
 const activeTab = computed(() => route.query.tab === "ssl" ? "ssl" : "ssh");
 const loading = ref(true);
 const saving = ref(false);
@@ -197,7 +197,7 @@ onMounted(load);
         </template>
         <template v-else>
           <el-button @click="certificateCenter?.openCreate()"><Search :size="16" />{{ $t('手动录入端点探测') }}</el-button>
-          <el-button type="primary" @click="certificateCenter?.probeAll()"><RefreshCw :size="16" />{{ $t('全局批量重新探测') }}</el-button>
+          <el-button type="primary" :loading="certificateCenter?.batchBusy" :disabled="certificateCenter?.batchBusy" @click="certificateCenter?.probeAll()"><RefreshCw :size="16" />{{ $t('全局批量重新探测') }}</el-button>
         </template>
       </template>
     </PageHeader>
