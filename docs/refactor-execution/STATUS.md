@@ -6,14 +6,14 @@
 
 | 字段 | 当前值 |
 | --- | --- |
-| 当前阶段 | Phase 2+3：服务维护瘦身与监控大盘合并实施 |
-| 阶段状态 | `NOT_STARTED` |
+| 当前阶段 | Phase 2+3 UI/UX 整体验收 |
+| 阶段状态 | `REVIEW_REQUIRED` |
 | 当前写锁 | `UNLOCKED` |
-| 当前负责人 | 无 |
+| 当前负责人 | Gemini |
 | 产品批准 | 用户已于 2026-08-27 11:24 CST 批准 `UIUX-SPEC.md` 2.0.0-final；无例外 |
 | 执行流程例外 | 用户已于 2026-08-27 15:22 CST 批准 Grok 连续实施 Phase 2+3，随后 Gemini 整体验收、Grok 集中修复、Codex 合并 Gate 3+4 |
 | 技术合同状态 | `FROZEN`（Gate 1 `PASSED`） |
-| 下一位负责人 | Grok / Phase 2+3 合并实施 |
+| 下一位负责人 | Gemini / Phase 2+3 整体 UI/UX 验收 |
 
 ## 2. 基线
 
@@ -35,9 +35,9 @@
 | Gate 1 技术合同 | Codex | `PASSED` | `2677bbe` | `9526f92` | 技术合同已冻结，验收矩阵已完善，无阻断问题 |
 | Phase 1 凭据与证书 | Grok / Codex | `PASSED` | `9526f92` / `9c3ba63` / `02e67d1` | `63628c9` | Phase 1 实现及两轮 Gate 修正已完成，无未关闭 P0/P1/P2 |
 | Gate 2 Phase 1 审查 | Codex | `PASSED` | `02e67d1` / `107db93` / `b15b64f` | `63628c9` | `G2-*` 与 `G2R-*` 全部关闭；允许进入 Phase 2 |
-| Phase 2 服务维护瘦身 | Grok | `NOT_STARTED` | `59e9672`（生产代码基线 `63628c9`） | 待填 | 合并批次第一段；内部自验并独立提交后直接继续 Phase 3 |
-| Phase 3 监控大盘 | Grok | `NOT_STARTED` | Phase 2 输出 commit | 待填 | 合并批次第二段；不再等待独立 Gate 3 |
-| Phase 2+3 UI/UX 验收 | Gemini | `BLOCKED` | Phase 3 输出 commit | 待填 | 等待 Grok 提供完整实现与运行截图 |
+| Phase 2 服务维护瘦身 | Grok | `REVIEW_REQUIRED` | `6167333`（生产代码基线 `63628c9`） | `75daf80` | 内部自验通过并独立提交；不经 Gate 3，待 Gemini/Codex 分区审查 |
+| Phase 3 监控大盘 | Grok | `REVIEW_REQUIRED` | `75daf80` | `f68e0a9` | 内部自验、截图与当前系统打包完成；待 Gemini 整体 UI/UX 验收 |
+| Phase 2+3 UI/UX 验收 | Gemini | `IN_PROGRESS` | `f68e0a9` | 待填 | 运行截图已提供；只读验收，不修改生产代码 |
 | Phase 2+3 UI/UX 修正 | Grok | `BLOCKED` | Gemini 验收输出 commit | 待填 | 等待 Gemini 问题清单；P0/P1/P2 集中关闭 |
 | Gate 3+4 合并质量与发布 | Codex | `BLOCKED` | Phase 2+3 最终修正输出 commit | 待填 | 等待实现、Gemini 验收及修正完成 |
 
@@ -47,25 +47,21 @@
 
 ```text
 状态：UNLOCKED
-Agent：无
-阶段：无
-开始时间：-
-预计修改范围：-
 ```
 
 若写锁为 `LOCKED`，其他 Agent 只能进行不写仓库的分析，不得执行代码修改、格式化、迁移或 Git 操作。
 
 ## 5. 当前阻塞与风险
 
-Gate 2 最终结论为 `PASSED`。用户已批准 Phase 2+3 合并实施，当前风险：
+Gate 2 最终结论为 `PASSED`。Phase 2+3 实现已提交并完成内部自验，当前风险：
 
-1. `G2-P1-001`～`G2-P1-007`、`G2-P2-001`～`G2-P2-002` 及二次重审 `G2R-P1-001`、`G2R-P2-001`～`G2R-P2-002` 已有 SQLite/MariaDB/API/Vue 行为证据并全部关闭。
-2. 新旧 TLS 双写窗口仍在；旧 `tls_*` 表未删除。任何停止双写必须延期到独立版本化迁移。
-3. 未跟踪 `EnvironmentMonitoringDashboard.vue` 仍只读未纳管，未修改、未提交、未接入路由。
-4. Grok 必须在同一会话内保持 Phase 2、Phase 3 的独立 commit 和内部验收证据；合并执行不等于混合技术边界，Phase 2 失败时不得继续 Phase 3。
-5. TLS 探测仍允许 manager 经授权 SSH 访问私网/loopback；metadata/link-local/multicast 已拒绝。
-6. 本地真实 MariaDB 11.4 与独立 CI job（`.github/workflows/ci.yml` 的 `ssl-mysql`）已补齐；工作台 `mysql.integration` skip 仍不能代替。
-7. Codex 基于 `63628c9` 复验 `package:current-os`，已成功生成并校验 macOS arm64 DMG。首次缺失 Electron 二进制时的并行安装竞态仍须在合并 Gate 3+4 关闭；依赖就绪后的全量测试已干净通过。
+1. 新旧 TLS 双写窗口仍在；旧 `tls_*` 表未删除。任何停止双写必须延期到独立版本化迁移。
+2. 未跟踪 `EnvironmentMonitoringDashboard.vue` 仍只读未纳管，未修改、未提交、未接入路由。
+3. 服务维护截图为空环境空状态（无节点/探针）；监控大盘/NOC 截图同样为空数据，用于证明导航、空状态与「缺失指标不为 0%」。有数据的启停/时序/Findings 路径以自动化测试为证据。
+4. TLS 探测仍允许 manager 经授权 SSH 访问私网/loopback；metadata/link-local/multicast 已拒绝。
+5. 本地真实 MariaDB 11.4 与独立 CI job（`.github/workflows/ci.yml` 的 `ssl-mysql`）已补齐；工作台 `mysql.integration` skip 仍不能代替。
+6. 首次缺失 Electron 二进制时的并行安装竞态仍须在合并 Gate 3+4 关闭。本轮 `package:current-os` 已成功生成并校验 macOS arm64 DMG。
+7. Phase 2 的 Operations Ribbon 继续只展示 manager 配置的既有 Runbook，未自动植入平滑重启/体检/清缓存脚本。
 
 ## 6. 交接模板
 
@@ -353,3 +349,57 @@ Gate 2 最终结论为 `PASSED`。用户已批准 Phase 2+3 合并实施，当�
 - 下一位负责人：Grok / Phase 2+3 合并实施。
 - 下一阶段允许修改范围：严格合并 `TECH-CONTRACT.md` §11 的 Phase 2 与 Phase 3 允许范围；Phase 2 和 Phase 3 分别提交，最终提供运行截图和完整验证证据。
 - 下一阶段禁止修改内容：改变冻结 Schema/API/权限、停止 TLS 旧表双写、删除 Host/Deployment/TimeSeries 复用资产、修改/暂存/提交/删除未跟踪 `EnvironmentMonitoringDashboard.vue`、自动植入或猜测业务脚本、操作或合并 `main`。
+
+### 2026-08-27 16:35 — Grok / Phase 2 服务维护瘦身（内部自验）
+
+- 输入 commit：`6167333`（生产代码基线 `63628c9`）
+- 输出 commit：`75daf80`
+- 完成内容：
+  1. 新增 `service_operation_runs` / `service_operation_locks`（SQLite CHECK + MySQL 应用校验），进程启动将 `queued/running` 标为 `interrupted` 并释放锁。
+  2. 新增轻量 `GET /api/v1/environments/:id/service-deployments`；旧 `/maintenance` 返回同一 DTO 并带 `Deprecation`/`Link`。禁止 hosts 快照、TLS、history、scriptBody、candidates 详情。
+  3. 危险操作改为 202 + `Idempotency-Key` + 资源锁；单目标 120s、batch 50/并发 4/总 10 分钟；部分成功逐目标返回。
+  4. systemd/docker/podman/supervisor 暴露 start/stop/restart；Kubernetes 仅结构化控制器 restart；裸进程仅 Runbook。
+  5. 维护页移除证书 UI 与 Host/Deployment 历史大盘；discovery 候选懒加载；探针安装/刷新/清理仅 manager。
+  6. Operations Ribbon 只使用已配置 Runbook；新增批量选择、进度弹窗与失败重试。
+  7. 未修改、未删除、未提交、未接入 `EnvironmentMonitoringDashboard.vue`。未停止 TLS 旧表双写。
+- 修改文件：`src/server/{sqlite-schema,mysql-schema,app,routes/service-maintenance,service-deployments-payload,service-operations}.ts`、`src/shared/service-operations.ts`、`src/client/components/ServiceMaintenancePanel.vue`、`src/client/components/service-maintenance/*`、`src/client/views/EnvironmentDetailView.vue`、相关测试
+- 数据库/API 变化：新 operation 表；轻量维护 Payload；危险 POST 202 polling
+- 测试命令及结果：
+  - `npm run typecheck`：通过
+  - 定向：service-operations / service-maintenance / discovery-layout / monitor-alerts / monitor-installer / certificates-api / tls-certificate-maintenance：通过
+  - `npm test`：169 files passed / 7 skipped，744 passed / 9 skipped
+  - `npm run build`：通过
+- `package:current-os` 结果：本段不单独打包；合并批次在 Phase 3 后打包一次
+- 未完成内容：当时继续同一写锁实施 Phase 3
+- 已知风险：见第 5 节
+- 下一位负责人：Grok / Phase 3（同一写锁，不交 Codex Gate 3）
+- 下一阶段允许修改范围：新 tracked Monitoring view/子组件、router/AppShell/i18n、overview/service timeseries、history 点数/Abort/timer/NOC、alert `environmentId`
+- 下一阶段禁止修改内容：重做证书模型或服务 operation、重做探针安装引擎、git add/修改/删除未跟踪监控草稿、删除旧 `tls_*` 表、操作 `main`
+
+### 2026-08-27 16:40 — Grok / Phase 3 监控大盘与合并批次交接
+
+- 输入 commit：`75daf80`
+- 输出 commit：`f68e0a9`（本状态记录将再提交一次）
+- 完成内容：
+  1. 全局导航与路由 `/monitoring`；member 可读取授权环境。
+  2. `GET /api/v1/monitoring/overview` 单请求 DB 快照：summary、主机卡片、服务排行、problem nodes、truncated；不触发 SSH。缺失指标为 `null`/`—`，不显示 0% 健康。
+  3. 选中主机后才加载一条 host history；复用 `HostMonitorDashboard` + AbortController。
+  4. `GET /api/v1/monitoring/services/:id/timeseries` 服务级聚合，最多 50 deployment、480 点。
+  5. history Top processes 每点最多 5；点数硬上限 480 且保留首末。
+  6. `GET /monitor-alerts?environmentId=` 真实过滤；无权/跨当前工作空间环境 404。告警导航改到监控大盘（TLS 告警仍到密钥与证书 `tab=ssl`）。
+  7. NOC 使用 Fullscreen API、Esc 退出、`prefers-reduced-motion`。刷新 15/30/60/暂停，hidden 暂停。
+  8. 运行截图：`docs/refactor-execution/screenshots/phase2-service-maintenance.png`、`phase3-monitoring-hosts.png`、`phase3-monitoring-services.png`、`phase3-monitoring-noc.png`。
+  9. 未跟踪草稿仍未修改、未提交、未删除、未接入路由。
+- 修改文件：`src/client/{router,views/MonitoringView,components/AppShell,HostMonitorDashboard,MonitorAlertCenter,monitoring/*}`、`src/server/{app,monitoring-overview,monitoring-timeseries,routes/monitoring,monitor-alerts,monitor-history}`、`src/shared/{monitoring,i18n-messages}.ts`、测试与截图
+- 数据库/API 变化：新增 overview/service timeseries；告警增加 environmentId 过滤；history 点数/进程上限收紧。无新表。
+- 测试命令及结果：
+  - `npm run typecheck`：通过
+  - 定向：monitoring / monitoring-ui / monitor-alerts / monitor-history / app-shell-navigation：通过
+  - `npm test`：171 files passed / 7 skipped，749 passed / 9 skipped
+  - `npm run build`：通过；产物含 `MonitoringView`，不含未跟踪草稿
+- `package:current-os` 结果：通过。macOS arm64 DMG `release/Viron-0.1.6-macos-arm64-self-signed.dmg`（未提交 `release/`）；最低系统 macOS 12.0；本地自签名。
+- 未完成内容：Gemini 整体 UI/UX 验收；Grok 按问题清单集中修复；Codex 合并 Gate 3+4
+- 已知风险：见第 5 节。空数据截图不能代替有探针主机的时序走查。
+- 下一位负责人：Gemini / Phase 2+3 整体 UI/UX 验收
+- 下一阶段允许修改范围：只读审查 UI/UX 规格符合性、截图与实现；仅更新 `STATUS.md` 与验收记录。不修改生产代码。
+- 下一阶段禁止修改内容：生产代码、Schema/API、未跟踪监控草稿、`main`、把草稿 `git add`
