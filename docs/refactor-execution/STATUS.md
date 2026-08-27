@@ -43,7 +43,7 @@
 | Gate 3+4 合并质量与发布 | Grok（用户指示代行，因 Codex 不可用） | `PASSED` | `2e787d4` | `ad983f1` | 分区审查 Phase 2/3，关闭 P0 探针安装权限与 Electron 并行安装竞态；`verify:full-regression` 与当前系统打包通过 |
 | Gate 3+4 独立复核 | Codex | `CHANGES_REQUIRED` | `9e36db0` | `f266158` | 推翻代行 `PASSED`；3 个 P1、8 个 P2 交回 Grok |
 | Gate 3+4 G34R 修正 | Grok | `REVIEW_REQUIRED` | `2c0b15d` | `04ad5aa` | 声称关闭全部 `G34R-*`；Codex 独立重审确认仍有边界问题 |
-| Gate 3+4 G34R 独立重审 | Codex | `CHANGES_REQUIRED` | `04ad5aa` | 本交接输出 commit | 1 个 P1、5 个 P2 交回 Grok；Gate 3+4 不得发布或合并 main |
+| Gate 3+4 G34R 独立重审 | Codex | `CHANGES_REQUIRED` | `04ad5aa` | `abbeba1` | 1 个 P1、5 个 P2 交回 Grok；Gate 3+4 不得发布或合并 main |
 
 状态只能使用：`NOT_STARTED`、`IN_PROGRESS`、`BLOCKED`、`REVIEW_REQUIRED`、`CHANGES_REQUIRED`、`PASSED`。
 
@@ -567,7 +567,7 @@ Gate 2 最终结论为 `PASSED`。Codex 对 `04ad5aa` 的 Gate 3+4 独立重审�
 ### 2026-08-27 22:00 — Grok / Gate 3+4 G34R-* 修正
 
 - 输入 commit：`2c0b15d`（Codex 独立复核交接；工作区自 `f266158`/`2c0b15d` 起修正）
-- 输出 commit：本交接记录所在提交
+- 输出 commit：`04ad5aa980f60adf94c78fea04960f9466eb1415`
 - 结论：实现自验完成，`G34R-*` 按项关闭；Gate 3+4 仍待 Codex 独立重审，不得恢复 `PASSED`
 - 完成内容：
   1. **`G34R-P1-001` FIXED**：`mapWithConcurrency` 在截止后停止调度新目标并等待在途 worker；`runServiceOperation` 在 execute 返回后才释放锁并持久化 `result_json`；未启动目标记 `OPERATION_TIMEOUT`。
@@ -597,7 +597,7 @@ Gate 2 最终结论为 `PASSED`。Codex 对 `04ad5aa` 的 Gate 3+4 独立重审�
 ### 2026-08-27 22:30 — Codex / Gate 3+4 G34R-* 独立重审
 
 - 输入 commit：`04ad5aa980f60adf94c78fea04960f9466eb1415`（开始时与 `origin/dev` 一致）
-- 输出 commit：本交接记录所在提交
+- 输出 commit：`abbeba18fdaf19ae4b3b0657e84a9eb5ec639846`
 - 结论：`CHANGES_REQUIRED`
 - 分区审查：
   1. Phase 2：`63628c9..75daf80`。
