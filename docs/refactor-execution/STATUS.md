@@ -132,3 +132,25 @@ Agent：无
 - 下一位负责人：用户批准 UI/UX；Codex Gate 1（须同时引用本审计与已批准规格）
 - 下一阶段允许修改范围：Gate 1 仅 `TECH-CONTRACT.md`、`ACCEPTANCE.md`、`STATUS.md`（及合同明确的文档）
 - 下一阶段禁止修改内容：生产代码、Schema/API、把未跟踪监控组件接入路由、从服务维护删除功能、新建证书表（直至 `TECH-CONTRACT.md` 为 `FROZEN`）
+
+### 2026-08-27 11:20 — Codex / Gate 1 前置条件核验
+
+- 输入 commit：`252a7b7cb4cd999e5f5f4e042b9fc5c5db70ac8e`（与 `origin/dev` 一致）
+- 输出 commit：本次阻塞交接记录所在提交；Gate 1 无输出 commit
+- 结论：`BLOCKED`
+- 完成内容：
+  1. 完整读取 Codex Gate 任务书要求的根目录 `AGENTS.md`、原始重构方案、执行说明、状态、现状审计、UI/UX 规格、技术合同和验收矩阵。
+  2. 根据 `STATUS.md` 识别当前目标为 Gate 1，并核验本地及远端 `dev` 均无后续产品批准记录。
+  3. 确认 Gate 1 前置条件未满足：`UIUX-SPEC.md` 状态仍为 `REVIEW_REQUIRED`，`STATUS.md` 仍记录“UI/UX 规格尚未用户批准”，验收矩阵“用户已批准设计方向”仍未完成。
+  4. 未冻结 `TECH-CONTRACT.md`，未修改 `ACCEPTANCE.md`，未实施 Schema、API、客户端或后续 Phase 1–3 代码。
+- 修改文件：`docs/refactor-execution/STATUS.md`（仅本交接记录）
+- 数据库/API 变化：无
+- 测试命令及结果：未运行；当前仅核验文档前置条件，无代码或合同内容变更
+- `package:current-os` 结果：不适用（纯文档性阻塞交接，且无代码修改）
+- 未完成内容：Gate 1 的技术决策、`TECH-CONTRACT.md` 冻结和 `ACCEPTANCE.md` 完善均未开始，禁止在用户批准前代替产品决策人推进。
+- 已知风险：
+  1. 阻塞编号 `G1-PRE-001`：用户尚未批准 `UIUX-SPEC.md`。触发条件是直接执行 Gate 1；实际后果是合同可能冻结未经批准的 IA、权限与关键交互；期望行为是用户明确批准设计或给出修改意见；解除边界是仅更新批准状态或先由 Gemini 修订规格；验证方法是 `UIUX-SPEC.md` 标为 `APPROVED` 且 `STATUS.md` 记录批准人/时间/例外。
+  2. 未跟踪 `src/client/components/EnvironmentMonitoringDashboard.vue` 保持原状，未删除、未覆盖、未接入路由、未提交。
+- 下一位负责人：用户（批准 `UIUX-SPEC.md` 或提出修改意见）；批准完成后交 Codex 重新执行 Gate 1
+- 下一阶段允许修改范围：批准前仅允许处理 `UIUX-SPEC.md` 的用户意见与批准记录；批准后 Gate 1 仅允许修改 `TECH-CONTRACT.md`、`ACCEPTANCE.md`、`STATUS.md` 及合同明确需要的文档
+- 下一阶段禁止修改内容：生产代码、Schema/API、未跟踪监控组件、Phase 1–3 实现，以及任何对 `TECH-CONTRACT.md` 的提前冻结
