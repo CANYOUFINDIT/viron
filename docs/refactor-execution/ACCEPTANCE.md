@@ -64,41 +64,41 @@
 
 ### 数据与迁移
 
-- [ ] 新表、索引、FK 和 migration marker 在 SQLite/MySQL 均正确创建。
-- [ ] 旧 endpoint/junction ID 和数据完整迁移，旧表保留且兼容双写。
-- [ ] 迁移重复执行不增加行、不改变 ID；失败时不激活、不静默丢数据。
-- [ ] SQLite `foreign_key_check` 为空；MySQL 约束、事务和级联与 SQLite 等价。
-- [ ] 相同 canonical SHA-256 指纹在同一工作空间跨环境正确归并。
-- [ ] 空/非法指纹不创建 certificate；证书轮换原子切换且保留旧 orphan。
-- [ ] 不同工作空间不会归并、冲突或泄漏资产存在性。
+- [x] 新表、索引、FK 和 migration marker 在 SQLite/MySQL 均正确创建。
+- [x] 旧 endpoint/junction ID 和数据完整迁移，旧表保留且兼容双写。
+- [x] 迁移重复执行不增加行、不改变 ID；失败时不激活、不静默丢数据。
+- [x] SQLite `foreign_key_check` 为空；MySQL 约束、事务和级联与 SQLite 等价。
+- [x] 相同 canonical SHA-256 指纹在同一工作空间跨环境正确归并。
+- [x] 空/非法指纹不创建 certificate；证书轮换原子切换且保留旧 orphan。
+- [x] 不同工作空间不会归并、冲突或泄漏资产存在性。
 
 ### API 与生命周期
 
-- [ ] 证书列表/详情支持分页、搜索、状态/环境过滤和排序，且无逐卡 N+1。
-- [ ] 多 Web 入口、多 endpoint 与证书关系正确；一个入口最多一个活动 endpoint。
-- [ ] 删除证书默认保护共享引用；显式 cascade 的影响、告警恢复和审计正确。
-- [ ] 删除/解绑 Web 入口、endpoint、SSH、环境不会误删共享证书或真实 Web 入口。
-- [ ] 探测失败保留上次成功资产并标记 error/stale，不显示为健康。
-- [ ] 旧 `/tls-endpoints*` 路径和 `web-entries[].tls` 兼容字段仍工作。
-- [ ] Phase 1 的旧 `/maintenance` Payload 尚未提前删除 TLS/hosts 字段。
+- [x] 证书列表/详情支持分页、搜索、状态/环境过滤和排序，且无逐卡 N+1。
+- [x] 多 Web 入口、多 endpoint 与证书关系正确；一个入口最多一个活动 endpoint。
+- [x] 删除证书默认保护共享引用；显式 cascade 的影响、告警恢复和审计正确。
+- [x] 删除/解绑 Web 入口、endpoint、SSH、环境不会误删共享证书或真实 Web 入口。
+- [x] 探测失败保留上次成功资产并标记 error/stale，不显示为健康。
+- [x] 旧 `/tls-endpoints*` 路径和 `web-entries[].tls` 兼容字段仍工作。
+- [x] Phase 1 的旧 `/maintenance` Payload 尚未提前删除 TLS/hosts 字段。
 
 ### 安全与界面
 
-- [ ] 全局入口显示「密钥与证书」，SSH 密钥原能力无回归。
-- [ ] SSL/TLS 统计、筛选、列表/卡片、详情、endpoint 和 Web 入口关联可用。
-- [ ] Web 入口显示正常、即将到期、过期、异常、未探测、探测中和陈旧状态。
-- [ ] Popover 支持就地探测与跳转/定位凭据中心，关联入口同步更新。
-- [ ] 全局中心和所有变更/探测仅 manager；member 仅见授权环境的裁剪状态。
-- [ ] TLS host/port/SNI、metadata、注入、超时、输出、冷却、每环境上限和并发测试通过。
-- [ ] 工作空间唯一约束和错误不会泄漏另一空间同指纹资产。
-- [ ] 旧 `EnvironmentMonitoringDashboard.vue` 保持未修改、未纳管、未接路由。
+- [x] 全局入口显示「密钥与证书」，SSH 密钥原能力无回归。
+- [x] SSL/TLS 统计、筛选、列表/卡片、详情、endpoint 和 Web 入口关联可用。
+- [x] Web 入口显示正常、即将到期、过期、异常、未探测、探测中和陈旧状态。
+- [x] Popover 支持就地探测与跳转/定位凭据中心，关联入口同步更新。
+- [x] 全局中心和所有变更/探测仅 manager；member 仅见授权环境的裁剪状态。
+- [x] TLS host/port/SNI、metadata、注入、超时、输出、冷却、每环境上限和并发测试通过。
+- [x] 工作空间唯一约束和错误不会泄漏另一空间同指纹资产。
+- [x] 旧 `EnvironmentMonitoringDashboard.vue` 保持未修改、未纳管、未接路由。
 
 ## 5. Gate 2 Phase 1 审查
 
-- [ ] 只审查 `STATUS.md` 记录的 Phase 1 输入/输出 commit diff。
-- [ ] 所有 Phase 1 验收项均有行为证据，真实 MySQL job 已通过。
-- [ ] 没有 P0/P1/P2 未关闭问题。
-- [ ] Gate 2 明确结论为 `PASSED`，并记录 commit/测试/打包/交接。
+- [x] 只审查 `STATUS.md` 记录的 Phase 1 输入/输出 commit diff。
+- [x] 所有 Phase 1 验收项均有行为证据，真实 MySQL job 已通过。
+- [x] 没有 P0/P1/P2 未关闭问题。
+- [x] Gate 2 明确结论为 `PASSED`，并记录 commit/测试/打包/交接。
 
 ## 6. Phase 2 服务维护验收
 
