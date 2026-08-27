@@ -21,7 +21,7 @@
 4. `docs/refactor-execution/STATUS.md`。
 5. `CURRENT-STATE-AUDIT.md`、`UIUX-SPEC.md`、`TECH-CONTRACT.md` 和 `ACCEPTANCE.md`。
 
-根据 `STATUS.md` 判断当前是 Gate 1、2、3 还是 4。不得越过未完成的前置阶段。
+根据 `STATUS.md` 判断当前是 Gate 1、Gate 2，还是用户批准的合并 Gate 3+4。不得越过未完成的前置阶段；合并 Gate 3+4 只有在 Phase 2+3 实现、Gemini 整体验收和相应 Grok 修正完成后才能开始。
 
 ## 3. Gate 1：冻结技术合同
 
@@ -72,7 +72,9 @@
 - UI 的权限、空态、异常态和陈旧状态。
 - 测试是否覆盖真实行为，而不是仅匹配源码文本。
 
-## 5. Gate 3：Phase 2 审查
+## 5. 合并 Gate 3+4：Phase 2 审查部分
+
+用户已批准取消本批次的独立 Gate 3。这里的检查项不得省略，而是在最终合并 Gate 中先按 Phase 2 commit 边界单独审查：
 
 重点：
 
@@ -83,7 +85,9 @@
 - 组件拆分是否减少耦合而非简单搬运。
 - 现有服务发现和维护能力是否回归。
 
-## 6. Gate 4：Phase 3 与最终发布审查
+## 6. 合并 Gate 3+4：Phase 3 与最终发布审查部分
+
+前置条件：Phase 2 审查部分没有未关闭问题；Gemini 已完成 Phase 2+3 整体 UI/UX 验收；Grok 已关闭 Gemini 的 P0/P1/P2。随后按 Phase 3 commit 边界审查：
 
 重点：
 
@@ -94,6 +98,8 @@
 - 离线、陈旧、缺失和局部失败状态。
 - Gemini 的 UI/UX 验收问题是否关闭。
 - 整份原始方案与验收矩阵是否闭环。
+
+合并 Gate 只给出一个最终结论。若 Phase 2 或 Phase 3 任一部分存在 P0/P1/P2，结论均为 `CHANGES_REQUIRED`，形成一份按阶段分组的精确工单交 Grok 集中修复；不得因 Phase 3 已实现而降低 Phase 2 的通过标准。
 
 最终至少运行：
 
@@ -130,7 +136,7 @@ npm run package:current-os
 
 ## 8. 审查结论
 
-每个 Gate 只能给出：
+每个 Gate（包括用户批准的合并 Gate 3+4）只能给出：
 
 - `PASSED`：没有阻断问题，可以进入下一阶段。
 - `CHANGES_REQUIRED`：存在 P0/P1/P2，交回 Grok。
@@ -143,7 +149,7 @@ npm run package:current-os
 ## 9. 完成条件
 
 - 技术合同中的每项决策都有理由、迁移方案和验证方法。
-- 每个阶段只审查指定 diff，不重复进行无关全仓重构。
+- 每个阶段只审查指定 diff；合并 Gate 3+4 必须利用 Grok 的两个阶段 commit 分区审查，不进行无关全仓重构。
 - 所有阻断问题有证据并被关闭。
 - 最终回归、安装包、Git 状态和 `origin/dev` 均通过验证。
 - `STATUS.md` 完整记录结论、提交和下一位负责人。
