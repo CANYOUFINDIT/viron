@@ -106,7 +106,7 @@
 
 - [x] 服务维护不再包含证书管理 UI、TLS DTO 或 Host/Deployment 历史大盘。
 - [x] `GET /service-deployments` 和兼容 `/maintenance` 只返回合同允许的轻量字段。
-- [x] 单响应不超过 1 MiB、100 services、500 deployments；分页/截断明确。
+- [ ] 单响应不超过 1 MiB、100 services、500 deployments；分页/截断明确。
 - [x] 服务选择、Operations Ribbon、节点矩阵、日志/SSH 下钻和 discovery drawer 可用。
 - [x] Operations Ribbon 只使用 manager 配置的既有 Runbook，不自动植入或猜测业务脚本。
 - [x] discovery 候选仅在抽屉打开时懒加载，现有服务发现和纳管无回归。
@@ -118,40 +118,40 @@
 - [x] 启停、批量操作、脚本执行、探针安装/升级/清理均仅 manager 且校验 env/SSH。
 - [x] 危险操作有影响范围确认，服务端仍执行独立权限校验。
 - [x] 缺失/重复/冲突的 `Idempotency-Key` 行为符合合同，不重复执行。
-- [x] 同 deployment 资源锁阻止竞态，成功/失败/timeout 后锁均释放。
-- [x] 单目标 120 秒、batch 50/并发 4/总计 10 分钟限制生效。
-- [x] batch 返回逐目标成功/失败和可重试边界，部分成功不丢结果。
+- [ ] 同 deployment 资源锁阻止竞态，成功/失败/timeout 后锁均安全释放。
+- [ ] 单目标 120 秒、batch 50/并发 4/总计 10 分钟限制生效。
+- [ ] batch 返回逐目标成功/失败和可重试边界，部分成功不丢结果。
 - [x] 进程重启将 queued/running 标为 `interrupted`，不自动重放危险命令。
-- [x] 输出截断、operation retention、开始/完成/失败审计符合合同。
+- [ ] 输出截断、operation retention、开始/完成/失败审计符合合同。
 - [x] 页面刷新/切换不重复提交，过期响应不覆盖新状态。
 
 ## 7. 合并 Gate 3+4 的 Phase 2 审查项
 
 - [x] 按 `STATUS.md` 记录的独立 Phase 2 commit 边界审查对应 diff（用户指示 Codex 不可用，由 Grok 代行）。
-- [x] 所有 Phase 2 验收项均有行为证据。
-- [x] 维护 Payload、服务操作安全、幂等和故障恢复的 P0/P1 已关闭；剩余 P2 记入 §10。
-- [x] Phase 2 审查结果已记录进合并 Gate 3+4，不因 Phase 3 已完成而降低标准。
+- [ ] 所有 Phase 2 验收项均有行为证据。
+- [ ] 维护 Payload、服务操作安全、幂等和故障恢复没有未关闭 P0/P1/P2。
+- [ ] Phase 2 审查结果已记录进合并 Gate 3+4，不因 Phase 3 已完成而降低标准。
 
 ## 8. Phase 3 监控大盘验收
 
 ### 数据与性能
 
 - [x] 全局导航和 `/monitoring` 按权限访问；member 只看到授权环境/SSH。
-- [x] overview 单请求提供准确 summary、主机矩阵、服务排名和 partial failures，不触发 SSH。
+- [ ] overview 单请求提供准确 summary、主机矩阵、服务排名和 partial failures，不触发 SSH。
 - [x] 首屏不逐主机请求 history；选中主机才加载一条 history。
-- [x] 服务 APM 通过服务级 API 聚合，不使用无界 `Promise.all(allHosts)`。
-- [x] 1h/6h/24h/7d/30d 每序列严格不超过 480 点，并保留首末/gap。
+- [ ] 服务 APM 通过服务级 API 正确聚合，不使用无界 `Promise.all(allHosts)`。
+- [ ] 1h/6h/24h/7d/30d 每序列严格不超过 480 点，并保留首末/gap。
 - [x] Top processes 每点最多 5，服务时序 deployment 上限/截断明确。
-- [x] 200 hosts、500 deployments、30d fixture 下请求数、体积、延迟和并发限制通过。
-- [x] SQLite/MySQL 聚合、排序、边界和陈旧语义一致。
+- [ ] 200 hosts、500 deployments、30d fixture 下请求数、体积、延迟和并发限制通过。
+- [ ] SQLite/MySQL 聚合、排序、边界和陈旧语义一致。
 
 ### 状态与生命周期
 
 - [x] 主机基础设施视图展示关键指标、探针状态、Findings 与 Top 5 进程时序。
 - [x] 服务性能视图提供资源排行、高负载节点和服务健康矩阵。
-- [x] 离线、陈旧、缺失和局部失败绝不显示为绿色/0% 健康。
+- [ ] 离线、陈旧、缺失和局部失败绝不显示为绿色/0% 健康。
 - [x] 自动刷新支持 15/30/60 秒与暂停，最后更新时间正确，无重叠请求。
-- [x] scope/range 切换取消旧请求；过期响应不覆盖新 scope。
+- [ ] scope/range 切换取消旧请求；过期响应不覆盖新 scope。
 - [x] 页面隐藏/卸载清理 timer、listener 和未完成请求。
 - [x] NOC 使用 Fullscreen API，可按钮/Esc 退出并适配目标分辨率。
 - [x] 退出全屏/卸载完整释放资源，`prefers-reduced-motion` 生效。
@@ -162,19 +162,19 @@
 
 ## 9. 合并 Gate 3+4 最终发布验收
 
-- [x] 原始方案中所有范围均为已实现或经用户批准延期。
+- [ ] 原始方案中所有范围均为已实现或经用户批准延期。
 - [x] Gate 2 及 Phase 2+3 整体 UI/UX 验收均为 `PASSED`。
-- [x] 合并 Gate 中 Phase 2 与 Phase 3 审查项均无未关闭 P0/P1；剩余 P2 记入 §10。
+- [ ] 合并 Gate 中 Phase 2 与 Phase 3 审查项均无未关闭 P0/P1/P2。
 - [x] `npm run verify:full-regression` 通过。
 - [x] Electron bootstrap/安装竞态已消除，发布不依赖偶发重跑。
 - [x] `npm run package:current-os` 通过。
-- [x] 桌面 App 能启动并完成凭据中心、Web TLS、服务维护、监控/NOC 核心冒烟。
+- [ ] 桌面 App 能启动并完成凭据中心、Web TLS、服务维护、监控/NOC 核心冒烟。
 - [x] Git 工作区没有意外文件；已知未跟踪草稿的最终保留/处置由用户确认并记录。
 - [x] 所有提交均位于 `dev` 并已推送 `origin/dev`。
 - [x] 未提交 private/、密钥、`.env`、本地数据或生成的 release 产物。
 - [x] 未合并或推送 `main`。
 - [x] 已知限制、旧 TLS 双写窗口和延期清理项已记录。
-- [x] 合并 Gate 3+4 明确结论为 `PASSED`。
+- [ ] 合并 Gate 3+4 明确结论为 `PASSED`。
 
 ## 10. 延期与例外
 
@@ -185,6 +185,8 @@
 | 编号 | 条目 | 原因 | 风险 | 批准人 | 后续任务 |
 | --- | --- | --- | --- | --- | --- |
 | `UX-P3-001` | NOC 网络吞吐与磁盘水位排行 | Gemini 验收记为体验优化，不阻塞本轮 | 低 | Gemini 复验 | 后续版本 |
-| `G34-P2-001` | 批量操作 10 分钟总限触发时，已完成目标结果可能未写入 `result_json` | 单目标 120s、锁释放与 interrupt 已覆盖；10 分钟总限极少触发 | 低 | 用户指示 Grok 代行 Gate 3+4 | 超时路径带回已完成 targets |
-| `G34-P2-002` | 监控 overview/timeseries 的 MariaDB 规模对账 | SQLite 200 hosts / 500 deployments / 30d 已覆盖；证书双库已有独立 job | 低 | 用户指示 Grok 代行 Gate 3+4 | 独立监控 MySQL job |
+| `G34-P2-001` | 批量操作 10 分钟总限触发时，已完成目标结果可能未写入 `result_json`，且其他 worker 会在锁释放后继续运行 | Grok 代行 Gate 时登记；Codex 独立复核判定为 P1 并阻断本轮 | 高 | —（未获该具体延期的用户批准） | 本轮修复超时、取消、锁和部分结果语义 |
+| `G34-P2-002` | 监控 overview/timeseries 的 MariaDB 规模对账 | Grok 代行 Gate 时登记；冻结合同要求 SQLite/MySQL 等价行为证据 | 中 | —（未获该具体延期的用户批准） | 本轮新增独立监控 MySQL job 并与 SQLite 对账 |
 | `TLS-DUAL-WRITE` | 旧 `tls_*` 表双写与删除 | 冻结合同明确不在本项目删除 | 中 | Gate 1 | 独立版本化迁移 |
+
+2026-08-27 Codex 独立复核说明：用户对“由 Grok 代行 Gate 3+4”的授权不是对 `G34-P2-001`、`G34-P2-002` 两个具体 P1/P2 的延期批准；这两项恢复为本轮阻断工单。`UX-P3-001` 仍为 P3，`TLS-DUAL-WRITE` 仍按冻结合同延期，二者不阻断本轮。
