@@ -8,10 +8,7 @@ import { candidateKey, providerLabel, type CandidateStatus, type MonitorCandidat
 import { normalizeMaintenanceScriptActions } from "../../service-maintenance-payload";
 import { reorderIds, sameOrder } from "../../../shared/tab-order";
 import { defaultMonitorAlertSettings, monitorDiskKey, type MonitorAlertSettings, } from "../../../shared/monitor-alerts";
-import AnimatedCounter from "../AnimatedCounter.vue";
-import DeploymentMonitorDashboard from "../DeploymentMonitorDashboard.vue";
-import HostMonitorDashboard, { type HostFocusMetric } from "../HostMonitorDashboard.vue";
-import ServiceDiscoveryPanel from "../ServiceDiscoveryPanel.vue";
+
 import type { MaintenanceWorkspace, HostWorkspaceTab, MaintenanceDirectory, DirectoryMoveDirection, ScriptActionIcon, DirectoryDropTarget, ScriptAction, ScriptActionExecutionResult, ScriptActionExecution, HostSnapshot, KubernetesConfigDiscovery, MonitorHost, MonitorInstallPreflight, MonitorInstallTaskStatus, MonitorInstallTaskPhase, MonitorInstallTask, Deployment, ServiceItem, EnvironmentLog, MaintenancePayload, MaintenanceDeploymentResponse, MaintenanceServiceResponse, MaintenancePayloadResponse, MaintenanceCounts, MaintenancePanelProps, MaintenancePanelEmit } from "./types";
 import { deferMaintenancePart, type MaintenanceContext } from "./context";
 
@@ -72,7 +69,7 @@ export function useScriptActions(ctx: MaintenanceContext, props: Readonly<Mainte
       scriptActionEditorOpen.value = true;
   }
 
-  function beginScriptActionEdit(action: ScriptAction) {
+  async function beginScriptActionEdit(action: ScriptAction) {
       editingScriptActionId.value = action.id;
       Object.assign(scriptActionForm, {
           name: action.name,
@@ -80,6 +77,18 @@ export function useScriptActions(ctx: MaintenanceContext, props: Readonly<Mainte
           scriptBody: action.scriptBody ?? "",
       });
       scriptActionEditorOpen.value = true;
+      try {
+          const response = await api<{ item: ScriptAction }>(`/api/v1/service-script-actions/${action.id}`);
+          if (editingScriptActionId.value === action.id) {
+              Object.assign(scriptActionForm, {
+                  name: response.item.name,
+                  icon: response.item.icon,
+                  scriptBody: response.item.scriptBody ?? "",
+              });
+          }
+      } catch {
+          /* keep metadata from the list DTO if the body cannot be loaded */
+      }
   }
 
   function openScriptActionManager(deployment: Deployment | null = null) {
@@ -147,7 +156,27 @@ export function useScriptActions(ctx: MaintenanceContext, props: Readonly<Mainte
       await ElMessageBox.confirm(tr("确定执行功能“{{0}}”吗？脚本将通过已有 SSH 连接在{{1}}上以对应 SSH 用户运行。", [action.name, targetDescription]), tr("确认执行脚本"), { type: "warning", confirmButtonText: tr("执行") });
       runningScriptActionId.value = action.id;
       try {
-          scriptActionExecution.value = await api<ScriptActionExecution>(`/api/v1/service-script-actions/${action.id}/execute`, { method: "POST" });
+          const created = await api<{ item: { id: string } }>(`/api/v1/service-script-actions/${action.id}/execute`, {
+              method: "POST",
+              headers: { "Idempotency-Key": `${crypto.randomUUID()}${crypto.randomUUID()}`.slice(0, 48) },
+              body: JSON.stringify({}),
+          });
+          let operation: { status: string; result?: { succeeded: number; failed: number; targets?: ScriptActionExecution["results"] } } | null = null;
+          for (let attempt = 0; attempt < 120; attempt += 1) {
+              const polled = await api<{ item: { status: string; result?: { succeeded: number; failed: number; targets?: ScriptActionExecution["results"] } } }>(`/api/v1/service-operations/${created.item.id}`);
+              operation = polled.item;
+              if (operation.status !== "queued" && operation.status !== "running")
+                  break;
+              await new Promise((resolve) => setTimeout(resolve, 1000));
+          }
+          const failed = operation?.result?.failed ?? 0;
+          scriptActionExecution.value = {
+              ok: failed === 0 && operation?.status === "succeeded",
+              action: { id: action.id, name: action.name, icon: action.icon, deploymentId: action.deploymentId },
+              succeeded: operation?.result?.succeeded ?? 0,
+              failed,
+              results: operation?.result?.targets ?? [],
+          };
           scriptActionResultDialog.value = true;
           if (scriptActionExecution.value.ok)
               ElMessage.success(tr("功能脚本执行成功"));

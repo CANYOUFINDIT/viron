@@ -13,6 +13,7 @@ import { ensureAdmin, openDatabase } from "../src/server/database.js";
 import { PRODUCT_VERSION } from "../src/server/product-info.js";
 import { pollMonitorHostsOnce } from "../src/server/service-monitor.js";
 import { defaultMonitorAlertSettings } from "../src/shared/monitor-alerts.js";
+import { operationHeaders, waitForOperation } from "./helpers/service-operations.js";
 
 const directories: string[] = [];
 
@@ -267,7 +268,16 @@ describe("service maintenance", () => {
 
       const initial = await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/maintenance`, cookies });
       expect(initial.json().services.map((item: { id: string }) => item.id)).toEqual(serviceIds);
-      expect(initial.json().hosts.map((item: { sshConnectionId: string }) => item.sshConnectionId)).toEqual(hostIds);
+      expect(initial.json().discovery.hosts.map((item: { sshConnectionId: string }) => item.sshConnectionId)).toEqual(hostIds);
+      expect(initial.json().hosts).toBeUndefined();
+      expect(initial.json().tlsEndpoints).toBeUndefined();
+      expect(initial.headers.deprecation).toBe("true");
+      expect(String(initial.headers.link ?? "")).toContain("/service-deployments");
+      const lightweight = await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/service-deployments`, cookies });
+      expect(lightweight.statusCode).toBe(200);
+      expect(lightweight.headers.deprecation).toBeUndefined();
+      expect(lightweight.json().alertSettings).toBeUndefined();
+      expect(JSON.stringify(lightweight.json())).not.toMatch(/scriptBody|tlsEndpoints|latest_host_json|snapshot/);
 
       const invalidServices = await app.inject({ method: "PUT", url: `/api/v1/environments/${environmentId}/services/order`, cookies, payload: { orderedIds: [serviceIds[0]] } });
       expect(invalidServices.statusCode).toBe(400);
@@ -279,13 +289,13 @@ describe("service maintenance", () => {
 
       const reordered = await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/maintenance`, cookies });
       expect(reordered.json().services.map((item: { id: string }) => item.id)).toEqual([...serviceIds].reverse());
-      expect(reordered.json().hosts.map((item: { sshConnectionId: string }) => item.sshConnectionId)).toEqual([...hostIds].reverse());
+      expect(reordered.json().discovery.hosts.map((item: { sshConnectionId: string }) => item.sshConnectionId)).toEqual([...hostIds].reverse());
 
       const appendedService = await app.inject({ method: "POST", url: `/api/v1/environments/${environmentId}/services`, cookies, payload: { name: "报表", description: "", status: "active" } });
       const appendedHost = await app.inject({ method: "POST", url: "/api/v1/ssh-connections", cookies, payload: sshPayload("宿主机 C") });
       const withAppendedItems = await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/maintenance`, cookies });
       expect(withAppendedItems.json().services.map((item: { id: string }) => item.id)).toEqual([...serviceIds].reverse().concat(appendedService.json().id));
-      expect(withAppendedItems.json().hosts.map((item: { sshConnectionId: string }) => item.sshConnectionId)).toEqual([...hostIds].reverse().concat(appendedHost.json().id));
+      expect(withAppendedItems.json().discovery.hosts.map((item: { sshConnectionId: string }) => item.sshConnectionId)).toEqual([...hostIds].reverse().concat(appendedHost.json().id));
     } finally {
       await app.close();
     }
@@ -410,16 +420,12 @@ describe("service maintenance", () => {
       const firstWorkspace = await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/maintenance`, cookies });
       expect(firstWorkspace.statusCode).toBe(200);
       expect(firstWorkspace.json()).toMatchObject({ canConfigure: true, canOperate: true });
-      expect(firstWorkspace.json().hosts[0]).toMatchObject({ monitorStatus: "ready", monitorUpdateAvailable: true, snapshot: { hostname: "service-node-01" } });
-      expect(firstWorkspace.json().hosts[0].candidates).toEqual([expect.objectContaining({ provider: "systemd", externalId: "api.service", status: "running" })]);
-      expect(firstWorkspace.json().hosts[0].kubernetesConfigs).toEqual([expect.objectContaining({ context: "development", selected: false, status: "discovered" })]);
-      await app.db.prepare("UPDATE monitor_hosts SET agent_version = ? WHERE ssh_connection_id = ?").run(PRODUCT_VERSION, connectionId);
-      const currentVersionWorkspace = await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/maintenance`, cookies });
-      expect(currentVersionWorkspace.json().hosts[0]).toMatchObject({ agentVersion: PRODUCT_VERSION, monitorUpdateAvailable: true });
-      await app.db.prepare("UPDATE monitor_hosts SET latest_host_json = ? WHERE ssh_connection_id = ?")
-        .run(JSON.stringify(monitorPayload(false, "root").samples[0]!.payload.host), connectionId);
-      const rootCollectorWorkspace = await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/maintenance`, cookies });
-      expect(rootCollectorWorkspace.json().hosts[0]).toMatchObject({ agentVersion: PRODUCT_VERSION, monitorUpdateAvailable: false, snapshot: { collectorUser: "root" } });
+      expect(firstWorkspace.json().hosts).toBeUndefined();
+      expect(firstWorkspace.json().tlsEndpoints).toBeUndefined();
+      expect(firstWorkspace.json().discovery.hosts[0]).toMatchObject({ monitorStatus: "ready", sshConnectionId: connectionId, candidateCount: expect.any(Number) });
+      const firstCandidates = await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/monitor-hosts/${connectionId}/candidates`, cookies });
+      expect(firstCandidates.json().item.candidates).toEqual([expect.objectContaining({ provider: "systemd", externalId: "api.service", status: "running" })]);
+      expect(firstCandidates.json().item.kubernetesConfigs).toEqual([expect.objectContaining({ context: "development", selected: false, status: "discovered" })]);
 
       const configuredKubernetes = await app.inject({
         method: "PUT",
@@ -429,9 +435,9 @@ describe("service maintenance", () => {
       });
       expect(configuredKubernetes.statusCode).toBe(200);
       expect(ssh.commands.some((command) => command.includes("viron-monitor configure-kubernetes --selection-base64"))).toBe(true);
-      const kubernetesWorkspace = await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/maintenance`, cookies });
-      expect(kubernetesWorkspace.json().hosts[0].kubernetesConfigs).toEqual([expect.objectContaining({ context: "development", selected: true, status: "connected", candidateCount: 1 })]);
-      expect(kubernetesWorkspace.json().hosts[0].candidates).toEqual(expect.arrayContaining([expect.objectContaining({ provider: "kubernetes", name: "order-api", status: "running" })]));
+      const kubernetesCandidates = await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/monitor-hosts/${connectionId}/candidates`, cookies });
+      expect(kubernetesCandidates.json().item.kubernetesConfigs).toEqual([expect.objectContaining({ context: "development", selected: true, status: "connected", candidateCount: 1 })]);
+      expect(kubernetesCandidates.json().item.candidates).toEqual(expect.arrayContaining([expect.objectContaining({ provider: "kubernetes", name: "order-api", status: "running" })]));
 
       const deployment = await app.inject({
         method: "POST",
@@ -506,22 +512,25 @@ describe("service maintenance", () => {
 
       const workspaceWithScriptActions = await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/maintenance`, cookies });
       expect(workspaceWithScriptActions.json().services[0]).toMatchObject({
-        scriptActions: [expect.objectContaining({ id: serviceScriptActionId, deploymentId: null, name: "发布", icon: "rocket", scriptBody: "printf 'service action\\n'" })],
+        scriptActions: [expect.objectContaining({ id: serviceScriptActionId, deploymentId: null, name: "发布", icon: "rocket" })],
         deployments: expect.arrayContaining([
           expect.objectContaining({ id: deploymentId, scriptActions: [expect.objectContaining({ id: nodeScriptActionId, name: "清缓存", icon: "zap" })] }),
         ]),
       });
+      expect(JSON.stringify(workspaceWithScriptActions.json())).not.toContain("printf 'service action");
 
-      const executedServiceAction = await app.inject({ method: "POST", url: `/api/v1/service-script-actions/${serviceScriptActionId}/execute`, cookies });
-      expect(executedServiceAction.statusCode).toBe(200);
-      expect(executedServiceAction.json()).toMatchObject({ ok: true, succeeded: 2, failed: 0, results: [expect.objectContaining({ ok: true, stdout: "script complete\n" }), expect.objectContaining({ ok: true, stdout: "script complete\n" })] });
+      const executedServiceAction = await app.inject({ method: "POST", url: `/api/v1/service-script-actions/${serviceScriptActionId}/execute`, cookies, headers: operationHeaders(), payload: {} });
+      expect(executedServiceAction.statusCode).toBe(202);
+      const serviceOp = await waitForOperation(app, cookies, executedServiceAction.json().item.id);
+      expect(serviceOp).toMatchObject({ status: "succeeded", result: { succeeded: 2, failed: 0 } });
       expect(ssh.scripts.filter((script) => script === "printf 'service action\\n'\n")).toHaveLength(2);
       expect(ssh.commands.filter((command) => command === "/bin/sh -s")).toHaveLength(2);
       expect(ssh.commands.some((command) => command.includes("service action"))).toBe(false);
 
-      const executedNodeAction = await app.inject({ method: "POST", url: `/api/v1/service-script-actions/${nodeScriptActionId}/execute`, cookies });
-      expect(executedNodeAction.statusCode).toBe(200);
-      expect(executedNodeAction.json()).toMatchObject({ ok: true, succeeded: 1, failed: 0, results: [expect.objectContaining({ deploymentId, ok: true })] });
+      const executedNodeAction = await app.inject({ method: "POST", url: `/api/v1/service-script-actions/${nodeScriptActionId}/execute`, cookies, headers: operationHeaders(), payload: {} });
+      expect(executedNodeAction.statusCode).toBe(202);
+      const nodeOp = await waitForOperation(app, cookies, executedNodeAction.json().item.id);
+      expect(nodeOp.result?.targets).toEqual([expect.objectContaining({ deploymentId, ok: true })]);
       expect(ssh.scripts).toContain("printf 'node action\\n'\n");
 
       expect((await app.inject({
@@ -530,9 +539,10 @@ describe("service maintenance", () => {
         cookies,
         payload: { deploymentId, name: "清理缓存", icon: "hammer", scriptBody: "exit 7" },
       })).statusCode).toBe(200);
-      const failedNodeAction = await app.inject({ method: "POST", url: `/api/v1/service-script-actions/${nodeScriptActionId}/execute`, cookies });
-      expect(failedNodeAction.statusCode).toBe(200);
-      expect(failedNodeAction.json()).toMatchObject({ ok: false, succeeded: 0, failed: 1, results: [expect.objectContaining({ ok: false, exitCode: 7, stderr: "script failed\n" })] });
+      const failedNodeAction = await app.inject({ method: "POST", url: `/api/v1/service-script-actions/${nodeScriptActionId}/execute`, cookies, headers: operationHeaders(), payload: {} });
+      expect(failedNodeAction.statusCode).toBe(202);
+      const failedOp = await waitForOperation(app, cookies, failedNodeAction.json().item.id);
+      expect(failedOp).toMatchObject({ status: "failed", result: { succeeded: 0, failed: 1, targets: [expect.objectContaining({ ok: false, exitCode: 7 })] } });
       const scriptAudit = await app.db.prepare("SELECT details_json FROM audit_events WHERE resource_id = ? ORDER BY created_at DESC LIMIT 1").get(nodeScriptActionId) as { details_json: string };
       expect(scriptAudit.details_json).not.toContain("exit 7");
       expect(scriptAudit.details_json).not.toContain("script failed");
@@ -557,8 +567,9 @@ describe("service maintenance", () => {
         payload: { name: "订单 API", description: "订单核心服务", status: "active" },
       })).statusCode).toBe(200);
 
-      const restarted = await app.inject({ method: "POST", url: `/api/v1/service-deployments/${deploymentId}/actions`, cookies, payload: { action: "restart" } });
-      expect(restarted.statusCode).toBe(200);
+      const restarted = await app.inject({ method: "POST", url: `/api/v1/service-deployments/${deploymentId}/actions`, cookies, headers: operationHeaders(), payload: { action: "restart" } });
+      expect(restarted.statusCode).toBe(202);
+      expect((await waitForOperation(app, cookies, restarted.json().item.id)).status).toBe("succeeded");
       expect(ssh.commands).toContain("systemctl restart -- 'api.service'");
       expect(ssh.commands.some((command) => command.includes("viron-monitor ack --through"))).toBe(false);
       expect(ssh.commands.some((command) => command.includes("viron-monitor clear"))).toBe(true);
@@ -585,7 +596,7 @@ describe("service maintenance", () => {
       expect(missing.statusCode).toBe(200);
       expect(missing.json().item).toMatchObject({ status: "missing", host: null, candidates: [] });
       const missingWorkspace = await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/maintenance`, cookies });
-      expect(missingWorkspace.json().hosts[0]).toMatchObject({ monitorStatus: "missing", snapshot: null });
+      expect(missingWorkspace.json().discovery.hosts[0]).toMatchObject({ monitorStatus: "missing" });
     } finally {
       await app.close();
       await new Promise<void>((resolve) => ssh.server.close(() => resolve()));

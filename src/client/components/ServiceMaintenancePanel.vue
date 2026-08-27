@@ -38,8 +38,6 @@ import {
 import { ElMessage } from "element-plus";
 import { onActivated, onBeforeUnmount, onDeactivated, onMounted, watch } from "vue";
 import AnimatedCounter from "./AnimatedCounter.vue";
-import DeploymentMonitorDashboard from "./DeploymentMonitorDashboard.vue";
-import HostMonitorDashboard, { type HostFocusMetric } from "./HostMonitorDashboard.vue";
 import ServiceDiscoveryPanel from "./ServiceDiscoveryPanel.vue";
 import { createMaintenanceContext } from "./service-maintenance/context";
 import { useMaintenancePayload } from "./service-maintenance/use-maintenance-payload";
@@ -47,7 +45,6 @@ import { useMaintenanceDirectory } from "./service-maintenance/use-maintenance-d
 import { useMonitorInstall } from "./service-maintenance/use-monitor-install";
 import { useScriptActions } from "./service-maintenance/use-script-actions";
 import { useAlertSettings } from "./service-maintenance/use-alert-settings";
-import { useTlsCertificates } from "./service-maintenance/use-tls-certificates";
 import type { MaintenanceCounts } from "./service-maintenance/types";
 
 const props = defineProps<{
@@ -69,9 +66,7 @@ const scriptActions = useScriptActions(maintenanceContext, props, emit);
 maintenanceContext.scriptActions = scriptActions;
 const alertSettings = useAlertSettings(maintenanceContext, props, emit);
 maintenanceContext.alertSettings = alertSettings;
-const tlsCertificates = useTlsCertificates(maintenanceContext, props, emit);
-maintenanceContext.tls = tlsCertificates;
-const maintenance = { ...maintenancePayload, ...maintenanceDirectory, ...monitorInstall, ...scriptActions, ...alertSettings, ...tlsCertificates };
+const maintenance = { ...maintenancePayload, ...maintenanceDirectory, ...monitorInstall, ...scriptActions, ...alertSettings };
 
 const {
   loading,
@@ -128,6 +123,7 @@ const {
   statusLabel,
   candidateLocationLabel,
   supportsMaintenanceActions,
+  deploymentAllowsAction,
   unsupportedMaintenanceActionReason,
   deploymentIdentity,
   kubernetesMetric,
@@ -169,6 +165,14 @@ const {
   saveLogLinks,
   refreshHost,
   runMaintenanceAction,
+  selectedDeploymentIds,
+  batchDialog,
+  batchOperation,
+  toggleDeploymentSelection,
+  selectAllVisibleDeployments,
+  clearDeploymentSelection,
+  runBatchMaintenanceAction,
+  retryFailedBatchTargets,
   draggingDirectory,
   serviceDropTarget,
   hostDropTarget,
@@ -242,28 +246,6 @@ const {
   monitorDiskOptions,
   openAlertSettings,
   saveAlertSettings,
-  certificateAlertDialog,
-  openCertificateAlertSettings,
-  saveCertificateAlertSettings,
-  certificateDialog,
-  editingEndpointId,
-  probingEndpointIds,
-  selectedCertificateKey,
-  certificateForm,
-  certificateGroups,
-  selectedCertificate,
-  expiredCertificates,
-  expiringCertificates,
-  selectCertificate,
-  certificateTone,
-  certificateSummary,
-  endpointStatusLabel,
-  fingerprintLabel,
-  openCertificateCreate,
-  openCertificateEdit,
-  saveCertificate,
-  removeCertificate,
-  probeCertificate,
 } = maintenance;
 
 watch(selectedService, (service) => {
@@ -315,36 +297,20 @@ onBeforeUnmount(() => {
 <template>
   <section class="maintenance-console" v-loading="loading">
     <div class="maintenance-chrome">
-      <nav class="maintenance-switcher" :class="{ 'is-certificate': activeWorkspace === 'certificate' }" :aria-label="$t('服务维护清单')">
+      <nav class="maintenance-switcher" :aria-label="$t('服务维护清单')">
         <div class="maintenance-switcher__primary" role="tablist" :aria-label="$t('服务与主机')">
           <button type="button" role="tab" :aria-selected="activeWorkspace === 'service'" :class="{ 'is-active': activeWorkspace === 'service' }" @click="openWorkspaceTab('service')">{{ $t('服务') }}<small>{{ payload.services.length }}</small></button>
-          <button type="button" role="tab" :aria-selected="activeWorkspace === 'host'" :class="{ 'is-active': activeWorkspace === 'host' }" @click="openWorkspaceTab('host')">{{ $t('主机') }}<small>{{ payload.hosts.length }}</small></button>
+          <button type="button" role="tab" :aria-selected="activeWorkspace === 'host'" :class="{ 'is-active': activeWorkspace === 'host' }" @click="openWorkspaceTab('host')">{{ $t('扫描发现') }}<small>{{ payload.hosts.reduce((sum, host) => sum + (host.candidateCount ?? host.candidates.length), 0) }}</small></button>
         </div>
-        <button
-          type="button"
-          class="maintenance-switcher__certificate"
-          :class="{ 'is-active': activeWorkspace === 'certificate', 'has-alert': expiredCertificates + expiringCertificates > 0 }"
-          :aria-pressed="activeWorkspace === 'certificate'"
-          @click="openWorkspaceTab('certificate')"
-        >
-          <ShieldCheck :size="14" />{{ $t('证书') }}<small :class="{ 'is-alert': expiredCertificates + expiringCertificates > 0 }">{{ certificateGroups.length }}</small>
-        </button>
       </nav>
       <header class="maintenance-toolbar">
-        <div class="maintenance-summary" :aria-label="activeWorkspace === 'certificate' ? $t('证书观察') : $t('服务维护')">
-          <span v-for="item in attentionItems" :key="item.key"><i :class="item.key === 'problems' || item.key === 'offline' || item.key === 'tls-expired' || item.key === 'tls-expiring' ? 'is-amber' : 'is-muted'"></i><strong>{{ item.value }}</strong><small>{{ item.label }}</small></span>
-          <span v-if="!attentionItems.length && activeWorkspace === 'certificate'" class="is-quiet"><i class="is-green"></i><strong>{{ certificateGroups.length }}</strong><small>{{ $t('观察中的证书') }}</small></span>
-          <span v-else-if="!attentionItems.length" class="is-quiet"><i class="is-green"></i><strong>{{ runningDeployments }}</strong><small>{{ $t('运行节点') }}</small></span>
+        <div class="maintenance-summary" :aria-label="$t('服务维护')">
+          <span v-for="item in attentionItems" :key="item.key"><i :class="item.key === 'problems' || item.key === 'offline' ? 'is-amber' : 'is-muted'"></i><strong>{{ item.value }}</strong><small>{{ item.label }}</small></span>
+          <span v-if="!attentionItems.length" class="is-quiet"><i class="is-green"></i><strong>{{ runningDeployments }}</strong><small>{{ $t('运行节点') }}</small></span>
         </div>
         <div v-if="payload.canConfigure" class="maintenance-toolbar__actions">
-          <template v-if="activeWorkspace === 'certificate'">
-            <el-button :type="payload.alertSettings.tlsEnabled ? 'warning' : 'default'" plain @click="openCertificateAlertSettings"><BellRing :size="16" />{{ $t('证书告警') }}</el-button>
-            <el-button type="primary" @click="openCertificateCreate"><ShieldCheck :size="16" />{{ $t('登记证书') }}</el-button>
-          </template>
-          <template v-else>
-            <el-button :type="payload.alertSettings.enabled ? 'warning' : 'default'" plain @click="openAlertSettings"><BellRing :size="16" />{{ $t('告警设置') }}</el-button>
-            <el-button v-if="activeWorkspace === 'service'" type="primary" @click="openServiceCreate()"><Plus :size="16" />{{ $t('录入服务') }}</el-button>
-          </template>
+          <el-button :type="payload.alertSettings.enabled ? 'warning' : 'default'" plain @click="openAlertSettings"><BellRing :size="16" />{{ $t('告警设置') }}</el-button>
+          <el-button v-if="activeWorkspace === 'service'" type="primary" @click="openServiceCreate()"><Plus :size="16" />{{ $t('录入服务') }}</el-button>
         </div>
       </header>
     </div>
@@ -413,33 +379,6 @@ onBeforeUnmount(() => {
             <div v-if="!payload.hosts.length" class="directory-empty"><Server :size="17" /><span>{{ $t('尚未关联 SSH 主机') }}</span></div>
           </div>
         </section>
-
-        <section v-show="activeWorkspace === 'certificate'" class="directory-group">
-          <header><h3>{{ $t('证书') }}</h3><span>{{ certificateGroups.length }}</span></header>
-          <div class="directory-list">
-            <article
-              v-for="group in certificateGroups"
-              :key="group.key"
-              class="host-index__row"
-              :class="{ 'is-active': activeWorkspace === 'certificate' && selectedCertificate?.key === group.key }"
-            >
-              <span class="directory-row__spacer"></span>
-              <button class="directory-row__main" type="button" :aria-pressed="activeWorkspace === 'certificate' && selectedCertificate?.key === group.key" @click="selectCertificate(group.key)">
-                <ShieldCheck :size="15" />
-                <span>
-                  <strong>{{ group.leafCn }}</strong>
-                  <small>{{ certificateSummary(group) }}<template v-if="group.endpoints.length"> · {{ group.endpoints.length }} {{ $t('端点') }}</template></small>
-                </span>
-                <i :class="`is-${certificateTone(group)}`"></i>
-              </button>
-            </article>
-            <div v-if="!certificateGroups.length" class="directory-empty">
-              <ShieldCheck :size="17" />
-              <span>{{ $t('尚未观察证书') }}</span>
-              <el-button v-if="payload.canConfigure" type="primary" link @click="openCertificateCreate">{{ $t('登记证书') }}</el-button>
-            </div>
-          </div>
-        </section>
       </aside>
 
       <main class="maintenance-workspace">
@@ -481,8 +420,12 @@ onBeforeUnmount(() => {
           </div>
 
           <section class="deployment-grid">
+            <div v-if="payload.canOperate && selectedService.deployments.length" class="deployment-select-all">
+              <label><input type="checkbox" :checked="selectedService.deployments.every((item) => selectedDeploymentIds.includes(item.id))" @change="selectAllVisibleDeployments">{{ $t('全选节点') }}</label>
+            </div>
             <article v-for="deployment in selectedService.deployments" :key="deployment.id" class="deployment-card" :class="`is-${deployment.status}`">
               <header>
+                <label v-if="payload.canOperate" class="deployment-select"><input type="checkbox" :checked="selectedDeploymentIds.includes(deployment.id)" @change="toggleDeploymentSelection(deployment.id)"></label>
                 <span class="deployment-provider">{{ providerLabel(deployment.provider) }}</span>
                 <span class="deployment-status"><i></i>{{ statusLabel(deployment.status) }}</span>
                 <div v-if="payload.canConfigure" class="deployment-card__tools">
@@ -528,22 +471,16 @@ onBeforeUnmount(() => {
               <p v-if="!deployment.connectionAvailable" class="deployment-warning">{{ $t('原 SSH 连接已删除或移出环境，请修复部署节点。') }}</p>
               <footer>
                 <span>{{ formatTime(deployment.lastCheckedAt) }}</span>
-                <div v-if="payload.canOperate && selectedService.status === 'active' && supportsMaintenanceActions(deployment.provider)">
-                  <button type="button" :disabled="runningAction !== '' || !deployment.connectionAvailable" :title="$t('启动')" :aria-label="$t('启动')" @click="runMaintenanceAction(deployment, 'start')"><Play :size="14" /></button>
-                  <button type="button" :disabled="runningAction !== '' || !deployment.connectionAvailable" :title="$t('停止')" :aria-label="$t('停止')" @click="runMaintenanceAction(deployment, 'stop')"><Square :size="13" /></button>
-                  <button type="button" :disabled="runningAction !== '' || !deployment.connectionAvailable" :title="$t('重启')" :aria-label="$t('重启')" @click="runMaintenanceAction(deployment, 'restart')"><RotateCw :size="14" :class="{ 'is-spinning': runningAction === `${deployment.id}:restart` }" /></button>
+                <div v-if="payload.canOperate && selectedService.status === 'active' && supportsMaintenanceActions(deployment.provider, deployment)">
+                  <button v-if="deploymentAllowsAction(deployment, 'start')" type="button" :disabled="runningAction !== '' || !deployment.connectionAvailable" :title="$t('启动')" :aria-label="$t('启动')" @click="runMaintenanceAction(deployment, 'start')"><Play :size="14" /></button>
+                  <button v-if="deploymentAllowsAction(deployment, 'stop')" type="button" :disabled="runningAction !== '' || !deployment.connectionAvailable" :title="$t('停止')" :aria-label="$t('停止')" @click="runMaintenanceAction(deployment, 'stop')"><Square :size="13" /></button>
+                  <button v-if="deploymentAllowsAction(deployment, 'restart')" type="button" :disabled="runningAction !== '' || !deployment.connectionAvailable" :title="$t('重启')" :aria-label="$t('重启')" @click="runMaintenanceAction(deployment, 'restart')"><RotateCw :size="14" :class="{ 'is-spinning': runningAction === `${deployment.id}:restart` }" /></button>
                 </div>
-                <small v-else-if="unsupportedMaintenanceActionReason(deployment.provider)" class="deployment-action-note">{{ unsupportedMaintenanceActionReason(deployment.provider) }}</small>
+                <small v-else-if="unsupportedMaintenanceActionReason(deployment.provider, deployment)" class="deployment-action-note">{{ unsupportedMaintenanceActionReason(deployment.provider, deployment) }}</small>
               </footer>
             </article>
             <button v-if="payload.canConfigure && !selectedService.deployments.length" class="deployment-empty-action" type="button" @click="openDeploymentCreate()"><Plus :size="18" /><strong>{{ $t('添加部署节点') }}</strong></button>
           </section>
-          <DeploymentMonitorDashboard
-            v-if="selectedService.deployments.length"
-            :key="selectedService.id"
-            :environment-id="environmentId"
-            :deployments="selectedService.deployments"
-          />
         </template>
 
         <section v-else-if="activeWorkspace === 'host' && selectedHost" class="host-observatory">
@@ -570,32 +507,9 @@ onBeforeUnmount(() => {
             </div>
           </header>
           <nav class="host-workspace-tabs" role="tablist" :aria-label="$t('宿主机工作区')">
-            <button type="button" role="tab" :aria-selected="hostWorkspaceTab === 'monitor'" :class="{ 'is-active': hostWorkspaceTab === 'monitor' }" @click="hostWorkspaceTab = 'monitor'"><Activity :size="18" />{{ $t('监控') }}</button>
-            <button type="button" role="tab" :aria-selected="hostWorkspaceTab === 'discovery'" :class="{ 'is-active': hostWorkspaceTab === 'discovery' }" @click="hostWorkspaceTab = 'discovery'"><ScanSearch :size="18" />{{ $t('服务发现') }}<small v-if="selectedUnmanagedCount">{{ selectedUnmanagedCount }}</small><small v-else-if="selectedHost.candidates.length" class="is-muted">{{ selectedHost.candidates.length }}</small></button>
+            <button type="button" role="tab" :aria-selected="true" class="is-active"><ScanSearch :size="18" />{{ $t('服务发现') }}<small v-if="selectedUnmanagedCount">{{ selectedUnmanagedCount }}</small><small v-else-if="selectedHost.candidates.length" class="is-muted">{{ selectedHost.candidates.length }}</small></button>
           </nav>
-          <div v-if="hostWorkspaceTab === 'monitor'" class="host-observatory__pane" role="tabpanel">
-            <div v-if="selectedHost.snapshot" class="host-metric-grid" role="group" :aria-label="$t('当前快照')">
-              <button type="button" :class="['is-' + metricTone(selectedHost.snapshot.cpuUsedPercent, cpuVisualThreshold), { 'is-active': hostFocusMetric === 'cpu' }]" @click="hostFocusMetric = 'cpu'"><span>CPU</span><strong>{{ formatPercent(selectedHost.snapshot.cpuUsedPercent) }}</strong><small>{{ selectedHost.snapshot.cpuCount || '—' }} {{ $t('核') }} · {{ selectedHost.snapshot.load1.toFixed(2) }}</small><i :style="{ width: Math.min(100, selectedHost.snapshot.cpuUsedPercent || 0) + '%' }"></i></button>
-              <button type="button" :class="['is-' + metricTone(selectedHost.snapshot.memoryUsedPercent, memoryVisualThreshold), { 'is-active': hostFocusMetric === 'memory' }]" @click="hostFocusMetric = 'memory'"><span>{{ $t('内存') }}</span><strong>{{ formatPercent(selectedHost.snapshot.memoryUsedPercent) }}</strong><small>{{ formatBytes(selectedHost.snapshot.memoryUsedBytes) }} / {{ formatBytes(selectedHost.snapshot.memoryTotalBytes) }}</small><i :style="{ width: Math.min(100, selectedHost.snapshot.memoryUsedPercent || 0) + '%' }"></i></button>
-              <button type="button" :class="['is-' + metricTone(selectedWorstDisk?.usedPercent, diskVisualThreshold), { 'is-active': hostFocusMetric === 'disk' }]" @click="hostFocusMetric = 'disk'"><span>{{ $t('磁盘') }}</span><strong>{{ formatPercent(selectedWorstDisk?.usedPercent) }}</strong><small>{{ selectedWorstDisk?.path || '—' }} · {{ selectedHost.snapshot.disks.length }} {{ $t('挂载点') }}</small><i :style="{ width: Math.min(100, selectedWorstDisk?.usedPercent || 0) + '%' }"></i></button>
-              <button v-if="selectedHost.snapshot.temperatures.length" type="button" :class="{ 'is-active': hostFocusMetric === 'temperature' }" @click="hostFocusMetric = 'temperature'"><span>{{ $t('温度') }}</span><strong>{{ Math.max(...selectedHost.snapshot.temperatures.map((item) => item.celsius)).toFixed(1) }}°C</strong><small>{{ selectedHost.snapshot.temperatures[0]?.chip }}</small></button>
-              <div class="host-metric-uptime"><span>{{ $t('运行时间') }}</span><strong>{{ formatDuration(selectedHost.snapshot.uptimeSeconds) }}</strong></div>
-            </div>
-            <HostMonitorDashboard
-              v-if="selectedHost.snapshot"
-              v-model:focus-metric="hostFocusMetric"
-              :environment-id="environmentId"
-              :host-id="selectedHost.sshConnectionId"
-              :last-collected-at="selectedHost.lastCollectedAt"
-              :cpu-threshold="cpuVisualThreshold"
-              :memory-threshold="memoryVisualThreshold"
-              :disk-threshold="diskVisualThreshold"
-            />
-            <div v-else class="host-observatory__empty" :class="`is-${selectedHost.monitorStatus}`">
-              <Power :size="24" /><div><strong>{{ selectedHost.monitorStatus === 'missing' ? $t('尚未安装 viron-monitor') : $t('尚未取得监控数据') }}</strong><p>{{ selectedHost.lastError || $t('点击“一键安装监控服务”，Viron 会预检权限和目录后通过现有 SSH 链路自动安装。') }}</p></div>
-            </div>
-          </div>
-          <div v-else class="host-observatory__pane is-discovery" role="tabpanel">
+          <div class="host-observatory__pane is-discovery" role="tabpanel">
             <ServiceDiscoveryPanel
               :host-id="selectedHost.sshConnectionId"
               :candidates="selectedHost.candidates"
@@ -612,39 +526,6 @@ onBeforeUnmount(() => {
             />
           </div>
         </section>
-
-        <section v-else-if="activeWorkspace === 'certificate' && selectedCertificate" class="host-observatory certificate-stage">
-          <header class="service-stage__header">
-            <div>
-              <div class="service-title-line"><h3>{{ selectedCertificate.leafCn }}</h3><span class="status-seal" :class="`is-${certificateTone(selectedCertificate)}`"><ShieldCheck :size="15" />{{ certificateSummary(selectedCertificate) }}</span></div>
-              <p v-if="selectedCertificate.issuer">{{ $t('颁发者') }} · {{ selectedCertificate.issuer }}</p>
-            </div>
-            <div v-if="payload.canConfigure" class="service-stage__actions">
-              <button type="button" :title="$t('登记证书')" :aria-label="$t('登记证书')" @click="openCertificateCreate"><Plus :size="16" /></button>
-            </div>
-          </header>
-          <div class="certificate-facts">
-            <article><small>{{ $t('指纹') }}</small><strong>{{ fingerprintLabel(selectedCertificate.fingerprintSha256) }}</strong></article>
-            <article><small>{{ $t('到期时间') }}</small><strong>{{ selectedCertificate.notAfter ? formatTime(selectedCertificate.notAfter) : $t('尚未探测') }}</strong></article>
-            <article><small>{{ $t('主体备用名') }}</small><strong>{{ selectedCertificate.leafSans.join(', ') || '—' }}</strong></article>
-          </div>
-          <div class="certificate-endpoints">
-            <article v-for="endpoint in selectedCertificate.endpoints" :key="endpoint.id" class="certificate-endpoint">
-              <div>
-                <strong>{{ endpoint.host }}:{{ endpoint.port }}</strong>
-                <small>{{ endpoint.sshConnectionName || $t('未绑定 SSH') }} · {{ endpoint.sni || endpoint.host }} · {{ endpointStatusLabel(endpoint) }}</small>
-                <p v-if="endpoint.webEntries.length">{{ $t('Web 入口') }} · {{ endpoint.webEntries.map((entry) => entry.name).join('、') }}</p>
-                <p v-if="endpoint.probeError">{{ endpoint.probeError }}</p>
-              </div>
-              <div class="certificate-endpoint__actions">
-                <el-button :loading="probingEndpointIds.has(endpoint.id)" :disabled="!endpoint.sshConnectionId" @click="probeCertificate(endpoint)"><RefreshCw :size="14" />{{ $t('重新探测') }}</el-button>
-                <el-button v-if="payload.canConfigure" @click="openCertificateEdit(endpoint)"><Pencil :size="14" />{{ $t('编辑') }}</el-button>
-                <el-button v-if="payload.canConfigure" type="danger" plain @click="removeCertificate(endpoint)"><Trash2 :size="14" />{{ $t('删除') }}</el-button>
-              </div>
-            </article>
-          </div>
-        </section>
-        <div v-else-if="activeWorkspace === 'certificate'" class="workspace-empty"><ShieldCheck :size="26" /><strong>{{ $t('尚未观察证书') }}</strong><el-button v-if="payload.canConfigure" type="primary" @click="openCertificateCreate"><Plus :size="16" />{{ $t('登记证书') }}</el-button></div>
         <div v-else-if="activeWorkspace === 'host'" class="workspace-empty"><Server :size="26" /><strong>{{ $t('尚未关联 SSH 主机') }}</strong></div>
         <div v-else class="workspace-empty"><Wrench :size="26" /><strong>{{ $t('尚未录入服务') }}</strong><el-button v-if="payload.canConfigure" type="primary" @click="openServiceCreate()"><Plus :size="16" />{{ $t('录入服务') }}</el-button></div>
       </main>
@@ -856,47 +737,51 @@ onBeforeUnmount(() => {
       <template #footer><el-button @click="alertSettingsDialog = false">{{ $t('取消') }}</el-button><el-button type="primary" :loading="savingAlertSettings" @click="saveAlertSettings">{{ $t('保存告警设置') }}</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="certificateAlertDialog" align-center class="envman-dialog monitor-alert-settings-dialog" :title="$t('证书告警设置')" width="560px">
-      <section class="monitor-alert-settings">
-        <header>
-          <div><strong>{{ $t('启用当前环境的证书告警') }}</strong><p>{{ $t('连续两次探测达到条件后触发，连续两次恢复正常后解除。') }}</p></div>
-          <el-switch v-model="alertSettingsForm.tlsEnabled" />
+    <div v-if="payload.canOperate && selectedDeploymentIds.length && activeWorkspace === 'service'" class="maintenance-batch-bar">
+      <strong>{{ selectedDeploymentIds.length }} {{ $t('节点') }}</strong>
+      <el-button @click="clearDeploymentSelection">{{ $t('取消选择') }}</el-button>
+      <el-button :disabled="runningAction !== ''" @click="runBatchMaintenanceAction('start')">{{ $t('批量启动') }}</el-button>
+      <el-button :disabled="runningAction !== ''" @click="runBatchMaintenanceAction('stop')">{{ $t('批量停止') }}</el-button>
+      <el-button type="primary" :disabled="runningAction !== ''" @click="runBatchMaintenanceAction('restart')">{{ $t('批量重启') }}</el-button>
+    </div>
+
+    <el-dialog v-model="batchDialog" align-center class="envman-dialog" :title="$t('批量操作进度')" width="720px">
+      <section v-if="batchOperation" class="script-action-results">
+        <header :class="batchOperation.failed ? 'is-warning' : 'is-success'">
+          <span><Check v-if="!batchOperation.failed" :size="18" /><CircleAlert v-else :size="18" /></span>
+          <div><strong>{{ batchOperation.status }}</strong><p>{{ batchOperation.succeeded }} / {{ batchOperation.failed }}</p></div>
         </header>
-        <div class="monitor-alert-rule-list" :class="{ 'is-disabled': !alertSettingsForm.tlsEnabled }">
-          <article class="is-named-rule">
-            <strong>{{ $t('证书到期') }}</strong>
-            <span>{{ $t('剩余天数不超过') }}</span>
-            <el-select v-model="alertSettingsForm.tlsWarnDays" style="width: 7rem">
-              <el-option :value="7" :label="$t('7 天')" />
-              <el-option :value="14" :label="$t('14 天')" />
-              <el-option :value="30" :label="$t('30 天')" />
-            </el-select>
-          </article>
-          <article class="is-switch-rule">
-            <el-checkbox v-model="alertSettingsForm.tlsHostnameMismatchEnabled">{{ $t('证书主机名不匹配') }}</el-checkbox>
-            <span>{{ $t('SNI 或连接主机与证书 CN/SAN 不一致时告警') }}</span>
-          </article>
-        </div>
+        <article v-for="result in batchOperation.targets" :key="result.deploymentId" :class="result.ok ? 'is-success' : 'is-error'">
+          <header><span><Check v-if="result.ok" :size="15" /><CircleAlert v-else :size="15" /></span><div><strong>{{ result.targetName }}</strong><small>{{ result.durationMs }} ms</small></div></header>
+          <p v-if="result.message" class="script-action-result__message">{{ localizeMessage(result.message) }}</p>
+        </article>
       </section>
-      <template #footer><el-button @click="certificateAlertDialog = false">{{ $t('取消') }}</el-button><el-button type="primary" :loading="savingAlertSettings" @click="saveCertificateAlertSettings">{{ $t('保存证书告警') }}</el-button></template>
+      <template #footer>
+        <el-button @click="batchDialog = false">{{ $t('关闭') }}</el-button>
+        <el-button v-if="batchOperation?.failed" type="primary" :disabled="runningAction !== ''" @click="retryFailedBatchTargets">{{ $t('重试失败节点') }}</el-button>
+      </template>
     </el-dialog>
 
-    <el-dialog v-model="certificateDialog" align-center class="envman-dialog" :title="editingEndpointId ? $t('编辑证书端点') : $t('登记证书端点')" width="560px">
-      <el-form label-position="top">
-        <el-form-item :label="$t('探测主机')" required><el-input v-model="certificateForm.host" :placeholder="$t('域名、IPv4 或 127.0.0.1')" /></el-form-item>
-        <div class="deployment-form-grid">
-          <el-form-item :label="$t('端口')" required><el-input-number v-model="certificateForm.port" :min="1" :max="65535" controls-position="right" style="width:100%" /></el-form-item>
-          <el-form-item :label="$t('SNI')"><el-input v-model="certificateForm.sni" :placeholder="$t('默认使用探测主机')" /></el-form-item>
-        </div>
-        <el-form-item :label="$t('SSH 连接')"><el-select v-model="certificateForm.sshConnectionId" clearable style="width:100%" :placeholder="$t('待关联主机时不探测')"><el-option v-for="host in payload.hosts" :key="host.sshConnectionId" :value="host.sshConnectionId" :label="`${host.connectionName} · ${host.username}@${host.host}`" /></el-select></el-form-item>
-        <el-form-item :label="$t('启用观察')"><el-switch v-model="certificateForm.observeEnabled" /></el-form-item>
-      </el-form>
-      <template #footer><el-button @click="certificateDialog = false">{{ $t('取消') }}</el-button><el-button type="primary" :loading="saving" @click="saveCertificate">{{ $t('保存') }}</el-button></template>
-    </el-dialog>
   </section>
 </template>
 
 <style scoped>
+.maintenance-batch-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
+  min-height: 3rem;
+  padding: .625rem .875rem;
+  border-block-start: 1px solid var(--ink-100);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .5rem .75rem;
+  background: var(--surface);
+}
+.maintenance-batch-bar strong { margin-right: auto; font-size: .8125rem; }
+.deployment-select-all { grid-column: 1 / -1; display: flex; align-items: center; gap: .5rem; color: var(--ink-500); font-size: .75rem; }
+.deployment-select { display: inline-flex; align-items: center; margin-right: .375rem; }
 .maintenance-console {
   --ops-green: var(--color-accent-strong);
   --ops-blue: var(--color-info);
@@ -940,7 +825,6 @@ onBeforeUnmount(() => {
   gap: 3px;
   background: color-mix(in srgb, var(--ink-100) 55%, var(--surface));
 }
-.maintenance-switcher.is-certificate .maintenance-switcher__primary { opacity: .72; }
 .maintenance-switcher__primary button {
   min-width: 0;
   min-height: 2.125rem;
@@ -962,25 +846,6 @@ onBeforeUnmount(() => {
   color: var(--teal-700);
   box-shadow: 0 1px 5px rgba(8, 22, 25, .1);
 }
-.maintenance-switcher__certificate {
-  min-width: 2.75rem;
-  min-height: 2.125rem;
-  padding: 0 .625rem;
-  border: 0;
-  border-radius: 8px;
-  display: inline-flex;
-  align-items: center;
-  gap: .375rem;
-  background: transparent;
-  color: var(--ink-500);
-  font-size: .6875rem;
-  font-weight: 650;
-  cursor: pointer;
-}
-.maintenance-switcher__certificate.is-active {
-  background: var(--teal-50);
-  color: var(--teal-700);
-}
 .maintenance-switcher small {
   min-width: 1.125rem;
   height: 1.125rem;
@@ -995,9 +860,7 @@ onBeforeUnmount(() => {
   font-weight: 700;
 }
 .maintenance-switcher__primary button.is-active small { background: var(--teal-50); color: var(--teal-700); }
-.maintenance-switcher__certificate.is-active small { background: var(--surface); color: var(--teal-700); }
-.maintenance-switcher small.is-alert,
-.maintenance-switcher__certificate.has-alert small { background: color-mix(in srgb, var(--ops-amber) 22%, var(--surface)); color: var(--ops-amber); }
+.maintenance-switcher small.is-alert { background: color-mix(in srgb, var(--ops-amber) 22%, var(--surface)); color: var(--ops-amber); }
 .maintenance-switcher button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 .maintenance-toolbar {
   min-width: 0;
@@ -1095,15 +958,6 @@ onBeforeUnmount(() => {
 .host-index__row i.is-expired, .host-index__row i.is-expiring, .host-index__row i.is-mismatch { background: var(--ops-amber) !important; }
 .host-index__row i.is-ok { background: var(--ops-green) !important; }
 .host-index__row i.is-unbound, .host-index__row i.is-failed { background: var(--ink-200) !important; }
-.certificate-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem; padding: 1rem 1.25rem; border-block-end: 1px solid var(--ink-100); }
-.certificate-facts article { min-width: 0; display: grid; gap: .25rem; }
-.certificate-facts small { color: var(--ink-400); font-size: .625rem; }
-.certificate-facts strong { overflow: hidden; color: var(--ink-800); font-size: .75rem; font-weight: 650; text-overflow: ellipsis; }
-.certificate-endpoints { min-height: 0; overflow: auto; display: grid; gap: .75rem; padding: 1rem 1.25rem 1.25rem; }
-.certificate-endpoint { min-width: 0; padding: .875rem 1rem; border: 1px solid var(--ink-100); border-radius: 10px; display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
-.certificate-endpoint strong, .certificate-endpoint small, .certificate-endpoint p { display: block; }
-.certificate-endpoint p, .certificate-endpoint small { margin: .25rem 0 0; color: var(--ink-400); font-size: .6875rem; }
-.certificate-endpoint__actions { display: flex; flex-wrap: wrap; gap: .375rem; }
 .status-seal.is-expired, .status-seal.is-expiring, .status-seal.is-mismatch { color: var(--ops-amber); }
 .status-seal.is-ok { color: var(--ops-green); }
 .directory-group > header {
@@ -1527,48 +1381,6 @@ onBeforeUnmount(() => {
 .deployment-empty-action strong { font-size: var(--text-sm); }
 .deployment-empty-action:active { transform: translateY(1px); }
 
-.host-metric-grid {
-  margin-block-start: var(--space-sm);
-  border: 1px solid var(--color-rule);
-  border-radius: var(--radius-panel);
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
-  overflow: hidden;
-  background: var(--color-paper);
-}
-.host-metric-grid > button,
-.host-metric-uptime {
-  position: relative;
-  min-width: 0;
-  min-height: 4.75rem;
-  padding: var(--space-sm);
-  border: 0;
-  border-inline-end: 1px solid var(--color-rule);
-  display: grid;
-  align-content: center;
-  gap: 2px;
-  background: transparent;
-  color: inherit;
-  text-align: start;
-}
-.host-metric-grid > button { cursor: pointer; }
-.host-metric-grid > button:last-child,
-.host-metric-uptime:last-child { border-inline-end: 0; }
-.host-metric-grid span { color: var(--color-muted); font-size: var(--text-2xs); }
-.host-metric-grid strong { font-family: var(--font-mono); font-size: var(--text-lg); font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
-.host-metric-grid small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-muted); font-size: var(--text-2xs); }
-.host-metric-grid > button > i {
-  position: absolute;
-  inset: auto 0 0 0;
-  height: 3px;
-  background: var(--color-accent);
-}
-.host-metric-grid > button.is-warn > i { background: var(--color-warning); }
-.host-metric-grid > button.is-critical > i { background: var(--color-danger); }
-.host-metric-grid > button.is-warn strong { color: var(--color-warning); }
-.host-metric-grid > button.is-critical strong { color: var(--color-danger); }
-.host-metric-grid > button.is-active { background: var(--color-accent-soft); }
-.host-metric-uptime { background: var(--color-paper-muted); }
 .host-observatory__empty {
   margin-block-start: var(--space-md);
   padding: var(--space-md);
@@ -1806,8 +1618,7 @@ onBeforeUnmount(() => {
   .directory-row__grip:hover:not(.is-disabled),
   .directory-row__menu:hover:not(:disabled) { background: var(--surface); color: var(--teal-700); }
   .host-workspace-tabs button:hover:not(.is-active),
-  .maintenance-switcher__primary button:hover:not(.is-active),
-  .maintenance-switcher__certificate:hover:not(.is-active) { color: var(--ink-800); }
+  .maintenance-switcher__primary button:hover:not(.is-active) { color: var(--ink-800); }
   .service-stage__actions > button:not(.el-button):hover,
   .deployment-card__tools button:hover,
   .deployment-card footer button:hover,

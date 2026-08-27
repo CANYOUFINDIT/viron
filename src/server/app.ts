@@ -62,6 +62,7 @@ import { McpOperationStore } from "./mcp/operation-store.js";
 import { migrateDatabaseTlsCredentials } from "./database-credentials.js";
 import { startMonitorHostPuller } from "./service-monitor.js";
 import { startTlsEndpointPuller } from "./tls-certificates.js";
+import { interruptStaleServiceOperations } from "./service-operations.js";
 import { enterAuditSourceForRequest } from "./audit.js";
 import { MonitorInstallTaskManager } from "./monitor-install-task-manager.js";
 
@@ -153,6 +154,7 @@ export async function buildApp(options: BuildAppOptions) {
   await app.register(registerKnowledgeBaseRoutes);
   await app.register(registerEnvironmentLogRoutes);
   await app.register(registerServiceMaintenanceRoutes);
+  await interruptStaleServiceOperations(app);
   await app.register(registerCertificateRoutes);
   await app.register(registerMonitorHistoryRoutes);
   await app.register(registerMonitorAlertRoutes);

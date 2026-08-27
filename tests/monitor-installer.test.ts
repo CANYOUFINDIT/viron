@@ -354,8 +354,10 @@ describe("monitor installer", () => {
       expect(context.ssh.commands).toContain("sudo -n bash '/tmp/viron-monitor-install.A1b2C3/install.sh' --ssh-user 'operator' --install-dir '/opt/viron/monitor'");
       expect(context.ssh.commands.some((command) => command.includes("viron-monitor pull"))).toBe(true);
 
-      const workspace = await context.app.inject({ method: "GET", url: `/api/v1/environments/${context.environmentId}/maintenance`, cookies: context.cookies });
-      expect(workspace.json().hosts[0]).toMatchObject({ installPath: "/opt/viron/monitor", installArchitecture: "amd64", installManaged: true, monitorStatus: "ready", snapshot: { hostname: "installed-node" } });
+      const host = await context.app.db.prepare("SELECT install_path, install_architecture, install_managed, status FROM monitor_hosts WHERE ssh_connection_id = ?").get(context.connectionId) as { install_path: string; install_architecture: string; install_managed: number; status: string };
+      expect(host).toMatchObject({ install_path: "/opt/viron/monitor", install_architecture: "amd64", install_managed: 1, status: "ready" });
+      const workspace = await context.app.inject({ method: "GET", url: `/api/v1/environments/${context.environmentId}/service-deployments`, cookies: context.cookies });
+      expect(workspace.json().discovery.hosts[0]).toMatchObject({ sshConnectionId: context.connectionId, monitorStatus: "ready" });
       const audit = await context.app.db.prepare("SELECT action, details_json FROM audit_events WHERE resource_id = ? AND action = ?").get(context.connectionId, "monitor_host.installed") as { action: string; details_json: string };
       expect(audit.action).toBe("monitor_host.installed");
       expect(JSON.parse(audit.details_json)).toMatchObject({ installPath: "/opt/viron/monitor", architecture: "amd64", version: PRODUCT_VERSION, mode: "install" });

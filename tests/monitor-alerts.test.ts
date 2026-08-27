@@ -221,8 +221,8 @@ describe("monitor alerts", () => {
       listed = await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies });
       expect((listed.json().items as Array<{ ruleType: string; details: Record<string, unknown> }>).some((item) => item.ruleType === "disk_added" && item.details.path === "/backup")).toBe(true);
 
-      const maintenance = await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/maintenance`, cookies });
-      expect(maintenance.json().alertSettings).toMatchObject({ enabled: true, cpuThreshold: 80 });
+      const settings = await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/monitor-alert-settings`, cookies });
+      expect(settings.json().item).toMatchObject({ enabled: true, cpuThreshold: 80 });
     } finally {
       await app.close();
     }
@@ -309,7 +309,7 @@ describe("monitor alerts", () => {
           details: expect.objectContaining({ reason: "pull_failed", lastError: "SSH 连接失败" }),
         }),
       ]);
-      expect((await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/maintenance`, cookies })).json().hosts[0]).toMatchObject({ monitorOffline: true });
+      expect((await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/service-deployments`, cookies })).json().discovery.hosts[0].sshConnectionId).toBe(connectionId);
 
       await check(90, true);
       listed = await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies });
@@ -317,7 +317,7 @@ describe("monitor alerts", () => {
       await check(120, true);
       listed = await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies });
       expect(listed.json().items[0]).toMatchObject({ ruleType: "host_offline", status: "recovered", details: { available: true, reason: "healthy" } });
-      expect((await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/maintenance`, cookies })).json().hosts[0]).toMatchObject({ monitorOffline: false });
+      expect((await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/service-deployments`, cookies })).json().discovery.hosts[0].sshConnectionId).toBe(connectionId);
     } finally {
       await app.close();
     }

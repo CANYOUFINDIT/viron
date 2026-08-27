@@ -1,11 +1,11 @@
 // Mechanical type contract captured before ServiceMaintenancePanel was partitioned.
 import type { Component, ComputedRef, Ref } from "vue";
 import type { MessageHandler } from "element-plus";
-import type { HostFocusMetric } from "../HostMonitorDashboard.vue";
+
 import type { CandidateStatus, MonitorCandidate, Provider } from "../../service-candidate-tree";
 import type { MonitorAlertSettings } from "../../../shared/monitor-alerts";
 import type { TlsCertificateGroup, TlsEndpoint } from "../../../shared/tls-certificates";
-import type { DirectoryDropTarget, DirectoryMoveDirection, EnvironmentLog, HostSnapshot, HostWorkspaceTab, KubernetesConfigDiscovery, MaintenanceCounts, MaintenanceDeploymentResponse, MaintenanceDirectory, MaintenancePayload, MaintenancePayloadResponse, MaintenanceServiceResponse, MaintenanceWorkspace, MonitorHost, MonitorInstallPreflight, MonitorInstallTask, MonitorInstallTaskPhase, MonitorInstallTaskStatus, ScriptAction, ScriptActionExecution, ScriptActionExecutionResult, ScriptActionIcon, ServiceItem, Deployment } from "./types";
+import type { DirectoryDropTarget, DirectoryMoveDirection, EnvironmentLog, HostFocusMetric, HostSnapshot, HostWorkspaceTab, KubernetesConfigDiscovery, MaintenanceCounts, MaintenanceDeploymentResponse, MaintenanceDirectory, MaintenancePayload, MaintenancePayloadResponse, MaintenanceServiceResponse, MaintenanceWorkspace, MonitorHost, MonitorInstallPreflight, MonitorInstallTask, MonitorInstallTaskPhase, MonitorInstallTaskStatus, ScriptAction, ScriptActionExecution, ScriptActionExecutionResult, ScriptActionIcon, ServiceItem, Deployment } from "./types";
 
 export interface MaintenanceApi {
   "loading": Ref<boolean, boolean>;

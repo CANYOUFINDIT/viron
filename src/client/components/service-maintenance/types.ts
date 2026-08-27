@@ -1,8 +1,9 @@
 import type { Component } from "vue";
-import type { HostFocusMetric } from "../HostMonitorDashboard.vue";
 import type { CandidateStatus, MonitorCandidate, Provider } from "../../service-candidate-tree";
 import type { MonitorAlertSettings } from "../../../shared/monitor-alerts";
 import type { TlsCertificateGroup, TlsEndpoint, TlsWebEntryBadge } from "../../../shared/tls-certificates";
+
+export type HostFocusMetric = "cpu" | "memory" | "disk" | "network" | "load" | "io" | "pressure" | "swap" | "uptime" | "temperature";
 
 export type MaintenanceWorkspace = "service" | "host" | "certificate";
 
@@ -123,6 +124,7 @@ export interface MonitorHost {
     installArchitecture: string;
     installManaged: boolean;
     installedAt: string | null;
+    candidateCount?: number;
 }
 
 export interface MonitorInstallPreflight {
@@ -197,6 +199,8 @@ export interface Deployment {
     host: string | null;
     port: number | null;
     username: string | null;
+    capabilities?: Array<"start" | "stop" | "restart">;
+    capabilityNotes?: Partial<Record<"start" | "stop" | "restart", string>>;
     scriptActions: ScriptAction[];
 }
 
@@ -221,6 +225,15 @@ export interface EnvironmentLog {
     filePaths: string[];
 }
 
+export interface DiscoveryHostSummary {
+    sshConnectionId: string;
+    connectionName: string;
+    host: string;
+    connectionAvailable: boolean;
+    monitorStatus: MonitorHost["monitorStatus"];
+    candidateCount: number;
+}
+
 export interface MaintenancePayload {
     canConfigure: boolean;
     canOperate: boolean;
@@ -229,6 +242,9 @@ export interface MaintenancePayload {
     services: ServiceItem[];
     logs: EnvironmentLog[];
     hosts: MonitorHost[];
+    discovery?: { hosts: DiscoveryHostSummary[] };
+    generatedAt?: string;
+    truncated?: boolean;
     tlsEndpoints: TlsEndpoint[];
 }
 
