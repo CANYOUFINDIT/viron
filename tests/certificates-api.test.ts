@@ -243,8 +243,8 @@ describe("certificate assets API", () => {
       expect((await app.inject({ method: "POST", url: `/api/v1/tls-endpoints/${endpointId}/probe`, cookies })).statusCode).toBe(200);
       const afterFail = await db.prepare("UPDATE ssl_endpoints SET probe_status = 'connect_failed', probe_error = 'boom' WHERE id = ?").run(endpointId);
       expect(afterFail.changes).toBe(1);
-      const staleGet = await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/maintenance`, cookies });
-      const staleItem = staleGet.json().tlsEndpoints.find((item: { id: string }) => item.id === endpointId);
+      const listedCerts = await app.inject({ method: "GET", url: "/api/v1/certificates", cookies });
+      const staleItem = listedCerts.json().items[0].endpoints.find((item: { id: string }) => item.id === endpointId);
       expect(staleItem.probeStatus).toBe("connect_failed");
       expect(staleItem.stale).toBe(true);
       expect(staleItem.certificateId).toBeTruthy();

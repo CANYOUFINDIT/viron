@@ -8,11 +8,8 @@ import { candidateKey, providerLabel, type CandidateStatus, type MonitorCandidat
 import { normalizeMaintenanceScriptActions } from "../../service-maintenance-payload";
 import { reorderIds, sameOrder } from "../../../shared/tab-order";
 import { defaultMonitorAlertSettings, monitorDiskKey, type MonitorAlertSettings, } from "../../../shared/monitor-alerts";
-import AnimatedCounter from "../AnimatedCounter.vue";
-import DeploymentMonitorDashboard from "../DeploymentMonitorDashboard.vue";
-import HostMonitorDashboard, { type HostFocusMetric } from "../HostMonitorDashboard.vue";
-import ServiceDiscoveryPanel from "../ServiceDiscoveryPanel.vue";
-import type { MaintenanceWorkspace, HostWorkspaceTab, MaintenanceDirectory, DirectoryMoveDirection, ScriptActionIcon, DirectoryDropTarget, ScriptAction, ScriptActionExecutionResult, ScriptActionExecution, HostSnapshot, KubernetesConfigDiscovery, MonitorHost, MonitorInstallPreflight, MonitorInstallTaskStatus, MonitorInstallTaskPhase, MonitorInstallTask, Deployment, ServiceItem, EnvironmentLog, MaintenancePayload, MaintenanceDeploymentResponse, MaintenanceServiceResponse, MaintenancePayloadResponse, MaintenanceCounts, MaintenancePanelProps, MaintenancePanelEmit } from "./types";
+
+import type { MaintenanceWorkspace, HostWorkspaceTab, HostFocusMetric, MaintenanceDirectory, DirectoryMoveDirection, ScriptActionIcon, DirectoryDropTarget, ScriptAction, ScriptActionExecutionResult, ScriptActionExecution, HostSnapshot, KubernetesConfigDiscovery, MonitorHost, MonitorInstallPreflight, MonitorInstallTaskStatus, MonitorInstallTaskPhase, MonitorInstallTask, Deployment, ServiceItem, EnvironmentLog, MaintenancePayload, MaintenanceDeploymentResponse, MaintenanceServiceResponse, MaintenancePayloadResponse, MaintenanceCounts, MaintenancePanelProps, MaintenancePanelEmit } from "./types";
 import { deferMaintenancePart, type MaintenanceContext } from "./context";
 
 export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<MaintenancePanelProps>, emit: MaintenancePanelEmit) {
@@ -20,7 +17,6 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
   const $monitorInstall = deferMaintenancePart(ctx, "monitorInstall");
   const $scriptActions = deferMaintenancePart(ctx, "scriptActions");
   const $alertSettings = deferMaintenancePart(ctx, "alertSettings");
-  const $tls = deferMaintenancePart(ctx, "tls");
   const loading = ref(true);
 
   const saving = ref(false);
@@ -57,6 +53,19 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
   const refreshingHosts = ref(new Set<string>());
 
   const runningAction = ref("");
+
+  const selectedDeploymentIds = ref<string[]>([]);
+
+  const batchDialog = ref(false);
+
+  const batchOperation = ref<{
+      id: string;
+      action: "start" | "stop" | "restart";
+      status: string;
+      succeeded: number;
+      failed: number;
+      targets: Array<{ deploymentId: string; targetName: string; ok: boolean; message: string; durationMs: number }>;
+  } | null>(null);
 
   const serviceDialog = ref(false);
 
@@ -115,13 +124,7 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
   const unmonitoredHosts = computed(() => payload.value.hosts.filter((host) => host.monitorStatus === "missing" && !host.monitorOffline).length);
 
   const attentionItems = computed(() => {
-      const items = activeWorkspace.value === "certificate"
-          ? [
-              $tls.expiredCertificates.value ? { key: "tls-expired", value: $tls.expiredCertificates.value, label: tr("证书已过期") } : null,
-              $tls.expiringCertificates.value ? { key: "tls-expiring", value: $tls.expiringCertificates.value, label: tr("证书即将过期") } : null,
-              $tls.unboundCertificates.value ? { key: "tls-unbound", value: $tls.unboundCertificates.value, label: tr("待关联主机") } : null,
-          ]
-          : [
+      const items = [
               problemDeployments.value ? { key: "problems", value: problemDeployments.value, label: tr("待处理") } : null,
               offlineHosts.value ? { key: "offline", value: offlineHosts.value, label: tr("离线主机") } : null,
               unmonitoredHosts.value ? { key: "missing", value: unmonitoredHosts.value, label: tr("未监控") } : null,
@@ -154,18 +157,47 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
       if (!silent)
           loading.value = true;
       try {
-          const response = await api<MaintenancePayloadResponse>(`/api/v1/environments/${props.environmentId}/maintenance`);
-          payload.value = normalizeMaintenanceScriptActions(response) as MaintenancePayload;
+          const response = await api<MaintenancePayloadResponse>(`/api/v1/environments/${props.environmentId}/service-deployments`);
+          const discoveryHosts = (response.discovery?.hosts ?? []).map((row) => ({
+              sshConnectionId: row.sshConnectionId,
+              connectionName: row.connectionName,
+              host: row.host,
+              port: 0,
+              username: "",
+              connectionAvailable: row.connectionAvailable,
+              monitorStatus: row.monitorStatus,
+              monitorOffline: row.monitorStatus === "error",
+              agentId: "",
+              agentVersion: "",
+              monitorUpdateAvailable: false,
+              protocolVersion: 0,
+              lastSequence: 0,
+              snapshot: null,
+              candidates: payload.value.hosts.find((host) => host.sshConnectionId === row.sshConnectionId)?.candidates ?? [],
+              kubernetesConfigs: payload.value.hosts.find((host) => host.sshConnectionId === row.sshConnectionId)?.kubernetesConfigs ?? [],
+              lastError: "",
+              lastCollectedAt: null,
+              lastPulledAt: null,
+              installPath: "",
+              installArchitecture: "",
+              installManaged: false,
+              installedAt: null,
+              candidateCount: row.candidateCount,
+          }));
+          payload.value = normalizeMaintenanceScriptActions({
+              ...response,
+              alertSettings: payload.value.alertSettings,
+              hosts: discoveryHosts,
+              tlsEndpoints: [],
+          }) as MaintenancePayload;
           if (!payload.value.services.some((item) => item.id === selectedServiceId.value))
               selectedServiceId.value = payload.value.services[0]?.id ?? "";
           if (!payload.value.services.some((item) => item.id === discoveryTargetServiceId.value))
               discoveryTargetServiceId.value = "";
           if (!payload.value.hosts.some((item) => item.sshConnectionId === selectedHostId.value))
               selectedHostId.value = payload.value.hosts[0]?.sshConnectionId ?? "";
-          if (!payload.value.tlsEndpoints.some((item) => (item.fingerprintSha256 || `pending:${item.id}`) === $tls.selectedCertificateKey.value)
-            && payload.value.tlsEndpoints[0]) {
-              $tls.selectedCertificateKey.value = payload.value.tlsEndpoints[0].fingerprintSha256 || `pending:${payload.value.tlsEndpoints[0].id}`;
-          }
+          if (activeWorkspace.value === "certificate" || (activeWorkspace.value !== "service" && activeWorkspace.value !== "host"))
+              activeWorkspace.value = "service";
           if (activeWorkspace.value === "service" && !payload.value.services.length && payload.value.hosts.length)
               activeWorkspace.value = "host";
           if (activeWorkspace.value === "host" && !payload.value.hosts.length && payload.value.services.length)
@@ -180,7 +212,6 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
   }
 
   function applyFocusTarget() {
-      if ($tls.applyCertificateFocus()) return;
       const requestedServiceId = props.focusServiceId
           || payload.value.services.find((service) => service.deployments.some((deployment) => deployment.id === props.focusDeploymentId))?.id;
       if (requestedServiceId && payload.value.services.some((service) => service.id === requestedServiceId)) {
@@ -198,14 +229,24 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
           return;
       window.clearInterval(refreshTimer);
       refreshTimer = undefined;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+  }
+
+  function onVisibilityChange() {
+      if (document.hidden)
+          return;
+      void load(true).catch(() => undefined);
   }
 
   function startAutoRefresh() {
       if (refreshTimer !== undefined)
           return;
       refreshTimer = window.setInterval(() => {
+          if (document.hidden)
+              return;
           void load(true).catch(() => undefined);
-      }, 10000);
+      }, 15000);
+      document.addEventListener("visibilitychange", onVisibilityChange);
   }
 
   function summarizeService(service: ServiceItem | null) {
@@ -232,15 +273,27 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
       return `Kubernetes · ${String(metadata.cluster ?? metadata.context ?? "")} / ${String(metadata.namespace ?? "default")} · ${String(metadata.resourceKind ?? "Workload")}`;
   }
 
-  function supportsMaintenanceActions(provider: Provider) {
+  function supportsMaintenanceActions(provider: Provider, deployment?: Deployment) {
+      if (deployment?.capabilities)
+          return deployment.capabilities.length > 0;
       return ["systemd", "docker", "podman", "supervisor"].includes(provider);
   }
 
-  function unsupportedMaintenanceActionReason(provider: Provider) {
+  function deploymentAllowsAction(deployment: Deployment, action: "start" | "stop" | "restart") {
+      if (deployment.capabilities)
+          return deployment.capabilities.includes(action);
+      if (["systemd", "docker", "podman", "supervisor"].includes(deployment.provider))
+          return true;
+      return false;
+  }
+
+  function unsupportedMaintenanceActionReason(provider: Provider, deployment?: Deployment) {
+      if (deployment?.capabilityNotes?.restart)
+          return deployment.capabilityNotes.restart;
       if (provider === "kubernetes")
-          return tr("Kubernetes 工作负载暂不提供通用启停");
+          return tr("Kubernetes 仅对结构化控制器提供重启");
       if (provider === "process")
-          return tr("普通进程只登记关系，不提供通用启停");
+          return tr("裸进程不提供通用启停，请使用 Runbook");
       return "";
   }
 
@@ -415,9 +468,27 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
       activeWorkspace.value = "service";
   }
 
+  async function loadHostCandidates(hostId: string) {
+      try {
+          const response = await api<{ item: { candidates: MonitorCandidate[]; kubernetesConfigs: KubernetesConfigDiscovery[] } }>(
+              `/api/v1/environments/${props.environmentId}/monitor-hosts/${hostId}/candidates`,
+          );
+          payload.value = {
+              ...payload.value,
+              hosts: payload.value.hosts.map((host) => host.sshConnectionId === hostId
+                  ? { ...host, candidates: response.item.candidates, kubernetesConfigs: response.item.kubernetesConfigs }
+                  : host),
+          };
+      } catch {
+          /* keep last known candidates */
+      }
+  }
+
   function selectHost(id: string) {
       selectedHostId.value = id;
       activeWorkspace.value = "host";
+      hostWorkspaceTab.value = "discovery";
+      void loadHostCandidates(id);
   }
 
   function openWorkspaceTab(kind: MaintenanceWorkspace) {
@@ -431,11 +502,7 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
           const id = selectedHostId.value || payload.value.hosts[0]?.sshConnectionId;
           if (id) selectHost(id);
           else activeWorkspace.value = "host";
-          return;
       }
-      const key = $tls.selectedCertificate.value?.key || $tls.certificateGroups.value[0]?.key;
-      if (key) $tls.selectCertificate(key);
-      else activeWorkspace.value = "certificate";
   }
 
   function openServiceCreate(fromDiscovery = false) {
@@ -686,23 +753,101 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
       }
   }
 
+  async function pollOperation(operationId: string) {
+      for (let attempt = 0; attempt < 120; attempt += 1) {
+          const response = await api<{ item: { id: string; status: string; result?: { succeeded: number; failed: number; targets?: Array<{ deploymentId?: string; targetName?: string; ok: boolean; message: string; durationMs?: number }> } } }>(`/api/v1/service-operations/${operationId}`);
+          const status = response.item.status;
+          if (status !== "queued" && status !== "running")
+              return response.item;
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+      throw new Error(tr("操作超时"));
+  }
+
   async function runMaintenanceAction(deployment: Deployment, action: "start" | "stop" | "restart") {
       const actionLabel = ({ start: tr("启动"), stop: tr("停止"), restart: tr("重启") })[action];
       await ElMessageBox.confirm(tr("确定要{{0}}“{{1}}”吗？命令将在 {{2}} 上执行。", [actionLabel, deployment.displayName || deployment.externalId, deployment.sshConnectionName]), tr("确认维护动作"), { type: action === "stop" ? "warning" : "info" });
       runningAction.value = `${deployment.id}:${action}`;
       try {
-          const result = await api<{
-              monitorWarning?: string;
-          }>(`/api/v1/service-deployments/${deployment.id}/actions`, { method: "POST", body: JSON.stringify({ action }) });
+          const created = await api<{ item: { id: string } }>(`/api/v1/service-deployments/${deployment.id}/actions`, {
+              method: "POST",
+              headers: { "Idempotency-Key": `${crypto.randomUUID()}${crypto.randomUUID()}`.slice(0, 48) },
+              body: JSON.stringify({ action }),
+          });
+          const item = await pollOperation(created.item.id);
           await reload();
-          if (result.monitorWarning)
-              ElMessage.warning(tr("动作已完成，但状态刷新失败：{{0}}", [result.monitorWarning]));
-          else
+          if (item.status === "succeeded")
               ElMessage.success(tr("{{0}}动作已完成", [actionLabel]));
+          else
+              ElMessage.warning(item.result?.targets?.find((target) => !target.ok)?.message || tr("{{0}}动作未完全成功", [actionLabel]));
       }
       finally {
           runningAction.value = "";
       }
+  }
+
+  function toggleDeploymentSelection(id: string) {
+      selectedDeploymentIds.value = selectedDeploymentIds.value.includes(id)
+          ? selectedDeploymentIds.value.filter((item) => item !== id)
+          : [...selectedDeploymentIds.value, id];
+  }
+
+  function selectAllVisibleDeployments() {
+      const ids = selectedService.value?.deployments.map((item) => item.id) ?? [];
+      const allSelected = ids.length > 0 && ids.every((id) => selectedDeploymentIds.value.includes(id));
+      selectedDeploymentIds.value = allSelected ? selectedDeploymentIds.value.filter((id) => !ids.includes(id)) : [...new Set([...selectedDeploymentIds.value, ...ids])];
+  }
+
+  function clearDeploymentSelection() {
+      selectedDeploymentIds.value = [];
+  }
+
+  async function runBatchMaintenanceAction(action: "start" | "stop" | "restart", deploymentIds = selectedDeploymentIds.value) {
+      const actionLabel = ({ start: tr("启动"), stop: tr("停止"), restart: tr("重启") })[action];
+      const ids = [...new Set(deploymentIds)].slice(0, 50);
+      if (!ids.length)
+          return;
+      await ElMessageBox.confirm(tr("确定要批量{{0}} {{1}} 个部署节点吗？命令将通过已有 SSH 连接执行。", [actionLabel, ids.length]), tr("确认批量维护动作"), { type: action === "stop" ? "warning" : "info" });
+      runningAction.value = `batch:${action}`;
+      batchDialog.value = true;
+      batchOperation.value = { id: "", action, status: "queued", succeeded: 0, failed: 0, targets: [] };
+      try {
+          const created = await api<{ item: { id: string } }>("/api/v1/service-deployments/actions", {
+              method: "POST",
+              headers: { "Idempotency-Key": `${crypto.randomUUID()}${crypto.randomUUID()}`.slice(0, 48) },
+              body: JSON.stringify({ action, deploymentIds: ids }),
+          });
+          const item = await pollOperation(created.item.id);
+          batchOperation.value = {
+              id: created.item.id,
+              action,
+              status: item.status,
+              succeeded: item.result?.succeeded ?? 0,
+              failed: item.result?.failed ?? 0,
+              targets: (item.result?.targets ?? []).map((target) => ({
+                  deploymentId: String(target.deploymentId ?? ""),
+                  targetName: String(target.targetName ?? ""),
+                  ok: Boolean(target.ok),
+                  message: String(target.message ?? ""),
+                  durationMs: Number(target.durationMs ?? 0),
+              })),
+          };
+          await reload();
+          if (item.status === "succeeded")
+              ElMessage.success(tr("批量{{0}}已完成", [actionLabel]));
+          else
+              ElMessage.warning(tr("批量{{0}}未完全成功", [actionLabel]));
+      }
+      finally {
+          runningAction.value = "";
+      }
+  }
+
+  async function retryFailedBatchTargets() {
+      const failedIds = (batchOperation.value?.targets ?? []).filter((item) => !item.ok && item.deploymentId).map((item) => item.deploymentId);
+      if (!failedIds.length || !batchOperation.value)
+          return;
+      await runBatchMaintenanceAction(batchOperation.value.action, failedIds);
   }
 
   return {
@@ -720,6 +865,9 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
     servicePickerDialog,
     refreshingHosts,
     runningAction,
+    selectedDeploymentIds,
+    batchDialog,
+    batchOperation,
     serviceDialog,
     deploymentDialog,
     logDialog,
@@ -760,6 +908,7 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
     statusLabel,
     candidateLocationLabel,
     supportsMaintenanceActions,
+    deploymentAllowsAction,
     unsupportedMaintenanceActionReason,
     deploymentIdentity,
     kubernetesMetric,
@@ -801,6 +950,11 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
     saveLogLinks,
     refreshHost,
     runMaintenanceAction,
+    toggleDeploymentSelection,
+    selectAllVisibleDeployments,
+    clearDeploymentSelection,
+    runBatchMaintenanceAction,
+    retryFailedBatchTargets,
   };
 }
 

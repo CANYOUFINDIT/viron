@@ -7,7 +7,6 @@ import { isUniqueConstraintError } from "../database-errors.js";
 import { quotePosixShellArg } from "../../shared/environment-log.js";
 import { hasExactIds } from "../../shared/tab-order.js";
 import { syncMonitorHost } from "../service-monitor.js";
-import { monitorAlertSettingsForEnvironment } from "../monitor-alerts.js";
 import { executeSshCommand, executeSshScript } from "../ssh/command.js";
 import { closeSshConnectionPool } from "../ssh/connector.js";
 import {
@@ -17,15 +16,29 @@ import {
   preflightMonitorInstallation,
 } from "../monitor-installer.js";
 import { MonitorInstallTaskConflictError, sanitizeMonitorInstallOutput, type MonitorInstallTaskReporter } from "../monitor-install-task-manager.js";
-import { PRODUCT_VERSION } from "../product-info.js";
 import { parseBody } from "../validation.js";
 import { requireAdmin } from "./auth.js";
+import { loadServiceDeploymentsPayload } from "../service-deployments-payload.js";
+import {
+  ServiceOperationError,
+  beginServiceOperation,
+  getServiceOperation,
+  mapWithConcurrency,
+  runServiceOperation,
+} from "../service-operations.js";
+import {
+  SERVICE_OPERATION_COMMAND_TIMEOUT_MS,
+  SERVICE_OPERATION_CONCURRENCY,
+  SERVICE_OPERATION_OUTPUT_LIMIT,
+  capabilityDisabledReason,
+  deploymentCapabilities,
+  kubernetesController,
+} from "../../shared/service-operations.js";
 import {
   TlsCertificateError,
   createTlsEndpoint,
   deleteTlsEndpoint,
   getTlsEndpoint,
-  listTlsEndpoints,
   probeTlsEndpoint,
   replaceEndpointWebEntries,
   updateTlsEndpoint,
@@ -51,6 +64,13 @@ const deploymentSchema = z.object({
 const serviceLogsSchema = z.object({ logIds: z.array(z.string().uuid()).max(100) });
 const maintenanceOrderSchema = z.object({ orderedIds: z.array(z.string().uuid()).max(500) });
 const maintenanceActionSchema = z.object({ action: z.enum(["start", "stop", "restart"]) });
+const batchMaintenanceActionSchema = z.object({
+  action: z.enum(["start", "stop", "restart"]),
+  deploymentIds: z.array(z.string().uuid()).min(1).max(50),
+});
+const scriptExecuteSchema = z.object({
+  deploymentIds: z.array(z.string().uuid()).max(50).optional(),
+});
 const serviceScriptActionSchema = z.object({
   deploymentId: z.string().uuid().nullable().default(null),
   name: z.string().trim().min(1).max(80),
@@ -85,32 +105,6 @@ function parseJson<T>(value: unknown, fallback: T): T {
   } catch {
     return fallback;
   }
-}
-
-function monitorUpdateAvailable(agentVersion: unknown, snapshot: Record<string, unknown> | null, installManaged: boolean): boolean {
-  const installed = String(agentVersion ?? "").trim();
-  if (!installed && !installManaged) return false;
-  if (snapshot?.collectorUser !== "root") return true;
-  if (Number(snapshot?.metricsVersion ?? 0) < 2) return true;
-  if (!installed || installed === PRODUCT_VERSION) return false;
-  const parse = (value: string) => {
-    const match = /^(\d+)\.(\d+)\.(\d+)(?:-([^+]+))?(?:\+.+)?$/.exec(value);
-    return match ? { numbers: match.slice(1, 4).map(Number), prerelease: match[4] ?? "" } : null;
-  };
-  const installedVersion = parse(installed);
-  const availableVersion = parse(PRODUCT_VERSION);
-  if (!installedVersion || !availableVersion) return true;
-  for (let index = 0; index < installedVersion.numbers.length; index += 1) {
-    const difference = installedVersion.numbers[index]! - availableVersion.numbers[index]!;
-    if (difference !== 0) return difference < 0;
-  }
-  return Boolean(installedVersion.prerelease) && !availableVersion.prerelease;
-}
-
-function parseHostSnapshot(value: unknown): Record<string, unknown> | null {
-  const parsed = parseJson<unknown>(value, null);
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-  return typeof (parsed as Record<string, unknown>).hostname === "string" ? parsed as Record<string, unknown> : null;
 }
 
 async function connectionBelongsToEnvironment(app: FastifyInstance, connectionId: string, environmentId: string) {
@@ -163,31 +157,29 @@ async function duplicateScriptActionName(
   `).get(serviceId, deploymentId, deploymentId, name, exceptId) as { id: string } | undefined;
 }
 
-async function mapWithConcurrency<T, R>(items: T[], limit: number, mapper: (item: T) => Promise<R>): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let next = 0;
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (next < items.length) {
-      const index = next;
-      next += 1;
-      results[index] = await mapper(items[index]!);
-    }
-  }));
-  return results;
-}
-
 async function kubernetesCandidateExists(app: FastifyInstance, connectionId: string, externalId: string): Promise<boolean> {
   const row = await app.db.prepare("SELECT latest_candidates_json FROM monitor_hosts WHERE ssh_connection_id = ?").get(connectionId) as { latest_candidates_json?: string } | undefined;
   const candidates = parseJson<Array<{ provider?: unknown; externalId?: unknown }>>(row?.latest_candidates_json, []);
   return candidates.some((candidate) => candidate.provider === "kubernetes" && candidate.externalId === externalId);
 }
 
-function maintenanceCommand(provider: string, externalId: string, action: "start" | "stop" | "restart"): string | null {
+function maintenanceCommand(
+  provider: string,
+  externalId: string,
+  action: "start" | "stop" | "restart",
+  metrics: Record<string, unknown> = {},
+): string | null {
+  if (!deploymentCapabilities(provider, metrics).includes(action)) return null;
   const target = quotePosixShellArg(externalId);
   if (provider === "systemd") return `systemctl ${action} -- ${target}`;
   if (provider === "docker") return `docker container ${action} -- ${target}`;
   if (provider === "podman") return `podman ${action} -- ${target}`;
   if (provider === "supervisor") return `supervisorctl ${action} ${target}`;
+  if (provider === "kubernetes" && action === "restart") {
+    const controller = kubernetesController(metrics);
+    if (!controller) return null;
+    return `kubectl -n ${quotePosixShellArg(controller.namespace)} rollout restart ${quotePosixShellArg(`${controller.kind}/${controller.name}`)}`;
+  }
   return null;
 }
 
@@ -279,180 +271,134 @@ async function recordMonitorInstallFailure(
   return { code, message };
 }
 
+function parseMetrics(value: unknown): Record<string, unknown> {
+  return parseJson<Record<string, unknown>>(value, {});
+}
+
+async function executeDeploymentAction(
+  app: FastifyInstance,
+  request: FastifyRequest,
+  deployment: Record<string, unknown>,
+  action: "start" | "stop" | "restart",
+): Promise<import("../../shared/service-operations.js").ServiceOperationTargetResult> {
+  const deploymentId = String(deployment.id);
+  const targetName = String(deployment.display_name || deployment.external_id || deployment.ssh_connection_name);
+  const connectionId = deployment.ssh_connection_id ? String(deployment.ssh_connection_id) : "";
+  const base = { deploymentId, targetName, connectionId, connectionName: String(deployment.ssh_connection_name ?? ""), errorCode: "" };
+  if (!connectionId) {
+    return { ...base, ok: false, exitCode: null, durationMs: 0, truncated: false, message: "原 SSH 连接已删除，请先修复部署节点", errorCode: "SSH_CONNECTION_MISSING" };
+  }
+  if (!await canAccessConnection(app.db, request.admin!, "ssh", connectionId)) {
+    return { ...base, ok: false, exitCode: null, durationMs: 0, truncated: false, message: "当前账号无权访问该 SSH 连接", errorCode: "SSH_CONNECTION_NOT_FOUND" };
+  }
+  if (!await connectionBelongsToEnvironment(app, connectionId, String(deployment.environment_id))) {
+    return { ...base, ok: false, exitCode: null, durationMs: 0, truncated: false, message: "SSH 连接已删除或移出当前环境", errorCode: "SSH_CONNECTION_UNAVAILABLE" };
+  }
+  const command = maintenanceCommand(String(deployment.provider_type), String(deployment.external_id), action, parseMetrics(deployment.latest_metrics_json));
+  if (!command) {
+    return { ...base, ok: false, exitCode: null, durationMs: 0, truncated: false, message: capabilityDisabledReason(String(deployment.provider_type), action), errorCode: "UNSUPPORTED_MAINTENANCE_ACTION" };
+  }
+  const started = Date.now();
+  try {
+    const result = await executeSshCommand(app, connectionId, command, { timeoutMs: SERVICE_OPERATION_COMMAND_TIMEOUT_MS, maxBytes: 64 * 1024 });
+    const ok = result.exitCode === 0;
+    if (ok) {
+      try { await syncMonitorHost(app, connectionId, true); } catch { /* best-effort */ }
+    }
+    return {
+      ...base,
+      ok,
+      exitCode: result.exitCode,
+      durationMs: result.durationMs,
+      stdout: result.stdout.slice(0, SERVICE_OPERATION_OUTPUT_LIMIT),
+      stderr: result.stderr.slice(0, SERVICE_OPERATION_OUTPUT_LIMIT),
+      truncated: result.truncated || result.stdout.length > SERVICE_OPERATION_OUTPUT_LIMIT || result.stderr.length > SERVICE_OPERATION_OUTPUT_LIMIT,
+      message: ok ? "" : (result.stderr.trim() || result.stdout.trim() || "远程维护命令执行失败").slice(0, 500),
+      errorCode: ok ? "" : "MAINTENANCE_ACTION_FAILED",
+    };
+  } catch (error) {
+    return {
+      ...base,
+      ok: false,
+      exitCode: null,
+      durationMs: Date.now() - started,
+      truncated: false,
+      message: error instanceof Error ? error.message.slice(0, 500) : "SSH 连接失败",
+      errorCode: "MAINTENANCE_ACTION_FAILED",
+    };
+  }
+}
+
+async function requireEnvironment(app: FastifyInstance, request: FastifyRequest, reply: { code: (status: number) => { send: (body: unknown) => unknown } }, environmentId: string): Promise<boolean> {
+  if (!await canAccessEnvironment(app.db, request.admin!, environmentId)) {
+    void reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
+    return false;
+  }
+  return true;
+}
+
 export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Promise<void> {
-  app.get<{ Params: { environmentId: string } }>(
+  const deploymentsQuerySchema = z.object({
+    cursor: z.string().uuid().optional(),
+    limit: z.coerce.number().int().min(1).max(100).optional(),
+  });
+
+  app.get<{ Params: { environmentId: string }; Querystring: { cursor?: string; limit?: string } }>(
+    "/api/v1/environments/:environmentId/service-deployments",
+    { preHandler: requireAdmin },
+    async (request, reply) => {
+      if (!await requireEnvironment(app, request, reply, request.params.environmentId)) return;
+      const query = deploymentsQuerySchema.safeParse(request.query);
+      if (!query.success) return reply.code(400).send({ error: "INVALID_QUERY", message: "分页参数无效" });
+      return await loadServiceDeploymentsPayload(app, request, request.params.environmentId, query.data);
+    },
+  );
+
+  app.get<{ Params: { environmentId: string }; Querystring: { cursor?: string; limit?: string } }>(
     "/api/v1/environments/:environmentId/maintenance",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      const environmentId = request.params.environmentId;
-      if (!await canAccessEnvironment(app.db, request.admin!, environmentId)) {
-        return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
+      if (!await requireEnvironment(app, request, reply, request.params.environmentId)) return;
+      reply.header("Deprecation", "true");
+      reply.header("Link", `</api/v1/environments/${request.params.environmentId}/service-deployments>; rel="successor-version"`);
+      const query = deploymentsQuerySchema.safeParse(request.query);
+      if (!query.success) return reply.code(400).send({ error: "INVALID_QUERY", message: "分页参数无效" });
+      return await loadServiceDeploymentsPayload(app, request, request.params.environmentId, query.data);
+    },
+  );
+
+  app.get<{ Params: { environmentId: string; connectionId: string } }>(
+    "/api/v1/environments/:environmentId/monitor-hosts/:connectionId/candidates",
+    { preHandler: requireAdmin },
+    async (request, reply) => {
+      if (!await requireEnvironment(app, request, reply, request.params.environmentId)) return;
+      const connection = await connectionBelongsToEnvironment(app, request.params.connectionId, request.params.environmentId);
+      if (!connection || !await canAccessConnection(app.db, request.admin!, "ssh", connection.id)) {
+        return reply.code(404).send({ error: "SSH_CONNECTION_NOT_FOUND", message: "SSH 连接不存在" });
       }
-      const [serviceRows, deploymentRows, scriptActionRows, logLinkRows, logRows, connectionCandidates, offlineHostRows, tlsEndpoints] = await Promise.all([
-        app.db.prepare("SELECT * FROM services WHERE environment_id = ? ORDER BY sort_order, updated_at DESC, name").all(environmentId) as Promise<Record<string, unknown>[]>,
-        app.db.prepare(`
-          SELECT d.*, c.host, c.port, c.username, c.source_deleted,
-            CASE WHEN c.id IS NULL THEN 0 ELSE EXISTS(
-              SELECT 1 FROM ssh_connection_environments ce
-              WHERE ce.connection_id = c.id AND ce.environment_id = ?
-            ) END AS connection_available
-          FROM service_deployments d
-          JOIN services s ON s.id = d.service_id
-          LEFT JOIN ssh_connections c ON c.id = d.ssh_connection_id
-          WHERE s.environment_id = ?
-          ORDER BY d.created_at
-        `).all(environmentId, environmentId) as Promise<Record<string, unknown>[]>,
-        app.db.prepare(`
-          SELECT a.* FROM service_script_actions a
-          JOIN services s ON s.id = a.service_id
-          WHERE s.environment_id = ?
-          ORDER BY a.created_at, a.name
-        `).all(environmentId) as Promise<Record<string, unknown>[]>,
-        app.db.prepare(`
-          SELECT l.service_id, l.environment_log_id FROM service_log_links l
-          JOIN services s ON s.id = l.service_id WHERE s.environment_id = ?
-        `).all(environmentId) as Promise<Array<{ service_id: string; environment_log_id: string }>>,
-        app.db.prepare(`
-          SELECT l.id, l.name, l.ssh_connection_id, l.file_path, l.file_paths_json, c.name AS connection_name
-          FROM environment_logs l JOIN ssh_connections c ON c.id = l.ssh_connection_id
-          WHERE l.environment_id = ? ORDER BY l.updated_at DESC
-        `).all(environmentId) as Promise<Record<string, unknown>[]>,
-        app.db.prepare(`
-          SELECT c.id, c.name, c.host, c.port, c.username, c.source_deleted,
-            h.agent_id, h.agent_version, h.protocol_version, h.status AS monitor_status,
-            h.last_sequence, h.latest_host_json, h.latest_candidates_json, h.latest_kubernetes_configs_json,
-            h.last_error, h.last_collected_at, h.last_pulled_at,
-            h.install_path, h.install_architecture, h.install_managed, h.installed_at
-          FROM ssh_connections c
-          JOIN ssh_connection_environments ce ON ce.connection_id = c.id
-          LEFT JOIN monitor_hosts h ON h.ssh_connection_id = c.id
-          WHERE ce.environment_id = ?
-          ORDER BY ce.maintenance_sort_order, c.name, c.id
-        `).all(environmentId) as Promise<Record<string, unknown>[]>,
-        app.db.prepare(`
-          SELECT target_id FROM monitor_alert_states
-          WHERE environment_id = ? AND rule_type = 'host_offline' AND active_alert_id IS NOT NULL
-        `).all(environmentId) as Promise<Array<{ target_id: string }>>,
-        listTlsEndpoints(app, environmentId),
-      ]);
-      const connectionRows: Record<string, unknown>[] = [];
-      for (const row of connectionCandidates) {
-        if (await canAccessConnection(app.db, request.admin!, "ssh", String(row.id))) connectionRows.push(row);
-      }
-      const visibleConnectionIds = new Set(connectionRows.map((row) => String(row.id)));
-      const offlineAgentIds = new Set(offlineHostRows.map((row) => row.target_id));
-      const canConfigure = canManageWorkspace(request);
-      const scriptActionsByService = new Map<string, Record<string, unknown>[]>();
-      const scriptActionsByDeployment = new Map<string, Record<string, unknown>[]>();
-      for (const row of scriptActionRows) {
-        const action = {
-          id: row.id,
-          serviceId: row.service_id,
-          deploymentId: row.deployment_id,
-          name: row.name,
-          icon: row.icon,
-          ...(canConfigure ? { scriptBody: row.script_body } : {}),
-          createdAt: row.created_at,
-          updatedAt: row.updated_at,
-        };
-        if (row.deployment_id) {
-          const items = scriptActionsByDeployment.get(String(row.deployment_id)) ?? [];
-          items.push(action);
-          scriptActionsByDeployment.set(String(row.deployment_id), items);
-        } else {
-          const items = scriptActionsByService.get(String(row.service_id)) ?? [];
-          items.push(action);
-          scriptActionsByService.set(String(row.service_id), items);
-        }
-      }
-      const deploymentsByService = new Map<string, Record<string, unknown>[]>();
-      for (const row of deploymentRows) {
-        const connectionVisible = visibleConnectionIds.has(String(row.ssh_connection_id));
-        const deployment = {
-          id: row.id,
-          serviceId: row.service_id,
-          sshConnectionId: row.ssh_connection_id,
-          sshConnectionName: row.ssh_connection_name,
-          provider: row.provider_type,
-          externalId: row.external_id,
-          displayName: row.display_name,
-          origin: row.origin,
-          status: connectionVisible ? row.status : "unknown",
-          state: connectionVisible ? row.state_detail : "",
-          metrics: connectionVisible ? parseJson(row.latest_metrics_json, {}) : {},
-          lastCheckedAt: connectionVisible ? row.last_checked_at : null,
-          connectionAvailable: Boolean(row.connection_available) && !Boolean(row.source_deleted) && connectionVisible,
-          host: connectionVisible ? row.host : null,
-          port: connectionVisible && row.port != null ? Number(row.port) : null,
-          username: connectionVisible ? row.username : null,
-          scriptActions: scriptActionsByDeployment.get(String(row.id)) ?? [],
-        };
-        const items = deploymentsByService.get(String(row.service_id)) ?? [];
-        items.push(deployment);
-        deploymentsByService.set(String(row.service_id), items);
-      }
-      const logIdsByService = new Map<string, string[]>();
-      for (const row of logLinkRows) {
-        const ids = logIdsByService.get(row.service_id) ?? [];
-        ids.push(row.environment_log_id);
-        logIdsByService.set(row.service_id, ids);
-      }
+      const row = await app.db.prepare(`
+        SELECT latest_candidates_json, latest_kubernetes_configs_json, status FROM monitor_hosts WHERE ssh_connection_id = ?
+      `).get(connection.id) as { latest_candidates_json?: string; latest_kubernetes_configs_json?: string; status?: string } | undefined;
       return {
-        canConfigure,
-        canOperate: connectionRows.some((row) => !Boolean(row.source_deleted)),
-        alertSettings: await monitorAlertSettingsForEnvironment(app, environmentId),
-        services: serviceRows.map((row) => ({
-          id: row.id,
-          environmentId: row.environment_id,
-          name: row.name,
-          description: row.description,
-          status: row.status,
-          scriptActions: scriptActionsByService.get(String(row.id)) ?? [],
-          deployments: deploymentsByService.get(String(row.id)) ?? [],
-          logIds: logIdsByService.get(String(row.id)) ?? [],
-          createdAt: row.created_at,
-          updatedAt: row.updated_at,
-        })),
-        logs: logRows.map((row) => ({
-          id: row.id,
-          name: row.name,
-          sshConnectionId: row.ssh_connection_id,
-          connectionName: row.connection_name,
-          filePaths: parseJson(row.file_paths_json, [row.file_path]),
-        })),
-        hosts: connectionRows.map((row) => {
-          const snapshot = parseHostSnapshot(row.latest_host_json);
-          const installManaged = Boolean(row.install_managed);
-          return {
-            sshConnectionId: row.id,
-            connectionName: row.name,
-            host: row.host,
-            port: Number(row.port),
-            username: row.username,
-            connectionAvailable: !Boolean(row.source_deleted),
-            monitorStatus: row.monitor_status ?? "unknown",
-            monitorOffline: Boolean(row.agent_id) && offlineAgentIds.has(String(row.agent_id)),
-            agentId: row.agent_id ?? "",
-            agentVersion: row.agent_version ?? "",
-            monitorUpdateAvailable: monitorUpdateAvailable(row.agent_version, snapshot, installManaged),
-            protocolVersion: Number(row.protocol_version ?? 0),
-            lastSequence: Number(row.last_sequence ?? 0),
-            snapshot,
-            candidates: parseJson(row.latest_candidates_json, []),
-            kubernetesConfigs: parseJson(row.latest_kubernetes_configs_json, []),
-            lastError: row.last_error ?? "",
-            lastCollectedAt: row.last_collected_at,
-            lastPulledAt: row.last_pulled_at,
-            installPath: row.install_path ?? "",
-            installArchitecture: row.install_architecture ?? "",
-            installManaged,
-            installedAt: row.installed_at,
-          };
-        }),
-        tlsEndpoints: tlsEndpoints.filter((endpoint) => !endpoint.sshConnectionId || visibleConnectionIds.has(endpoint.sshConnectionId)),
+        item: {
+          sshConnectionId: connection.id,
+          connectionName: connection.name,
+          monitorStatus: row?.status ?? "unknown",
+          candidates: parseJson(row?.latest_candidates_json, []),
+          kubernetesConfigs: parseJson(row?.latest_kubernetes_configs_json, []),
+        },
       };
     },
   );
+
+  app.get<{ Params: { id: string } }>("/api/v1/service-operations/:id", { preHandler: requireAdmin }, async (request, reply) => {
+    try {
+      return { item: await getServiceOperation(app, request, request.params.id) };
+    } catch (error) {
+      if (error instanceof ServiceOperationError) return reply.code(error.statusCode).send({ error: error.code, message: error.message });
+      throw error;
+    }
+  });
 
   app.post<{ Params: { environmentId: string } }>(
     "/api/v1/environments/:environmentId/tls-endpoints",
@@ -825,6 +771,26 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     return reply.code(201).send({ id });
   });
 
+  app.get<{ Params: { id: string } }>("/api/v1/service-script-actions/:id", { preHandler: requireAdmin }, async (request, reply) => {
+    if (!requireManager(request, reply)) return;
+    const existing = await scriptActionRow(app, request.params.id);
+    if (!existing || !await canAccessEnvironment(app.db, request.admin!, String(existing.environment_id))) {
+      return reply.code(404).send({ error: "SCRIPT_ACTION_NOT_FOUND", message: "功能按钮不存在" });
+    }
+    return {
+      item: {
+        id: existing.id,
+        serviceId: existing.service_id,
+        deploymentId: existing.deployment_id,
+        name: existing.name,
+        icon: existing.icon,
+        scriptBody: existing.script_body,
+        createdAt: existing.created_at,
+        updatedAt: existing.updated_at,
+      },
+    };
+  });
+
   app.put<{ Params: { id: string } }>("/api/v1/service-script-actions/:id", { preHandler: requireAdmin }, async (request, reply) => {
     if (!requireManager(request, reply)) return;
     const body = parseBody(serviceScriptActionSchema, request.body, reply);
@@ -877,6 +843,9 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
   });
 
   app.post<{ Params: { id: string } }>("/api/v1/service-script-actions/:id/execute", { preHandler: requireAdmin }, async (request, reply) => {
+    if (!requireManager(request, reply)) return;
+    const body = parseBody(scriptExecuteSchema, request.body ?? {}, reply);
+    if (!body) return;
     const action = await scriptActionRow(app, request.params.id);
     if (!action || !await canAccessEnvironment(app.db, request.admin!, String(action.environment_id))) {
       return reply.code(404).send({ error: "SCRIPT_ACTION_NOT_FOUND", message: "功能按钮不存在" });
@@ -884,97 +853,96 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     if (action.service_status !== "active") {
       return reply.code(409).send({ error: "SERVICE_DISABLED", message: "服务已停用，不能执行功能按钮" });
     }
+    const requestedIds = body.deploymentIds?.length ? body.deploymentIds : null;
     const targets = await app.db.prepare(`
       SELECT d.id, d.ssh_connection_id, d.ssh_connection_name, d.provider_type, d.external_id, d.display_name,
-        c.source_deleted,
+        d.latest_metrics_json, s.environment_id, c.source_deleted,
         CASE WHEN c.id IS NULL THEN 0 ELSE EXISTS(
           SELECT 1 FROM ssh_connection_environments ce
           WHERE ce.connection_id = c.id AND ce.environment_id = ?
         ) END AS connection_available
       FROM service_deployments d
+      JOIN services s ON s.id = d.service_id
       LEFT JOIN ssh_connections c ON c.id = d.ssh_connection_id
       WHERE d.service_id = ? AND (? IS NULL OR d.id = ?)
       ORDER BY d.created_at
     `).all(action.environment_id, action.service_id, action.deployment_id, action.deployment_id) as Array<Record<string, unknown>>;
-    if (!targets.length) {
+    const selected = requestedIds ? targets.filter((item) => requestedIds.includes(String(item.id))) : targets;
+    if (!selected.length) {
       return reply.code(409).send({ error: "SCRIPT_ACTION_NO_TARGETS", message: "当前功能按钮没有可执行的部署节点" });
     }
-    const results = await mapWithConcurrency(targets, 4, async (target) => {
-      const deploymentId = String(target.id);
-      const targetName = String(target.display_name || target.external_id || target.ssh_connection_name);
-      const connectionId = target.ssh_connection_id ? String(target.ssh_connection_id) : "";
-      const base = { deploymentId, targetName, connectionId, connectionName: String(target.ssh_connection_name ?? "") };
-      if (!connectionId || !Boolean(target.connection_available) || Boolean(target.source_deleted)) {
-        return { ...base, ok: false, exitCode: null, signal: null, durationMs: 0, stdout: "", stderr: "", truncated: false, message: "SSH 连接已删除或移出当前环境" };
+    try {
+      const started = await beginServiceOperation(app, request, {
+        environmentId: String(action.environment_id),
+        operationType: "script_action",
+        resourceId: request.params.id,
+        body: { actionId: request.params.id, deploymentIds: selected.map((item) => String(item.id)) },
+        resourceKeys: selected.map((item) => `deployment:${item.id}`),
+      });
+      if (started.created) {
+        void runServiceOperation(app, started.operation.id, async (onProgress) => {
+          let current = 0;
+          const results = await mapWithConcurrency(selected, SERVICE_OPERATION_CONCURRENCY, async (target) => {
+            const deploymentId = String(target.id);
+            const targetName = String(target.display_name || target.external_id || target.ssh_connection_name);
+            const connectionId = target.ssh_connection_id ? String(target.ssh_connection_id) : "";
+            const base = { deploymentId, targetName, connectionId, connectionName: String(target.ssh_connection_name ?? ""), errorCode: "" };
+            let result;
+            if (!connectionId || !Boolean(target.connection_available) || Boolean(target.source_deleted)) {
+              result = { ...base, ok: false, exitCode: null, durationMs: 0, truncated: false, message: "SSH 连接已删除或移出当前环境", errorCode: "SSH_CONNECTION_UNAVAILABLE" };
+            } else if (!await canAccessConnection(app.db, request.admin!, "ssh", connectionId)) {
+              result = { ...base, ok: false, exitCode: null, durationMs: 0, truncated: false, message: "当前账号无权访问该 SSH 连接", errorCode: "SSH_CONNECTION_NOT_FOUND" };
+            } else {
+              const began = Date.now();
+              try {
+                const output = await executeSshScript(app, connectionId, String(action.script_body), { timeoutMs: SERVICE_OPERATION_COMMAND_TIMEOUT_MS, maxBytes: 64 * 1024 });
+                const ok = output.exitCode === 0;
+                result = {
+                  ...base,
+                  ok,
+                  exitCode: output.exitCode,
+                  durationMs: output.durationMs,
+                  stdout: output.stdout.slice(0, SERVICE_OPERATION_OUTPUT_LIMIT),
+                  stderr: output.stderr.slice(0, SERVICE_OPERATION_OUTPUT_LIMIT),
+                  truncated: output.truncated || output.stdout.length > SERVICE_OPERATION_OUTPUT_LIMIT,
+                  message: ok ? "" : (output.stderr.trim() || output.stdout.trim() || "脚本执行失败").slice(0, 500),
+                  errorCode: ok ? "" : "SCRIPT_ACTION_FAILED",
+                };
+              } catch (error) {
+                result = {
+                  ...base,
+                  ok: false,
+                  exitCode: null,
+                  durationMs: Date.now() - began,
+                  truncated: false,
+                  message: error instanceof Error ? error.message.slice(0, 500) : "SSH 脚本执行失败",
+                  errorCode: "SCRIPT_ACTION_FAILED",
+                };
+              }
+            }
+            current += 1;
+            await onProgress(current, selected.length);
+            return result;
+          });
+          const failed = results.filter((item) => !item.ok).length;
+          await writeAudit(app.db, {
+            action: failed ? "service_script_action.execution_failed" : "service_script_action.executed",
+            resourceType: "service_script_action",
+            resourceId: request.params.id,
+            summary: `执行服务功能按钮 ${String(action.name)}`,
+            details: { serviceId: action.service_id, targetCount: results.length, succeeded: results.length - failed, failed },
+            request,
+          });
+          return results;
+        });
       }
-      if (!await canAccessConnection(app.db, request.admin!, "ssh", connectionId)) {
-        return { ...base, ok: false, exitCode: null, signal: null, durationMs: 0, stdout: "", stderr: "", truncated: false, message: "当前账号无权访问该 SSH 连接" };
+      return reply.code(202).send({ item: started.operation });
+    } catch (error) {
+      if (error instanceof ServiceOperationError) {
+        return reply.code(error.statusCode).send({ error: error.code, message: error.message, details: error.operationId ? { operationId: error.operationId } : undefined });
       }
-      const connection = await connectionBelongsToEnvironment(app, connectionId, String(action.environment_id));
-      if (!connection) {
-        return { ...base, ok: false, exitCode: null, signal: null, durationMs: 0, stdout: "", stderr: "", truncated: false, message: "SSH 连接不可用" };
-      }
-      const started = Date.now();
-      try {
-        const result = await executeSshScript(app, connectionId, String(action.script_body), { timeoutMs: 120_000, maxBytes: 128 * 1024 });
-        const ok = result.exitCode === 0;
-        return {
-          ...base,
-          ok,
-          exitCode: result.exitCode,
-          signal: result.signal,
-          durationMs: result.durationMs,
-          stdout: result.stdout.slice(0, 32 * 1024),
-          stderr: result.stderr.slice(0, 32 * 1024),
-          truncated: result.truncated || result.stdout.length > 32 * 1024 || result.stderr.length > 32 * 1024,
-          message: ok ? "" : (result.stderr.trim() || result.stdout.trim() || "脚本执行失败").slice(0, 1000),
-        };
-      } catch (error) {
-        return {
-          ...base,
-          ok: false,
-          exitCode: null,
-          signal: null,
-          durationMs: Date.now() - started,
-          stdout: "",
-          stderr: "",
-          truncated: false,
-          message: error instanceof Error ? error.message.slice(0, 1000) : "SSH 脚本执行失败",
-        };
-      }
-    });
-    const succeeded = results.filter((item) => item.ok).length;
-    const failed = results.length - succeeded;
-    await writeAudit(app.db, {
-      action: failed ? "service_script_action.execution_failed" : "service_script_action.executed",
-      resourceType: "service_script_action",
-      resourceId: request.params.id,
-      summary: `执行服务功能按钮 ${String(action.name)}`,
-      details: {
-        serviceId: action.service_id,
-        deploymentId: action.deployment_id,
-        targetCount: results.length,
-        succeeded,
-        failed,
-        results: results.map((item) => ({
-          deploymentId: item.deploymentId,
-          connectionId: item.connectionId,
-          ok: item.ok,
-          exitCode: item.exitCode,
-          durationMs: item.durationMs,
-          truncated: item.truncated,
-          message: item.ok ? "" : item.exitCode == null ? item.message : "脚本以非零状态退出",
-        })),
-      },
-      request,
-    });
-    return {
-      ok: failed === 0,
-      action: { id: action.id, name: action.name, icon: action.icon, deploymentId: action.deployment_id },
-      succeeded,
-      failed,
-      results,
-    };
+      throw error;
+    }
   });
 
   app.put<{ Params: { id: string } }>("/api/v1/services/:id/logs", { preHandler: requireAdmin }, async (request, reply) => {
@@ -1053,6 +1021,7 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     "/api/v1/environments/:environmentId/monitor-hosts/:connectionId/install-tasks",
     { preHandler: requireAdmin },
     async (request, reply) => {
+      if (!requireManager(request, reply)) return;
       const body = parseBody(monitorInstallSchema, request.body ?? {}, reply);
       if (!body) return;
       if (!await canAccessEnvironment(app.db, request.admin!, request.params.environmentId)) return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
@@ -1100,6 +1069,7 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     "/api/v1/environments/:environmentId/monitor-hosts/:connectionId/refresh",
     { preHandler: requireAdmin },
     async (request, reply) => {
+      if (!requireManager(request, reply)) return;
       if (!await canAccessEnvironment(app.db, request.admin!, request.params.environmentId)) return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
       const connection = await connectionBelongsToEnvironment(app, request.params.connectionId, request.params.environmentId);
       if (!connection || !await canAccessConnection(app.db, request.admin!, "ssh", connection.id)) return reply.code(404).send({ error: "SSH_CONNECTION_NOT_FOUND", message: "SSH 连接不存在" });
@@ -1119,6 +1089,7 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     "/api/v1/environments/:environmentId/monitor-hosts/:connectionId/kubernetes-contexts",
     { preHandler: requireAdmin },
     async (request, reply) => {
+      if (!requireManager(request, reply)) return;
       const body = parseBody(kubernetesSelectionSchema, request.body, reply);
       if (!body) return;
       if (!await canAccessEnvironment(app.db, request.admin!, request.params.environmentId)) return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
@@ -1166,6 +1137,7 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     "/api/v1/environments/:environmentId/monitor-hosts/:connectionId/clear",
     { preHandler: requireAdmin },
     async (request, reply) => {
+      if (!requireManager(request, reply)) return;
       if (!await canAccessEnvironment(app.db, request.admin!, request.params.environmentId)) return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
       const connection = await connectionBelongsToEnvironment(app, request.params.connectionId, request.params.environmentId);
       if (!connection || !await canAccessConnection(app.db, request.admin!, "ssh", connection.id)) return reply.code(404).send({ error: "SSH_CONNECTION_NOT_FOUND", message: "SSH 连接不存在" });
@@ -1217,7 +1189,71 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     },
   );
 
+  app.post("/api/v1/service-deployments/actions", { preHandler: requireAdmin }, async (request, reply) => {
+    if (!requireManager(request, reply)) return;
+    const body = parseBody(batchMaintenanceActionSchema, request.body, reply);
+    if (!body) return;
+    const deployments: Record<string, unknown>[] = [];
+    for (const id of body.deploymentIds) {
+      const deployment = await deploymentRow(app, id);
+      if (!deployment || !await canAccessEnvironment(app.db, request.admin!, String(deployment.environment_id))) {
+        return reply.code(404).send({ error: "DEPLOYMENT_NOT_FOUND", message: "部署节点不存在" });
+      }
+      if (deployment.service_status !== "active") return reply.code(409).send({ error: "SERVICE_DISABLED", message: "服务已停用，不能执行维护动作" });
+      deployments.push(deployment);
+    }
+    if (new Set(deployments.map((item) => String(item.environment_id))).size !== 1) {
+      return reply.code(400).send({ error: "INVALID_OPERATION_TARGETS", message: "批量操作必须属于同一环境" });
+    }
+    try {
+      const started = await beginServiceOperation(app, request, {
+        environmentId: String(deployments[0]!.environment_id),
+        operationType: "deployment_batch_action",
+        resourceId: String(deployments[0]!.service_id ?? deployments[0]!.id),
+        body,
+        resourceKeys: deployments.map((item) => `deployment:${item.id}`),
+      });
+      if (started.created) {
+        await writeAudit(app.db, {
+          action: "service_deployment.batch_action_started",
+          resourceType: "service_deployment",
+          resourceId: started.operation.id,
+          summary: `开始批量 ${body.action} ${deployments.length} 个节点`,
+          details: { action: body.action, targetCount: deployments.length },
+          request,
+        });
+        void runServiceOperation(app, started.operation.id, async (onProgress) => {
+          let current = 0;
+          const results = await mapWithConcurrency(deployments, SERVICE_OPERATION_CONCURRENCY, async (deployment) => {
+            const result = await executeDeploymentAction(app, request, deployment, body.action);
+            current += 1;
+            await onProgress(current, deployments.length);
+            return result;
+          });
+          try {
+            await writeAudit(app.db, {
+              action: "service_deployment.batch_action_completed",
+              resourceType: "service_deployment",
+              resourceId: started.operation.id,
+              summary: `批量 ${body.action} ${deployments.length} 个节点`,
+              details: { action: body.action, targetCount: deployments.length, succeeded: results.filter((item) => item.ok).length },
+              request,
+            });
+          } catch { /* keep target results even if audit fails */ }
+          return results;
+        });
+      }
+      return reply.code(202).send({ item: started.operation });
+    } catch (error) {
+      if (error instanceof ServiceOperationError) {
+        return reply.code(error.statusCode).send({ error: error.code, message: error.message, details: error.operationId ? { operationId: error.operationId } : undefined });
+      }
+      throw error;
+    }
+  });
+
   app.post<{ Params: { id: string } }>("/api/v1/service-deployments/:id/actions", { preHandler: requireAdmin }, async (request, reply) => {
+    if (!requireManager(request, reply)) return;
     const body = parseBody(maintenanceActionSchema, request.body, reply);
     if (!body) return;
     const deployment = await deploymentRow(app, request.params.id);
@@ -1230,30 +1266,48 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     if (!await connectionBelongsToEnvironment(app, String(deployment.ssh_connection_id), String(deployment.environment_id))) {
       return reply.code(409).send({ error: "SSH_CONNECTION_UNAVAILABLE", message: "SSH 连接已删除或移出当前环境，请先修复部署节点" });
     }
-    const command = maintenanceCommand(String(deployment.provider_type), String(deployment.external_id), body.action);
-    if (!command) return reply.code(400).send({ error: "UNSUPPORTED_MAINTENANCE_ACTION", message: "普通进程和 Kubernetes 工作负载当前不提供标准启停接口" });
-    const started = Date.now();
-    let result;
+    const command = maintenanceCommand(String(deployment.provider_type), String(deployment.external_id), body.action, parseMetrics(deployment.latest_metrics_json));
+    if (!command) return reply.code(400).send({ error: "UNSUPPORTED_MAINTENANCE_ACTION", message: capabilityDisabledReason(String(deployment.provider_type), body.action) });
     try {
-      result = await executeSshCommand(app, String(deployment.ssh_connection_id), command, { timeoutMs: 120_000, maxBytes: 512 * 1024 });
+      const started = await beginServiceOperation(app, request, {
+        environmentId: String(deployment.environment_id),
+        operationType: "deployment_action",
+        resourceId: request.params.id,
+        body: { action: body.action, deploymentId: request.params.id },
+        resourceKeys: [`deployment:${request.params.id}`],
+      });
+      if (started.created) {
+        await writeAudit(app.db, {
+          action: "service_deployment.action_started",
+          resourceType: "service_deployment",
+          resourceId: request.params.id,
+          summary: `开始 ${body.action} ${String(deployment.service_name)}`,
+          details: { action: body.action },
+          request,
+        });
+        void runServiceOperation(app, started.operation.id, async (onProgress) => {
+          await onProgress(0, 1);
+          const result = await executeDeploymentAction(app, request, deployment, body.action);
+          await onProgress(1, 1);
+          try {
+            await writeAudit(app.db, {
+              action: result.ok ? "service_deployment.action_completed" : "service_deployment.action_failed",
+              resourceType: "service_deployment",
+              resourceId: request.params.id,
+              summary: `${body.action} ${String(deployment.service_name)}${result.ok ? "" : " 失败"}`,
+              details: { action: body.action, durationMs: result.durationMs, message: result.message },
+              request,
+            });
+          } catch { /* keep target result even if audit fails */ }
+          return [result];
+        });
+      }
+      return reply.code(202).send({ item: started.operation });
     } catch (error) {
-      const message = error instanceof Error ? error.message.slice(0, 1000) : "SSH 连接失败";
-      await writeAudit(app.db, { action: "service_deployment.action_failed", resourceType: "service_deployment", resourceId: request.params.id, summary: `${body.action} ${String(deployment.service_name)} 失败`, details: { action: body.action, durationMs: Date.now() - started, message }, request });
-      return reply.code(502).send({ error: "MAINTENANCE_ACTION_FAILED", message });
+      if (error instanceof ServiceOperationError) {
+        return reply.code(error.statusCode).send({ error: error.code, message: error.message, details: error.operationId ? { operationId: error.operationId } : undefined });
+      }
+      throw error;
     }
-    if (result.exitCode !== 0) {
-      const message = (result.stderr.trim() || result.stdout.trim() || "远程维护命令执行失败").slice(0, 1000);
-      await writeAudit(app.db, { action: "service_deployment.action_failed", resourceType: "service_deployment", resourceId: request.params.id, summary: `${body.action} ${String(deployment.service_name)} 失败`, details: { action: body.action, exitCode: result.exitCode, durationMs: result.durationMs, message }, request });
-      return reply.code(502).send({ error: "MAINTENANCE_ACTION_FAILED", message });
-    }
-    let monitorWarning = "";
-    try {
-      const monitorResult = await syncMonitorHost(app, String(deployment.ssh_connection_id), true);
-      monitorWarning = monitorResult.error;
-    } catch (error) {
-      monitorWarning = error instanceof Error ? error.message : "状态刷新失败";
-    }
-    await writeAudit(app.db, { action: "service_deployment.action_completed", resourceType: "service_deployment", resourceId: request.params.id, summary: `${body.action} ${String(deployment.service_name)}`, details: { action: body.action, durationMs: Date.now() - started, monitorWarning }, request });
-    return { ok: true, durationMs: Date.now() - started, stdout: result.stdout.slice(0, 20_000), monitorWarning };
   });
 }

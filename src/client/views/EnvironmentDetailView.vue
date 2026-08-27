@@ -238,7 +238,7 @@ function prefetchTabData(tab: EnvironmentPreloadTab): Promise<unknown>[] {
   ];
   if (tab === "redis") return [prefetchApi(`/api/v1/connections?assignment=all&type=redis&environmentId=${encodeURIComponent(environmentId)}`)];
   if (tab === "knowledge") return [prefetchApi(`/api/v1/environments/${environmentId}/knowledge`)];
-  return [prefetchApi(`/api/v1/environments/${environmentId}/maintenance`)];
+  return [prefetchApi(`/api/v1/environments/${environmentId}/service-deployments`)];
 }
 
 async function preloadTab(tab: EnvironmentPreloadTab): Promise<void> {

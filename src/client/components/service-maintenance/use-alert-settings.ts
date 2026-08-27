@@ -8,10 +8,7 @@ import { candidateKey, providerLabel, type CandidateStatus, type MonitorCandidat
 import { normalizeMaintenanceScriptActions } from "../../service-maintenance-payload";
 import { reorderIds, sameOrder } from "../../../shared/tab-order";
 import { defaultMonitorAlertSettings, monitorDiskKey, type MonitorAlertSettings, } from "../../../shared/monitor-alerts";
-import AnimatedCounter from "../AnimatedCounter.vue";
-import DeploymentMonitorDashboard from "../DeploymentMonitorDashboard.vue";
-import HostMonitorDashboard, { type HostFocusMetric } from "../HostMonitorDashboard.vue";
-import ServiceDiscoveryPanel from "../ServiceDiscoveryPanel.vue";
+
 import type { MaintenanceWorkspace, HostWorkspaceTab, MaintenanceDirectory, DirectoryMoveDirection, ScriptActionIcon, DirectoryDropTarget, ScriptAction, ScriptActionExecutionResult, ScriptActionExecution, HostSnapshot, KubernetesConfigDiscovery, MonitorHost, MonitorInstallPreflight, MonitorInstallTaskStatus, MonitorInstallTaskPhase, MonitorInstallTask, Deployment, ServiceItem, EnvironmentLog, MaintenancePayload, MaintenanceDeploymentResponse, MaintenanceServiceResponse, MaintenancePayloadResponse, MaintenanceCounts, MaintenancePanelProps, MaintenancePanelEmit } from "./types";
 import { deferMaintenancePart, type MaintenanceContext } from "./context";
 
@@ -52,7 +49,13 @@ export function useAlertSettings(ctx: MaintenanceContext, props: Readonly<Mainte
       Object.assign(alertSettingsForm, $payload.payload.value.alertSettings, { excludedDisks: [...$payload.payload.value.alertSettings.excludedDisks] });
   }
 
-  function openAlertSettings() {
+  async function openAlertSettings() {
+      try {
+          const response = await api<{ item: MonitorAlertSettings }>(`/api/v1/environments/${props.environmentId}/monitor-alert-settings`);
+          $payload.payload.value = { ...$payload.payload.value, alertSettings: { ...response.item, excludedDisks: [...(response.item.excludedDisks ?? [])] } };
+      } catch {
+          /* keep last known settings */
+      }
       copyAlertSettingsForm();
       alertSettingsDialog.value = true;
   }

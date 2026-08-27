@@ -7,6 +7,7 @@ describe("service maintenance payload compatibility", () => {
       services: [{ id: "service-1", deployments: [{ id: "deployment-1" }] }],
       logs: [],
       hosts: [],
+      tlsEndpoints: [],
     });
 
     expect(payload.scriptActionsSupported).toBe(false);

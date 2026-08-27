@@ -1219,4 +1219,38 @@ CREATE TABLE IF NOT EXISTS ssl_endpoint_web_entries (
 
 CREATE UNIQUE INDEX IF NOT EXISTS ssl_endpoint_web_entries_entry_uidx
   ON ssl_endpoint_web_entries(web_entry_id);
-`;
+
+CREATE TABLE IF NOT EXISTS service_operation_runs (
+  id TEXT PRIMARY KEY,
+  workspace_type TEXT NOT NULL CHECK(workspace_type IN ('personal','organization')),
+  workspace_id TEXT NOT NULL,
+  environment_id TEXT NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
+  idempotency_key TEXT NOT NULL,
+  request_hash TEXT NOT NULL,
+  operation_type TEXT NOT NULL,
+  resource_id TEXT NOT NULL,
+  requested_by_user_id TEXT NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+  status TEXT NOT NULL CHECK(status IN ('queued','running','succeeded','partial','failed','timed_out','interrupted')),
+  progress_json TEXT NOT NULL DEFAULT '{}',
+  result_json TEXT NOT NULL DEFAULT '{}',
+  error_code TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  started_at TEXT,
+  completed_at TEXT,
+  updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS service_operation_runs_idempotency_idx
+  ON service_operation_runs(workspace_type, workspace_id, idempotency_key);
+CREATE INDEX IF NOT EXISTS service_operation_runs_environment_idx
+  ON service_operation_runs(environment_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS service_operation_locks (
+  workspace_type TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  resource_key TEXT NOT NULL,
+  operation_id TEXT NOT NULL REFERENCES service_operation_runs(id) ON DELETE CASCADE,
+  expires_at TEXT NOT NULL,
+  PRIMARY KEY(workspace_type, workspace_id, resource_key)
+);
+`

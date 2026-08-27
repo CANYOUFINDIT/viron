@@ -48,33 +48,18 @@ describe("service discovery layout", () => {
     expect(discoveryPanel).toContain(".discovery-provider-tabs button { min-height: 2.75rem; }");
   });
 
-  it("keeps certificates out of the service/host tab group and places the toolbar below the switcher", () => {
-    const chrome = maintenancePanel.indexOf("class=\"maintenance-chrome\"");
-    const switcher = maintenancePanel.indexOf("class=\"maintenance-switcher\"");
-    const primary = maintenancePanel.indexOf("maintenance-switcher__primary");
-    const certificate = maintenancePanel.indexOf("maintenance-switcher__certificate");
-    const toolbar = maintenancePanel.indexOf("class=\"maintenance-toolbar\"");
-    const layout = maintenancePanel.indexOf("class=\"maintenance-layout\"");
-    expect(chrome).toBeGreaterThan(-1);
-    expect(switcher).toBeGreaterThan(chrome);
-    expect(primary).toBeGreaterThan(switcher);
-    expect(certificate).toBeGreaterThan(primary);
-    expect(toolbar).toBeGreaterThan(certificate);
-    expect(layout).toBeGreaterThan(toolbar);
-    const primaryBlock = maintenancePanel.slice(primary, certificate);
-    expect(primaryBlock).toContain("$t('服务')");
-    expect(primaryBlock).toContain("$t('主机')");
-    expect(primaryBlock).not.toContain("$t('证书')");
-    expect(maintenancePanel).toContain("$t('证书告警')");
-    expect(maintenancePanel).not.toContain("$t('TLS 证书到期')");
-  });
-
-  it("keeps host monitoring as an instrument strip with all actions still reachable", () => {
-    expect(maintenancePanel).toContain("host-metric-grid");
-    expect(maintenancePanel).toContain("v-model:focus-metric");
+  it("removes certificates and host history from the service maintenance page", () => {
+    expect(maintenancePanel).toContain("maintenance-switcher__primary");
+    expect(maintenancePanel).toContain("$t('服务')");
+    expect(maintenancePanel).not.toContain("maintenance-switcher__certificate");
+    expect(maintenancePanel).not.toContain("$t('证书告警')");
+    expect(maintenancePanel).not.toContain("$t('登记证书')");
+    expect(maintenancePanel).not.toContain("HostMonitorDashboard");
+    expect(maintenancePanel).not.toContain("DeploymentMonitorDashboard");
+    expect(maintenancePanel).not.toContain("host-metric-grid");
+    expect(maintenancePanel).not.toContain("v-model:focus-metric");
     expect(maintenancePanel).toContain("$t('清理监控数据')");
     expect(maintenancePanel).toContain("$t('扫描并拉取')");
     expect(maintenancePanel).toContain("$t('刷新')");
-    expect(maintenancePanel).not.toContain("$t('按采集时间回看宿主机资源变化')");
   });
 });

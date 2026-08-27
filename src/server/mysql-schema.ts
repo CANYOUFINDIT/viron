@@ -1268,4 +1268,38 @@ CREATE TABLE IF NOT EXISTS ssl_endpoint_web_entries (
   CONSTRAINT ssl_endpoint_web_entries_endpoint_fk FOREIGN KEY (endpoint_id) REFERENCES ssl_endpoints(id) ON DELETE CASCADE,
   CONSTRAINT ssl_endpoint_web_entries_entry_fk FOREIGN KEY (web_entry_id) REFERENCES web_entries(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-`;
+
+CREATE TABLE IF NOT EXISTS service_operation_runs (
+  id VARCHAR(64) PRIMARY KEY,
+  workspace_type VARCHAR(20) NOT NULL,
+  workspace_id VARCHAR(64) NOT NULL,
+  environment_id VARCHAR(64) NOT NULL,
+  idempotency_key VARCHAR(128) NOT NULL,
+  request_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  operation_type VARCHAR(64) NOT NULL,
+  resource_id VARCHAR(64) NOT NULL,
+  requested_by_user_id VARCHAR(64) NOT NULL,
+  status VARCHAR(32) NOT NULL,
+  progress_json LONGTEXT NOT NULL,
+  result_json LONGTEXT NOT NULL,
+  error_code VARCHAR(64) NOT NULL DEFAULT '',
+  created_at VARCHAR(32) NOT NULL,
+  started_at VARCHAR(32) NULL,
+  completed_at VARCHAR(32) NULL,
+  updated_at VARCHAR(32) NOT NULL,
+  UNIQUE KEY service_operation_runs_idempotency_idx (workspace_type, workspace_id, idempotency_key),
+  KEY service_operation_runs_environment_idx (environment_id, created_at),
+  CONSTRAINT service_operation_runs_environment_fk FOREIGN KEY (environment_id) REFERENCES environments(id) ON DELETE CASCADE,
+  CONSTRAINT service_operation_runs_user_fk FOREIGN KEY (requested_by_user_id) REFERENCES admin_users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS service_operation_locks (
+  workspace_type VARCHAR(20) NOT NULL,
+  workspace_id VARCHAR(64) NOT NULL,
+  resource_key VARCHAR(160) NOT NULL,
+  operation_id VARCHAR(64) NOT NULL,
+  expires_at VARCHAR(32) NOT NULL,
+  PRIMARY KEY (workspace_type, workspace_id, resource_key),
+  CONSTRAINT service_operation_locks_operation_fk FOREIGN KEY (operation_id) REFERENCES service_operation_runs(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+`
