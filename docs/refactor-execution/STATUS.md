@@ -44,7 +44,7 @@
 | Gate 3+4 独立复核 | Codex | `CHANGES_REQUIRED` | `9e36db0` | `f266158` | 推翻代行 `PASSED`；3 个 P1、8 个 P2 交回 Grok |
 | Gate 3+4 G34R 修正 | Grok | `REVIEW_REQUIRED` | `2c0b15d` | `04ad5aa` | 声称关闭全部 `G34R-*`；Codex 独立重审确认仍有边界问题 |
 | Gate 3+4 G34R 独立重审 | Codex | `CHANGES_REQUIRED` | `04ad5aa` | `abbeba1` | 1 个 P1、5 个 P2 交回 Grok；Gate 3+4 不得发布或合并 main |
-| Gate 3+4 G34RR 一次性修正与收尾 | Codex | `PASSED` | `26c1a01` | 待回填 | 六项 `G34RR-*` 全部关闭；全量回归、真实 MariaDB 对账、用户流及当前系统打包通过 |
+| Gate 3+4 G34RR 一次性修正与收尾 | Codex | `PASSED` | `26c1a01` | `73b24f5` | 六项 `G34RR-*` 全部关闭；全量回归、真实 MariaDB 对账、用户流及当前系统打包通过 |
 
 状态只能使用：`NOT_STARTED`、`IN_PROGRESS`、`BLOCKED`、`REVIEW_REQUIRED`、`CHANGES_REQUIRED`、`PASSED`。
 
@@ -634,9 +634,9 @@ Gate 2 与合并 Gate 3+4 最终结论均为 `PASSED`。当前剩余风险：
 ### 2026-08-28 19:13 — Codex / Gate 3+4 G34RR 一次性修正与最终收尾
 
 - 输入 commit：`26c1a01e9dd2e6d66ccf8f250bb14ace499f78ff`（开始时与 `origin/dev` 一致）
-- 输出 commit：待当前实现提交后回填
+- 输出 commit：`73b24f55d590db5b1f551101b02db348f0d19f5f`
 - 结论：`PASSED`
-- 分区审查：Phase 2 继续按 `63628c9..75daf80` 独立标准复核；Phase 3 按 `75daf80..f68e0a9` 复核；同时核对 `c26b6c2..8cec107`、`2e787d4..ad983f1`、`2c0b15d..04ad5aa` 及本次 `26c1a01..输出 commit`，没有因后续阶段完成而降低 Phase 2 标准。
+- 分区审查：Phase 2 继续按 `63628c9..75daf80` 独立标准复核；Phase 3 按 `75daf80..f68e0a9` 复核；同时核对 `c26b6c2..8cec107`、`2e787d4..ad983f1`、`2c0b15d..04ad5aa` 及本次 `26c1a01..73b24f5`，没有因后续阶段完成而降低 Phase 2 标准。
 - 关闭结果：
   1. **`G34RR-P1-001` FIXED**：并发 mapper 异常会停止新调度、等待所有在途 worker 完成，并把单目标异常映射为结果；operation 只在 workers settle 后写终态并释放锁。
   2. **`G34RR-P2-002` FIXED**：service-only cursor 不再返回不可续读截断；单服务超过 500 deployments 或单个可分页单元仍超过 1 MiB 时明确返回合同允许的 `413 PAYLOAD_TOO_LARGE`，按 service 分页时只裁完整尾部 service。
