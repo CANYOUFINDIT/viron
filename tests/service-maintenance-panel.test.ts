@@ -44,10 +44,12 @@ describe("service maintenance panel split", () => {
       "service-maintenance/types.ts",
       "service-maintenance/api-contract.ts",
       "service-maintenance/use-maintenance-payload.ts",
+      "service-maintenance/use-maintenance-actions.ts",
       "service-maintenance/use-alert-settings.ts",
       "service-maintenance/MaintenanceServiceSelector.vue",
       "service-maintenance/MaintenanceOperationsRibbon.vue",
       "service-maintenance/MaintenanceDeploymentGrid.vue",
+      "service-maintenance/MaintenanceDeploymentCard.vue",
       "service-maintenance/MaintenanceDiscoveryDrawer.vue",
       "service-maintenance/MaintenanceBatchProgress.vue",
     ];
@@ -56,6 +58,11 @@ describe("service maintenance panel split", () => {
       expect(source).not.toContain("use-tls-certificates");
       expect(source).not.toContain("shared/tls-certificates");
     }
+    const alertSettings = readFileSync(join(process.cwd(), "src/client/components/service-maintenance/use-alert-settings.ts"), "utf8");
+    expect(alertSettings).not.toContain('"tls"');
+    expect(alertSettings).not.toContain("tlsEnabled");
+    const grid = readFileSync(join(process.cwd(), "src/client/components/service-maintenance/MaintenanceDeploymentGrid.vue"), "utf8");
+    expect(grid).toContain("MaintenanceDeploymentCard");
     const panel = readFileSync(join(process.cwd(), "src/client/components/ServiceMaintenancePanel.vue"), "utf8");
     expect(panel).toContain("MaintenanceServiceSelector");
     expect(panel).toContain("MaintenanceOperationsRibbon");

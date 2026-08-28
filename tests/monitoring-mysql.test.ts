@@ -77,7 +77,9 @@ describe("monitoring MariaDB equivalence", () => {
   mysqlIt("matches SQLite contract for overview, buckets, first/last/gap, and truncated", async () => {
     expect(db).toBeDefined();
     const config = monitoringTestConfig(directory, { host: externalHost || "127.0.0.1", port, database: "viron_monitor" });
-    const result = await runMonitoringContractSuite(config, db!);
+    const ownedDb = db!;
+    db = undefined;
+    const result = await runMonitoringContractSuite(config, ownedDb);
     expect(result.dialect).toBe("mysql");
     expect(result.summary.hostTotal).toBeGreaterThanOrEqual(200);
     expect(result.summary.hostStale).toBeGreaterThanOrEqual(1);

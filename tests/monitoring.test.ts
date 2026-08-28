@@ -34,6 +34,14 @@ describe("monitoring downsample helpers", () => {
     expect(values.has(499) && values.has(500)).toBe(true);
     expect(capped.some((point) => point.breakBefore)).toBe(true);
   });
+
+  it("never exceeds the hard cap when required gap boundaries fill the budget", () => {
+    const points = Array.from({ length: 1200 }, (_, index) => ({ at: index, breakBefore: index > 0 && index % 2 === 0 }));
+    const capped = capSeriesPoints(points, 480, (point) => point.breakBefore);
+    expect(capped).toHaveLength(480);
+    expect(capped[0]?.at).toBe(0);
+    expect(capped.at(-1)?.at).toBe(1199);
+  });
 });
 
 describe("monitoring overview and service timeseries", () => {
@@ -42,15 +50,11 @@ describe("monitoring overview and service timeseries", () => {
     directories.push(directory);
     const config = monitoringTestConfig(directory);
     const db = await openDatabase(config);
-    try {
-      const result = await runMonitoringContractSuite(config, db);
-      expect(result.summary.hostTotal).toBeGreaterThanOrEqual(200);
-      expect(result.summary.hostStale).toBeGreaterThanOrEqual(1);
-      expect(result.firstPoint).toBeTruthy();
-      expect(result.lastPoint).toBeTruthy();
-    } finally {
-      await db.close();
-    }
+    const result = await runMonitoringContractSuite(config, db);
+    expect(result.summary.hostTotal).toBeGreaterThanOrEqual(200);
+    expect(result.summary.hostStale).toBeGreaterThanOrEqual(1);
+    expect(result.firstPoint).toBeTruthy();
+    expect(result.lastPoint).toBeTruthy();
   });
 
   it("returns 404 for an environment outside the current workspace", async () => {

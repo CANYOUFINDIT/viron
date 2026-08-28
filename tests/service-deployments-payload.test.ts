@@ -108,26 +108,28 @@ describe("service deployments payload pagination", () => {
       const adminId = (await db.prepare("SELECT id FROM admin_users WHERE username = 'admin'").get() as { id: string }).id;
       const now = new Date().toISOString();
       const fatName = "主机名称".repeat(2000);
-      for (let index = 0; index < 200; index += 1) {
-        const connectionId = randomUUID();
-        await db.prepare(`
-          INSERT INTO ssh_connections (
-            id, workspace_type, workspace_id, name, host, port, username, auth_type, credential_ciphertext, options_json, tags_json, source_deleted, created_at, updated_at
-          ) VALUES (?, 'personal', ?, ?, '127.0.0.1', 22, 'operator', 'password', 'x', '{}', '[]', 0, ?, ?)
-        `).run(connectionId, adminId, `${fatName}-${index}`, now, now);
-        await db.prepare("INSERT INTO ssh_connection_environments (connection_id, environment_id) VALUES (?, ?)").run(connectionId, environmentId);
-        await db.prepare(`
-          INSERT INTO monitor_hosts (
-            ssh_connection_id, agent_id, agent_version, protocol_version, status, last_sequence,
-            latest_host_json, latest_candidates_json, latest_kubernetes_configs_json, last_error,
-            last_collected_at, last_pulled_at, install_path, install_architecture, install_managed, installed_at, updated_at
-          ) VALUES (?, ?, '0.1.4', 1, 'ready', 1, '{}', ?, '[]', '', ?, ?, '', '', 1, ?, ?)
-        `).run(connectionId, randomUUID(), JSON.stringify(Array.from({ length: 40 }, (_, candidate) => ({
-          provider: "docker",
-          externalId: `${fatName}-c${candidate}`,
-          name: fatName,
-        }))), now, now, now, now);
-      }
+      await db.transaction(async () => {
+        for (let index = 0; index < 50; index += 1) {
+          const connectionId = randomUUID();
+          await db.prepare(`
+            INSERT INTO ssh_connections (
+              id, workspace_type, workspace_id, name, host, port, username, auth_type, credential_ciphertext, options_json, tags_json, source_deleted, created_at, updated_at
+            ) VALUES (?, 'personal', ?, ?, '127.0.0.1', 22, 'operator', 'password', 'x', '{}', '[]', 0, ?, ?)
+          `).run(connectionId, adminId, `${fatName}-${index}`, now, now);
+          await db.prepare("INSERT INTO ssh_connection_environments (connection_id, environment_id) VALUES (?, ?)").run(connectionId, environmentId);
+          await db.prepare(`
+            INSERT INTO monitor_hosts (
+              ssh_connection_id, agent_id, agent_version, protocol_version, status, last_sequence,
+              latest_host_json, latest_candidates_json, latest_kubernetes_configs_json, last_error,
+              last_collected_at, last_pulled_at, install_path, install_architecture, install_managed, installed_at, updated_at
+            ) VALUES (?, ?, '0.1.4', 1, 'ready', 1, '{}', ?, '[]', '', ?, ?, '', '', 1, ?, ?)
+          `).run(connectionId, randomUUID(), JSON.stringify(Array.from({ length: 1 }, (_, candidate) => ({
+            provider: "docker",
+            externalId: `${fatName}-c${candidate}`,
+            name: fatName,
+          }))), now, now, now, now);
+        }
+      })();
       const response = await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/service-deployments`, cookies });
       expect([200, 413]).toContain(response.statusCode);
       if (response.statusCode === 200) {
@@ -136,6 +138,53 @@ describe("service deployments payload pagination", () => {
       } else {
         expect(response.json().error).toBe("PAYLOAD_TOO_LARGE");
       }
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("returns 413 instead of an unrecoverable cursor when one service exceeds 500 deployments", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "viron-payload-single-service-"));
+    directories.push(directory);
+    const config = testConfig(directory);
+    const db = await openDatabase(config);
+    await ensureAdmin(db, config);
+    const app = await buildApp({ config, db, logger: false });
+    try {
+      const login = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { username: "admin", password: config.adminPassword } });
+      const cookies = { envman_session: login.cookies.find((item) => item.name === "envman_session")!.value };
+      const environment = await app.inject({ method: "POST", url: "/api/v1/environments", cookies, payload: { name: "single-service-env" } });
+      const environmentId = environment.json().id as string;
+      const ssh = await app.inject({
+        method: "POST",
+        url: "/api/v1/ssh-connections",
+        cookies,
+        payload: {
+          environmentId,
+          name: "single-host",
+          host: "127.0.0.1",
+          port: 22,
+          username: "operator",
+          authType: "password",
+          credential: { password: "payload-secret" },
+          options: { terminalType: "xterm-256color", keepAliveSeconds: 30, encoding: "utf-8", hostKeySha256: "", loginScriptEnabled: false, loginScript: "" },
+        },
+      });
+      const service = await app.inject({ method: "POST", url: `/api/v1/environments/${environmentId}/services`, cookies, payload: { name: "svc", description: "", status: "active" } });
+      const now = new Date().toISOString();
+      await db.transaction(async () => {
+        for (let index = 0; index < 501; index += 1) {
+          await db.prepare(`
+            INSERT INTO service_deployments (
+              id, service_id, ssh_connection_id, ssh_connection_name, provider_type, external_id,
+              display_name, origin, status, state_detail, latest_metrics_json, created_at, updated_at
+            ) VALUES (?, ?, ?, 'single-host', 'systemd', ?, ?, 'manual', 'running', '', '{}', ?, ?)
+          `).run(randomUUID(), service.json().id, ssh.json().id, `svc-${index}`, `svc-${index}`, now, now);
+        }
+      })();
+      const response = await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/service-deployments`, cookies });
+      expect(response.statusCode).toBe(413);
+      expect(response.json().error).toBe("PAYLOAD_TOO_LARGE");
     } finally {
       await app.close();
     }

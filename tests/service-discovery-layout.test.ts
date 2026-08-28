@@ -7,6 +7,7 @@ const maintenancePanel = [
   readFileSync(new URL("../src/client/components/service-maintenance/MaintenanceServiceSelector.vue", import.meta.url), "utf8"),
   readFileSync(new URL("../src/client/components/service-maintenance/MaintenanceOperationsRibbon.vue", import.meta.url), "utf8"),
   readFileSync(new URL("../src/client/components/service-maintenance/MaintenanceDeploymentGrid.vue", import.meta.url), "utf8"),
+  readFileSync(new URL("../src/client/components/service-maintenance/MaintenanceDeploymentCard.vue", import.meta.url), "utf8"),
   readFileSync(new URL("../src/client/components/service-maintenance/MaintenanceDiscoveryDrawer.vue", import.meta.url), "utf8"),
   readFileSync(new URL("../src/client/components/service-maintenance/MaintenanceBatchProgress.vue", import.meta.url), "utf8"),
 ].join("\n");

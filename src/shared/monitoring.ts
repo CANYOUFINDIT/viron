@@ -58,9 +58,14 @@ export function capSeriesPoints<T>(points: T[], max = MONITORING_MAX_POINTS, isG
   }
   const selected = new Map<number, T>();
   const requiredIndexes = [...required].sort((left, right) => left - right);
-  for (const index of requiredIndexes) {
-    if (selected.size >= max && index !== 0 && index !== lastIndex) continue;
-    selected.set(index, points[index]!);
+  if (requiredIndexes.length > max) {
+    for (let slot = 0; slot < max; slot += 1) {
+      const position = Math.round((slot * (requiredIndexes.length - 1)) / (max - 1));
+      const index = requiredIndexes[position]!;
+      selected.set(index, points[index]!);
+    }
+  } else {
+    for (const index of requiredIndexes) selected.set(index, points[index]!);
   }
   selected.set(0, points[0]!);
   selected.set(lastIndex, points[lastIndex]!);

@@ -151,14 +151,14 @@ export async function loadServiceDeploymentsPayload(
       truncated = true;
       break;
     }
-    let used = deps;
     if (deps.length > SERVICE_DEPLOYMENTS_MAX_DEPLOYMENTS) {
-      used = deps.slice(0, SERVICE_DEPLOYMENTS_MAX_DEPLOYMENTS);
-      deploymentsByService.set(String(row.id), used);
-      truncated = true;
+      throw new ServiceDeploymentsPayloadError(
+        "PAYLOAD_TOO_LARGE",
+        `服务 ${String(row.id)} 的部署节点超过 ${SERVICE_DEPLOYMENTS_MAX_DEPLOYMENTS} 个，当前游标无法安全分页`,
+      );
     }
     includedRows.push(row);
-    deploymentCount += used.length;
+    deploymentCount += deps.length;
   }
   if (includedRows.length < pageRows.length) truncated = true;
   const services = includedRows.map((row) => ({
@@ -212,15 +212,8 @@ export async function loadServiceDeploymentsPayload(
     payload.truncated = true;
     payload.hasMore = true;
     if (!payload.partialFailures.includes("payload_truncated")) payload.partialFailures.push("payload_truncated");
-    const firstService = payload.services[0];
     if (payload.services.length > 1) {
       payload.services = payload.services.slice(0, Math.max(1, Math.floor(payload.services.length / 2)));
-    } else if (firstService && firstService.deployments.length > 1) {
-      firstService.deployments = firstService.deployments.slice(0, Math.max(1, Math.floor(firstService.deployments.length / 2)));
-    } else if (payload.logs.length) {
-      payload.logs = [];
-    } else if (payload.discovery.hosts.length) {
-      payload.discovery.hosts = payload.discovery.hosts.slice(0, Math.max(0, Math.floor(payload.discovery.hosts.length / 2)));
     } else {
       throw new ServiceDeploymentsPayloadError("PAYLOAD_TOO_LARGE", "服务维护载荷无法在 1 MiB 内安全分页");
     }
