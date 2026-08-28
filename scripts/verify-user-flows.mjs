@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash, randomUUID } from "node:crypto";
+import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
@@ -9,6 +9,9 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import { chromium } from "playwright-core";
+import ssh2 from "ssh2";
+
+const { Server: SshServer } = ssh2;
 
 // Critical-user-flow integration: production server and UI are real; external database and Electron bridge boundaries use deterministic fixtures.
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -24,6 +27,44 @@ const mockDatabaseName = "flow_database";
 const mockConnectionName = `全流程数据库-${flowSuffix}`;
 const mockConnectionId = "10000000-0000-4000-8000-000000000001";
 const mockSessionId = "20000000-0000-4000-8000-000000000001";
+
+const initialCertificatePem = `-----BEGIN CERTIFICATE-----
+MIIC5DCCAcygAwIBAgIJAPF8qfu29bACMA0GCSqGSIb3DQEBCwUAMBoxGDAWBgNV
+BAMMD2FwcC5leGFtcGxlLmNvbTAeFw0yNjA4MjYxMjE5NDBaFw0yNjA5MjUxMjE5
+NDBaMBoxGDAWBgNVBAMMD2FwcC5leGFtcGxlLmNvbTCCASIwDQYJKoZIhvcNAQEB
+BQADggEPADCCAQoCggEBAL/QP2J3Zcba68aq5mvmuDikBzLpP2O1vnFZA5n4zuEx
+2+jI0AF3YnI1bkWzVy5bGMTJ9PtshupyslJEpsmec0kpKf94NJBoe7nkclxC70UI
+X/Klvx7A5tuBHPkUXD5B3/RZZ7zill0q11ufa9qOknlsVyTh52yO8iwmYA2dBaCb
+b0kl6yTLXk64Yc2AaRVpiFuYBJocZpJ7qs3qldINtUsNFdIljg3Iy3GXa/Xs1QX9
+NB29ebZwZPgpvBsixT1izpt2kUIxyYSqk6AghaUFdBzfaN9G1/n9KkZuKGNWCUfN
+0EWI7wi1d0XLgx/KnYPvFkBPSFDo5mlos/XXIOO2vEECAwEAAaMtMCswKQYDVR0R
+BCIwIIIPYXBwLmV4YW1wbGUuY29tgg0qLmV4YW1wbGUuY29tMA0GCSqGSIb3DQEB
+CwUAA4IBAQAEGoqI/xm6ucV34O5h6l1cr9MYA2/P69IYkl87GDIyxEfYefUk/paa
+9y2z8/C668Ym6Z9PxksU3GeffJ6TJBhVZDd9hgCqVGDflEymUMAtur6rpKKBO6MV
+KicZWAVUBhrwrZhWSTS7bokJls8u2HAfDC2Vb3MgvSKTjCJB+kURG2wBuA+7ty97
+K59yO7apswVh3AZTTxaSJLIq00gtm+LKN19vbUhEheJxkxToxl1Ka2GDj62x99Lv
+D0ts+GliXAOz6LRrlzF1lzGH/eZ8Q8faeglZCm6wTvJ5imym20AVyPkSks/A2tXn
+Ora+Pq14wMcIueA5/E+kx6/T7zRjA1Z6
+-----END CERTIFICATE-----`;
+
+const rotatedCertificatePem = `-----BEGIN CERTIFICATE-----
+MIIC+zCCAeOgAwIBAgIJAMHzX820zkk3MA0GCSqGSIb3DQEBCwUAMBwxGjAYBgNV
+BAMMEWZsb3cucm90YXRlZC50ZXN0MB4XDTI2MDgyODEwNTgwM1oXDTI3MDgyODEw
+NTgwM1owHDEaMBgGA1UEAwwRZmxvdy5yb3RhdGVkLnRlc3QwggEiMA0GCSqGSIb3
+DQEBAQUAA4IBDwAwggEKAoIBAQC6HJk7VociweY8lrEouqUEBhk/EkF7DRnLrxlL
+boI9YqD2GADN721oP/lO1VRrTDFIDvMwCRBJuhS2iS2EgUc3FLRDMPydDonqHM6P
+ZIaPRhYLRUQ7UiIoSqw7OTscc2cBwzuzz1puDPBFGD9SXVJ1OI8wKL3C9p8Ms8t+
+BEFU5XQxxwZm+DFkxwo1t7dwKoyDUH2ZPr4ZCl6nCrrL0VkuqV+PjdzwcLyusKrU
+22zKKWvNM0ZnP+izaaL5iiTmvdrmN12yjSBxBrKpG8q3fVuFleGiWRub+JNxMPDv
+noj/CUd+KswEGwWl0sca5tnTEp1G1+BPzihYYesPjtKaXUPVAgMBAAGjQDA+MDwG
+A1UdEQQ1MDOCEWZsb3cucm90YXRlZC50ZXN0gg9hZG1pbi5mbG93LnRlc3SCDWFw
+aS5mbG93LnRlc3QwDQYJKoZIhvcNAQELBQADggEBADJrXQVDqAAhtRqEMQbwsxUC
+t1odvcy5a5fddE62kIOhboNz+Ws9/tJl3rDJS41Ou7MDwqSQkqc1f3f2jpkcS4JA
+1eaMGhZt6cx4AkDHOr5WBPfdOZRpuAOV8a6U0VBpCnAaPS3zFfAg8ErylPQVVQZx
+aD3jJA8Wf7cdIvc2AjJ5IIN3vyzzacFxTJeH1+pnBVnnJujO1QKb38KSEQWsRelQ
+c7wGYbE/7LAObH3jKnVcPJYm7QxeChbWsWwAjxqJ6/DIJjou1tyMAflzs5/JkLlX
+XHcKplSt7kmW3S1D37NqU19vNeu3tVBqWV8Yu2w4pcku5ZwgjhpLHTa5dbW0tRo=
+-----END CERTIFICATE-----`;
 
 function browserExecutable() {
   const programFiles = process.env.PROGRAMFILES;
@@ -64,6 +105,54 @@ async function availablePort() {
   assert(address && typeof address === "object", "无法分配全流程测试端口");
   await new Promise((resolveClose, rejectClose) => server.close((error) => error ? rejectClose(error) : resolveClose()));
   return address.port;
+}
+
+async function startFlowSshServer() {
+  const { privateKey } = generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+    privateKeyEncoding: { type: "pkcs1", format: "pem" },
+    publicKeyEncoding: { type: "pkcs1", format: "pem" },
+  });
+  let certificatePem = initialCertificatePem;
+  const commands = [];
+  const server = new SshServer({ hostKeys: [privateKey] }, (client) => {
+    client.on("authentication", (context) => {
+      if (context.method === "password" && context.username === "operator" && context.password === "flow-secret") context.accept();
+      else context.reject();
+    });
+    client.on("ready", () => {
+      client.on("session", (accept) => {
+        const session = accept();
+        session.on("exec", (acceptExec, _rejectExec, info) => {
+          commands.push(info.command);
+          const stream = acceptExec();
+          if (info.command.includes("openssl s_client")) {
+            stream.write(`${certificatePem}\nVerify return code: 18 (self signed certificate)\n`);
+            stream.exit(0);
+          } else if (info.command.includes("worker.service")) {
+            stream.stderr.write("SSH 执行失败\n");
+            stream.exit(1);
+          } else {
+            stream.write("ok\n");
+            stream.exit(0);
+          }
+          stream.end();
+        });
+      });
+    });
+  });
+  await new Promise((resolveListen, rejectListen) => {
+    server.once("error", rejectListen);
+    server.listen(0, "127.0.0.1", resolveListen);
+  });
+  const address = server.address();
+  assert(address && typeof address === "object", "无法分配 SSH fixture 端口");
+  return {
+    port: address.port,
+    commands,
+    useCertificate(pem) { certificatePem = pem; },
+    close: () => new Promise((resolveClose) => server.close(() => resolveClose())),
+  };
 }
 
 async function waitForServer(baseUrl, child, output) {
@@ -134,35 +223,6 @@ function openFlowDatabase(dataDirectory) {
   return db;
 }
 
-function seedSharedCertificate(dataDirectory, environmentId, fingerprint, cn) {
-  const db = openFlowDatabase(dataDirectory);
-  try {
-    const now = new Date().toISOString();
-    const admin = db.prepare("SELECT id FROM admin_users WHERE username = ?").get(adminUsername);
-    const certId = randomUUID();
-    db.prepare(`
-      INSERT INTO ssl_certificates (
-        id, workspace_type, workspace_id, fingerprint_sha256, leaf_cn, leaf_sans_json, issuer, serial,
-        signature_algorithm, not_before, not_after, is_self_signed, first_seen_at, last_seen_at, created_at, updated_at
-      ) VALUES (?, 'personal', ?, ?, ?, ?, 'Flow CA', '1', 'sha256', ?, ?, 0, ?, ?, ?, ?)
-    `).run(certId, admin.id, fingerprint, cn, JSON.stringify([cn, "admin.flow.test", "api.flow.test"]), now, new Date(Date.now() + 30 * 86400000).toISOString(), now, now, now, now);
-    const endpoints = db.prepare("SELECT id FROM ssl_endpoints WHERE environment_id = ?").all(environmentId);
-    for (const endpoint of endpoints) {
-      db.prepare(`
-        UPDATE ssl_endpoints SET certificate_id = ?, probe_status = 'ok', last_success_at = ?, probed_at = ?, updated_at = ?
-        WHERE id = ?
-      `).run(certId, now, now, now, endpoint.id);
-      db.prepare(`
-        UPDATE tls_endpoints SET fingerprint_sha256 = ?, leaf_cn = ?, probe_status = 'ok', probed_at = ?, not_before = ?, not_after = ?, updated_at = ?
-        WHERE id = ?
-      `).run(fingerprint, cn, now, now, new Date(Date.now() + 30 * 86400000).toISOString(), now, endpoint.id);
-    }
-    return certId;
-  } finally {
-    db.close();
-  }
-}
-
 function seedMonitoringFixture(dataDirectory, { environmentId, connectionId, serviceName }) {
   const db = openFlowDatabase(dataDirectory);
   try {
@@ -193,7 +253,7 @@ function seedMonitoringFixture(dataDirectory, { environmentId, connectionId, ser
   }
 }
 
-async function verifyEnvironmentAndMaintenance(page, { baseUrl }) {
+async function verifyEnvironmentAndMaintenance(page, { baseUrl, sshFixture }) {
   await page.getByRole("button", { name: "新建环境", exact: true }).click();
   const environmentDialog = page.getByRole("dialog", { name: "新建环境" });
   await expectVisible(environmentDialog, "新建环境对话框");
@@ -224,7 +284,7 @@ async function verifyEnvironmentAndMaintenance(page, { baseUrl }) {
     environmentId,
     name,
     host: "127.0.0.1",
-    port: 22,
+    port: sshFixture.port,
     username: "operator",
     authType: "password",
     credential: { password: "flow-secret" },
@@ -246,46 +306,17 @@ async function verifyEnvironmentAndMaintenance(page, { baseUrl }) {
   });
   assert.equal(depAResponse.status(), 201, "创建部署节点 A 失败");
   assert.equal(depBResponse.status(), 201, "创建部署节点 B 失败");
-  const depA = await depAResponse.json();
-  const depB = await depBResponse.json();
-
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.getByRole("button", { name: /服务维护/ }).click();
   await expectVisible(page.locator(".deployment-card").getByText("flow-a"), "部署节点 A");
-  await page.route("**/api/v1/service-deployments/actions", async (route) => {
-    if (route.request().method() !== "POST") return route.continue();
-    return route.fulfill({
-      status: 202,
-      contentType: "application/json",
-      body: JSON.stringify({ item: { id: "flow-op-1", status: "queued", result: { succeeded: 0, failed: 0, targets: [] } } }),
-    });
-  });
-  await page.route("**/api/v1/service-operations/flow-op-1", async (route) => {
-    return route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        item: {
-          id: "flow-op-1",
-          status: "partial",
-          result: {
-            succeeded: 1,
-            failed: 1,
-            truncated: false,
-            targets: [
-              { deploymentId: depA.id, targetName: "flow-a", ok: true, message: "", durationMs: 12 },
-              { deploymentId: depB.id, targetName: "flow-b", ok: false, message: "SSH 执行失败", durationMs: 9 },
-            ],
-          },
-        },
-      }),
-    });
-  });
   await page.locator(".deployment-select-all input").check();
   await page.getByRole("button", { name: "批量重启", exact: true }).click();
   const confirm = page.getByRole("dialog").last();
   await expectVisible(confirm, "批量确认");
   await confirm.getByRole("button", { name: /确定|确认|OK/ }).click();
   await expectVisible(page.getByText("SSH 执行失败"), "批量部分失败结果");
+  assert(sshFixture.commands.some((command) => command.includes("flow.service")), "批量操作未执行成功目标的真实 SSH 命令");
+  assert(sshFixture.commands.some((command) => command.includes("worker.service")), "批量操作未执行失败目标的真实 SSH 命令");
   await page.getByRole("button", { name: "关闭", exact: true }).click();
   process.stdout.write("Given/When/Then 服务批量部分失败: pass\n");
 
@@ -297,7 +328,7 @@ async function verifyEnvironmentAndMaintenance(page, { baseUrl }) {
   return { environmentId, serviceName, connectionId: connectionA.id };
 }
 
-async function verifyCredentialsAndMonitoring(page, { environmentId, serviceName, connectionId, dataDirectory, baseUrl }) {
+async function verifyCredentialsAndMonitoring(page, { environmentId, serviceName, connectionId, dataDirectory, baseUrl, sshFixture }) {
   const adminEntry = await page.request.post(`${baseUrl}/api/v1/environments/${environmentId}/web-entries`, {
     data: { name: "admin", url: "https://admin.flow.test", description: "", tags: [] },
   });
@@ -306,8 +337,19 @@ async function verifyCredentialsAndMonitoring(page, { environmentId, serviceName
   });
   assert.equal(adminEntry.status(), 201, "创建 admin Web 入口失败");
   assert.equal(apiEntry.status(), 201, "创建 api Web 入口失败");
-  const sharedFingerprint = createHash("sha256").update(`flow-shared-${flowSuffix}`).digest("hex");
-  seedSharedCertificate(dataDirectory, environmentId, sharedFingerprint, "flow.shared.test");
+  const adminEntryId = (await adminEntry.json()).id;
+  const apiEntryId = (await apiEntry.json()).id;
+  const endpointResponse = await page.request.post(`${baseUrl}/api/v1/environments/${environmentId}/tls-endpoints`, {
+    data: { host: "127.0.0.1", port: 443, sni: "app.example.com", sshConnectionId: connectionId },
+  });
+  assert.equal(endpointResponse.status(), 201, "创建 TLS 端点失败");
+  const endpointId = (await endpointResponse.json()).id;
+  const linkResponse = await page.request.put(`${baseUrl}/api/v1/tls-endpoints/${endpointId}/web-entries`, {
+    data: { webEntryIds: [adminEntryId, apiEntryId] },
+  });
+  assert.equal(linkResponse.status(), 200, "关联多个 Web 入口失败");
+  const probeResponse = await page.request.post(`${baseUrl}/api/v1/tls-endpoints/${endpointId}/probe`);
+  assert.equal(probeResponse.status(), 200, "真实 SSH TLS 探测失败");
   seedMonitoringFixture(dataDirectory, { environmentId, connectionId, serviceName });
 
   const expandSidebar = page.getByRole("button", { name: "展开左侧菜单" });
@@ -318,11 +360,28 @@ async function verifyCredentialsAndMonitoring(page, { environmentId, serviceName
   await expectVisible(page.getByRole("tab", { name: /SSH 密钥/ }), "SSH 密钥 Tab");
   await page.getByRole("tab", { name: "SSL/TLS 证书" }).click();
   await expectVisible(page.locator(".certificate-center"), "证书中心");
-  await expectVisible(page.getByRole("heading", { name: "flow.shared.test" }), "同证书 CN");
+  await expectVisible(page.getByRole("heading", { name: "app.example.com" }), "同证书 CN");
   await expectVisible(page.locator(".cert-card li").filter({ hasText: "admin.flow.test" }), "admin 入口");
   await expectVisible(page.locator(".cert-card li").filter({ hasText: "api.flow.test" }), "api 入口");
-  const rotatedFingerprint = createHash("sha256").update(`flow-rotated-${flowSuffix}`).digest("hex");
-  seedSharedCertificate(dataDirectory, environmentId, rotatedFingerprint, "flow.rotated.test");
+  sshFixture.useCertificate(rotatedCertificatePem);
+  const rotateEndpoint = await page.request.post(`${baseUrl}/api/v1/environments/${environmentId}/tls-endpoints`, {
+    data: { host: "127.0.0.1", port: 8443, sni: "flow.rotated.test", sshConnectionId: connectionId },
+  });
+  assert.equal(rotateEndpoint.status(), 201, "创建轮换 TLS 端点失败");
+  const rotatedEndpointId = (await rotateEndpoint.json()).id;
+  const rotateLink = await page.request.put(`${baseUrl}/api/v1/tls-endpoints/${rotatedEndpointId}/web-entries`, {
+    data: { webEntryIds: [adminEntryId, apiEntryId] },
+  });
+  assert.equal(rotateLink.status(), 200, "切换 Web 入口的证书端点失败");
+  const rotateProbe = await page.request.post(`${baseUrl}/api/v1/tls-endpoints/${rotatedEndpointId}/probe`);
+  assert.equal(rotateProbe.status(), 200, "轮换后的真实 SSH TLS 探测失败");
+  const removeOldEndpoint = await page.request.delete(`${baseUrl}/api/v1/tls-endpoints/${endpointId}`);
+  assert.equal(removeOldEndpoint.status(), 204, "移除旧证书端点失败");
+  const certificates = await page.request.get(`${baseUrl}/api/v1/certificates`);
+  assert.equal(certificates.status(), 200, "读取证书列表失败");
+  const certificateItems = (await certificates.json()).items;
+  assert(certificateItems.some((item) => item.leafCn === "flow.rotated.test" && item.endpointCount === 1), "轮换证书未绑定原端点");
+  assert(certificateItems.some((item) => item.leafCn === "app.example.com" && item.endpointCount === 0), "旧证书未保留为孤儿资产");
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.getByRole("tab", { name: "SSL/TLS 证书" }).click();
   await expectVisible(page.getByRole("heading", { name: "flow.rotated.test" }), "轮换后证书");
@@ -337,7 +396,9 @@ async function verifyCredentialsAndMonitoring(page, { environmentId, serviceName
   process.stdout.write("Given/When/Then 监控下钻: pass\n");
   await page.getByRole("tab", { name: "NOC 全屏" }).click();
   await expectVisible(page.locator(".noc-screen"), "NOC 全屏");
+  await page.waitForFunction(() => document.fullscreenElement !== null, undefined, { timeout: 10_000 });
   await page.getByRole("button", { name: "退出全屏" }).click();
+  await page.waitForFunction(() => document.fullscreenElement === null, undefined, { timeout: 10_000 });
   await expectVisible(page.getByRole("heading", { name: "监控大盘" }), "退出 NOC 后回到监控大盘");
   process.stdout.write("Given/When/Then NOC 进退全屏: pass\n");
   await expectNoRouteError(page, "凭据中心与监控大盘流程");
@@ -748,8 +809,10 @@ async function main() {
   let server;
   let browser;
   let activePage;
+  let sshFixture;
   const failures = [];
   try {
+    sshFixture = await startFlowSshServer();
     server = spawn(process.execPath, ["scripts/start.mjs"], {
       cwd: repositoryRoot,
       env: environment,
@@ -769,9 +832,9 @@ async function main() {
     activePage = page;
     observePage(page, failures);
     await loginThroughUi(page, baseUrl);
-    const maintenance = await verifyEnvironmentAndMaintenance(page, { baseUrl });
+    const maintenance = await verifyEnvironmentAndMaintenance(page, { baseUrl, sshFixture });
     assert(maintenance.environmentId, "环境流程未返回环境 ID");
-    await verifyCredentialsAndMonitoring(page, { ...maintenance, dataDirectory, baseUrl });
+    await verifyCredentialsAndMonitoring(page, { ...maintenance, dataDirectory, baseUrl, sshFixture });
     await verifyDatabaseWorkbench(page, baseUrl);
     await verifySettings(page, baseUrl);
     await verifyOrganization(page, baseUrl);
@@ -792,6 +855,7 @@ async function main() {
   } finally {
     await browser?.close().catch(() => undefined);
     await stopProcess(server);
+    await sshFixture?.close().catch(() => undefined);
     await rm(dataDirectory, { recursive: true, force: true });
   }
 }

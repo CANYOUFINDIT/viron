@@ -351,18 +351,37 @@ export async function mapWithConcurrency<T, R>(
   items: T[],
   limit: number,
   mapper: (item: T) => Promise<R>,
-  options: { shouldContinue?: () => boolean } = {},
+  options: {
+    shouldContinue?: () => boolean;
+    onError?: (error: unknown, item: T, index: number) => R | Promise<R>;
+  } = {},
 ): Promise<Array<R | undefined>> {
   const results = new Array<R | undefined>(items.length);
   let next = 0;
+  let stopped = false;
+  let firstError: unknown;
   await Promise.all(Array.from({ length: Math.min(limit, Math.max(items.length, 1)) }, async () => {
     while (true) {
-      if (options.shouldContinue && !options.shouldContinue()) return;
+      if (stopped || (options.shouldContinue && !options.shouldContinue())) return;
       const index = next;
       next += 1;
       if (index >= items.length) return;
-      results[index] = await mapper(items[index]!);
+      try {
+        results[index] = await mapper(items[index]!);
+      } catch (error) {
+        stopped = true;
+        if (options.onError) {
+          try {
+            results[index] = await options.onError(error, items[index]!, index);
+          } catch (mappedError) {
+            firstError ??= mappedError;
+          }
+        } else {
+          firstError ??= error;
+        }
+      }
     }
   }));
+  if (firstError) throw firstError;
   return results;
 }

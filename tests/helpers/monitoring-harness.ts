@@ -74,10 +74,11 @@ export async function runMonitoringContractSuite(config: AppConfig, db: EnvmanDa
   truncated: boolean;
   dialect: string;
 }> {
-  await ensureAdmin(db, config);
-  clearMonitoringOverviewCache();
-  const app = await buildApp({ config, db, logger: false });
+  let app: FastifyInstance | undefined;
   try {
+    await ensureAdmin(db, config);
+    clearMonitoringOverviewCache();
+    app = await buildApp({ config, db, logger: false });
     const login = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { username: "admin", password: config.adminPassword } });
     const cookies = { envman_session: login.cookies.find((item) => item.name === "envman_session")!.value };
     const environment = await app.inject({ method: "POST", url: "/api/v1/environments", cookies, payload: { name: "监控环境" } });
@@ -115,7 +116,7 @@ export async function runMonitoringContractSuite(config: AppConfig, db: EnvmanDa
       const collected = index === 0 ? staleAt : extraNow;
       const hostJson = index === 0
         ? JSON.stringify({ cpuUsedPercent: 5, memoryUsedPercent: 10, disks: [{ path: "/", usedPercent: 95 }], resolutionSeconds: 30 })
-        : snapshot;
+        : index === 1 ? "null" : snapshot;
       await insertHost(db, connectionId, "ready", collected, extraNow, hostJson);
     }
 
@@ -158,7 +159,7 @@ export async function runMonitoringContractSuite(config: AppConfig, db: EnvmanDa
     expect(deploymentB.statusCode).toBe(201);
 
     const bucketMs = timeBucketMs("1h");
-    const bucketStart = Math.floor(now.getTime() / bucketMs) * bucketMs;
+    const bucketStart = Math.floor((now.getTime() - bucketMs) / bucketMs) * bucketMs;
     const firstStamp = new Date(bucketStart + 120).toISOString();
     const secondStamp = new Date(bucketStart + 480).toISOString();
     await db.prepare(`
@@ -235,6 +236,7 @@ export async function runMonitoringContractSuite(config: AppConfig, db: EnvmanDa
       dialect: db.dialect,
     };
   } finally {
-    await app.close();
+    if (app) await app.close();
+    else await db.close();
   }
 }

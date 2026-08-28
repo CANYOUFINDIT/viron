@@ -16,6 +16,13 @@ function parseJson<T>(value: unknown, fallback: T): T {
   }
 }
 
+function parseObject(value: unknown): Record<string, unknown> {
+  const parsed = parseJson<unknown>(value, {});
+  return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+    ? parsed as Record<string, unknown>
+    : {};
+}
+
 const overviewCache = new Map<string, { expiresAt: number; payload: Record<string, unknown> }>();
 
 function average(values: Array<number | null>): number | null {
@@ -68,7 +75,7 @@ export async function loadMonitoringOverview(
   }
 
   const mappedHosts = visibleHosts.map((row) => {
-    const snapshot = parseJson<Record<string, unknown>>(row.latest_host_json, {});
+    const snapshot = parseObject(row.latest_host_json);
     const disks = Array.isArray(snapshot.disks) ? snapshot.disks as Array<Record<string, unknown>> : [];
     const diskPercents = disks.map((disk) => finiteMetric(disk.usedPercent)).filter((value): value is number => value !== null);
     const worstDisk = disks.reduce<Record<string, unknown> | null>((worst, disk) => {
@@ -158,7 +165,7 @@ export async function loadMonitoringOverview(
       deployments: [],
     };
     if (row.deployment_id) {
-      const metrics = parseJson<Record<string, unknown>>(row.latest_metrics_json, {});
+      const metrics = parseObject(row.latest_metrics_json);
       current.deployments.push({
         id: row.deployment_id,
         name: row.display_name || row.external_id,

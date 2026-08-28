@@ -72,13 +72,26 @@ export async function loadServiceTimeseries(
   `).get(...connectionIds, from, to) as { sample_count: number | string };
   const sourceSampleCount = Number(countRow.sample_count);
   const bucketMs = timeBucketMs(range);
+  const bucketExpression = app.db.dialect === "mysql"
+    ? "FLOOR(UNIX_TIMESTAMP(collected_at) * 1000 / ?)"
+    : "CAST((CAST(strftime('%s', collected_at) AS INTEGER) * 1000) / ? AS INTEGER)";
   const rows = await app.db.prepare(`
+    WITH ranked_samples AS (
+      SELECT ssh_connection_id, collected_at, payload_json,
+        ROW_NUMBER() OVER (
+          PARTITION BY ssh_connection_id, ${bucketExpression}
+          ORDER BY collected_at DESC
+        ) AS bucket_rank,
+        ROW_NUMBER() OVER (PARTITION BY ssh_connection_id ORDER BY collected_at) AS first_rank,
+        ROW_NUMBER() OVER (PARTITION BY ssh_connection_id ORDER BY collected_at DESC) AS last_rank
+      FROM monitor_samples
+      WHERE ssh_connection_id IN (${placeholders}) AND collected_at >= ? AND collected_at <= ?
+    )
     SELECT ssh_connection_id, collected_at, payload_json
-    FROM monitor_samples
-    WHERE ssh_connection_id IN (${placeholders}) AND collected_at >= ? AND collected_at <= ?
+    FROM ranked_samples
+    WHERE bucket_rank = 1 OR first_rank = 1 OR last_rank = 1
     ORDER BY collected_at
-    LIMIT 50000
-  `).all(...connectionIds, from, to) as Array<{ ssh_connection_id: string; collected_at: string; payload_json: string }>;
+  `).all(bucketMs, ...connectionIds, from, to) as Array<{ ssh_connection_id: string; collected_at: string; payload_json: string }>;
   const buckets = new Map<string, {
     at: string;
     cpu: number[];

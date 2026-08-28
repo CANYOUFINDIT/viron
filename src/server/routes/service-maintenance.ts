@@ -938,7 +938,21 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
             current += 1;
             await onProgress(current, selected.length);
             return result;
-          }, { shouldContinue: helpers.shouldContinue });
+          }, {
+            shouldContinue: helpers.shouldContinue,
+            onError: (error, target) => ({
+              deploymentId: String(target.id),
+              targetName: String(target.display_name || target.external_id || target.ssh_connection_name),
+              connectionId: target.ssh_connection_id ? String(target.ssh_connection_id) : "",
+              connectionName: String(target.ssh_connection_name ?? ""),
+              ok: false,
+              exitCode: null,
+              durationMs: 0,
+              truncated: false,
+              message: error instanceof Error ? error.message.slice(0, 500) : "操作执行异常",
+              errorCode: "OPERATION_INTERNAL_ERROR",
+            }),
+          });
           const results = selected.map((target, index) => assigned[index] ?? {
             deploymentId: String(target.id),
             targetName: String(target.display_name || target.external_id || target.ssh_connection_name),
@@ -1258,7 +1272,21 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
             current += 1;
             await onProgress(current, deployments.length);
             return result;
-          }, { shouldContinue: helpers.shouldContinue });
+          }, {
+            shouldContinue: helpers.shouldContinue,
+            onError: (error, deployment) => ({
+              deploymentId: String(deployment.id),
+              targetName: String(deployment.display_name || deployment.external_id || deployment.ssh_connection_name),
+              connectionId: deployment.ssh_connection_id ? String(deployment.ssh_connection_id) : "",
+              connectionName: String(deployment.ssh_connection_name ?? ""),
+              ok: false,
+              exitCode: null,
+              durationMs: 0,
+              truncated: false,
+              message: error instanceof Error ? error.message.slice(0, 500) : "操作执行异常",
+              errorCode: "OPERATION_INTERNAL_ERROR",
+            }),
+          });
           const results = deployments.map((deployment, index) => assigned[index] ?? {
             deploymentId: String(deployment.id),
             targetName: String(deployment.display_name || deployment.external_id || deployment.ssh_connection_name),

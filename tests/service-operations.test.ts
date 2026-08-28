@@ -272,6 +272,24 @@ describe("service operation API contract", () => {
     expect(started.length).toBe(4);
     expect(assigned.filter((item) => item !== undefined)).toHaveLength(4);
 
+    const events: string[] = [];
+    await expect(mapWithConcurrency([0, 1, 2], 2, async (item) => {
+      events.push(`start:${item}`);
+      if (item === 0) throw new Error("worker failed");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      events.push(`finish:${item}`);
+      return item;
+    })).rejects.toThrow("worker failed");
+    expect(events).toContain("finish:1");
+    expect(events).not.toContain("start:2");
+
+    const recovered = await mapWithConcurrency([0, 1, 2], 2, async (item) => {
+      if (item === 0) throw new Error("progress write failed");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return `ok:${item}`;
+    }, { onError: (_error, item) => `failed:${item}` });
+    expect(recovered).toEqual(["failed:0", "ok:1", undefined]);
+
     const directory = mkdtempSync(join(tmpdir(), "viron-ops-timeout-"));
     directories.push(directory);
     const config = testConfig(directory);

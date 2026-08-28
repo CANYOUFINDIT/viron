@@ -7,13 +7,13 @@
 | 字段 | 当前值 |
 | --- | --- |
 | 当前阶段 | Gate 3+4 合并质量与发布 |
-| 阶段状态 | `CHANGES_REQUIRED` |
+| 阶段状态 | `PASSED` |
 | 当前写锁 | `UNLOCKED` |
-| 当前负责人 | Grok（关闭 `G34RR-*` 后交 Codex 重审） |
+| 当前负责人 | Codex（Gate 3+4 已完成） |
 | 产品批准 | 用户已于 2026-08-27 11:24 CST 批准 `UIUX-SPEC.md` 2.0.0-final；无例外 |
 | 执行流程例外 | 用户已于 2026-08-27 15:22 CST 批准 Grok 连续实施 Phase 2+3，随后 Gemini 整体验收、Grok 集中修复、Codex 合并 Gate 3+4 |
 | 技术合同状态 | `FROZEN`（Gate 1 `PASSED`） |
-| 下一位负责人 | Grok（仅修复 `G34RR-P1-001`、`G34RR-P2-002`～`G34RR-P2-006`） |
+| 下一位负责人 | 用户（如需合并或发布，另行明确授权） |
 
 ## 2. 基线
 
@@ -44,6 +44,7 @@
 | Gate 3+4 独立复核 | Codex | `CHANGES_REQUIRED` | `9e36db0` | `f266158` | 推翻代行 `PASSED`；3 个 P1、8 个 P2 交回 Grok |
 | Gate 3+4 G34R 修正 | Grok | `REVIEW_REQUIRED` | `2c0b15d` | `04ad5aa` | 声称关闭全部 `G34R-*`；Codex 独立重审确认仍有边界问题 |
 | Gate 3+4 G34R 独立重审 | Codex | `CHANGES_REQUIRED` | `04ad5aa` | `abbeba1` | 1 个 P1、5 个 P2 交回 Grok；Gate 3+4 不得发布或合并 main |
+| Gate 3+4 G34RR 一次性修正与收尾 | Codex | `PASSED` | `26c1a01` | 待回填 | 六项 `G34RR-*` 全部关闭；全量回归、真实 MariaDB 对账、用户流及当前系统打包通过 |
 
 状态只能使用：`NOT_STARTED`、`IN_PROGRESS`、`BLOCKED`、`REVIEW_REQUIRED`、`CHANGES_REQUIRED`、`PASSED`。
 
@@ -52,16 +53,17 @@
 ```text
 状态：UNLOCKED
 Agent：无
-阶段：Gate 3+4 G34RR 修正待领取
-开始时间：—
-预计修改范围：仅本交接 `G34RR-*` 工单列出的实现与行为测试、`STATUS.md`
+阶段：Gate 3+4 已完成
+开始时间：2026-08-27 22:36 CST
+结束时间：2026-08-28 19:13 CST
+实际修改范围：仅 `G34RR-P1-001`、`G34RR-P2-002`～`G34RR-P2-006` 对应实现、测试与交接文档
 ```
 
 若写锁为 `LOCKED`，其他 Agent 只能进行不写仓库的分析，不得执行代码修改、格式化、迁移或 Git 操作。
 
 ## 5. 当前阻塞与风险
 
-Gate 2 最终结论为 `PASSED`。Codex 对 `04ad5aa` 的 Gate 3+4 独立重审结论仍为 `CHANGES_REQUIRED`。当前风险：
+Gate 2 与合并 Gate 3+4 最终结论均为 `PASSED`。当前剩余风险：
 
 1. 新旧 TLS 双写窗口仍在；旧 `tls_*` 表未删除。任何停止双写必须延期到独立版本化迁移。
 2. 未跟踪 `EnvironmentMonitoringDashboard.vue` 仍只读未纳管，未修改、未提交、未接入路由。用户需确认最终保留。
@@ -71,8 +73,8 @@ Gate 2 最终结论为 `PASSED`。Codex 对 `04ad5aa` 的 Gate 3+4 独立重审�
 6. Electron 并行安装竞态已通过 `scripts/ensure-electron.mjs` 在 `npm test` 前串行预装关闭。
 7. Operations Ribbon 只展示 manager 配置的既有 Runbook。
 8. `UX-P3-001` 仍为不阻塞的 P3。旧 TLS 双写清理仍按冻结合同延期；二者不是本轮打回原因。
-9. `G34RR-P1-001` 可在 mapper/进度持久化异常时提前释放仍在执行目标的锁；属于危险操作并发安全阻断。
-10. 轻量 Payload 的 service-only cursor、监控降采样硬上限/全区间边界、真实 MariaDB 套件和最终用户流仍有 P2 证据缺口。全部 `G34RR-*` 关闭且 Codex 重审前不得恢复 `PASSED`，不得发布或合并 main。
+9. `G34RR-P1-001`、`G34RR-P2-002`～`G34RR-P2-006` 已全部关闭，没有未关闭 P0/P1/P2。
+10. `dev` 尚未合并 `main`，也未执行正式发布；两者均须用户另行明确授权。
 
 ## 6. 交接模板
 
@@ -628,3 +630,29 @@ Gate 2 最终结论为 `PASSED`。Codex 对 `04ad5aa` 的 Gate 3+4 独立重审�
 - 下一位负责人：Grok / 仅关闭 `G34RR-*` 后交 Codex 独立重审。
 - 下一阶段允许修改范围：仅 operation runner 并发异常语义、轻量 Payload 可续读分页、维护组件拆分/TLS 残留、timeseries 查询/降采样、监控 MariaDB teardown/对账、用户流 fixture/harness 及相应行为测试。
 - 下一阶段禁止修改内容：操作/合并/推送 `main`；删除旧 `tls_*` 表或停止双写；无 ADR 修改冻结合同 Schema/API；修改、删除、暂存或提交未跟踪 `src/client/components/EnvironmentMonitoringDashboard.vue`；提前实现 `UX-P3-001`。
+
+### 2026-08-28 19:13 — Codex / Gate 3+4 G34RR 一次性修正与最终收尾
+
+- 输入 commit：`26c1a01e9dd2e6d66ccf8f250bb14ace499f78ff`（开始时与 `origin/dev` 一致）
+- 输出 commit：待当前实现提交后回填
+- 结论：`PASSED`
+- 分区审查：Phase 2 继续按 `63628c9..75daf80` 独立标准复核；Phase 3 按 `75daf80..f68e0a9` 复核；同时核对 `c26b6c2..8cec107`、`2e787d4..ad983f1`、`2c0b15d..04ad5aa` 及本次 `26c1a01..输出 commit`，没有因后续阶段完成而降低 Phase 2 标准。
+- 关闭结果：
+  1. **`G34RR-P1-001` FIXED**：并发 mapper 异常会停止新调度、等待所有在途 worker 完成，并把单目标异常映射为结果；operation 只在 workers settle 后写终态并释放锁。
+  2. **`G34RR-P2-002` FIXED**：service-only cursor 不再返回不可续读截断；单服务超过 500 deployments 或单个可分页单元仍超过 1 MiB 时明确返回合同允许的 `413 PAYLOAD_TOO_LARGE`，按 service 分页时只裁完整尾部 service。
+  3. **`G34RR-P2-003` FIXED**：deployment card 与 maintenance actions 拆成独立边界；维护告警 composable 删除不可达 TLS 分支，依赖扫描不含 TLS/certificate。
+  4. **`G34RR-P2-004` FIXED**：降采样严格不超过 480 点；gap 超预算时确定性取样并保留首末；timeseries SQL 不再用 `LIMIT 50000` 截断全区间，SQLite/MariaDB 均按桶取受界样本和真实首末。
+  5. **`G34RR-P2-005` FIXED**：监控 harness 明确数据库所有权且只关闭一次；真实 MariaDB 11.4 套件连续两次退出 0，修改 fixture 后复验仍通过，容器均完成清理。
+  6. **`G34RR-P2-006` FIXED**：发布用户流使用受控 SSH server 通过真实生产 route/runner 验证批量部分失败；证书经真实 TLS/SSH 探测和关联 API 完成轮换并断言旧 orphan；NOC 断言 Fullscreen API 真实进入和退出。
+- 额外稳健性修正：overview 对数据库中合法 JSON `null` 快照做对象校验，不再因 `null.disks` 返回 500；对应真实用户流已覆盖。
+- 数据库/API 变化：无 Schema 变化；冻结路由/DTO、旧 `tls_*` 表及兼容双写均保持不变；没有操作 `main`。
+- 测试命令及结果：
+  - 定向行为测试：operation mapper 异常/all-settled、Payload 501+ 与 UTF-8 1 MiB、严格 480 点、维护拆分与依赖扫描均通过。
+  - `VIRON_MONITOR_MYSQL_TEST=1 npx vitest run tests/monitoring-mysql.test.ts`：真实 MariaDB 11.4 套件连续两次通过；最终 fixture 复验再次通过。
+  - `npm run verify:full-regression`：通过；Vitest 174 files passed / 8 skipped，763 tests passed / 10 skipped；四条真实 Given/When/Then 用户流、客户端/服务端构建与桌面启动烟测全部通过，`passiveHoverFocusStable=true`。
+  - `npm run package:current-os`：通过；生成并校验 `/Users/futongyong/project/hyperone/viron/release/Viron-0.1.6-macos-arm64-self-signed.dmg`，arm64、macOS 12.0+、本地自签名，产物未纳入 Git。
+- 未完成内容：无未关闭 P0/P1/P2。`UX-P3-001` 与 `TLS-DUAL-WRITE` 继续作为已批准、非阻塞延期；本轮未提前实施。
+- 受保护草稿：未跟踪 `/Users/futongyong/project/hyperone/viron/src/client/components/EnvironmentMonitoringDashboard.vue` 未修改、未删除、未暂存、未提交。
+- 下一位负责人：用户。如需合并 `main` 或正式发布，须另行明确授权。
+- 下一阶段允许修改范围：无自动后续阶段；只执行用户另行明确授权的合并或发布工作。
+- 下一阶段禁止修改内容：未经用户授权操作/合并/推送 `main`；删除旧 `tls_*` 表或停止双写；无 ADR 修改冻结合同 Schema/API；修改、删除、暂存或提交受保护未跟踪草稿；提前实现 `UX-P3-001`。
