@@ -14,18 +14,20 @@ const {
 </script>
 
 <template>
-  <section class="deployment-grid">
+  <section class="deployment-board">
     <div v-if="payload.canOperate && selectedService.deployments.length" class="deployment-select-all">
       <label><input type="checkbox" :checked="selectedService.deployments.every((item: { id: string }) => selectedDeploymentIds.includes(item.id))" @change="selectAllVisibleDeployments">{{ $t('全选节点') }}</label>
     </div>
-    <MaintenanceDeploymentCard
-      v-for="deployment in selectedService.deployments"
-      :key="deployment.id"
-      :m="m"
-      :deployment="deployment"
-      @open-log="emit('open-log', $event)"
-      @open-ssh="emit('open-ssh', $event)"
-    />
-    <button v-if="payload.canConfigure && !selectedService.deployments.length" class="deployment-empty-action" type="button" @click="openDeploymentCreate()"><Plus :size="18" /><strong>{{ $t('添加部署节点') }}</strong></button>
+    <div class="deployment-grid">
+      <MaintenanceDeploymentCard
+        v-for="deployment in selectedService.deployments"
+        :key="deployment.id"
+        :m="m"
+        :deployment="deployment"
+        @open-log="emit('open-log', $event)"
+        @open-ssh="emit('open-ssh', $event)"
+      />
+      <button v-if="payload.canConfigure && !selectedService.deployments.length" class="deployment-empty-action" type="button" @click="openDeploymentCreate()"><Plus :size="18" /><strong>{{ $t('添加部署节点') }}</strong></button>
+    </div>
   </section>
 </template>

@@ -82,4 +82,21 @@ describe("service discovery layout", () => {
     expect(maintenancePanel).toContain("$t('节点日志')");
     expect(maintenancePanel).toContain('emit(\'open-ssh\'');
   });
+
+  it("keeps deployment cards compact and filling the workspace grid", () => {
+    const card = firstStyleRule(maintenancePanel, ".deployment-card");
+    const metrics = firstStyleRule(maintenancePanel, ".deployment-card__metrics");
+    expect(card).toContain("container-type: inline-size;");
+    expect(card).toContain("display: flex;");
+    expect(card).not.toContain("min-height: 14.5rem;");
+    expect(card).not.toContain("grid-template-rows: auto auto 1fr auto;");
+    expect(metrics).toContain("repeat(2, minmax(0, 1fr))");
+    expect(maintenancePanel).toContain("repeat(auto-fit, minmax(22rem, 1fr))");
+    expect(maintenancePanel).toContain("repeat(4, max-content)");
+    expect(maintenancePanel).not.toContain("repeat(auto-fill, minmax(18rem, 1fr))");
+    expect(maintenancePanel).toContain("class=\"deployment-board\"");
+    expect(maintenancePanel).toContain("showDeploymentIdentity()");
+    expect(maintenancePanel).toContain("deployment-card__body");
+    expect(firstStyleRule(maintenancePanel, ".deployment-select-all")).not.toContain("grid-column: 1 / -1;");
+  });
 });

@@ -135,6 +135,85 @@ describe("service maintenance panel split", () => {
     wrapper.unmount();
   });
 
+  it("renders a docker node card without duplicated identity or stacked host/status fields", async () => {
+    mockedApi.mockImplementation(async (path: string) => {
+      if (String(path).includes("/service-deployments") && !String(path).includes("/actions")) {
+        return {
+          canConfigure: true,
+          canOperate: true,
+          scriptActionsSupported: true,
+          generatedAt: new Date().toISOString(),
+          truncated: false,
+          services: [{
+            id: "svc-1",
+            name: "test",
+            description: "",
+            status: "active",
+            scriptActions: [],
+            logIds: [],
+            deployments: [{
+              id: "dep-1",
+              provider: "docker",
+              displayName: "viron-server",
+              externalId: "viron-server",
+              sshConnectionId: "ssh-1",
+              sshConnectionName: "192.168.5.195",
+              host: "192.168.5.195",
+              status: "running",
+              state: "running",
+              metrics: { cpuUsedPercent: 0, memoryBytes: 257 * 1024 * 1024, uptimeSeconds: 86400, restartCount: null },
+              connectionAvailable: true,
+              capabilities: ["start", "stop", "restart"],
+              capabilityNotes: {},
+              scriptActions: [],
+              lastCheckedAt: "2026-08-29T01:38:53.000Z",
+            }],
+          }],
+          logs: [],
+          discovery: { hosts: [] },
+        };
+      }
+      return { item: { enabled: false } };
+    });
+
+    const wrapper = mount(ServiceMaintenancePanel, {
+      props: { environmentId: "env-1" },
+      global: {
+        plugins: [i18nPlugin],
+        stubs: {
+          "el-button": stubControl(),
+          "el-dialog": { template: "<div class='el-dialog-stub'></div>", props: ["modelValue"] },
+          "el-dropdown": { template: "<div><slot /><slot name='dropdown' /></div>" },
+          "el-dropdown-menu": { template: "<div><slot /></div>" },
+          "el-dropdown-item": { template: "<button><slot /></button>" },
+          "el-form": { template: "<form><slot /></form>" },
+          "el-form-item": { template: "<div><slot /></div>" },
+          "el-input": true,
+          "el-select": true,
+          "el-option": true,
+          "el-switch": true,
+          "el-checkbox": true,
+          "el-checkbox-group": true,
+          "el-radio-group": true,
+          "el-radio-button": true,
+          "el-progress": true,
+          AnimatedCounter: true,
+        },
+      },
+    });
+    await flushPromises();
+    const card = wrapper.find(".deployment-card");
+    expect(card.exists()).toBe(true);
+    expect(card.find(".deployment-card__identity strong").text()).toBe("viron-server");
+    expect(card.find(".deployment-card__identity small").text()).toBe("192.168.5.195");
+    expect(card.find(".deployment-card__identity code").exists()).toBe(false);
+    expect(card.find(".deployment-card__metrics").text()).toMatch(/CPU/);
+    expect(card.find(".deployment-card__metrics").text()).not.toMatch(/SSH 主机|SSH host/);
+    expect(card.find(".deployment-card__metrics").text()).not.toMatch(/服务状态|Service status/);
+    expect(card.find(".deployment-card__ops").exists()).toBe(true);
+    wrapper.unmount();
+  });
+
   it("loads the selected host snapshot and shows monitoring next to discovery", async () => {
     mockedApi.mockImplementation(async (path: string) => {
       if (String(path).includes("/service-deployments") && !String(path).includes("/actions")) {
@@ -203,6 +282,7 @@ describe("service maintenance panel split", () => {
           "el-radio-button": true,
           "el-progress": true,
           AnimatedCounter: true,
+          HostEventCalendar: true,
           HostMonitorDashboard: { template: `<div class="host-monitor-stub">host-charts</div>` },
           ServiceDiscoveryPanel: { template: `<div class="discovery-stub">discovery-list</div>` },
         },
