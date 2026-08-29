@@ -887,19 +887,19 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
 }
 
 .monitor-history__focus {
-  padding: 3px;
+  padding: 2px;
   border: 1px solid var(--ink-100);
-  border-radius: 9px;
+  border-radius: 8px;
   display: flex;
   flex-wrap: wrap;
   gap: 2px;
-  background: color-mix(in srgb, var(--ink-100) 45%, var(--surface));
+  background: var(--ink-50);
 }
 
 .monitor-history__focus button {
-  height: 28px;
-  padding: 0 9px;
-  border: 0;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
   color: var(--ink-600);
@@ -907,9 +907,9 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
   font-weight: 700;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   cursor: pointer;
-  transition: all .16s ease;
+  transition: all .15s ease;
 }
 
 .monitor-history__focus button:hover {
@@ -919,7 +919,8 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
 .monitor-history__focus button.is-active {
   background: var(--surface);
   color: var(--teal-700);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, .06);
+  border-color: var(--teal-200);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .05);
 }
 
 .focus-pill-preview {
@@ -927,35 +928,35 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
   font-size: 10px;
   padding: 1px 4px;
   border-radius: 4px;
-  background: color-mix(in srgb, var(--ink-200) 50%, transparent);
-  color: var(--ink-700);
+  background: var(--ink-100);
+  color: var(--ink-600);
 }
 
 .monitor-history__focus button.is-active .focus-pill-preview {
-  background: var(--teal-100);
-  color: var(--teal-800);
+  background: var(--teal-50);
+  color: var(--teal-700);
 }
 
 .toolbar-right-controls {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .monitor-history__ranges,
 .monitor-history__views {
-  padding: 3px;
+  padding: 2px;
   border: 1px solid var(--ink-100);
-  border-radius: 8px;
+  border-radius: 7px;
   display: flex;
   gap: 2px;
-  background: color-mix(in srgb, var(--ink-100) 45%, var(--surface));
+  background: var(--ink-50);
 }
 
 .monitor-history__ranges button,
 .monitor-history__views button {
-  height: 26px;
-  padding: 0 8px;
+  height: 24px;
+  padding: 0 7px;
   border: 0;
   border-radius: 5px;
   background: transparent;
@@ -979,10 +980,10 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
 }
 
 .monitor-history__refresh {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border: 1px solid var(--ink-100);
-  border-radius: 8px;
+  border-radius: 7px;
   display: grid;
   place-items: center;
   background: var(--surface);

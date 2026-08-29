@@ -368,15 +368,15 @@ function presence(host: MonitoringHostCard) {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
 }
 
 /* 未纳管主机轻量提示横幅 */
 .unmonitored-notice-banner {
-  padding: 10px 14px;
-  border: 1px solid color-mix(in srgb, #f59e0b 35%, var(--ink-100));
-  border-radius: 10px;
-  background: color-mix(in srgb, #fef3c7 40%, var(--surface));
+  padding: 8px 14px;
+  border: 1px solid color-mix(in srgb, #f59e0b 25%, var(--ink-100));
+  border-radius: 9px;
+  background: color-mix(in srgb, #fef3c7 30%, var(--surface));
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -391,8 +391,8 @@ function presence(host: MonitoringHostCard) {
 }
 
 .notice-text {
-  font-size: 12px;
-  color: var(--ink-800);
+  font-size: 11px;
+  color: var(--ink-700);
 }
 
 .notice-text strong {
@@ -409,14 +409,14 @@ function presence(host: MonitoringHostCard) {
 .notice-toggle-btn {
   border: 0;
   padding: 2px 6px;
-  border-radius: 6px;
+  border-radius: 5px;
   background: transparent;
   color: var(--ink-600);
   font-size: 11px;
   font-weight: 650;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   cursor: pointer;
   transition: all .15s ease;
 }
@@ -431,7 +431,7 @@ function presence(host: MonitoringHostCard) {
   padding: 0;
   background: transparent;
   color: var(--teal-700);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   cursor: pointer;
 }
@@ -442,37 +442,37 @@ function presence(host: MonitoringHostCard) {
 
 /* 展开的未安装探针主机抽屉 */
 .unmonitored-hosts-drawer {
-  padding: 14px 16px;
+  padding: 12px 14px;
   border: 1px dashed var(--ink-200);
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--surface);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .drawer-header h4 {
   margin: 0;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 750;
   color: var(--ink-900);
 }
 
 .drawer-header small {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--ink-400);
 }
 
 .unmonitored-hosts-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
-  gap: 10px;
+  gap: 8px;
 }
 
 .unmonitored-host-item {
-  padding: 10px 12px;
+  padding: 8px 12px;
   border: 1px solid var(--ink-100);
-  border-radius: 8px;
+  border-radius: 7px;
   background: var(--ink-50);
   display: flex;
   align-items: center;
@@ -488,9 +488,9 @@ function presence(host: MonitoringHostCard) {
 }
 
 .item-icon {
-  width: 26px;
-  height: 26px;
-  border-radius: 6px;
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
   background: var(--ink-100);
   color: var(--ink-500);
   display: grid;
@@ -502,11 +502,11 @@ function presence(host: MonitoringHostCard) {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 
 .item-text strong {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   color: var(--ink-900);
   overflow: hidden;
@@ -525,13 +525,13 @@ function presence(host: MonitoringHostCard) {
 /* 主机卡片网格 */
 .host-fleet__grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(18.5rem, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
   gap: 12px;
 }
 
 .host-card {
   min-width: 0;
-  padding: 14px 16px;
+  padding: 12px 14px;
   border: 1px solid var(--ink-100);
   border-radius: 12px;
   background: var(--surface);
@@ -540,7 +540,7 @@ function presence(host: MonitoringHostCard) {
   cursor: pointer;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   box-shadow: var(--shadow-sm);
   transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
   position: relative;
@@ -561,12 +561,12 @@ function presence(host: MonitoringHostCard) {
 .host-card:hover {
   transform: translateY(-2px);
   border-color: var(--teal-300);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, .05);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .05);
 }
 
 .host-card.is-active {
   border-color: var(--teal-500);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--teal-500) 25%, transparent), var(--shadow-sm);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--teal-500) 25%, transparent), 0 4px 16px rgba(33, 151, 128, 0.08);
 }
 
 .host-card.is-active::before {
@@ -585,13 +585,13 @@ function presence(host: MonitoringHostCard) {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .host-icon {
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
   background: var(--ink-50);
   color: var(--ink-600);
   display: grid;
@@ -608,7 +608,7 @@ function presence(host: MonitoringHostCard) {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 
 .host-title-group strong {
@@ -621,7 +621,7 @@ function presence(host: MonitoringHostCard) {
 }
 
 .host-title-group small {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--ink-400);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -632,16 +632,16 @@ function presence(host: MonitoringHostCard) {
 .presence-badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 7px;
-  border-radius: 6px;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: 5px;
   font-size: 10px;
   font-weight: 700;
   flex-shrink: 0;
 }
 
 .presence-badge.is-online { background: var(--teal-50); color: var(--teal-700); }
-.presence-badge.is-stale { background: var(--amber-100); color: var(--amber-600); }
+.presence-badge.is-stale { background: var(--amber-100); color: #b45309; }
 .presence-badge.is-offline { background: var(--red-100); color: var(--red-600); }
 .presence-badge.is-missing { background: var(--ink-100); color: var(--ink-500); }
 .presence-badge.is-unknown { background: var(--ink-50); color: var(--ink-400); }
@@ -650,20 +650,20 @@ function presence(host: MonitoringHostCard) {
 .host-card__metrics {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 7px;
 }
 
 .metric-row {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
 }
 
 .metric-info {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 11px;
+  font-size: 10px;
 }
 
 .metric-label {
@@ -674,7 +674,7 @@ function presence(host: MonitoringHostCard) {
 
 .metric-value {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -707,14 +707,14 @@ function presence(host: MonitoringHostCard) {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding-top: 4px;
+  padding-top: 3px;
   border-top: 1px dashed var(--ink-100);
 }
 
 .sub-stat-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   font-family: var(--font-mono);
   font-size: 10px;
   color: var(--ink-500);
@@ -730,7 +730,7 @@ function presence(host: MonitoringHostCard) {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding-top: 6px;
+  padding-top: 5px;
   border-top: 1px solid var(--ink-100);
   font-family: var(--font-mono);
   font-size: 10px;
@@ -738,7 +738,7 @@ function presence(host: MonitoringHostCard) {
 }
 
 .stale-badge {
-  color: #d97706;
+  color: #b45309;
   font-weight: 700;
 }
 
