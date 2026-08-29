@@ -16,9 +16,12 @@ export interface MonitoringHostCard {
   stale: boolean;
   agentVersion: string;
   lastCollectedAt: string | null;
+  lastPulledAt?: string | null;
   cpuUsedPercent: number | null;
   memoryUsedPercent: number | null;
   diskUsedPercent: number | null;
+  networkReceiveBytesPerSecond?: number | null;
+  networkTransmitBytesPerSecond?: number | null;
   temperatureCelsius: number | null;
   operatingSystem: string;
   architecture: string;
@@ -40,6 +43,17 @@ const selected = computed(() => props.hosts.find((host) => host.sshConnectionId 
 
 function formatPercent(value: number | null) {
   return value === null ? "—" : `${value.toFixed(1)}%`;
+}
+
+function formatRate(value: number | null | undefined) {
+  if (value == null) return "—";
+  if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(1)} MB/s`;
+  if (value >= 1024) return `${(value / 1024).toFixed(1)} KB/s`;
+  return `${value.toFixed(0)} B/s`;
+}
+
+function formatCollected(value: string | null | undefined) {
+  return value ? new Date(value).toLocaleTimeString() : "—";
 }
 
 function presence(host: MonitoringHostCard) {
@@ -71,7 +85,11 @@ function presence(host: MonitoringHostCard) {
           <div><dt>CPU</dt><dd>{{ formatPercent(host.cpuUsedPercent) }}</dd></div>
           <div><dt>{{ $t('内存') }}</dt><dd>{{ formatPercent(host.memoryUsedPercent) }}</dd></div>
           <div><dt>{{ $t('磁盘') }}</dt><dd>{{ formatPercent(host.diskUsedPercent) }}</dd></div>
+          <div><dt>{{ $t('网络接收') }}</dt><dd>{{ formatRate(host.networkReceiveBytesPerSecond) }}</dd></div>
+          <div><dt>{{ $t('网络发送') }}</dt><dd>{{ formatRate(host.networkTransmitBytesPerSecond) }}</dd></div>
+          <div><dt>{{ $t('温度') }}</dt><dd>{{ host.temperatureCelsius === null ? '—' : `${host.temperatureCelsius.toFixed(1)}°C` }}</dd></div>
         </dl>
+        <footer><span>Agent {{ host.agentVersion || '—' }}</span><time>{{ $t('采集') }} {{ formatCollected(host.lastCollectedAt) }}</time></footer>
         <span v-if="host.stale" class="host-card__stale">{{ $t('陈旧数据') }}</span>
       </button>
       <div v-if="!hosts.length" class="host-fleet__empty"><Server :size="22" /><strong>{{ $t('暂无监控主机') }}</strong></div>
@@ -116,6 +134,7 @@ function presence(host: MonitoringHostCard) {
 .host-card dl { margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; }
 .host-card dt { color: var(--ink-400); font-size: .625rem; }
 .host-card dd { margin: 0; font-family: var(--font-mono); font-size: .8125rem; }
+.host-card > footer { padding-top: .5rem; border-top: 1px solid var(--ink-100); display: flex; justify-content: space-between; gap: .5rem; color: var(--ink-400); font-family: var(--font-mono); font-size: .625rem; }
 .host-card__stale { color: var(--color-warning); font-size: .6875rem; }
 .host-fleet__empty, .host-fleet__hint, .host-fleet__missing {
   min-height: 8rem; display: flex; align-items: center; justify-content: center; gap: .5rem; color: var(--ink-400);

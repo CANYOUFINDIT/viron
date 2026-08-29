@@ -68,6 +68,8 @@ describe("service discovery layout", () => {
     expect(maintenancePanel).not.toContain("v-model:focus-metric");
     expect(maintenancePanel).toContain("$t('清理监控数据')");
     expect(maintenancePanel).toContain("$t('扫描并拉取')");
+    expect(maintenancePanel).toContain("$t('扫描发现')");
+    expect(maintenancePanel).toContain("$t('配置按钮')");
     expect(maintenancePanel).toContain("$t('刷新')");
     expect(maintenancePanel).toContain("$t('直连 SSH')");
     expect(maintenancePanel).toContain("$t('节点日志')");

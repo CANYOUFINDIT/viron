@@ -29,7 +29,7 @@ const {
       <span>{{ action.name }}</span>
       <RefreshCw v-if="runningScriptActionId === action.id" :size="13" class="is-spinning" />
     </button>
-    <button v-if="payload.canConfigure && !selectedService.scriptActions.length" type="button" class="script-action-add" @click="openScriptActionManager()"><Plus :size="14" />{{ $t('添加功能按钮') }}</button>
+    <button v-if="payload.canConfigure" type="button" class="script-action-add" @click="openScriptActionManager()"><Plus :size="14" />{{ selectedService.scriptActions.length ? $t('配置按钮') : $t('添加功能按钮') }}</button>
   </div>
 
   <div v-if="selectedLogs.length" class="service-log-ribbon">

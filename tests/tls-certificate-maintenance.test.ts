@@ -120,6 +120,15 @@ describe("TLS certificate maintenance", () => {
         payload: { name: "后台", url: "https://app.example.com/admin", description: "", tags: [] },
       });
       expect(web.statusCode).toBe(201);
+      expect(web.json()).toMatchObject({ tlsEndpointId: expect.any(String), tlsProbeReady: true });
+      const endpoint = await app.inject({ method: "GET", url: `/api/v1/tls-endpoints/${web.json().tlsEndpointId}`, cookies });
+      expect(endpoint.statusCode).toBe(200);
+      expect(endpoint.json().item).toMatchObject({
+        host: "app.example.com",
+        port: 443,
+        sshConnectionId: connection.json().id,
+        source: "web_entry",
+      });
       const listed = await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/web-entries`, cookies });
       expect(listed.json().items[0].tls).toEqual(expect.objectContaining({
         endpointId: expect.any(String),

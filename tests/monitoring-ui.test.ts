@@ -44,7 +44,11 @@ describe("monitoring dashboard wiring", () => {
     expect(noc).toContain("<Teleport to=\"body\">");
     expect(noc).toContain("$t('暂无活动告警')");
     expect(noc).toContain("$t('暂无主机矩阵')");
-    expect(noc).toContain("$t('无高负载节点')");
+    expect(noc).toContain("$t('网络吞吐排行')");
+    expect(noc).toContain("$t('存储容量水位')");
+    expect(noc).toContain("noc-donut");
+    expect(noc).toContain("noc-wave");
+    expect(apm).toContain("memorySeries");
     expect(hostDashboard).toContain("$t('前往服务维护')");
     expect(environment).toContain("workspaceQuery.maintenanceServiceId || workspaceQuery.serviceId");
     expect(environment).toContain("workspaceQuery.maintenanceHostId || workspaceQuery.hostId");

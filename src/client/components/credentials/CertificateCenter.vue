@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { RefreshCw, Search, ShieldCheck, Trash2 } from "@lucide/vue";
+import { Link2, Pencil, RefreshCw, Search, Server, ShieldCheck, Trash2 } from "@lucide/vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
@@ -13,7 +13,7 @@ import {
 } from "../../../shared/tls-certificates";
 
 interface EnvironmentOption { id: string; name: string }
-interface SshOption { id: string; name: string; environmentIds: string[] }
+interface SshOption { id: string; name: string; host?: string; environmentIds: string[] }
 const route = useRoute();
 const router = useRouter();
 const loading = ref(false);
@@ -25,6 +25,10 @@ const sshConnections = ref<SshOption[]>([]);
 const query = reactive({ q: "", status: "", environmentId: "", sort: "expiry" as "expiry" | "name" | "updated" });
 const createDialog = ref(false);
 const createForm = reactive({ host: "", port: 443, sni: "", environmentId: "", sshConnectionId: "" as string | null, observeEnabled: true });
+const editDialog = ref(false);
+const editingAsset = ref<SslCertificateAsset | null>(null);
+const editingEndpointId = ref("");
+const editForm = reactive({ host: "", port: 443, sni: "", sshConnectionId: "" as string | null, observeEnabled: true });
 const highlighted = computed(() => String(route.query.fingerprint ?? "").replace(/[^0-9a-f]/gi, "").toLowerCase());
 const batch = reactive({
   running: false,
@@ -41,8 +45,11 @@ const batchBusy = computed(() => batch.running || saving.value);
 const batchCooldownActive = computed(() => cooldownNow.value < batch.cooldownUntil);
 const batchPercent = computed(() => batch.total ? Math.round((batch.current / batch.total) * 100) : 0);
 const batchSummaryText = computed(() => `${tr("正在重新探测 {{0}} / {{1}}", [batch.current, batch.total])} · ${tr("成功 {{0}}", [batch.succeeded])} · ${tr("失败 {{0}}", [batch.failed])}`);
+const certificateCount = computed(() => summary.value.total);
 
 const sshOptions = computed(() => sshConnections.value.filter((item) => !createForm.environmentId || item.environmentIds.includes(createForm.environmentId)));
+const editingEndpoint = computed(() => editingAsset.value?.endpoints.find((item) => item.id === editingEndpointId.value) ?? null);
+const editSshOptions = computed(() => sshConnections.value.filter((item) => !editingEndpoint.value || item.environmentIds.includes(editingEndpoint.value.environmentId)));
 
 async function load() {
   loading.value = true;
@@ -101,6 +108,55 @@ async function createEndpoint() {
     await load();
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : tr("登记探测端点失败"));
+  } finally {
+    saving.value = false;
+  }
+}
+
+function environmentName(environmentId: string) {
+  return environments.value.find((item) => item.id === environmentId)?.name ?? tr("未知环境");
+}
+
+function loadEditForm() {
+  const endpoint = editingEndpoint.value;
+  if (!endpoint) return;
+  Object.assign(editForm, {
+    host: endpoint.host,
+    port: endpoint.port,
+    sni: endpoint.sni,
+    sshConnectionId: endpoint.sshConnectionId ?? "",
+    observeEnabled: endpoint.observeEnabled,
+  });
+}
+
+function openEndpointEdit(asset: SslCertificateAsset, endpointId = asset.endpoints[0]?.id ?? "") {
+  if (!endpointId) return openCreate();
+  editingAsset.value = asset;
+  editingEndpointId.value = endpointId;
+  loadEditForm();
+  editDialog.value = true;
+}
+
+async function saveEndpoint() {
+  const endpoint = editingEndpoint.value;
+  if (!endpoint || !editForm.host.trim()) return ElMessage.warning(tr("请填写探测主机"));
+  saving.value = true;
+  try {
+    await api(`/api/v1/tls-endpoints/${endpoint.id}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        host: editForm.host,
+        port: editForm.port,
+        sni: editForm.sni,
+        sshConnectionId: editForm.sshConnectionId || null,
+        observeEnabled: editForm.observeEnabled,
+      }),
+    });
+    editDialog.value = false;
+    ElMessage.success(tr("证书探测端点已更新"));
+    await load();
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : tr("更新证书探测端点失败"));
   } finally {
     saving.value = false;
   }
@@ -254,7 +310,7 @@ onMounted(async () => {
 });
 onUnmounted(stopCooldownTimer);
 
-defineExpose({ openCreate, probeAll, retryFailed, batchBusy });
+defineExpose({ openCreate, probeAll, retryFailed, batchBusy, certificateCount });
 </script>
 
 <template>
@@ -263,7 +319,8 @@ defineExpose({ openCreate, probeAll, retryFailed, batchBusy });
       <article><strong>{{ summary.total }}</strong><span>{{ $t('总证书数') }}</span></article>
       <article class="is-valid"><strong>{{ summary.valid }}</strong><span>{{ $t('正常有效') }}</span></article>
       <article class="is-expiring"><strong>{{ summary.expiring }}</strong><span>{{ $t('即将到期') }}</span></article>
-      <article class="is-expired"><strong>{{ summary.expired + summary.error }}</strong><span>{{ $t('已过期 / 异常') }}</span></article>
+      <article class="is-expired"><strong>{{ summary.expired }}</strong><span>{{ $t('已过期') }}</span></article>
+      <article class="is-attention"><strong>{{ summary.orphan + summary.error }}</strong><span>{{ $t('待关联 / 探测异常') }}</span></article>
     </section>
 
     <div v-if="batch.total" class="cert-batch-progress" role="status" :aria-busy="batch.running" data-testid="certificate-batch-progress">
@@ -327,8 +384,18 @@ defineExpose({ openCreate, probeAll, retryFailed, batchBusy });
           <li v-for="entry in asset.webEntries" :key="entry.id">{{ entry.environmentName }} · {{ entry.name }} ({{ entry.url }})</li>
         </ul>
         <p v-else>{{ $t('待关联 Web 入口') }}</p>
+        <section class="cert-bindings">
+          <header><span><Server :size="14" />{{ $t('探测端点与 SSH 主机') }}</span><small>{{ asset.endpoints.length }}</small></header>
+          <button v-for="endpoint in asset.endpoints" :key="endpoint.id" type="button" @click="openEndpointEdit(asset, endpoint.id)">
+            <span><strong>{{ endpoint.host }}:{{ endpoint.port }}</strong><small>{{ environmentName(endpoint.environmentId) }}<template v-if="endpoint.sni"> · SNI {{ endpoint.sni }}</template></small></span>
+            <em :class="{ 'is-unbound': !endpoint.sshConnectionId }">{{ endpoint.sshConnectionName || $t('未绑定 SSH 主机') }}</em>
+            <Pencil :size="13" />
+          </button>
+          <p v-if="!asset.endpoints.length">{{ $t('当前证书没有可维护的探测端点') }}</p>
+        </section>
         <footer>
           <el-button text :loading="batchBusy" :disabled="batch.running" @click="probeAsset(asset)"><RefreshCw :size="14" />{{ $t('重新探测全部端点') }}</el-button>
+          <el-button text @click="openEndpointEdit(asset)"><Link2 :size="14" />{{ asset.endpoints.length ? $t('编辑/绑定') : $t('添加探测端点') }}</el-button>
           <el-button text class="is-danger" @click="removeAsset(asset)"><Trash2 :size="14" />{{ $t('删除证书记录') }}</el-button>
         </footer>
       </article>
@@ -360,18 +427,39 @@ defineExpose({ openCreate, probeAll, retryFailed, batchBusy });
         <el-button type="primary" :loading="saving" @click="createEndpoint">{{ $t('开始探测') }}</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="editDialog" align-center class="envman-dialog" :title="$t('编辑/绑定证书探测端点')" width="600px">
+      <el-form label-position="top" class="dialog-form-grid">
+        <el-form-item v-if="(editingAsset?.endpoints.length || 0) > 1" :label="$t('探测端点')" class="form-span-2">
+          <el-select v-model="editingEndpointId" style="width:100%" @change="loadEditForm">
+            <el-option v-for="item in editingAsset?.endpoints || []" :key="item.id" :label="`${environmentName(item.environmentId)} · ${item.host}:${item.port}`" :value="item.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item :label="$t('探测主机')" required><el-input v-model="editForm.host" /></el-form-item>
+        <el-form-item :label="$t('端口')"><el-input-number v-model="editForm.port" :min="1" :max="65535" /></el-form-item>
+        <el-form-item label="SNI"><el-input v-model="editForm.sni" :placeholder="$t('可留空，默认使用主机名')" /></el-form-item>
+        <el-form-item :label="$t('SSH 探测主机')">
+          <el-select v-model="editForm.sshConnectionId" clearable filterable style="width:100%" :placeholder="$t('选择当前环境中的 SSH 主机')">
+            <el-option v-for="item in editSshOptions" :key="item.id" :label="item.host ? `${item.name} · ${item.host}` : item.name" :value="item.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item :label="$t('证书观察')"><el-switch v-model="editForm.observeEnabled" /></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="editDialog = false">{{ $t('取消') }}</el-button><el-button type="primary" :loading="saving" @click="saveEndpoint">{{ $t('保存绑定') }}</el-button></template>
+    </el-dialog>
   </div>
 </template>
 
 <style scoped>
 .certificate-center { min-width: 0; }
-.cert-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
+.cert-metrics { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 16px; }
 .cert-metrics article { padding: 14px 16px; border: 1px solid var(--ink-100); border-radius: 12px; background: var(--surface); display: grid; gap: 4px; }
 .cert-metrics strong { font-family: var(--font-display); font-size: 22px; color: var(--ink-900); }
 .cert-metrics span { font-size: 11px; color: var(--ink-500); }
 .cert-metrics .is-valid strong { color: var(--teal-700); }
 .cert-metrics .is-expiring strong { color: var(--amber-600, #b46b0d); }
 .cert-metrics .is-expired strong { color: var(--red-600, #b7473f); }
+.cert-metrics .is-attention strong { color: var(--amber-600, #b46b0d); }
 .cert-batch-progress { margin-bottom: 14px; padding: 12px 14px; border: 1px solid var(--ink-100); border-radius: 12px; background: var(--surface); display: grid; gap: 8px; }
 .cert-batch-progress__bar { display: flex; align-items: center; gap: 10px; }
 .cert-batch-progress progress { flex: 1; height: 8px; }
@@ -390,6 +478,16 @@ defineExpose({ openCreate, probeAll, retryFailed, batchBusy });
 .cert-card code { color: var(--teal-700); font-size: 11px; }
 .cert-card p, .cert-card li { margin: 0; color: var(--ink-500); font-size: 12px; }
 .cert-card ul { margin: 0; padding-left: 16px; }
+.cert-bindings { display: grid; gap: 6px; padding: 10px; border: 1px solid var(--ink-100); border-radius: 9px; background: var(--ink-50); }
+.cert-bindings header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.cert-bindings header span { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-700); font-size: 11px; font-weight: 800; }
+.cert-bindings header small { color: var(--ink-400); font-family: var(--font-mono); }
+.cert-bindings button { width: 100%; padding: 8px 9px; border: 1px solid var(--ink-100); border-radius: 8px; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 9px; background: var(--surface); color: inherit; text-align: left; cursor: pointer; }
+.cert-bindings button:hover { border-color: var(--teal-300); }
+.cert-bindings button > span { min-width: 0; display: grid; gap: 2px; }
+.cert-bindings button strong { overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); font-size: 11px; white-space: nowrap; }
+.cert-bindings button small, .cert-bindings button em { color: var(--ink-400); font-size: 10px; font-style: normal; }
+.cert-bindings button em.is-unbound { color: var(--amber-600, #b46b0d); }
 .cert-card footer { display: flex; gap: 8px; }
 .cert-card .is-danger { color: var(--red-500); }
 .cert-empty { padding: 48px 20px; border: 1px dashed var(--ink-200); border-radius: 12px; text-align: center; color: var(--ink-500); }

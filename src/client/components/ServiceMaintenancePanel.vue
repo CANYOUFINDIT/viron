@@ -313,6 +313,7 @@ onBeforeUnmount(() => {
           <span v-if="!attentionItems.length" class="is-quiet"><i class="is-green"></i><strong>{{ runningDeployments }}</strong><small>{{ $t('运行节点') }}</small></span>
         </div>
         <div v-if="payload.canConfigure" class="maintenance-toolbar__actions">
+          <el-button :type="activeWorkspace === 'host' ? 'primary' : 'default'" plain @click="openWorkspaceTab('host')"><ScanSearch :size="16" />{{ $t('扫描发现') }} ({{ payload.hosts.reduce((sum, host) => sum + (host.candidateCount ?? host.candidates.length), 0) }})</el-button>
           <el-button :type="payload.alertSettings.enabled ? 'warning' : 'default'" plain @click="openAlertSettings"><BellRing :size="16" />{{ $t('告警设置') }}</el-button>
           <el-button v-if="activeWorkspace === 'service'" type="primary" @click="openServiceCreate()"><Plus :size="16" />{{ $t('录入服务') }}</el-button>
         </div>

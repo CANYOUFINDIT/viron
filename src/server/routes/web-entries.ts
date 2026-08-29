@@ -9,7 +9,7 @@ import { tlsWebEntryBadge } from "../../shared/tls-certificates.js";
 import { monitorAlertSettingsForEnvironment } from "../monitor-alerts.js";
 import { hasExactIds } from "../../shared/tab-order.js";
 import { requireAdmin } from "./auth.js";
-import { listTlsEndpoints, removeWebEntryTlsEndpoint, syncWebEntryTlsEndpoint } from "../tls-certificates.js";
+import { getTlsEndpoint, listTlsEndpoints, removeWebEntryTlsEndpoint, syncWebEntryTlsEndpoint } from "../tls-certificates.js";
 
 const entrySchema = z.object({
   name: z.string().trim().min(1).max(120),
@@ -110,7 +110,8 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
         now,
         now,
       );
-      await syncWebEntryTlsEndpoint(app, request.params.environmentId, id, body.url);
+      const tlsEndpointId = await syncWebEntryTlsEndpoint(app, request.params.environmentId, id, body.url);
+      const tlsEndpoint = tlsEndpointId ? await getTlsEndpoint(app, tlsEndpointId) : null;
       await writeAudit(app.db, {
         action: "web_entry.created",
         resourceType: "web_entry",
@@ -118,7 +119,7 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
         summary: `添加 Web 入口 ${body.name}`,
         request,
       });
-      return reply.code(201).send({ id });
+      return reply.code(201).send({ id, tlsEndpointId, tlsProbeReady: Boolean(tlsEndpoint?.sshConnectionId) });
     },
   );
 
@@ -166,9 +167,10 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
         .run(body.name, body.url, body.description, JSON.stringify(body.tags), new Date().toISOString(), request.params.id);
       if (!result.changes) return reply.code(404).send({ error: "NOT_FOUND", message: "Web 入口不存在" });
       await Promise.all(credentials.map((credential) => app.webAccountViews.sleepCredential(credential.id)));
-      await syncWebEntryTlsEndpoint(app, environmentId, request.params.id, body.url);
+      const tlsEndpointId = await syncWebEntryTlsEndpoint(app, environmentId, request.params.id, body.url);
+      const tlsEndpoint = tlsEndpointId ? await getTlsEndpoint(app, tlsEndpointId) : null;
       await writeAudit(app.db, { action: "web_entry.updated", resourceType: "web_entry", resourceId: request.params.id, summary: `更新 Web 入口 ${body.name}`, request });
-      return { ok: true };
+      return { ok: true, tlsEndpointId, tlsProbeReady: Boolean(tlsEndpoint?.sshConnectionId) };
     },
   );
 

@@ -25,7 +25,7 @@ interface SshKeyItem {
 
 const route = useRoute();
 const router = useRouter();
-const certificateCenter = ref<{ openCreate: () => void; probeAll: () => Promise<void>; batchBusy: boolean } | null>(null);
+const certificateCenter = ref<{ openCreate: () => void; probeAll: () => Promise<void>; batchBusy: boolean; certificateCount: number } | null>(null);
 const activeTab = computed(() => route.query.tab === "ssl" ? "ssl" : "ssh");
 const loading = ref(true);
 const saving = ref(false);
@@ -204,7 +204,7 @@ onMounted(load);
     <p class="vault-subtitle">{{ $t('集中管理工作空间内的 SSH 连接私钥与 SSL/TLS 域名证书资产') }}</p>
     <nav class="vault-tabs" role="tablist">
       <button type="button" role="tab" :aria-selected="activeTab === 'ssh'" :class="{ 'is-active': activeTab === 'ssh' }" @click="selectTab('ssh')">{{ $t('SSH 密钥') }} ({{ keys.length }})</button>
-      <button type="button" role="tab" :aria-selected="activeTab === 'ssl'" :class="{ 'is-active': activeTab === 'ssl' }" @click="selectTab('ssl')">{{ $t('SSL/TLS 证书') }}</button>
+      <button type="button" role="tab" :aria-selected="activeTab === 'ssl'" :class="{ 'is-active': activeTab === 'ssl' }" @click="selectTab('ssl')">{{ $t('SSL/TLS 证书') }} ({{ certificateCenter?.certificateCount ?? 0 }})</button>
     </nav>
     <CertificateCenter v-show="activeTab === 'ssl'" ref="certificateCenter" />
     <div v-show="activeTab === 'ssh'">

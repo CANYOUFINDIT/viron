@@ -47,9 +47,22 @@ const cpuSeries = computed(() => [{
   color: "#397ea8",
   values: props.points.map((point) => point.cpuUsedPercent),
 }]);
+const memorySeries = computed(() => [{
+  key: "memory",
+  label: "MEM",
+  color: "#6c8e58",
+  values: props.points.map((point) => point.memoryBytes),
+}]);
 
 function formatPercent(value: number | null) {
   return value === null ? "—" : `${value.toFixed(1)}%`;
+}
+
+function formatBytes(value: number | null) {
+  if (value === null) return "—";
+  if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(1)} GB`;
+  if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(0)} MB`;
+  return `${(value / 1024).toFixed(0)} KB`;
 }
 </script>
 
@@ -60,7 +73,7 @@ function formatPercent(value: number | null) {
         <h3>{{ $t('资源排行') }}</h3>
         <button v-for="service in ranking" :key="service.id" type="button" :class="{ 'is-active': selected?.id === service.id }" @click="emit('select', service)">
           <strong>{{ service.name }}</strong>
-          <small>{{ service.environmentName }} · {{ formatPercent(service.cpuUsedPercent) }}</small>
+          <small>{{ service.environmentName }} · CPU {{ formatPercent(service.cpuUsedPercent) }} · MEM {{ formatBytes(service.memoryBytes) }}</small>
         </button>
         <p v-if="!ranking.length" class="is-empty">{{ $t('暂无服务时序') }}</p>
       </article>
@@ -68,7 +81,7 @@ function formatPercent(value: number | null) {
         <h3>{{ $t('高负载节点') }}</h3>
         <div v-for="node in problemNodes" :key="String(node.id)" class="problem-node">
           <strong>{{ node.serviceName }} / {{ String(node.name ?? "") }}</strong>
-          <small>{{ String(node.sshConnectionName ?? "") }} · CPU {{ formatPercent(typeof node.cpuUsedPercent === "number" ? node.cpuUsedPercent : null) }}</small>
+          <small>{{ String(node.sshConnectionName ?? "") }} · CPU {{ formatPercent(typeof node.cpuUsedPercent === "number" ? node.cpuUsedPercent : null) }} · {{ $t('重启') }} {{ Number(node.restartCount ?? 0) }}</small>
           <button type="button" class="problem-node__inspect" @click="emit('inspect', node)">{{ $t('立即排查') }}</button>
         </div>
         <p v-if="!problemNodes.length" class="is-empty">{{ $t('暂无服务时序') }}</p>
@@ -92,6 +105,15 @@ function formatPercent(value: number | null) {
       :points="points"
       :series="cpuSeries"
       format="percent"
+    />
+    <MonitorTimeSeriesChart
+      v-if="selected && points.length"
+      :title="$t('{{0}} · 内存消耗', [selected.name])"
+      :subtitle="loadingTimeseries ? $t('正在读取监控历史') : selected.environmentName"
+      :icon="Activity"
+      :points="points"
+      :series="memorySeries"
+      format="bytes"
     />
     <div v-else class="service-apm__empty"><CircleAlert :size="18" />{{ $t('暂无服务时序') }}</div>
   </section>

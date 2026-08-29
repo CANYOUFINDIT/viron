@@ -625,7 +625,8 @@ async function cleanupOrphanWebEntryEndpoints(app: FastifyInstance, endpointIds:
   }
 }
 
-export async function syncWebEntryTlsEndpoint(app: FastifyInstance, environmentId: string, webEntryId: string, url: string): Promise<void> {
+export async function syncWebEntryTlsEndpoint(app: FastifyInstance, environmentId: string, webEntryId: string, url: string): Promise<string | null> {
+  let linkedEndpointId: string | null = null;
   await app.db.transaction(async () => {
     const previous = await unlinkWebEntry(app, webEntryId);
     const origin = parseHttpsOrigin(url);
@@ -645,8 +646,10 @@ export async function syncWebEntryTlsEndpoint(app: FastifyInstance, environmentI
       });
     }
     await linkWebEntry(app, endpointId, webEntryId);
+    linkedEndpointId = endpointId;
     await cleanupOrphanWebEntryEndpoints(app, previous.filter((id) => id !== endpointId));
   })();
+  return linkedEndpointId;
 }
 
 export async function removeWebEntryTlsEndpoint(app: FastifyInstance, webEntryId: string): Promise<void> {
