@@ -180,6 +180,14 @@ async function startSshServer() {
             stream.write(JSON.stringify(payload));
           }
           else if (info.command.includes("viron-monitor clear")) stream.write('{"ok":true,"cleared":{"samples":12,"gaps":2}}\n');
+          else if (info.command.includes("systemctl restart") && info.command.includes("viron-monitor")) {
+            if (!state.monitorInstalled) {
+              stream.exit(127);
+              stream.end();
+              return;
+            }
+            stream.write("monitor restarted\n");
+          }
           else if (info.command.includes("systemctl restart")) stream.write("restart requested\n");
           stream.exit(0);
           stream.end();
@@ -552,6 +560,11 @@ describe("service maintenance", () => {
       const cleared = await app.inject({ method: "POST", url: `/api/v1/environments/${environmentId}/monitor-hosts/${connectionId}/clear`, cookies });
       expect(cleared.statusCode).toBe(200);
       expect(cleared.json()).toMatchObject({ ok: true, cleared: { samples: 12, gaps: 2 } });
+
+      const restartedMonitor = await app.inject({ method: "POST", url: `/api/v1/environments/${environmentId}/monitor-hosts/${connectionId}/restart`, cookies });
+      expect(restartedMonitor.statusCode).toBe(200);
+      expect(restartedMonitor.json()).toMatchObject({ ok: true });
+      expect(ssh.commands.some((command) => command.includes("systemctl restart viron-monitor"))).toBe(true);
       expect(await app.db.prepare("SELECT COUNT(*) AS count FROM monitor_samples WHERE ssh_connection_id = ?").get(connectionId)).toEqual({ count: 1 });
 
       expect((await app.inject({
@@ -597,6 +610,9 @@ describe("service maintenance", () => {
       const missing = await app.inject({ method: "POST", url: `/api/v1/environments/${environmentId}/monitor-hosts/${connectionId}/refresh`, cookies });
       expect(missing.statusCode).toBe(200);
       expect(missing.json().item).toMatchObject({ status: "missing", host: null, candidates: [] });
+      const missingRestart = await app.inject({ method: "POST", url: `/api/v1/environments/${environmentId}/monitor-hosts/${connectionId}/restart`, cookies });
+      expect(missingRestart.statusCode).toBe(409);
+      expect(missingRestart.json()).toMatchObject({ error: "MONITOR_NOT_INSTALLED" });
       const missingWorkspace = await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/maintenance`, cookies });
       expect(missingWorkspace.json().discovery.hosts[0]).toMatchObject({ monitorStatus: "missing" });
     } finally {

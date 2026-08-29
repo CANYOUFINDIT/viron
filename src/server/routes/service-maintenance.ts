@@ -14,6 +14,7 @@ import {
   MonitorInstallError,
   normalizeMonitorInstallPath,
   preflightMonitorInstallation,
+  restartMonitorServiceCommand,
 } from "../monitor-installer.js";
 import { MonitorInstallTaskConflictError, sanitizeMonitorInstallOutput, type MonitorInstallTaskReporter } from "../monitor-install-task-manager.js";
 import { parseBody } from "../validation.js";
@@ -1251,6 +1252,83 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
         const message = error instanceof Error ? error.message : "Kubernetes 配置已保存，但立即扫描失败";
         await writeAudit(app.db, { action: "monitor_host.kubernetes_contexts_updated", resourceType: "ssh_connection", resourceId: connection.id, summary: `更新 Kubernetes 扫描配置 ${connection.name}`, details: { selectedContexts: body.selections.length, durationMs: Date.now() - started, monitorWarning: message }, request });
         return { ok: true, monitorWarning: message };
+      }
+    },
+  );
+
+  app.post<{ Params: { environmentId: string; connectionId: string } }>(
+    "/api/v1/environments/:environmentId/monitor-hosts/:connectionId/restart",
+    { preHandler: requireAdmin },
+    async (request, reply) => {
+      if (!requireManager(request, reply)) return;
+      if (!await canAccessEnvironment(app.db, request.admin!, request.params.environmentId)) return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
+      const connection = await connectionBelongsToEnvironment(app, request.params.connectionId, request.params.environmentId);
+      if (!connection || !await canAccessConnection(app.db, request.admin!, "ssh", connection.id)) return reply.code(404).send({ error: "SSH_CONNECTION_NOT_FOUND", message: "SSH 连接不存在" });
+      const started = Date.now();
+      try {
+        const result = await executeSshCommand(app, connection.id, restartMonitorServiceCommand(), { timeoutMs: 60_000, maxBytes: 64 * 1024 });
+        if (result.exitCode === 127) {
+          const message = "目标机器尚未安装 viron-monitor";
+          await writeAudit(app.db, {
+            action: "monitor_host.restart_failed",
+            resourceType: "ssh_connection",
+            resourceId: connection.id,
+            summary: `重启监控服务 ${connection.name} 失败`,
+            details: { message, durationMs: Date.now() - started },
+            request,
+          });
+          return reply.code(409).send({ error: "MONITOR_NOT_INSTALLED", message });
+        }
+        if (result.exitCode === 126) {
+          const message = "SSH 用户必须是 root 或具有免密 sudo 才能重启监控服务";
+          await writeAudit(app.db, {
+            action: "monitor_host.restart_failed",
+            resourceType: "ssh_connection",
+            resourceId: connection.id,
+            summary: `重启监控服务 ${connection.name} 失败`,
+            details: { message, durationMs: Date.now() - started },
+            request,
+          });
+          return reply.code(422).send({ error: "MONITOR_RESTART_PRIVILEGE_REQUIRED", message });
+        }
+        if (result.exitCode !== 0) {
+          const message = (result.stderr.trim() || result.stdout.trim() || "重启 viron-monitor 失败").slice(0, 500);
+          throw new Error(message);
+        }
+        try {
+          const monitor = await syncMonitorHost(app, connection.id, true);
+          await writeAudit(app.db, {
+            action: "monitor_host.restarted",
+            resourceType: "ssh_connection",
+            resourceId: connection.id,
+            summary: `重启监控服务 ${connection.name}`,
+            details: { status: monitor.status, durationMs: Date.now() - started },
+            request,
+          });
+          return { ok: true, item: monitor };
+        } catch (error) {
+          const monitorWarning = error instanceof Error ? error.message : "监控服务已重启，但立即扫描失败";
+          await writeAudit(app.db, {
+            action: "monitor_host.restarted",
+            resourceType: "ssh_connection",
+            resourceId: connection.id,
+            summary: `重启监控服务 ${connection.name}`,
+            details: { durationMs: Date.now() - started, monitorWarning },
+            request,
+          });
+          return { ok: true, monitorWarning };
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "重启监控服务失败";
+        await writeAudit(app.db, {
+          action: "monitor_host.restart_failed",
+          resourceType: "ssh_connection",
+          resourceId: connection.id,
+          summary: `重启监控服务 ${connection.name} 失败`,
+          details: { message: message.slice(0, 500), durationMs: Date.now() - started },
+          request,
+        });
+        return reply.code(502).send({ error: "MONITOR_RESTART_FAILED", message });
       }
     },
   );

@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildApp } from "../src/server/app.js";
 import type { AppConfig } from "../src/server/config.js";
 import { ensureAdmin, openDatabase } from "../src/server/database.js";
-import { MonitorInstallError, normalizeMonitorInstallPath } from "../src/server/monitor-installer.js";
+import { MonitorInstallError, normalizeMonitorInstallPath, restartMonitorServiceCommand } from "../src/server/monitor-installer.js";
 import { sanitizeMonitorInstallOutput } from "../src/server/monitor-install-task-manager.js";
 import { PRODUCT_VERSION } from "../src/server/product-info.js";
 
@@ -278,6 +278,15 @@ describe("monitor installer", () => {
   it("redacts credentials from installation output", () => {
     expect(sanitizeMonitorInstallOutput("password=hunter2 token=abc Bearer xyz https://user:pass@example.test"))
       .toBe("password=[已隐藏] token=[已隐藏] Bearer [已隐藏] https://user:[已隐藏]@example.test");
+  });
+
+  it("restarts viron-monitor with root or passwordless sudo and fails closed when missing", () => {
+    const command = restartMonitorServiceCommand();
+    expect(command).toContain("command -v viron-monitor");
+    expect(command).toContain("systemctl restart viron-monitor");
+    expect(command).toContain("sudo -n systemctl restart viron-monitor");
+    expect(command).toContain("exit 127");
+    expect(command).toContain("exit 126");
   });
 
   it("accepts only normalized installation directories below /opt", () => {
