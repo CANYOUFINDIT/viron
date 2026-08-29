@@ -575,7 +575,8 @@ onBeforeUnmount(() => {
   background: var(--surface);
 }
 .maintenance-batch-bar strong { margin-right: auto; font-size: .8125rem; }
-.deployment-select-all { grid-column: 1 / -1; display: flex; align-items: center; gap: .5rem; color: var(--ink-500); font-size: .75rem; }
+.deployment-board { min-width: 0; display: grid; gap: var(--space-sm); }
+.deployment-select-all { display: flex; align-items: center; gap: .5rem; color: var(--ink-500); font-size: .75rem; }
 .deployment-select { display: inline-flex; align-items: center; margin-right: .375rem; }
 .maintenance-console {
   --ops-green: var(--color-accent-strong);
@@ -1041,8 +1042,8 @@ onBeforeUnmount(() => {
 .service-stage__actions > button:not(.el-button),
 .deployment-card__tools button,
 .deployment-card footer button {
-  width: 2.25rem;
-  height: 2.25rem;
+  width: 2rem;
+  height: 2rem;
   padding: 0;
   border: 1px solid var(--color-rule);
   border-radius: var(--radius-control);
@@ -1053,6 +1054,7 @@ onBeforeUnmount(() => {
   cursor: pointer;
   transition: background-color var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out), transform var(--dur-micro) var(--ease-out);
 }
+.service-stage__actions > button:not(.el-button) { width: 2.25rem; height: 2.25rem; }
 .service-stage__actions > button:not(.el-button):active,
 .deployment-card__tools button:active,
 .deployment-card footer button:active { transform: translateY(1px); }
@@ -1113,21 +1115,22 @@ onBeforeUnmount(() => {
 }
 .service-log-ribbon button:active { transform: translateY(1px); }
 .service-log-ribbon button small { margin-inline-start: var(--space-2xs); color: var(--color-muted); }
-.deployment-grid { padding-block-start: var(--space-md); display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-sm); }
+.deployment-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-sm); }
 .deployment-card {
+  container-type: inline-size;
   min-width: 0;
-  min-height: 14.5rem;
-  padding: var(--space-md);
+  padding: .875rem 1rem;
   border: 1px solid var(--color-rule);
   border-radius: var(--radius-card);
-  display: grid;
-  grid-template-rows: auto auto 1fr auto;
+  display: flex;
+  flex-direction: column;
+  gap: .75rem;
   background: var(--color-paper);
   color: var(--color-ink);
-  box-shadow: none;
 }
-.deployment-card > header { display: flex; align-items: center; gap: var(--space-xs); }
+.deployment-card > header { min-width: 0; display: flex; align-items: center; gap: var(--space-xs); }
 .deployment-provider {
+  flex: none;
   padding: var(--space-2xs) var(--space-xs);
   border-radius: var(--radius-control);
   background: var(--color-rule);
@@ -1137,28 +1140,34 @@ onBeforeUnmount(() => {
   font-weight: 700;
   line-height: 1;
 }
-.deployment-status { display: inline-flex; align-items: center; gap: var(--space-2xs); color: var(--color-muted); font-size: var(--text-xs); }
-.deployment-status i { width: .375rem; height: .375rem; border-radius: 50%; background: currentColor; }
+.deployment-status { min-width: 0; display: inline-flex; align-items: center; gap: var(--space-2xs); overflow: hidden; color: var(--color-muted); font-size: var(--text-xs); text-overflow: ellipsis; white-space: nowrap; }
+.deployment-status i { width: .375rem; height: .375rem; flex: none; border-radius: 50%; background: currentColor; }
 .deployment-card.is-running .deployment-status { color: var(--ops-green); }
 .deployment-card.is-degraded .deployment-status,
 .deployment-card.is-stopped .deployment-status { color: var(--ops-amber); }
-.deployment-card__tools { margin-inline-start: auto; display: flex; gap: var(--space-2xs); }
-.deployment-card__tools button { width: 2rem; height: 2rem; border-color: transparent; background: transparent; }
-.deployment-card__identity { min-width: 0; padding-block: var(--space-md) var(--space-sm); display: grid; gap: var(--space-2xs); }
-.deployment-card__identity strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-base); }
-.deployment-card code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-muted); font-family: var(--font-mono); font-size: var(--text-2xs); line-height: 1.35; }
-.deployment-card dl { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-sm); }
-.deployment-card dl div { min-width: 0; }
-.deployment-card dt { margin-block-end: var(--space-2xs); color: var(--color-muted); font-size: var(--text-2xs); }
-.deployment-card dd { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
-.deployment-script-actions { margin-block-start: var(--space-sm); display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-xs); }
+.deployment-card__tools { margin-inline-start: auto; display: flex; flex: none; gap: var(--space-2xs); }
+.deployment-card__body { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: .75rem 1.25rem; }
+.deployment-card__identity { min-width: 0; display: grid; gap: .125rem; }
+.deployment-card__identity strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); font-weight: 750; }
+.deployment-card__identity small,
+.deployment-card__identity code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-muted); font-size: var(--text-2xs); line-height: 1.35; }
+.deployment-card__identity code { font-family: var(--font-mono); }
+.deployment-card__metrics { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: .5rem .75rem; }
+@container (min-width: 36rem) {
+  .deployment-card__body { grid-template-columns: minmax(8rem, max-content) minmax(0, 1fr); align-items: start; }
+  .deployment-card__identity { max-width: 16rem; }
+  .deployment-card__metrics { grid-template-columns: repeat(4, max-content); justify-content: start; column-gap: 1.5rem; }
+}
+.deployment-card__metrics > div { min-width: 0; display: grid; gap: .125rem; }
+.deployment-card__metrics dt { color: var(--color-muted); font-size: var(--text-2xs); line-height: 1.2; }
+.deployment-card__metrics dd { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-xs); font-variant-numeric: tabular-nums; font-weight: 650; }
+.deployment-script-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-xs); }
 .script-action-button.is-node { min-height: 1.875rem; padding-inline: var(--space-xs); background: var(--color-paper-muted); font-size: var(--text-2xs); }
-.deployment-warning { margin: var(--space-xs) 0 0; color: var(--ops-red); font-size: var(--text-xs); }
-.deployment-card > footer { margin-block-start: var(--space-sm); padding-block-start: var(--space-sm); border-block-start: 1px solid var(--color-rule); display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); }
-.deployment-card footer > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-muted); font-size: var(--text-2xs); }
-.deployment-card footer > div { display: flex; gap: var(--space-2xs); }
-.deployment-card footer button { width: 2rem; height: 2rem; }
-.deployment-action-note { min-width: 0; color: var(--color-muted); font-size: var(--text-2xs); text-align: end; }
+.deployment-warning { margin: 0; color: var(--ops-red); font-size: var(--text-xs); }
+.deployment-card > footer { margin-block-start: auto; padding-block-start: .75rem; border-block-start: 1px solid var(--color-rule); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .5rem; }
+.deployment-card footer > span { min-width: 0; flex: 1 1 8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-muted); font-size: var(--text-2xs); }
+.deployment-card footer > div { display: flex; flex: none; gap: var(--space-2xs); margin-inline-start: auto; }
+.deployment-action-note { flex: 1 1 100%; min-width: 0; color: var(--color-muted); font-size: var(--text-2xs); text-align: start; }
 .deployment-empty-action {
   min-height: 3.5rem;
   padding: var(--space-sm) var(--space-md);
@@ -1476,7 +1485,7 @@ onBeforeUnmount(() => {
   .maintenance-workspace:has(.host-observatory) { overflow: hidden; display: flex; flex-direction: column; }
   .maintenance-workspace:has(.host-observatory) > .host-observatory { flex: 1 1 auto; min-height: 0; }
   .maintenance-workspace:has(.host-observatory__pane.is-discovery) { overflow: auto; display: block; }
-  .deployment-grid { grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr)); }
+  .deployment-grid { grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr)); }
 }
 
 @media (min-width: 60rem) {
