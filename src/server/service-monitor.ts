@@ -198,6 +198,8 @@ const preferredPullLimits = new WeakMap<FastifyInstance, Map<string, number>>();
 const monitorStorageNormalizations = new WeakMap<FastifyInstance, Promise<void>>();
 const monitorPullLimit = 20;
 const monitorPullMaxBytes = 16 * 1024 * 1024;
+const monitorPullCatchUpMaxBatches = 40;
+const monitorSampleRetentionMs = 30 * 24 * 60 * 60 * 1000;
 const monitorEnvironmentFile = "/etc/viron-monitor/viron-monitor.env";
 const monitorTransactionAttempts = 3;
 
@@ -274,6 +276,52 @@ async function executeMonitorPull(app: FastifyInstance, connectionId: string, af
   if (result.truncated) throw new Error("viron-monitor 单条数据超过 16 MiB，请检查目标机是否存在异常数量的服务候选");
   appLimits.set(connectionId, limit);
   return result;
+}
+
+async function continueMonitorPull(
+  app: FastifyInstance,
+  connectionId: string,
+  response: z.infer<typeof pullResponseSchema>,
+): Promise<z.infer<typeof pullResponseSchema>> {
+  let current = response;
+  for (let batch = 0; batch < monitorPullCatchUpMaxBatches && current.hasMore; batch += 1) {
+    if (current.samples.length >= 800) break;
+    const continued = await executeMonitorPull(app, connectionId, current.throughSequence, false);
+    if (continued.exitCode !== 0) break;
+    let more: z.infer<typeof pullResponseSchema>;
+    try {
+      more = parsePullOutput(continued.stdout.trim());
+    } catch {
+      break;
+    }
+    current = {
+      ...current,
+      latestSequence: more.latestSequence,
+      throughSequence: more.throughSequence,
+      hasMore: more.hasMore,
+      samples: [...current.samples, ...more.samples],
+      gaps: [...current.gaps, ...more.gaps],
+    };
+    if (!more.samples.length && !more.gaps.length) break;
+  }
+  return current;
+}
+
+async function pruneExpiredMonitorSamples(
+  app: FastifyInstance,
+  agentId: string,
+  workspaceType: string,
+  workspaceId: string,
+): Promise<void> {
+  const cutoff = new Date(Date.now() - monitorSampleRetentionMs).toISOString();
+  await app.db.prepare(`
+    DELETE FROM monitor_samples WHERE agent_id = ? AND collected_at < ?
+      AND ssh_connection_id IN (SELECT id FROM ssh_connections WHERE workspace_type = ? AND workspace_id = ?)
+  `).run(agentId, cutoff, workspaceType, workspaceId);
+  await app.db.prepare(`
+    DELETE FROM monitor_sequence_gaps WHERE agent_id = ? AND ended_at < ?
+      AND ssh_connection_id IN (SELECT id FROM ssh_connections WHERE workspace_type = ? AND workspace_id = ?)
+  `).run(agentId, cutoff, workspaceType, workspaceId);
 }
 
 function parsePullOutput(stdout: string) {
@@ -548,6 +596,11 @@ async function performMonitorHostSync(app: FastifyInstance, connectionId: string
     await markMonitorFailure(app, connectionId, "error", message);
     throw error;
   }
+  try {
+    response = await continueMonitorPull(app, connectionId, response);
+  } catch {
+    // Keep the samples already pulled if catch-up SSH fails.
+  }
 
   return serializeMonitorAgentWork(app, response.agentId, async () => {
     const now = new Date().toISOString();
@@ -659,37 +712,21 @@ async function performMonitorHostSync(app: FastifyInstance, connectionId: string
           deployment.id,
         );
       }
-      const retentionCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-      await app.db.prepare(`
-        DELETE FROM monitor_samples WHERE agent_id = ? AND collected_at < ?
-          AND ssh_connection_id IN (SELECT id FROM ssh_connections WHERE workspace_type = ? AND workspace_id = ?)
-      `).run(response.agentId, retentionCutoff, cursor.workspaceType, cursor.workspaceId);
-      await app.db.prepare(`
-        DELETE FROM monitor_sequence_gaps WHERE agent_id = ? AND ended_at < ?
-          AND ssh_connection_id IN (SELECT id FROM ssh_connections WHERE workspace_type = ? AND workspace_id = ?)
-      `).run(response.agentId, retentionCutoff, cursor.workspaceType, cursor.workspaceId);
     });
 
     try {
-      await evaluateRecentMonitorAlerts(app, response.agentId, cursor.workspaceType, cursor.workspaceId);
+      await pruneExpiredMonitorSamples(app, response.agentId, cursor.workspaceType, cursor.workspaceId);
     } catch (error) {
-      app.log.error({ err: error, agentId: response.agentId }, "monitor alert evaluation failed");
+      app.log.warn({ err: error, agentId: response.agentId }, "monitor sample retention prune failed");
     }
 
+    void evaluateRecentMonitorAlerts(app, response.agentId, cursor.workspaceType, cursor.workspaceId).catch((error) => {
+      app.log.error({ err: error, agentId: response.agentId }, "monitor alert evaluation failed");
+    });
+
     try {
-      const storedAvailabilitySample = latestSample
-        ? { collected_at: latestSample.collectedAt, resolution_seconds: latestSample.resolutionSeconds }
-        : await app.db.prepare(`
-          SELECT s.collected_at, s.resolution_seconds
-          FROM monitor_samples s JOIN ssh_connections c ON c.id = s.ssh_connection_id
-          WHERE s.agent_id = ? AND c.workspace_type = ? AND c.workspace_id = ?
-          ORDER BY s.collected_at DESC, s.sequence_end DESC
-          LIMIT 1
-        `).get(response.agentId, cursor.workspaceType, cursor.workspaceId) as
-          | { collected_at: string; resolution_seconds: number | string }
-          | undefined;
-      const collectedAt = storedAvailabilitySample?.collected_at ?? latestCollectedAt;
-      const resolutionSeconds = Number(storedAvailabilitySample?.resolution_seconds ?? 30);
+      const collectedAt = latestSample?.collectedAt ?? latestCollectedAt;
+      const resolutionSeconds = Number(latestSample?.resolutionSeconds ?? 30);
       const available = monitorSampleIsFresh(now, collectedAt, resolutionSeconds);
       await evaluateMonitorHostAvailability(app, {
         connectionId,

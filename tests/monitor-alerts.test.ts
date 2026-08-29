@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildApp } from "../src/server/app.js";
 import type { AppConfig } from "../src/server/config.js";
 import { ensureAdmin, openDatabase } from "../src/server/database.js";
-import { evaluateMonitorAlertSamples, evaluateMonitorHostAvailability, type MonitorAlertSample } from "../src/server/monitor-alerts.js";
+import { evaluateMonitorAlertSamples, evaluateMonitorHostAvailability, evaluateRecentMonitorAlerts, type MonitorAlertSample } from "../src/server/monitor-alerts.js";
 import { defaultMonitorAlertSettings } from "../src/shared/monitor-alerts.js";
 
 const directories: string[] = [];
@@ -580,6 +580,89 @@ describe("monitor alerts", () => {
       expect(Date.now() - started).toBeLessThan(1_500);
       expect((await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies })).json()).toMatchObject({ unread: 0, items: [] });
       expect((await app.inject({ method: "POST", url: "/api/v1/monitor-alerts/clear-all", cookies })).json()).toMatchObject({ updated: 0 });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("evaluates recent samples for the canonical connection instead of scanning every duplicate host row", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "viron-monitor-alert-canonical-samples-"));
+    directories.push(directory);
+    const config = testConfig(directory);
+    const db = await openDatabase(config);
+    await ensureAdmin(db, config);
+    const app = await buildApp({ config, db, logger: false });
+    try {
+      const login = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { username: "admin", password: config.adminPassword } });
+      const cookies = { envman_session: login.cookies.find((item) => item.name === "envman_session")!.value };
+      const environment = await app.inject({ method: "POST", url: "/api/v1/environments", cookies, payload: { name: "重复连接告警环境" } });
+      const environmentId = environment.json().id as string;
+      const sshPayload = (name: string) => ({
+        environmentId,
+        name,
+        host: "127.0.0.1",
+        port: 22,
+        username: "operator",
+        authType: "password",
+        credential: { password: "monitor-secret" },
+        options: { terminalType: "xterm-256color", keepAliveSeconds: 30, encoding: "utf-8", hostKeySha256: "", loginScriptEnabled: false, loginScript: "" },
+      });
+      const managed = await app.inject({ method: "POST", url: "/api/v1/ssh-connections", cookies, payload: sshPayload("托管主机") });
+      const duplicate = await app.inject({ method: "POST", url: "/api/v1/ssh-connections", cookies, payload: sshPayload("重复主机") });
+      const managedId = managed.json().id as string;
+      const duplicateId = duplicate.json().id as string;
+      const agentId = "5d1f0c3a-2b8e-4d11-9c4a-7a6f0b12e9aa";
+      const now = Date.parse("2026-08-29T12:00:00.000Z");
+      const insertHost = async (connectionId: string, managedFlag: number, collectedAt: string) => {
+        await app.db.prepare(`
+          INSERT INTO monitor_hosts (
+            ssh_connection_id, agent_id, agent_version, protocol_version, status, last_sequence,
+            latest_host_json, latest_candidates_json, latest_kubernetes_configs_json, last_error,
+            last_collected_at, last_pulled_at, install_managed, updated_at
+          ) VALUES (?, ?, '0.1.6', 1, 'ready', 4, ?, '[]', '[]', '', ?, ?, ?, ?)
+        `).run(connectionId, agentId, JSON.stringify({ hostname: "alert-node", cpuUsedPercent: 95 }), collectedAt, collectedAt, managedFlag, collectedAt);
+      };
+      const hotAt = new Date(now).toISOString();
+      const laterCoolAt = new Date(now + 120_000).toISOString();
+      await insertHost(managedId, 1, hotAt);
+      await insertHost(duplicateId, 0, laterCoolAt);
+      const insertSample = async (connectionId: string, sequence: number, collectedAt: string, cpu: number) => {
+        const payload = sample(collectedAt, { cpu, dataDisk: false, deploymentStatus: "running" });
+        await app.db.prepare(`
+          INSERT INTO monitor_samples (
+            ssh_connection_id, agent_id, sequence_start, sequence_end, collected_at,
+            resolution_seconds, payload_json, received_at
+          ) VALUES (?, ?, ?, ?, ?, 30, ?, ?)
+        `).run(connectionId, agentId, sequence, sequence, collectedAt, JSON.stringify(payload), collectedAt);
+      };
+      await insertSample(managedId, 1, new Date(now - 30_000).toISOString(), 95);
+      await insertSample(managedId, 2, hotAt, 95);
+      await insertSample(duplicateId, 3, new Date(now + 90_000).toISOString(), 10);
+      await insertSample(duplicateId, 4, laterCoolAt, 10);
+      const saved = await app.inject({
+        method: "PUT",
+        url: `/api/v1/environments/${environmentId}/monitor-alert-settings`,
+        cookies,
+        payload: {
+          ...defaultMonitorAlertSettings,
+          enabled: true,
+          hostOfflineEnabled: false,
+          cpuEnabled: true,
+          cpuThreshold: 90,
+          memoryEnabled: false,
+          diskUsageEnabled: false,
+          temperatureEnabled: false,
+          deploymentStatusEnabled: false,
+          diskMissingEnabled: false,
+        },
+      });
+      expect(saved.statusCode).toBe(200);
+      const scope = await app.db.prepare("SELECT workspace_type, workspace_id FROM ssh_connections WHERE id = ?").get(managedId) as { workspace_type: string; workspace_id: string };
+      await evaluateRecentMonitorAlerts(app, agentId, scope.workspace_type, scope.workspace_id);
+      const listed = await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies });
+      expect(listed.json().items).toEqual([
+        expect.objectContaining({ ruleType: "cpu", status: "active", targetName: "alert-node" }),
+      ]);
     } finally {
       await app.close();
     }
