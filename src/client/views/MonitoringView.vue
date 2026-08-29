@@ -94,7 +94,12 @@ const selectedHostId = computed(() => String(route.query.hostId ?? ""));
 const selectedServiceId = computed(() => String(route.query.serviceId ?? ""));
 const canOperate = computed(() => ["owner", "admin"].includes(session.workspace?.role ?? ""));
 
+function isMonitoringRoute() {
+  return route.name === "monitoring";
+}
+
 function patchQuery(next: Record<string, string | undefined>) {
+  if (!isMonitoringRoute()) return;
   const query = { ...route.query, ...next };
   for (const key of Object.keys(query)) if (!query[key]) delete query[key];
   void router.replace({ name: "monitoring", query });
@@ -151,7 +156,7 @@ async function loadOverview(silent = false) {
       overviewQuery({ hostLimit: String(MONITORING_HOST_PAGE_SIZE), hostOffset: "0" }),
       { signal },
     );
-    if (signal.aborted) return;
+    if (signal.aborted || !isMonitoringRoute()) return;
     for (const host of first.hosts) seenIds.add(host.sshConnectionId);
     mergeHostPage(first, !silent);
     lastUpdated.value = first.generatedAt;
@@ -159,7 +164,7 @@ async function loadOverview(silent = false) {
     loading.value = false;
     refreshing.value = false;
     void loadAlerts();
-    if (view.value === "hosts" && !selectedHostId.value && first.hosts.length) {
+    if (!silent && isMonitoringRoute() && view.value === "hosts" && !selectedHostId.value && first.hosts.length) {
       const firstMonitored = first.hosts.find((h) => !h.missing) || first.hosts[0];
       if (firstMonitored) patchQuery({ hostId: firstMonitored.sshConnectionId });
     }
@@ -183,14 +188,14 @@ async function loadOverview(silent = false) {
           }),
           { signal },
         );
-        if (signal.aborted) return;
+        if (signal.aborted || !isMonitoringRoute()) return;
         for (const host of page.hosts) seenIds.add(host.sshConnectionId);
         mergeHostPage(page, false);
         lastUpdated.value = page.generatedAt;
       }
     });
     await Promise.all(workers);
-    if (!signal.aborted) mergeHostPage({
+    if (!signal.aborted && isMonitoringRoute()) mergeHostPage({
       ...(overview.value as OverviewPayload),
       hosts: [],
     }, false, seenIds);
@@ -260,7 +265,7 @@ function startRefresh() {
   stopRefresh();
   if (!refreshSeconds.value) return;
   refreshTimer = window.setInterval(() => {
-    if (document.hidden) return;
+    if (document.hidden || !isMonitoringRoute()) return;
     void loadOverview(true);
     if (view.value === "services" && Date.now() - lastTimeseriesAt >= 30_000) void loadTimeseries();
     void loadAlerts();
@@ -268,7 +273,7 @@ function startRefresh() {
 }
 
 function onVisibility() {
-  if (document.hidden) return;
+  if (document.hidden || !isMonitoringRoute()) return;
   void loadOverview(true);
 }
 
@@ -293,8 +298,12 @@ onBeforeUnmount(() => {
   document.removeEventListener("visibilitychange", onVisibility);
 });
 
-watch([environmentId, view], () => { void loadOverview(true); });
+watch([environmentId, view], () => {
+  if (!isMonitoringRoute()) return;
+  void loadOverview(true);
+});
 watch([selectedServiceId, range, view], () => {
+  if (!isMonitoringRoute()) return;
   void loadTimeseries();
 });
 watch(refreshSeconds, () => startRefresh());
