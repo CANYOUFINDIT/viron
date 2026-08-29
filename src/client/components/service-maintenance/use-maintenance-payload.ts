@@ -143,32 +143,35 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
           loading.value = true;
       try {
           const response = await api<MaintenancePayloadResponse>(`/api/v1/environments/${props.environmentId}/service-deployments`);
-          const discoveryHosts = (response.discovery?.hosts ?? []).map((row) => ({
-              sshConnectionId: row.sshConnectionId,
-              connectionName: row.connectionName,
-              host: row.host,
-              port: 0,
-              username: "",
-              connectionAvailable: row.connectionAvailable,
-              monitorStatus: row.monitorStatus,
-              monitorOffline: row.monitorStatus === "error",
-              agentId: "",
-              agentVersion: "",
-              monitorUpdateAvailable: false,
-              protocolVersion: 0,
-              lastSequence: 0,
-              snapshot: null,
-              candidates: payload.value.hosts.find((host) => host.sshConnectionId === row.sshConnectionId)?.candidates ?? [],
-              kubernetesConfigs: payload.value.hosts.find((host) => host.sshConnectionId === row.sshConnectionId)?.kubernetesConfigs ?? [],
-              lastError: "",
-              lastCollectedAt: null,
-              lastPulledAt: null,
-              installPath: "",
-              installArchitecture: "",
-              installManaged: false,
-              installedAt: null,
-              candidateCount: row.candidateCount,
-          }));
+          const discoveryHosts = (response.discovery?.hosts ?? []).map((row) => {
+              const previous = payload.value.hosts.find((host) => host.sshConnectionId === row.sshConnectionId);
+              return {
+                  sshConnectionId: row.sshConnectionId,
+                  connectionName: row.connectionName,
+                  host: previous?.host || row.host,
+                  port: previous?.port ?? 0,
+                  username: previous?.username ?? "",
+                  connectionAvailable: row.connectionAvailable,
+                  monitorStatus: row.monitorStatus,
+                  monitorOffline: row.monitorStatus === "error",
+                  agentId: previous?.agentId ?? "",
+                  agentVersion: previous?.agentVersion ?? "",
+                  monitorUpdateAvailable: previous?.monitorUpdateAvailable ?? false,
+                  protocolVersion: previous?.protocolVersion ?? 0,
+                  lastSequence: previous?.lastSequence ?? 0,
+                  snapshot: previous?.snapshot ?? null,
+                  candidates: previous?.candidates ?? [],
+                  kubernetesConfigs: previous?.kubernetesConfigs ?? [],
+                  lastError: previous?.lastError ?? "",
+                  lastCollectedAt: previous?.lastCollectedAt ?? null,
+                  lastPulledAt: previous?.lastPulledAt ?? null,
+                  installPath: previous?.installPath ?? "",
+                  installArchitecture: previous?.installArchitecture ?? "",
+                  installManaged: previous?.installManaged ?? false,
+                  installedAt: previous?.installedAt ?? null,
+                  candidateCount: row.candidateCount,
+              };
+          });
           payload.value = normalizeMaintenanceScriptActions({
               ...response,
               alertSettings: payload.value.alertSettings,
@@ -455,13 +458,20 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
 
   async function loadHostCandidates(hostId: string) {
       try {
-          const response = await api<{ item: { candidates: MonitorCandidate[]; kubernetesConfigs: KubernetesConfigDiscovery[] } }>(
+          const response = await api<{ item: Partial<MonitorHost> & { candidates: MonitorCandidate[]; kubernetesConfigs: KubernetesConfigDiscovery[] } }>(
               `/api/v1/environments/${props.environmentId}/monitor-hosts/${hostId}/candidates`,
           );
           payload.value = {
               ...payload.value,
               hosts: payload.value.hosts.map((host) => host.sshConnectionId === hostId
-                  ? { ...host, candidates: response.item.candidates, kubernetesConfigs: response.item.kubernetesConfigs }
+                  ? {
+                      ...host,
+                      ...response.item,
+                      sshConnectionId: host.sshConnectionId,
+                      connectionName: response.item.connectionName || host.connectionName,
+                      connectionAvailable: host.connectionAvailable,
+                      candidateCount: host.candidateCount,
+                  }
                   : host),
           };
       } catch {

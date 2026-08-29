@@ -426,6 +426,8 @@ describe("service maintenance", () => {
       const firstCandidates = await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/monitor-hosts/${connectionId}/candidates`, cookies });
       expect(firstCandidates.json().item.candidates).toEqual([expect.objectContaining({ provider: "systemd", externalId: "api.service", status: "running" })]);
       expect(firstCandidates.json().item.kubernetesConfigs).toEqual([expect.objectContaining({ context: "development", selected: false, status: "discovered" })]);
+      expect(firstCandidates.json().item.lastCollectedAt).toEqual(expect.any(String));
+      expect(firstCandidates.json().item.snapshot).toEqual(expect.objectContaining({ hostname: expect.any(String) }));
 
       const configuredKubernetes = await app.inject({
         method: "PUT",
