@@ -56,16 +56,23 @@ describe("service discovery layout", () => {
     expect(discoveryPanel).toContain(".discovery-provider-tabs button { min-height: 2.75rem; }");
   });
 
-  it("removes certificates and host history from the service maintenance page", () => {
+  it("keeps host monitoring charts beside service discovery", () => {
+    expect(maintenancePanel).toContain("HostMonitorDashboard");
+    expect(maintenancePanel).toContain("host-metric-grid");
+    expect(maintenancePanel).toContain("v-model:focus-metric");
+    expect(maintenancePanel).toContain("$t('监控')");
+    expect(maintenancePanel).toContain("$t('服务发现')");
+    expect(maintenancePanel).toContain("hostWorkspaceTab === 'monitor'");
+    expect(maintenancePanel).toContain("hostWorkspaceTab === 'discovery'");
+  });
+
+  it("removes certificates from the service maintenance page", () => {
     expect(maintenancePanel).toContain("maintenance-switcher__primary");
     expect(maintenancePanel).toContain("$t('服务')");
     expect(maintenancePanel).not.toContain("maintenance-switcher__certificate");
     expect(maintenancePanel).not.toContain("$t('证书告警')");
     expect(maintenancePanel).not.toContain("$t('登记证书')");
-    expect(maintenancePanel).not.toContain("HostMonitorDashboard");
     expect(maintenancePanel).not.toContain("DeploymentMonitorDashboard");
-    expect(maintenancePanel).not.toContain("host-metric-grid");
-    expect(maintenancePanel).not.toContain("v-model:focus-metric");
     expect(maintenancePanel).toContain("$t('清理监控数据')");
     expect(maintenancePanel).toContain("$t('扫描并拉取')");
     expect(maintenancePanel).toContain("$t('扫描发现')");

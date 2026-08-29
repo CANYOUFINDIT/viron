@@ -37,13 +37,14 @@ const emit = defineEmits<{ exit: [] }>();
 const root = ref<HTMLElement | null>(null);
 const reducedMotion = ref(false);
 
-const heatHosts = computed(() => props.hosts.slice(0, 48));
+const heatHosts = computed(() => props.hosts.filter((host) => !host.missing).slice(0, 48));
 const networkRanking = computed(() => props.hosts
+  .filter((host) => !host.missing)
   .map((host) => ({ host, total: Number(host.networkReceiveBytesPerSecond ?? 0) + Number(host.networkTransmitBytesPerSecond ?? 0) }))
   .sort((left, right) => right.total - left.total)
   .slice(0, 8));
 const storageWarnings = computed(() => props.hosts
-  .filter((host) => host.worstDisk?.usedPercent != null)
+  .filter((host) => !host.missing && host.worstDisk?.usedPercent != null)
   .sort((left, right) => Number(right.worstDisk?.usedPercent ?? 0) - Number(left.worstDisk?.usedPercent ?? 0))
   .slice(0, 8));
 

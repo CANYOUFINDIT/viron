@@ -112,8 +112,11 @@ async function loadOverview(silent = false) {
     lastUpdated.value = response.generatedAt;
     error.value = "";
     void loadAlerts();
-    if (view.value === "hosts" && !selectedHostId.value && response.hosts[0]) {
-      patchQuery({ hostId: response.hosts[0].sshConnectionId, environmentId: environmentId.value || response.hosts[0].environmentId });
+    if (view.value === "hosts" && !selectedHostId.value && response.hosts.length) {
+      const firstMonitored = response.hosts.find((h) => !h.missing) || response.hosts[0];
+      if (firstMonitored) {
+        patchQuery({ hostId: firstMonitored.sshConnectionId, environmentId: environmentId.value || firstMonitored.environmentId });
+      }
     }
   } catch (caught) {
     if ((caught as { name?: string }).name === "AbortError" || signal.aborted) return;
@@ -251,6 +254,8 @@ const summary = computed(() => overview.value?.summary ?? {
   hostTotal: 0, hostOnline: 0, hostOffline: 0, hostMissing: 0, hostStale: 0, serviceTotal: 0, avgCpuPercent: null, avgMemoryPercent: null, diskAlerts: 0,
 });
 
+const monitoredHostCount = computed(() => (overview.value?.hosts ?? []).filter((h) => !h.missing).length);
+
 const onlineRate = computed(() => {
   if (!summary.value.hostTotal) return 0;
   return Math.round((summary.value.hostOnline / summary.value.hostTotal) * 100);
@@ -304,7 +309,7 @@ function memTone(val: number | null) {
         >
           <Server :size="14" />
           <span>{{ $t('主机基础设施') }}</span>
-          <small v-if="summary.hostTotal" class="tab-badge">{{ summary.hostTotal }}</small>
+          <small v-if="monitoredHostCount" class="tab-badge">{{ monitoredHostCount }}</small>
         </button>
         <button
           type="button"

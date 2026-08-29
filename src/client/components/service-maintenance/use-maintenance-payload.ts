@@ -472,7 +472,6 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
   function selectHost(id: string) {
       selectedHostId.value = id;
       activeWorkspace.value = "host";
-      hostWorkspaceTab.value = "discovery";
       void loadHostCandidates(id);
   }
 

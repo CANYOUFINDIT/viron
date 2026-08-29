@@ -343,7 +343,7 @@ onBeforeUnmount(() => {
           <MaintenanceDeploymentGrid :m="maintenance" @open-log="(id) => emit('open-log', id)" @open-ssh="(id) => emit('open-ssh', id)" />
         </template>
 
-        <MaintenanceDiscoveryDrawer v-else-if="activeWorkspace === 'host' && selectedHost" :m="maintenance" />
+        <MaintenanceDiscoveryDrawer v-else-if="activeWorkspace === 'host' && selectedHost" :m="maintenance" :environment-id="environmentId" />
         <div v-else-if="activeWorkspace === 'host'" class="workspace-empty"><Server :size="26" /><strong>{{ $t('尚未关联 SSH 主机') }}</strong></div>
         <div v-else class="workspace-empty"><Wrench :size="26" /><strong>{{ $t('尚未录入服务') }}</strong><el-button v-if="payload.canConfigure" type="primary" @click="openServiceCreate()"><Plus :size="16" />{{ $t('录入服务') }}</el-button></div>
       </main>
