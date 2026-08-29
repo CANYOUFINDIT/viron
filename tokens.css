@@ -26,7 +26,7 @@
   --color-sidebar-rule: oklch(29% 0.018 190);
   --color-sidebar-ink: oklch(94% 0.007 175);
   --color-sidebar-muted: oklch(72% 0.012 185);
-  --color-browser-tab: var(--color-sidebar);
+  --color-browser-tab: oklch(31% 0.018 190);
 
   --font-display: "DIN Alternate", "Avenir Next Condensed", "PingFang SC", sans-serif;
   --font-body: "Avenir Next", "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
