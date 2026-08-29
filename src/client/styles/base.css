@@ -592,8 +592,6 @@ button { color: inherit; }
 .resource-list__item:hover .resource-list__icon, .resource-list__item.is-active .resource-list__icon { color: var(--browser-tab-icon-active); }
 .resource-list__item strong { min-width: 0; flex: 1; color: currentColor; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; }
 .resource-list__item em { display: none; }
-.resource-list__item.has-tls { min-width: 190px; padding-top: 5px; padding-bottom: 17px; align-items: center; }
-.resource-list__item .web-entry-tls { position: absolute; right: 10px; bottom: 3px; max-width: calc(100% - 44px); color: var(--ops-amber); font-size: 10px; font-style: normal; font-weight: 650; }
 .list-empty { min-width: 260px; height: 39px; padding: 0 12px; color: var(--browser-tab-muted); display: flex; align-items: center; gap: 8px; font-size: 12px; }
 .resource-list__add, .web-account-list__add { position: sticky; right: 0; z-index: 2; flex: 0 0 auto; padding: 0; border: 0; background: transparent; display: grid; place-items: center; cursor: pointer; }
 .resource-list__add { width: 42px; height: 46px; background: var(--browser-tab-bar); color: var(--browser-tab-muted); box-shadow: inset 0 -1px var(--browser-tab-divider); }
@@ -723,8 +721,6 @@ button { color: inherit; }
 .web-browser-toolbar button:disabled { opacity: .34; cursor: not-allowed; }
 .web-browser-toolbar button:disabled:hover { border-color: transparent; background: transparent; color: #536762; }
 .web-browser-address { min-width: 0; height: 31px; padding: 0 8px; border: 1px solid #d5dfdc; border-radius: 6px; background: white; display: flex; align-items: center; gap: 7px; }
-.web-browser-address i { width: 7px; height: 7px; border-radius: 50%; background: #a9b6b2; }
-.web-browser-address i.is-connected { background: #22a57f; }
 .web-browser-address input { min-width: 0; width: 100%; padding: 0; border: 0; outline: 0; background: transparent; color: #33433f; font-family: var(--font-mono); font-size: 11px; }
 .web-browser-surface { position: relative; min-height: 0; flex: 1; background: #f5f7f6; overflow: hidden; cursor: default; }
 .web-browser-surface > img { width: 100%; height: 100%; object-fit: fill; display: block; user-select: none; }

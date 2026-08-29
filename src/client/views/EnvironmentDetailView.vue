@@ -23,7 +23,6 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { computed, defineAsyncComponent, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { api, prefetchApi } from "../api";
-import TlsPopover from "../components/credentials/TlsPopover.vue";
 import DesktopExecutionNotice from "../components/DesktopExecutionNotice.vue";
 import EnvironmentImmersiveNavigation from "../components/EnvironmentImmersiveNavigation.vue";
 import DesktopWebAccountBrowser from "../components/DesktopWebAccountBrowser.vue";
@@ -488,6 +487,15 @@ function relatedTlsEntries(entry: WebEntry) {
     .map((item) => ({ id: item.id, name: item.name, url: item.url }));
 }
 
+function webEntryFor(entryId: string) {
+  return webEntries.value.find((entry) => entry.id === entryId) ?? null;
+}
+
+function relatedTlsEntriesForId(entryId: string) {
+  const entry = webEntryFor(entryId);
+  return entry ? relatedTlsEntries(entry) : [];
+}
+
 async function selectWorkspaceTab(tab: WorkspaceTab) {
   const shouldSyncRoute = !props.preview && workspaceQuery.value.tab !== tab;
   activeTab.value = tab;
@@ -724,6 +732,11 @@ function openSslConfiguration(entry: WebEntry) {
   } catch {
     // Keep the original value visible so the user can correct it in the form.
   }
+}
+
+function openSslConfigurationForId(entryId: string) {
+  const entry = webEntryFor(entryId);
+  if (entry) openSslConfiguration(entry);
 }
 
 async function saveEntry() {
@@ -986,7 +999,7 @@ onBeforeUnmount(() => {
           <button
             v-for="entry in webEntries"
             :key="entry.id"
-            class="resource-list__item has-tls"
+            class="resource-list__item"
             :class="{
               'is-active': selectedEntryId === entry.id,
               'is-dragging': draggingEntryId === entry.id,
@@ -1006,9 +1019,6 @@ onBeforeUnmount(() => {
           >
             <span class="resource-list__icon"><img v-if="entryFavicons[entry.id]" :src="entryFavicons[entry.id]" alt="" @error="discardEntryFavicon(entry.id)" /><Globe2 v-else :size="17" /></span>
             <strong>{{ entry.name }}</strong>
-            <span class="web-entry-tls" @click.stop>
-              <TlsPopover :tls="entry.tls" :entry-id="entry.id" :entry-name="entry.name" :entry-url="entry.url" :related-entries="relatedTlsEntries(entry)" @configure-https="openSslConfiguration(entry)" @refreshed="loadEnvironment" />
-            </span>
             <em>{{ entry.credentialCount }}</em>
           </button>
           <div v-if="!webEntries.length" class="list-empty"><Globe2 :size="20" /><span>{{ $t('还没有页面入口') }}</span></div>
@@ -1079,14 +1089,20 @@ onBeforeUnmount(() => {
                       v-show="openedCredentialActive(paneIndex, opened)"
                       :environment-id="environmentId"
                       :credential-id="opened.id"
+                      :entry-id="opened.entryId"
+                      :entry-name="webEntryFor(opened.entryId)?.name || ''"
                       :username="opened.username"
                       :entry-url="webEntryUrl(opened.entryId)"
+                      :entry-tls="webEntryFor(opened.entryId)?.tls"
+                      :related-tls-entries="relatedTlsEntriesForId(opened.entryId)"
                       :active="openedCredentialActive(paneIndex, opened)"
                       :focused="environmentImmersive"
                       :preview="preview"
                       :auto-start="(focusedWebView || (webPreloadEnabled && webPreloadCredentialId === opened.id)) && openedCredentialActive(paneIndex, opened)"
                       :preload-start="webPreloadEnabled && webPreloadCredentialId === opened.id && !focusedWebView"
                       @focus-change="setFocusedWebView($event, opened)"
+                      @configure-entry-https="openSslConfigurationForId(opened.entryId)"
+                      @tls-refreshed="loadEnvironment"
                       @preview-frame="emit('previewFrame', $event)"
                     />
                     <DesktopExecutionNotice v-else-if="desktop && webTarget === 'unavailable'" v-show="openedCredentialActive(paneIndex, opened)" :capability='$t("当前连接模式下 Web 账号浏览")' compact />
@@ -1094,14 +1110,20 @@ onBeforeUnmount(() => {
                       v-else
                       v-show="openedCredentialActive(paneIndex, opened)"
                       :credential-id="opened.id"
+                      :entry-id="opened.entryId"
+                      :entry-name="webEntryFor(opened.entryId)?.name || ''"
                       :username="opened.username"
                       :entry-url="webEntryUrl(opened.entryId)"
+                      :entry-tls="webEntryFor(opened.entryId)?.tls"
+                      :related-tls-entries="relatedTlsEntriesForId(opened.entryId)"
                       :external-href="externalWebHref(opened.entryId, opened.id)"
                       :active="openedCredentialActive(paneIndex, opened)"
                       :focused="desktop ? environmentImmersive : undefined"
                       :auto-connect="(focusedWebView || (webPreloadEnabled && webPreloadCredentialId === opened.id)) && openedCredentialActive(paneIndex, opened)"
                       :preload-connect="webPreloadEnabled && webPreloadCredentialId === opened.id && !focusedWebView"
                       @focus-change="setFocusedWebView($event, opened)"
+                      @configure-entry-https="openSslConfigurationForId(opened.entryId)"
+                      @tls-refreshed="loadEnvironment"
                     />
                   </template>
                   <div v-if="!credentialForPane(paneIndex)" class="web-view-pane__empty"><KeyRound :size="26" /><strong>{{ $t('选择一个账号') }}</strong><span>{{ $t('从上方账号列表载入此区域') }}</span></div>

@@ -166,12 +166,19 @@ describe("certificate center UI", () => {
     expect(source("src/client/views/SshKeysView.vue")).toContain("CertificateCenter");
     expect(source("src/client/views/SshKeysView.vue")).not.toContain("EnvironmentMonitoringDashboard");
     expect(source("src/client/views/EnvironmentDetailView.vue")).not.toContain("EnvironmentMonitoringDashboard");
-    expect(source("src/client/views/EnvironmentDetailView.vue")).toContain("TlsPopover");
-    expect(source("src/client/views/EnvironmentDetailView.vue")).not.toContain('<span v-if="entry.tls" class="web-entry-tls"');
-    expect(source("src/client/views/EnvironmentDetailView.vue")).toContain(':entry-url="entry.url"');
+    expect(source("src/client/views/EnvironmentDetailView.vue")).not.toContain("web-entry-tls");
+    expect(source("src/client/views/EnvironmentDetailView.vue")).toContain(':entry-tls="webEntryFor(opened.entryId)?.tls"');
     expect(source("src/client/views/EnvironmentDetailView.vue")).toContain("配置 Web 入口 SSL");
+    for (const path of ["src/client/components/WebAccountBrowser.vue", "src/client/components/DesktopWebAccountBrowser.vue"]) {
+      const browser = source(path);
+      const addressStart = browser.indexOf('<form class="web-browser-address"');
+      expect(addressStart).toBeGreaterThan(-1);
+      expect(browser.indexOf("<TlsPopover", addressStart)).toBeGreaterThan(addressStart);
+      expect(browser.indexOf("<TlsPopover", addressStart)).toBeLessThan(browser.indexOf("<input v-model=\"address\"", addressStart));
+      expect(browser).toContain("icon-only");
+    }
     expect(source("src/client/components/credentials/TlsPopover.vue")).toContain("绑定并探测");
-    expect(source("src/client/components/credentials/TlsPopover.vue")).toContain("SSL · ");
+    expect(source("src/client/components/credentials/TlsPopover.vue")).toContain("tls-address-control");
     expect(source("src/client/components/credentials/TlsPopover.vue")).toContain("启用 HTTPS");
     expect(source("src/client/components/credentials/TlsPopover.vue")).toContain("/api/v1/certificates/${endpoint.value.certificateId}/probe");
     expect(source("src/client/components/credentials/CertificateCenter.vue")).toContain("待关联 / 探测异常");

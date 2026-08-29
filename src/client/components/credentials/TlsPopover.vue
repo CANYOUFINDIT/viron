@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Link2, Pencil, RefreshCw, Server, ShieldCheck } from "@lucide/vue";
+import { Link2, Pencil, RefreshCw, Server, Shield, ShieldAlert, ShieldCheck } from "@lucide/vue";
 import { ElMessage } from "element-plus";
 import { computed, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
@@ -23,6 +23,7 @@ const props = defineProps<{
   entryId?: string;
   entryName?: string;
   entryUrl?: string;
+  iconOnly?: boolean;
   relatedEntries?: Array<{ id: string; name: string; url: string }>;
 }>();
 const emit = defineEmits<{ refreshed: []; configureHttps: [] }>();
@@ -43,6 +44,20 @@ const isHttps = computed(() => {
   } catch {
     return false;
   }
+});
+const securityState = computed(() => {
+  if (!isHttps.value) return "insecure";
+  if (props.tls?.status === "valid") return "secure";
+  if (props.tls?.status === "expiring") return "warning";
+  if (["expired", "mismatch", "error"].includes(props.tls?.status || "")) return "danger";
+  return "pending";
+});
+const securityLabel = computed(() => {
+  if (securityState.value === "secure") return tr("连接安全，查看 SSL 证书");
+  if (securityState.value === "warning") return tr("SSL 证书即将到期");
+  if (securityState.value === "danger") return tr("SSL 证书存在异常");
+  if (securityState.value === "pending") return tr("SSL 证书待配置");
+  return tr("连接未启用 SSL");
 });
 const sshOptions = computed(() => sshConnections.value.filter((item) => !endpoint.value || item.environmentIds.includes(endpoint.value.environmentId)));
 const related = computed(() => {
@@ -152,9 +167,15 @@ function openCenter() {
 </script>
 
 <template>
-  <el-popover placement="bottom-end" :width="400" trigger="click" :show-arrow="true" @show="loadDetail">
+  <el-popover :placement="iconOnly ? 'bottom-start' : 'bottom-end'" :width="400" trigger="click" :show-arrow="true" @show="loadDetail">
     <template #reference>
+      <span v-if="iconOnly" class="tls-address-control" :class="`is-${securityState}`" role="button" tabindex="0" :aria-label="securityLabel" :title="securityLabel">
+        <ShieldCheck v-if="securityState === 'secure'" :size="15" />
+        <ShieldAlert v-else-if="securityState === 'warning' || securityState === 'danger' || securityState === 'insecure'" :size="15" />
+        <Shield v-else :size="15" />
+      </span>
       <TlsStatusBadge
+        v-else
         :status="tls?.status || 'unconfigured'"
         :days-remaining="tls?.daysRemaining"
         :stale="tls?.stale"
@@ -228,6 +249,13 @@ function openCenter() {
 
 <style scoped>
 .tls-popover { display: grid; gap: 12px; color: var(--ink-800); }
+.tls-address-control { width: 24px; height: 24px; margin-left: -3px; flex: 0 0 24px; border-radius: 50%; display: grid; place-items: center; color: var(--ink-400); cursor: pointer; transition: background-color var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out); }
+.tls-address-control:hover, .tls-address-control:focus-visible { outline: none; background: var(--ink-50); color: var(--ink-700); }
+.tls-address-control.is-secure { color: var(--teal-700); }
+.tls-address-control.is-warning { color: var(--amber-600, #b46b0d); }
+.tls-address-control.is-danger { color: var(--red-600, #b7473f); }
+.tls-address-control.is-insecure { color: var(--ink-400); }
+.tls-address-control.is-pending { color: var(--ink-500); }
 .tls-popover > header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 9px; padding-bottom: 10px; border-bottom: 1px solid var(--ink-100); }
 .tls-popover > header > div { min-width: 0; display: grid; gap: 2px; }
 .tls-popover > header strong { overflow: hidden; text-overflow: ellipsis; font-size: 13px; white-space: nowrap; }
