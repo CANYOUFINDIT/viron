@@ -256,6 +256,23 @@ const summary = computed(() => overview.value?.summary ?? {
 
 const monitoredHostCount = computed(() => (overview.value?.hosts ?? []).filter((h) => !h.missing).length);
 
+// 智能聚合平均 CPU & 内存（若无活跃实时流但有陈旧采样，则展示最新有效快照的平均值）
+const clusterAvgCpu = computed(() => {
+  if (summary.value.avgCpuPercent !== null) return summary.value.avgCpuPercent;
+  const valid = (overview.value?.hosts ?? []).filter((h) => !h.missing && h.cpuUsedPercent !== null);
+  if (!valid.length) return null;
+  return valid.reduce((sum, h) => sum + (h.cpuUsedPercent ?? 0), 0) / valid.length;
+});
+
+const clusterAvgMemory = computed(() => {
+  if (summary.value.avgMemoryPercent !== null) return summary.value.avgMemoryPercent;
+  const valid = (overview.value?.hosts ?? []).filter((h) => !h.missing && h.memoryUsedPercent !== null);
+  if (!valid.length) return null;
+  return valid.reduce((sum, h) => sum + (h.memoryUsedPercent ?? 0), 0) / valid.length;
+});
+
+const isHistoricalFallback = computed(() => summary.value.avgCpuPercent === null && clusterAvgCpu.value !== null);
+
 const onlineRate = computed(() => {
   if (!summary.value.hostTotal) return 0;
   return Math.round((summary.value.hostOnline / summary.value.hostTotal) * 100);
@@ -278,27 +295,26 @@ function memTone(val: number | null) {
 
 <template>
   <section class="monitoring-view" v-loading="loading">
-    <!-- 顶部智能操作工具栏 -->
+    <!-- 顶部极简一体化智能工具栏 -->
     <header class="monitoring-topbar">
-      <div class="monitoring-topbar__title-group">
-        <div class="title-with-pulse">
+      <!-- 左侧：脉冲指示灯 + 标题 + 环境选择器 -->
+      <div class="topbar-left">
+        <div class="brand-unit">
           <span class="live-dot" :class="{ 'is-paused': refreshSeconds === 0 }"></span>
           <h1>{{ $t('监控大盘') }}</h1>
         </div>
-        <div class="monitoring-live-status">
-          <span v-if="lastUpdated" class="updated-time">
-            {{ $t('上次更新') }} {{ new Date(lastUpdated).toLocaleTimeString() }}
-          </span>
-          <span v-if="refreshSeconds > 0" class="refresh-badge is-active">
-            <Play :size="11" /> {{ refreshSeconds }}s {{ $t('自动刷新') }}
-          </span>
-          <span v-else class="refresh-badge is-paused">
-            <Pause :size="11" /> {{ $t('已暂停') }}
-          </span>
-        </div>
+        <el-select
+          :model-value="environmentId"
+          clearable
+          :placeholder="$t('全部环境')"
+          class="control-env-select"
+          @change="(value: string) => patchQuery({ environmentId: value, hostId: undefined, serviceId: undefined })"
+        >
+          <el-option v-for="item in environments" :key="item.id" :label="item.name" :value="item.id" />
+        </el-select>
       </div>
 
-      <!-- 中间视图分段切换器 (Segmented Control) -->
+      <!-- 中间：视图模式分段切换器 (Segmented Switcher) -->
       <nav class="monitoring-view-switcher" role="tablist" :aria-label="$t('视图模式')">
         <button
           type="button"
@@ -307,7 +323,7 @@ function memTone(val: number | null) {
           :class="{ 'is-active': view === 'hosts' }"
           @click="patchQuery({ view: 'hosts' })"
         >
-          <Server :size="14" />
+          <Server :size="13" />
           <span>{{ $t('主机基础设施') }}</span>
           <small v-if="monitoredHostCount" class="tab-badge">{{ monitoredHostCount }}</small>
         </button>
@@ -318,7 +334,7 @@ function memTone(val: number | null) {
           :class="{ 'is-active': view === 'services' }"
           @click="patchQuery({ view: 'services' })"
         >
-          <Boxes :size="14" />
+          <Boxes :size="13" />
           <span>{{ $t('业务服务') }}</span>
           <small v-if="summary.serviceTotal" class="tab-badge">{{ summary.serviceTotal }}</small>
         </button>
@@ -329,72 +345,68 @@ function memTone(val: number | null) {
           :class="{ 'is-active': view === 'noc' }"
           @click="patchQuery({ view: 'noc' })"
         >
-          <Radio :size="14" />
+          <Radio :size="13" />
           <span>{{ $t('NOC 全屏') }}</span>
         </button>
       </nav>
 
-      <!-- 右侧参数过滤与刷新操作 -->
-      <div class="monitoring-controls">
-        <el-select
-          :model-value="environmentId"
-          clearable
-          :placeholder="$t('全部环境')"
-          class="control-env-select"
-          @change="(value: string) => patchQuery({ environmentId: value, hostId: undefined, serviceId: undefined })"
-        >
-          <el-option v-for="item in environments" :key="item.id" :label="item.name" :value="item.id" />
-        </el-select>
+      <!-- 右侧：时间跨度、自动刷新、刷新按钮与微时间戳 -->
+      <div class="topbar-right">
+        <div class="compact-controls">
+          <el-select
+            :model-value="range"
+            class="control-range-select"
+            @change="(value: string) => patchQuery({ range: value })"
+          >
+            <el-option value="1h" :label="$t('1 小时')" />
+            <el-option value="6h" :label="$t('6 小时')" />
+            <el-option value="24h" :label="$t('24 小时')" />
+            <el-option value="7d" :label="$t('7 天')" />
+            <el-option value="30d" :label="$t('30 天')" />
+          </el-select>
 
-        <el-select
-          :model-value="range"
-          class="control-range-select"
-          @change="(value: string) => patchQuery({ range: value })"
-        >
-          <el-option value="1h" :label="$t('1 小时')" />
-          <el-option value="6h" :label="$t('6 小时')" />
-          <el-option value="24h" :label="$t('24 小时')" />
-          <el-option value="7d" :label="$t('7 天')" />
-          <el-option value="30d" :label="$t('30 天')" />
-        </el-select>
+          <el-select
+            :model-value="String(refreshSeconds)"
+            class="control-refresh-select"
+            @change="(value: string) => patchQuery({ refresh: value })"
+          >
+            <el-option value="15" :label="$t('15 秒')" />
+            <el-option value="30" :label="$t('30 秒')" />
+            <el-option value="60" :label="$t('60 秒')" />
+            <el-option value="0" :label="$t('暂停刷新')" />
+          </el-select>
 
-        <el-select
-          :model-value="String(refreshSeconds)"
-          class="control-refresh-select"
-          @change="(value: string) => patchQuery({ refresh: value })"
-        >
-          <el-option value="15" :label="$t('15 秒')" />
-          <el-option value="30" :label="$t('30 秒')" />
-          <el-option value="60" :label="$t('60 秒')" />
-          <el-option value="0" :label="$t('暂停刷新')" />
-        </el-select>
+          <el-button
+            type="primary"
+            plain
+            class="control-refresh-btn"
+            :loading="refreshing"
+            @click="loadOverview(true)"
+          >
+            <RefreshCw :size="12" :class="{ 'is-spinning': refreshing }" />
+            <span>{{ $t('刷新') }}</span>
+          </el-button>
+        </div>
 
-        <el-button
-          type="primary"
-          plain
-          class="control-refresh-btn"
-          :loading="refreshing"
-          @click="loadOverview(true)"
-        >
-          <RefreshCw :size="13" :class="{ 'is-spinning': refreshing }" />
-          <span>{{ $t('立即刷新') }}</span>
-        </el-button>
+        <span v-if="lastUpdated" class="last-sync-time" :title="`上次更新: ${new Date(lastUpdated).toLocaleString()}`">
+          {{ new Date(lastUpdated).toLocaleTimeString() }}
+        </span>
       </div>
     </header>
 
     <p v-if="error" class="monitoring-banner-error">{{ error }}</p>
 
-    <!-- 全景集群健康 KPI 态势卡片 -->
+    <!-- 全景集群健康 4 大 KPI 态势卡片 -->
     <section v-if="view !== 'noc'" class="cluster-kpi-grid">
       <!-- KPI 1: 主机在线与就绪率 -->
       <article class="kpi-card">
         <header class="kpi-card__head">
           <div class="kpi-card__title">
-            <span class="kpi-icon is-teal"><Server :size="16" /></span>
+            <span class="kpi-icon is-teal"><Server :size="14" /></span>
             <strong>{{ $t('主机就绪态势') }}</strong>
           </div>
           <span class="kpi-tag" :class="onlineRate >= 80 ? 'is-green' : 'is-warning'">
-            {{ onlineRate }}% {{ $t('可用') }}
+            {{ monitoredHostCount }}/{{ summary.hostTotal }} {{ $t('接入') }}
           </span>
         </header>
         <div class="kpi-card__body">
@@ -433,9 +445,9 @@ function memTone(val: number | null) {
           <footer class="kpi-card__footer">
             <span v-if="summary.hostStale > 0" class="status-sub-chip is-stale">{{ summary.hostStale }} {{ $t('陈旧') }}</span>
             <span v-if="summary.hostOffline > 0" class="status-sub-chip is-offline">{{ summary.hostOffline }} {{ $t('离线') }}</span>
-            <span v-if="summary.hostMissing > 0" class="status-sub-chip is-missing">{{ summary.hostMissing }} {{ $t('探针缺失') }}</span>
+            <span v-if="summary.hostMissing > 0" class="status-sub-chip is-missing">{{ summary.hostMissing }} {{ $t('未纳管') }}</span>
             <span v-if="!summary.hostOffline && !summary.hostMissing && !summary.hostStale && summary.hostTotal" class="status-sub-chip is-healthy">
-              <CheckCircle2 :size="11" /> {{ $t('全部健康') }}
+              <CheckCircle2 :size="11" /> {{ $t('全部在线') }}
             </span>
           </footer>
         </div>
@@ -445,17 +457,17 @@ function memTone(val: number | null) {
       <article class="kpi-card">
         <header class="kpi-card__head">
           <div class="kpi-card__title">
-            <span class="kpi-icon is-blue"><Cpu :size="16" /></span>
+            <span class="kpi-icon is-blue"><Cpu :size="14" /></span>
             <strong>{{ $t('集群平均 CPU') }}</strong>
           </div>
-          <span class="kpi-tag" :class="cpuTone(summary.avgCpuPercent)">
-            {{ summary.avgCpuPercent === null ? $t('无数据') : (summary.avgCpuPercent >= 80 ? $t('高负荷') : $t('正常')) }}
+          <span class="kpi-tag" :class="isHistoricalFallback ? 'is-warning' : cpuTone(clusterAvgCpu)">
+            {{ isHistoricalFallback ? $t('最近采样') : (clusterAvgCpu === null ? $t('无数据') : (clusterAvgCpu >= 80 ? $t('高负荷') : $t('正常'))) }}
           </span>
         </header>
         <div class="kpi-card__body">
           <div class="kpi-value-row">
             <span class="kpi-value-main">
-              {{ summary.avgCpuPercent === null ? '—' : `${summary.avgCpuPercent.toFixed(1)}%` }}
+              {{ clusterAvgCpu === null ? '—' : `${clusterAvgCpu.toFixed(1)}%` }}
             </span>
             <span class="kpi-value-sub">{{ $t('整体 CPU 负荷') }}</span>
           </div>
@@ -463,8 +475,8 @@ function memTone(val: number | null) {
           <div class="kpi-meter-bar">
             <div
               class="kpi-meter-fill"
-              :class="cpuTone(summary.avgCpuPercent)"
-              :style="{ width: `${Math.min(100, Math.max(0, summary.avgCpuPercent ?? 0))}%` }"
+              :class="cpuTone(clusterAvgCpu)"
+              :style="{ width: `${Math.min(100, Math.max(0, clusterAvgCpu ?? 0))}%` }"
             ></div>
           </div>
           <footer class="kpi-card__footer">
@@ -477,17 +489,17 @@ function memTone(val: number | null) {
       <article class="kpi-card">
         <header class="kpi-card__head">
           <div class="kpi-card__title">
-            <span class="kpi-icon is-purple"><HardDrive :size="16" /></span>
+            <span class="kpi-icon is-purple"><HardDrive :size="14" /></span>
             <strong>{{ $t('集群平均内存') }}</strong>
           </div>
-          <span class="kpi-tag" :class="memTone(summary.avgMemoryPercent)">
-            {{ summary.avgMemoryPercent === null ? $t('无数据') : (summary.avgMemoryPercent >= 85 ? $t('偏高') : $t('正常')) }}
+          <span class="kpi-tag" :class="isHistoricalFallback ? 'is-warning' : memTone(clusterAvgMemory)">
+            {{ isHistoricalFallback ? $t('最近采样') : (clusterAvgMemory === null ? $t('无数据') : (clusterAvgMemory >= 85 ? $t('偏高') : $t('正常'))) }}
           </span>
         </header>
         <div class="kpi-card__body">
           <div class="kpi-value-row">
             <span class="kpi-value-main">
-              {{ summary.avgMemoryPercent === null ? '—' : `${summary.avgMemoryPercent.toFixed(1)}%` }}
+              {{ clusterAvgMemory === null ? '—' : `${clusterAvgMemory.toFixed(1)}%` }}
             </span>
             <span class="kpi-value-sub">{{ $t('整体内存利用率') }}</span>
           </div>
@@ -495,8 +507,8 @@ function memTone(val: number | null) {
           <div class="kpi-meter-bar">
             <div
               class="kpi-meter-fill is-purple"
-              :class="memTone(summary.avgMemoryPercent)"
-              :style="{ width: `${Math.min(100, Math.max(0, summary.avgMemoryPercent ?? 0))}%` }"
+              :class="memTone(clusterAvgMemory)"
+              :style="{ width: `${Math.min(100, Math.max(0, clusterAvgMemory ?? 0))}%` }"
             ></div>
           </div>
           <footer class="kpi-card__footer">
@@ -509,8 +521,8 @@ function memTone(val: number | null) {
       <article class="kpi-card">
         <header class="kpi-card__head">
           <div class="kpi-card__title">
-            <span class="kpi-icon" :class="summary.diskAlerts > 0 || alerts.length > 0 ? 'is-danger' : 'is-amber'">
-              <ShieldAlert :size="16" />
+            <span class="kpi-icon" :class="summary.diskAlerts > 0 || alerts.length > 0 ? 'is-danger' : 'is-teal'">
+              <ShieldAlert :size="14" />
             </span>
             <strong>{{ $t('存储与活动告警') }}</strong>
           </div>
@@ -583,46 +595,46 @@ function memTone(val: number | null) {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
 }
 
-/* 顶部操作工具栏 */
+/* 顶部一体化紧凑操作栏 */
 .monitoring-topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
   flex-wrap: wrap;
-  padding: 12px 16px;
+  padding: 8px 14px;
   border: 1px solid var(--ink-100);
   border-radius: 12px;
   background: var(--surface);
   box-shadow: var(--shadow-sm);
 }
 
-.monitoring-topbar__title-group {
+.topbar-left {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
 }
 
-.title-with-pulse {
+.brand-unit {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.title-with-pulse h1 {
+.brand-unit h1 {
   margin: 0;
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 800;
   letter-spacing: -.02em;
   color: var(--ink-950);
 }
 
 .live-dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: #10b981;
   box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2);
@@ -637,65 +649,37 @@ function memTone(val: number | null) {
 
 @keyframes live-pulse {
   0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5); }
-  70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+  70% { transform: scale(1); box-shadow: 0 0 0 5px rgba(16, 185, 129, 0); }
   100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
 }
 
-.monitoring-live-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 11px;
-}
-
-.updated-time {
-  color: var(--ink-400);
-  font-family: var(--font-mono);
-}
-
-.refresh-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 7px;
-  border-radius: 6px;
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.refresh-badge.is-active {
-  background: var(--teal-50);
-  color: var(--teal-700);
-}
-
-.refresh-badge.is-paused {
-  background: var(--ink-50);
-  color: var(--ink-500);
+.control-env-select {
+  width: 130px;
 }
 
 /* 视图模式分段选择器 */
 .monitoring-view-switcher {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 2px;
   padding: 3px;
   border: 1px solid var(--ink-100);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--ink-100) 45%, var(--surface));
+  border-radius: 9px;
+  background: var(--ink-50);
 }
 
 .monitoring-view-switcher button {
-  height: 32px;
-  padding: 0 12px;
+  height: 28px;
+  padding: 0 10px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 6px;
   background: transparent;
   color: var(--ink-500);
   font-size: 12px;
   font-weight: 700;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   cursor: pointer;
   transition: all .16s ease;
 }
@@ -711,7 +695,9 @@ function memTone(val: number | null) {
 }
 
 .tab-badge {
-  padding: 1px 6px;
+  padding: 0 5px;
+  height: 16px;
+  line-height: 16px;
   border-radius: 8px;
   background: color-mix(in srgb, var(--teal-100) 60%, transparent);
   color: var(--teal-700);
@@ -719,21 +705,29 @@ function memTone(val: number | null) {
   font-size: 10px;
 }
 
-/* 过滤与控制组 */
-.monitoring-controls {
+/* 右侧控制栏 */
+.topbar-right {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
 }
 
-.control-env-select { width: 140px; }
-.control-range-select { width: 96px; }
-.control-refresh-select { width: 100px; }
+.compact-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.control-range-select { width: 88px; }
+.control-refresh-select { width: 92px; }
 
 .control-refresh-btn {
+  height: 32px;
+  padding: 0 10px;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -746,9 +740,15 @@ function memTone(val: number | null) {
   to { transform: rotate(360deg); }
 }
 
+.last-sync-time {
+  color: var(--ink-400);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
 .monitoring-banner-error {
   margin: 0;
-  padding: 10px 14px;
+  padding: 8px 12px;
   border-radius: 8px;
   background: var(--red-100);
   color: var(--red-600);
@@ -763,14 +763,14 @@ function memTone(val: number | null) {
 }
 
 .kpi-card {
-  padding: 14px 16px;
+  padding: 12px 14px;
   border: 1px solid var(--ink-100);
   border-radius: 12px;
   background: var(--surface);
   box-shadow: var(--shadow-sm);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   transition: transform .18s ease, border-color .18s ease;
 }
 
@@ -782,25 +782,25 @@ function memTone(val: number | null) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
 }
 
 .kpi-card__title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .kpi-card__title strong {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 750;
   color: var(--ink-800);
 }
 
 .kpi-icon {
-  width: 28px;
-  height: 28px;
-  border-radius: 7px;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
   display: grid;
   place-items: center;
 }
@@ -812,21 +812,21 @@ function memTone(val: number | null) {
 .kpi-icon.is-danger { background: var(--red-100); color: var(--red-600); }
 
 .kpi-tag {
-  padding: 2px 7px;
-  border-radius: 6px;
+  padding: 2px 6px;
+  border-radius: 5px;
   font-size: 10px;
   font-weight: 700;
 }
 
 .kpi-tag.is-green, .kpi-tag.is-healthy { background: var(--teal-50); color: var(--teal-700); }
-.kpi-tag.is-warning { background: var(--amber-100); color: var(--amber-600); }
+.kpi-tag.is-warning { background: var(--amber-100); color: var(--amber-700); }
 .kpi-tag.is-danger { background: var(--red-100); color: var(--red-600); }
 .kpi-tag.is-muted { background: var(--ink-50); color: var(--ink-500); }
 
 .kpi-card__body {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .kpi-value-row {
@@ -837,14 +837,14 @@ function memTone(val: number | null) {
 
 .kpi-value-main {
   font-family: var(--font-display);
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 800;
   line-height: 1.1;
   color: var(--ink-950);
 }
 
 .kpi-value-main small {
-  font-size: 14px;
+  font-size: 13px;
   color: var(--ink-400);
   margin-left: 2px;
 }
@@ -860,7 +860,7 @@ function memTone(val: number | null) {
 
 /* 分段健康比例槽 */
 .kpi-segmented-bar {
-  height: 6px;
+  height: 5px;
   border-radius: 3px;
   background: var(--ink-100);
   display: flex;
@@ -882,7 +882,7 @@ function memTone(val: number | null) {
 
 /* 水位进度槽 */
 .kpi-meter-bar {
-  height: 6px;
+  height: 5px;
   border-radius: 3px;
   background: var(--ink-100);
   overflow: hidden;
@@ -906,9 +906,9 @@ function memTone(val: number | null) {
 }
 
 .alert-indicator-chip {
-  padding: 3px 8px;
-  border-radius: 6px;
-  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  font-size: 10px;
   font-weight: 650;
 }
 
@@ -920,15 +920,15 @@ function memTone(val: number | null) {
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  font-size: 11px;
+  font-size: 10px;
   color: var(--ink-400);
-  min-height: 18px;
+  min-height: 16px;
 }
 
 .status-sub-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   font-size: 10px;
   font-weight: 700;
 }
@@ -942,14 +942,14 @@ function memTone(val: number | null) {
   color: #059669;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 11px;
+  gap: 3px;
+  font-size: 10px;
   font-weight: 600;
 }
 
 .text-danger-sub {
   color: #dc2626;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
 }
 
@@ -963,17 +963,18 @@ function memTone(val: number | null) {
   }
 }
 
-@media (max-width: 768px) {
+@media (max-width: 860px) {
   .monitoring-topbar {
     flex-direction: column;
     align-items: stretch;
   }
-  .monitoring-controls {
-    flex-wrap: wrap;
+  .topbar-left, .topbar-right {
+    justify-content: space-between;
   }
   .cluster-kpi-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 }
 </style>
+
 
