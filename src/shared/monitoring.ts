@@ -5,6 +5,8 @@ export const MONITORING_REFRESH_SECONDS = [15, 30, 60] as const;
 export type MonitoringRefreshSeconds = (typeof MONITORING_REFRESH_SECONDS)[number] | 0;
 
 export const MONITORING_MAX_HOSTS = 200;
+export const MONITORING_HOST_PAGE_SIZE = 12;
+export const MONITORING_HOST_PAGE_CONCURRENCY = 4;
 export const MONITORING_MAX_SERVICES = 100;
 export const MONITORING_MAX_POINTS = 480;
 export const MONITORING_MAX_SERVICE_DEPLOYMENTS = 50;

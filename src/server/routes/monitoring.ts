@@ -8,8 +8,10 @@ import { requireAdmin } from "./auth.js";
 const overviewQuerySchema = z.object({
   environmentId: z.string().uuid().optional(),
   hostCursor: z.string().uuid().optional(),
+  hostOffset: z.coerce.number().int().min(0).max(10_000).optional(),
   hostLimit: z.coerce.number().int().min(1).max(MONITORING_MAX_HOSTS).optional(),
   serviceLimit: z.coerce.number().int().min(1).max(MONITORING_MAX_SERVICES).optional(),
+  hostsOnly: z.enum(["1"]).optional(),
 });
 
 const timeseriesQuerySchema = z.object({

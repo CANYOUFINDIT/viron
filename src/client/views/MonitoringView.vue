@@ -23,11 +23,19 @@ import ServiceApmPanel, { type MonitoringProblemNode, type MonitoringServiceCard
 import { translate as tr } from "../i18n";
 import { session } from "../session";
 import type { MonitorAlertItem } from "../../shared/monitor-alerts";
-import type { MonitoringRange, MonitoringRefreshSeconds } from "../../shared/monitoring";
+import {
+  MONITORING_HOST_PAGE_CONCURRENCY,
+  MONITORING_HOST_PAGE_SIZE,
+  MONITORING_MAX_HOSTS,
+  compareMonitoringHosts,
+  type MonitoringRange,
+  type MonitoringRefreshSeconds,
+} from "../../shared/monitoring";
 
 interface OverviewPayload {
   generatedAt: string;
   truncated?: boolean;
+  nextHostOffset?: number | null;
   partialFailures: string[];
   summary: {
     hostTotal: number;
@@ -61,6 +69,7 @@ const loadingTimeseries = ref(false);
 const lastUpdated = ref("");
 const error = ref("");
 const alerts = ref<MonitorAlertItem[]>([]);
+const hostsLoadingMore = ref(false);
 let overviewAbort: AbortController | null = null;
 let timeseriesAbort: AbortController | null = null;
 let alertsAbort: AbortController | null = null;
@@ -96,6 +105,39 @@ async function loadEnvironments() {
   environments.value = response.items.map((item) => ({ id: item.id, name: item.name }));
 }
 
+function overviewQuery(extra: Record<string, string>) {
+  const params = new URLSearchParams(extra);
+  if (environmentId.value) params.set("environmentId", environmentId.value);
+  return `/api/v1/monitoring/overview?${params}`;
+}
+
+function mergeHostPage(page: OverviewPayload, replace: boolean, keepIds?: Set<string>) {
+  const current = overview.value;
+  if (replace || !current) {
+    overview.value = page;
+    return;
+  }
+  const hosts = new Map(current.hosts.map((host) => [host.sshConnectionId, host]));
+  for (const host of page.hosts) hosts.set(host.sshConnectionId, host);
+  let merged = [...hosts.values()];
+  if (keepIds) merged = merged.filter((host) => keepIds.has(host.sshConnectionId));
+  overview.value = {
+    ...current,
+    generatedAt: page.generatedAt,
+    truncated: page.truncated,
+    nextHostOffset: page.nextHostOffset,
+    partialFailures: page.partialFailures,
+    summary: {
+      ...page.summary,
+      serviceTotal: page.summary.serviceTotal || current.summary.serviceTotal,
+    },
+    hosts: merged.sort(compareMonitoringHosts),
+    services: current.services.length ? current.services : page.services,
+    serviceRanking: current.serviceRanking.length ? current.serviceRanking : page.serviceRanking,
+    problemNodes: current.problemNodes.length ? current.problemNodes : page.problemNodes,
+  };
+}
+
 async function loadOverview(silent = false) {
   overviewAbort?.abort();
   overviewAbort = new AbortController();
@@ -103,27 +145,65 @@ async function loadOverview(silent = false) {
   overviewInFlight = true;
   if (!silent) loading.value = true;
   else refreshing.value = true;
+  const seenIds = new Set<string>();
   try {
-    const params = new URLSearchParams();
-    if (environmentId.value) params.set("environmentId", environmentId.value);
-    const response = await api<OverviewPayload>(`/api/v1/monitoring/overview${params.size ? `?${params}` : ""}`, { signal });
+    const first = await api<OverviewPayload>(
+      overviewQuery({ hostLimit: String(MONITORING_HOST_PAGE_SIZE), hostOffset: "0" }),
+      { signal },
+    );
     if (signal.aborted) return;
-    overview.value = response;
-    lastUpdated.value = response.generatedAt;
+    for (const host of first.hosts) seenIds.add(host.sshConnectionId);
+    mergeHostPage(first, !silent);
+    lastUpdated.value = first.generatedAt;
     error.value = "";
+    loading.value = false;
+    refreshing.value = false;
     void loadAlerts();
-    if (view.value === "hosts" && !selectedHostId.value && response.hosts.length) {
-      const firstMonitored = response.hosts.find((h) => !h.missing) || response.hosts[0];
+    if (view.value === "hosts" && !selectedHostId.value && first.hosts.length) {
+      const firstMonitored = first.hosts.find((h) => !h.missing) || first.hosts[0];
       if (firstMonitored) patchQuery({ hostId: firstMonitored.sshConnectionId });
     }
+
+    const total = Math.min(first.summary.hostTotal, MONITORING_MAX_HOSTS);
+    const offsets: number[] = [];
+    for (let offset = MONITORING_HOST_PAGE_SIZE; offset < total; offset += MONITORING_HOST_PAGE_SIZE) offsets.push(offset);
+    if (!offsets.length) return;
+
+    hostsLoadingMore.value = true;
+    let next = 0;
+    const workers = Array.from({ length: Math.min(MONITORING_HOST_PAGE_CONCURRENCY, offsets.length) }, async () => {
+      while (next < offsets.length) {
+        const offset = offsets[next];
+        next += 1;
+        const page = await api<OverviewPayload>(
+          overviewQuery({
+            hostLimit: String(MONITORING_HOST_PAGE_SIZE),
+            hostOffset: String(offset),
+            hostsOnly: "1",
+          }),
+          { signal },
+        );
+        if (signal.aborted) return;
+        for (const host of page.hosts) seenIds.add(host.sshConnectionId);
+        mergeHostPage(page, false);
+        lastUpdated.value = page.generatedAt;
+      }
+    });
+    await Promise.all(workers);
+    if (!signal.aborted) mergeHostPage({
+      ...(overview.value as OverviewPayload),
+      hosts: [],
+    }, false, seenIds);
   } catch (caught) {
     if ((caught as { name?: string }).name === "AbortError" || signal.aborted) return;
-    error.value = caught instanceof Error ? caught.message : tr("读取监控概览失败");
+    if (!overview.value) error.value = caught instanceof Error ? caught.message : tr("读取监控概览失败");
+    else ElMessage.warning(caught instanceof Error ? caught.message : tr("部分主机监控数据加载失败"));
   } finally {
     if (overviewAbort?.signal === signal) {
       overviewInFlight = false;
       loading.value = false;
       refreshing.value = false;
+      hostsLoadingMore.value = false;
     }
   }
 }
@@ -252,7 +332,7 @@ const summary = computed(() => overview.value?.summary ?? {
   hostTotal: 0, hostOnline: 0, hostOffline: 0, hostMissing: 0, hostStale: 0, serviceTotal: 0, avgCpuPercent: null, avgMemoryPercent: null, diskAlerts: 0,
 });
 
-const monitoredHostCount = computed(() => (overview.value?.hosts ?? []).filter((h) => !h.missing).length);
+const monitoredHostCount = computed(() => Math.max(0, summary.value.hostTotal - summary.value.hostMissing));
 
 // 智能聚合平均 CPU & 内存（若无活跃实时流但有陈旧采样，则展示最新有效快照的平均值）
 const clusterAvgCpu = computed(() => {
@@ -559,6 +639,9 @@ function memTone(val: number | null) {
         :hosts="overview?.hosts ?? []"
         :selected-host-id="selectedHostId"
         :can-operate="canOperate"
+        :loading-more="hostsLoadingMore"
+        :loaded-count="overview?.hosts.length ?? 0"
+        :host-total="summary.hostTotal"
         @select="selectHost"
         @install="openInstall"
         @open-maintenance="openHostMaintenance"

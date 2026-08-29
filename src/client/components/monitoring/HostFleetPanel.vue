@@ -54,6 +54,9 @@ const props = defineProps<{
   hosts: MonitoringHostCard[];
   selectedHostId: string;
   canOperate: boolean;
+  loadingMore?: boolean;
+  loadedCount?: number;
+  hostTotal?: number;
 }>();
 
 const emit = defineEmits<{
@@ -278,8 +281,13 @@ function presence(host: MonitoringHostCard) {
       </button>
     </div>
 
+    <p v-if="loadingMore" class="host-fleet__more" aria-live="polite">
+      <RefreshCw :size="14" class="is-spinning" />
+      <span>{{ $t('正在加载其余主机') }}<template v-if="hostTotal"> · {{ loadedCount ?? hosts.length }}/{{ hostTotal }}</template></span>
+    </p>
+
     <!-- 当环境中所有机器都尚未接入探针时的空状态引导 -->
-    <div v-else class="host-fleet__no-monitored">
+    <div v-if="!monitoredHosts.length && !loadingMore" class="host-fleet__no-monitored">
       <div class="no-monitored-card">
         <Server :size="36" class="text-teal" />
         <div class="no-monitored-text">
@@ -370,6 +378,31 @@ function presence(host: MonitoringHostCard) {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.host-fleet__more {
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px dashed var(--ink-200);
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-500);
+  font-size: 12px;
+}
+
+.host-fleet__more .is-spinning {
+  animation: host-fleet-spin 1s linear infinite;
+}
+
+@keyframes host-fleet-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .host-fleet__more .is-spinning { animation: none; }
 }
 
 /* 未纳管主机轻量提示横幅 */

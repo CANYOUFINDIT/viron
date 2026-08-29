@@ -126,6 +126,14 @@ describe("monitoring overview and service timeseries", () => {
       const names = overview.json().hosts.map((host: { connectionName: string }) => host.connectionName);
       expect(new Set(overview.json().hosts.map((host: { environmentName: string }) => host.environmentName))).toEqual(new Set(["生产环境", "开发环境"]));
       expect(names.slice(0, 3)).toEqual(["dev-offline", "dev-hot", "prod-healthy"]);
+      clearMonitoringOverviewCache();
+      const firstPage = await app.inject({ method: "GET", url: "/api/v1/monitoring/overview?hostLimit=1&hostOffset=0", cookies });
+      const secondPage = await app.inject({ method: "GET", url: "/api/v1/monitoring/overview?hostLimit=1&hostOffset=1&hostsOnly=1", cookies });
+      expect(firstPage.json().hosts).toHaveLength(1);
+      expect(firstPage.json().hosts[0].connectionName).toBe("dev-offline");
+      expect(secondPage.json().hosts[0].connectionName).toBe("dev-hot");
+      expect(secondPage.json().nextHostOffset).toBe(2);
+      expect(secondPage.json().services).toEqual([]);
     } finally {
       await app.close();
     }

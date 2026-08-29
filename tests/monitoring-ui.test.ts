@@ -59,5 +59,9 @@ describe("monitoring dashboard wiring", () => {
     expect(monitoringView).not.toContain("environmentId: environmentId.value || firstMonitored.environmentId");
     expect(monitoringView).not.toContain("environmentId: environmentId.value || host.environmentId");
     expect(monitoringView).toContain("patchQuery({ hostId: firstMonitored.sshConnectionId })");
+    expect(monitoringView).toContain("MONITORING_HOST_PAGE_SIZE");
+    expect(monitoringView).toContain("hostOffset");
+    expect(monitoringView).toContain("hostsOnly");
+    expect(monitoringView).toContain("mergeHostPage");
   });
 });
