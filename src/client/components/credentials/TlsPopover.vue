@@ -29,6 +29,7 @@ const props = defineProps<{
 const emit = defineEmits<{ refreshed: []; configureHttps: [] }>();
 
 const router = useRouter();
+const open = ref(false);
 const probing = ref(false);
 const loadingDetail = ref(false);
 const savingBinding = ref(false);
@@ -184,14 +185,24 @@ async function copyFingerprint() {
   ElMessage.success(tr("指纹已复制"));
 }
 
+function dismiss() {
+  open.value = false;
+}
+
+function configureHttps() {
+  dismiss();
+  emit("configureHttps");
+}
+
 function openCenter() {
+  dismiss();
   const fingerprint = props.tls?.fingerprintSha256 || "";
   void router.push({ name: "ssh-keys", query: { tab: "ssl", fingerprint } });
 }
 </script>
 
 <template>
-  <el-popover :placement="iconOnly ? 'bottom-start' : 'bottom-end'" :width="400" trigger="click" :show-arrow="true" popper-class="tls-site-info-popper" @show="loadDetail">
+  <el-popover v-model:visible="open" :placement="iconOnly ? 'bottom-start' : 'bottom-end'" :width="400" trigger="click" :show-arrow="true" popper-class="tls-site-info-popper" @show="loadDetail">
     <template #reference>
       <span
         v-if="iconOnly"
@@ -279,7 +290,7 @@ function openCenter() {
           <RefreshCw :size="14" />{{ asset ? $t('重新探测全部端点') : $t('立即重新探测') }}
         </el-button>
         <el-button v-if="canManage && endpoint" @click="bindingOpen = !bindingOpen"><Pencil :size="14" />{{ $t('编辑/绑定') }}</el-button>
-        <el-button v-if="canManage && !tls?.endpointId" type="primary" @click="emit('configureHttps')"><ShieldCheck :size="14" />{{ isHttps ? $t('初始化 SSL 探测') : $t('启用 HTTPS') }}</el-button>
+        <el-button v-if="canManage && !tls?.endpointId" type="primary" @click="configureHttps"><ShieldCheck :size="14" />{{ isHttps ? $t('初始化 SSL 探测') : $t('启用 HTTPS') }}</el-button>
         <el-button v-if="canManage && isHttps" type="primary" plain @click="openCenter"><ShieldCheck :size="14" />{{ $t('在凭据中心管理') }}</el-button>
       </footer>
     </div>
