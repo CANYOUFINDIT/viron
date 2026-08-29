@@ -8,6 +8,8 @@ const props = defineProps<{
   daysRemaining?: number | null;
   stale?: boolean;
   probing?: boolean;
+  labelPrefix?: string;
+  unconfiguredLabel?: string;
 }>();
 
 const normalized = computed<TlsWebEntryStatus>(() => {
@@ -19,14 +21,15 @@ const normalized = computed<TlsWebEntryStatus>(() => {
 
 const label = computed(() => {
   const status = normalized.value;
-  if (status === "probing") return tr("探测中...");
-  if (status === "expired") return tr("证书已过期");
-  if (status === "expiring") return tr("{{0}} 天后到期", [props.daysRemaining ?? 0]);
-  if (status === "mismatch") return tr("域名不匹配");
-  if (status === "error") return tr("探测异常");
-  if (status === "unconfigured") return tr("未配置探测");
-  if (status === "valid") return tr("剩余 {{0}} 天", [props.daysRemaining ?? 0]);
-  return tr("未配置探测");
+  let value = tr("未配置探测");
+  if (status === "probing") value = tr("探测中...");
+  else if (status === "expired") value = tr("证书已过期");
+  else if (status === "expiring") value = tr("{{0}} 天后到期", [props.daysRemaining ?? 0]);
+  else if (status === "mismatch") value = tr("域名不匹配");
+  else if (status === "error") value = tr("探测异常");
+  else if (status === "unconfigured") value = props.unconfiguredLabel || tr("未配置探测");
+  else if (status === "valid") value = tr("剩余 {{0}} 天", [props.daysRemaining ?? 0]);
+  return `${props.labelPrefix || ""}${value}`;
 });
 </script>
 

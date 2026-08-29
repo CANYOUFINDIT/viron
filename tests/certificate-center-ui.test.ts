@@ -167,7 +167,12 @@ describe("certificate center UI", () => {
     expect(source("src/client/views/SshKeysView.vue")).not.toContain("EnvironmentMonitoringDashboard");
     expect(source("src/client/views/EnvironmentDetailView.vue")).not.toContain("EnvironmentMonitoringDashboard");
     expect(source("src/client/views/EnvironmentDetailView.vue")).toContain("TlsPopover");
+    expect(source("src/client/views/EnvironmentDetailView.vue")).not.toContain('<span v-if="entry.tls" class="web-entry-tls"');
+    expect(source("src/client/views/EnvironmentDetailView.vue")).toContain(':entry-url="entry.url"');
+    expect(source("src/client/views/EnvironmentDetailView.vue")).toContain("配置 Web 入口 SSL");
     expect(source("src/client/components/credentials/TlsPopover.vue")).toContain("绑定并探测");
+    expect(source("src/client/components/credentials/TlsPopover.vue")).toContain("SSL · ");
+    expect(source("src/client/components/credentials/TlsPopover.vue")).toContain("启用 HTTPS");
     expect(source("src/client/components/credentials/TlsPopover.vue")).toContain("/api/v1/certificates/${endpoint.value.certificateId}/probe");
     expect(source("src/client/components/credentials/CertificateCenter.vue")).toContain("待关联 / 探测异常");
     expect(source("src/client/components/credentials/CertificateCenter.vue")).toContain("编辑/绑定");

@@ -610,6 +610,7 @@ button { color: inherit; }
 .resource-list__actions .icon-action { width: 28px; height: 28px; border: 0; border-radius: 50%; background: transparent; color: var(--browser-tab-muted); }
 .resource-list__actions .icon-action:hover:not(:disabled) { background: var(--browser-tab-action-hover); color: var(--browser-tab-text); transform: none; }
 .resource-list__actions .icon-action.is-danger:hover:not(:disabled) { background: var(--browser-tab-danger-hover); color: var(--browser-tab-danger-text); }
+.envman-dialog .ssl-config-alert { margin-bottom: 16px; }
 .web-vault__main { min-width: 0; min-height: 0; height: 100%; padding: 0; background: var(--surface); }
 .icon-action.is-danger:hover { border-color: var(--red-600); background: var(--red-100); color: var(--red-600); }
 .open-link { height: 35px; padding: 0 12px; border: 1px solid var(--ink-200); border-radius: 8px; background: var(--surface); color: var(--teal-700); display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 700; }

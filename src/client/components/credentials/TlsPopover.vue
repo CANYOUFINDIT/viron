@@ -19,12 +19,13 @@ import TlsStatusBadge from "./TlsStatusBadge.vue";
 interface SshOption { id: string; name: string; host?: string; environmentIds: string[] }
 
 const props = defineProps<{
-  tls: TlsWebEntryBadge;
+  tls?: TlsWebEntryBadge | null;
   entryId?: string;
   entryName?: string;
+  entryUrl?: string;
   relatedEntries?: Array<{ id: string; name: string; url: string }>;
 }>();
-const emit = defineEmits<{ refreshed: [] }>();
+const emit = defineEmits<{ refreshed: []; configureHttps: [] }>();
 
 const router = useRouter();
 const probing = ref(false);
@@ -36,6 +37,13 @@ const endpoint = ref<TlsEndpoint | null>(null);
 const sshConnections = ref<SshOption[]>([]);
 const bindForm = reactive({ sshConnectionId: "" });
 const canManage = computed(() => ["owner", "admin"].includes(session.workspace?.role ?? ""));
+const isHttps = computed(() => {
+  try {
+    return new URL(props.entryUrl || "").protocol === "https:";
+  } catch {
+    return false;
+  }
+});
 const sshOptions = computed(() => sshConnections.value.filter((item) => !endpoint.value || item.environmentIds.includes(endpoint.value.environmentId)));
 const related = computed(() => {
   if (asset.value) {
@@ -51,7 +59,11 @@ function formatDate(value: string | null | undefined) {
 }
 
 async function loadDetail() {
-  if (!props.tls.endpointId) return;
+  if (!props.tls?.endpointId) {
+    endpoint.value = null;
+    asset.value = null;
+    return;
+  }
   loadingDetail.value = true;
   try {
     const endpointResponse = await api<{ item: TlsEndpoint }>(`/api/v1/tls-endpoints/${props.tls.endpointId}`);
@@ -76,7 +88,7 @@ async function loadDetail() {
 }
 
 async function probe() {
-  if (!props.tls.endpointId || !canManage.value) return;
+  if (!props.tls?.endpointId || !canManage.value) return;
   if (!endpoint.value) await loadDetail();
   if (!endpoint.value?.sshConnectionId) {
     bindingOpen.value = true;
@@ -127,14 +139,14 @@ async function saveBinding() {
 }
 
 async function copyFingerprint() {
-  const fingerprint = asset.value?.fingerprintSha256 || props.tls.fingerprintSha256;
+  const fingerprint = asset.value?.fingerprintSha256 || props.tls?.fingerprintSha256;
   if (!fingerprint) return;
   await copyTextToClipboard(formatFingerprint(fingerprint));
   ElMessage.success(tr("指纹已复制"));
 }
 
 function openCenter() {
-  const fingerprint = props.tls.fingerprintSha256 || "";
+  const fingerprint = props.tls?.fingerprintSha256 || "";
   void router.push({ name: "ssh-keys", query: { tab: "ssl", fingerprint } });
 }
 </script>
@@ -142,25 +154,48 @@ function openCenter() {
 <template>
   <el-popover placement="bottom-end" :width="400" trigger="click" :show-arrow="true" @show="loadDetail">
     <template #reference>
-      <TlsStatusBadge :status="tls.status" :days-remaining="tls.daysRemaining" :stale="tls.stale" :probing="probing" />
+      <TlsStatusBadge
+        :status="tls?.status || 'unconfigured'"
+        :days-remaining="tls?.daysRemaining"
+        :stale="tls?.stale"
+        :probing="probing"
+        :label-prefix="$t('SSL · ')"
+        :unconfigured-label="isHttps ? $t('待配置') : $t('未启用')"
+      />
     </template>
     <div class="tls-popover" v-loading="loadingDetail">
       <header>
         <span class="tls-popover__mark"><ShieldCheck :size="17" /></span>
         <div><strong>{{ asset?.leafCn || endpoint?.sni || endpoint?.host || entryName || $t('SSL 证书详情') }}</strong><small>{{ entryName }}</small></div>
-        <TlsStatusBadge :status="tls.status" :days-remaining="tls.daysRemaining" :stale="tls.stale" :probing="probing" />
+        <TlsStatusBadge :status="tls?.status || 'unconfigured'" :days-remaining="tls?.daysRemaining" :stale="tls?.stale" :probing="probing" :unconfigured-label="isHttps ? $t('待配置') : $t('未启用')" />
       </header>
 
-      <dl>
+      <section v-if="!isHttps" class="tls-disabled-state">
+        <ShieldCheck :size="22" />
+        <div>
+          <strong>{{ $t('当前入口尚未启用 SSL') }}</strong>
+          <p>{{ $t('该 Web 入口仍使用 HTTP。切换为 HTTPS 后，系统会自动创建证书探测端点，并在这里持续显示有效期和异常状态。') }}</p>
+        </div>
+      </section>
+
+      <section v-else-if="!tls?.endpointId" class="tls-disabled-state is-pending">
+        <ShieldCheck :size="22" />
+        <div>
+          <strong>{{ $t('SSL 探测端点尚未建立') }}</strong>
+          <p>{{ $t('重新保存入口即可初始化证书探测端点。') }}</p>
+        </div>
+      </section>
+
+      <dl v-if="tls?.endpointId">
         <div v-if="asset?.issuer"><dt>{{ $t('颁发者') }}</dt><dd>{{ asset.issuer }}</dd></div>
         <div v-if="asset?.notAfter"><dt>{{ $t('有效期') }}</dt><dd>{{ formatDate(asset.notBefore) }} — {{ formatDate(asset.notAfter) }}</dd></div>
         <div v-if="asset?.leafSans.length"><dt>SAN</dt><dd>{{ asset.leafSans.join(', ') }}</dd></div>
-        <div v-if="asset?.fingerprintSha256 || tls.fingerprintSha256"><dt>{{ $t('SHA-256 指纹') }}</dt><dd><button type="button" @click="copyFingerprint">{{ formatFingerprint(asset?.fingerprintSha256 || tls.fingerprintSha256 || '') }}</button></dd></div>
+        <div v-if="asset?.fingerprintSha256 || tls?.fingerprintSha256"><dt>{{ $t('SHA-256 指纹') }}</dt><dd><button type="button" @click="copyFingerprint">{{ formatFingerprint(asset?.fingerprintSha256 || tls?.fingerprintSha256 || '') }}</button></dd></div>
         <div v-if="endpoint"><dt>{{ $t('探测端点') }}</dt><dd>{{ endpoint.host }}:{{ endpoint.port }}<template v-if="endpoint.sni"> · SNI {{ endpoint.sni }}</template></dd></div>
         <div v-if="endpoint"><dt>{{ $t('探测主机') }}</dt><dd :class="{ 'is-error': !endpoint.sshConnectionId }">{{ endpoint.sshConnectionName || $t('尚未绑定 SSH 主机') }}</dd></div>
-        <div v-if="tls.probedAt"><dt>{{ $t('上次探测') }}</dt><dd>{{ formatDate(tls.probedAt) }}</dd></div>
-        <div v-if="tls.stale"><dt>{{ $t('数据状态') }}</dt><dd>{{ $t('探测结果已陈旧') }}</dd></div>
-        <div v-if="tls.probeError"><dt>{{ $t('探测错误') }}</dt><dd class="is-error">{{ tls.probeError }}</dd></div>
+        <div v-if="tls?.probedAt"><dt>{{ $t('上次探测') }}</dt><dd>{{ formatDate(tls.probedAt) }}</dd></div>
+        <div v-if="tls?.stale"><dt>{{ $t('数据状态') }}</dt><dd>{{ $t('探测结果已陈旧') }}</dd></div>
+        <div v-if="tls?.probeError"><dt>{{ $t('探测错误') }}</dt><dd class="is-error">{{ tls.probeError }}</dd></div>
       </dl>
 
       <section v-if="related.length" class="tls-related">
@@ -180,11 +215,12 @@ function openCenter() {
       </section>
 
       <footer>
-        <el-button v-if="canManage" :loading="probing" :disabled="!tls.endpointId" @click="probe">
+        <el-button v-if="canManage && tls?.endpointId" :loading="probing" @click="probe">
           <RefreshCw :size="14" />{{ asset ? $t('重新探测全部端点') : $t('立即重新探测') }}
         </el-button>
         <el-button v-if="canManage && endpoint" @click="bindingOpen = !bindingOpen"><Pencil :size="14" />{{ $t('编辑/绑定') }}</el-button>
-        <el-button v-if="canManage" type="primary" plain @click="openCenter"><ShieldCheck :size="14" />{{ $t('在凭据中心管理') }}</el-button>
+        <el-button v-if="canManage && !tls?.endpointId" type="primary" @click="emit('configureHttps')"><ShieldCheck :size="14" />{{ isHttps ? $t('初始化 SSL 探测') : $t('启用 HTTPS') }}</el-button>
+        <el-button v-if="canManage && isHttps" type="primary" plain @click="openCenter"><ShieldCheck :size="14" />{{ $t('在凭据中心管理') }}</el-button>
       </footer>
     </div>
   </el-popover>
@@ -203,6 +239,10 @@ function openCenter() {
 .tls-popover dd { margin: 0; font-size: 11px; word-break: break-word; }
 .tls-popover dd button { padding: 0; border: 0; background: none; color: var(--teal-700); cursor: pointer; font: inherit; text-align: left; }
 .tls-popover .is-error { color: var(--red-600, #b7473f); }
+.tls-disabled-state { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; padding: 12px; border: 1px dashed var(--ink-200); border-radius: 9px; background: var(--ink-50); color: var(--ink-400); }
+.tls-disabled-state.is-pending { border-color: var(--teal-200); background: var(--teal-50); color: var(--teal-700); }
+.tls-disabled-state strong { color: var(--ink-700); font-size: 12px; }
+.tls-disabled-state p { margin: 4px 0 0; color: var(--ink-500); font-size: 10px; line-height: 1.6; }
 .tls-related { display: grid; gap: 6px; padding: 10px; border: 1px solid var(--ink-100); border-radius: 9px; background: var(--ink-50); }
 .tls-related h4 { margin: 0; display: flex; align-items: center; gap: 5px; font-size: 11px; }
 .tls-related h4 small { color: var(--ink-400); }
