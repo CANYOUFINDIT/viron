@@ -2,8 +2,10 @@ import { createHash, randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import {
   defaultMonitorAlertSettings,
+  monitorAlertSeverityRank,
   monitorDiskKey,
   type MonitorAlertRuleType,
+  type MonitorAlertSeverity,
   type MonitorAlertSettings,
   type MonitorAlertTargetType,
 } from "../shared/monitor-alerts.js";
@@ -77,10 +79,14 @@ interface MonitorAlertStateRow {
   breach_count: number | string;
   recovery_count: number | string;
   active_alert_id: string | null;
+  last_recovered_alert_id: string | null;
+  last_recovered_at: string | null;
   last_evaluated_at: string;
 }
 
 const diskBaselineRuleKey = "__viron_disk_mount_baseline__";
+const alertFlapMergeWindowMs = 5 * 60 * 1000;
+const alertHeartbeatIntervalMs = 5 * 60 * 1000;
 
 export interface MonitorAlertSample {
   collectedAt: string;
@@ -133,6 +139,37 @@ function stateKey(targetType: string, targetId: string, ruleType: string, ruleKe
 
 function ruleKeyHash(ruleKey: string): string {
   return createHash("sha256").update(ruleKey).digest("hex");
+}
+
+function numericDetail(observation: MonitorAlertObservation, key: string): number | null {
+  const value = Number(observation.details[key]);
+  return Number.isFinite(value) ? value : null;
+}
+
+function thresholdSeverity(observation: MonitorAlertObservation): MonitorAlertSeverity {
+  const value = numericDetail(observation, "value");
+  const threshold = numericDetail(observation, "threshold");
+  if (value == null || threshold == null) return "warning";
+  const majorDelta = observation.ruleType === "temperature" ? 8 : 5;
+  const criticalDelta = observation.ruleType === "temperature" ? 15 : 10;
+  if (value >= threshold + criticalDelta || (observation.ruleType !== "temperature" && value >= 95)) return "critical";
+  if (value >= threshold + majorDelta || (observation.ruleType !== "temperature" && value >= 90)) return "major";
+  return "warning";
+}
+
+export function monitorAlertSeverityForObservation(observation: Pick<MonitorAlertObservation, "ruleType" | "details">): MonitorAlertSeverity {
+  if (observation.ruleType === "disk_added") return "info";
+  if (["host_offline", "disk_missing", "tls_expired"].includes(observation.ruleType)) return "critical";
+  if (observation.ruleType === "tls_hostname_mismatch") return "major";
+  if (observation.ruleType === "tls_expiring") return "warning";
+  if (observation.ruleType === "deployment_status") {
+    return String(observation.details.status ?? "") === "stopped" ? "major" : "warning";
+  }
+  return thresholdSeverity(observation as MonitorAlertObservation);
+}
+
+function higherSeverity(left: MonitorAlertSeverity, right: MonitorAlertSeverity): MonitorAlertSeverity {
+  return monitorAlertSeverityRank(left) >= monitorAlertSeverityRank(right) ? left : right;
 }
 
 function thresholdObservation(
@@ -374,9 +411,12 @@ async function applyObservations(
   }
 
   const now = new Date().toISOString();
+  const forUpdate = app.db.dialect === "mysql" ? " FOR UPDATE" : "";
   await app.db.transaction(async () => {
-    for (const state of stateRows) {
-      if (state.target_type !== "host" || state.rule_type !== "disk_added" || !observedHostTargetIds.has(state.target_id) || state.active_alert_id) continue;
+    for (const staleState of stateRows) {
+      if (staleState.target_type !== "host" || staleState.rule_type !== "disk_added" || !observedHostTargetIds.has(staleState.target_id)) continue;
+      const state = await app.db.prepare(`SELECT * FROM monitor_alert_states WHERE id = ?${forUpdate}`).get(staleState.id) as MonitorAlertStateRow | undefined;
+      if (!state || state.active_alert_id) continue;
       const currentKey = stateKey(state.target_type, state.target_id, "disk_missing", state.rule_key_hash);
       if (currentDiskStateKeys.has(currentKey) || Number(state.breach_count) === 0) continue;
       await app.db.prepare(`
@@ -386,6 +426,7 @@ async function applyObservations(
       state.breach_count = 0;
       state.recovery_count = 0;
       state.last_evaluated_at = evaluatedAt;
+      states.set(stateKey(state.target_type, state.target_id, state.rule_type, state.rule_key_hash), state);
     }
     for (const observation of observations) {
       if (observation.ruleType === "disk_missing") {
@@ -394,39 +435,32 @@ async function applyObservations(
       }
       const hash = ruleKeyHash(observation.ruleKey);
       const key = stateKey(observation.targetType, observation.targetId, observation.ruleType, hash);
-      let state = states.get(key);
+      const selectState = () => app.db.prepare(`
+        SELECT * FROM monitor_alert_states
+        WHERE environment_id = ? AND target_type = ? AND target_id = ? AND rule_type = ? AND rule_key_hash = ?${forUpdate}
+      `).get(environment.id, observation.targetType, observation.targetId, observation.ruleType, hash) as Promise<MonitorAlertStateRow | undefined>;
+      let state = await selectState();
       if (state && Date.parse(state.last_evaluated_at) >= Date.parse(evaluatedAt)) continue;
       if (!state) {
         const id = randomUUID();
-        await app.db.prepare(`
-          INSERT INTO monitor_alert_states (
+        const inserted = await app.db.prepare(`
+          INSERT OR IGNORE INTO monitor_alert_states (
             id, environment_id, target_type, target_id, rule_type, rule_key_hash, rule_key,
             ssh_connection_id, service_id, deployment_id, target_name, connection_name, service_name,
-            breach_count, recovery_count, active_alert_id, last_value_json, last_evaluated_at, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?, ?)
+            breach_count, recovery_count, active_alert_id, last_recovered_alert_id, last_recovered_at,
+            last_value_json, last_evaluated_at, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, ?, ?, ?, ?)
         `).run(
           id, environment.id, observation.targetType, observation.targetId, observation.ruleType, hash, observation.ruleKey,
           observation.sshConnectionId, observation.serviceId, observation.deploymentId, observation.targetName,
           observation.connectionName, observation.serviceName, observation.breached === true ? 1 : 0,
           JSON.stringify(observation.details), evaluatedAt, now, now,
         );
-        state = {
-          id,
-          target_type: observation.targetType,
-          target_id: observation.targetId,
-          rule_type: observation.ruleType,
-          rule_key_hash: hash,
-          rule_key: observation.ruleKey,
-          ssh_connection_id: observation.sshConnectionId,
-          target_name: observation.targetName,
-          connection_name: observation.connectionName,
-          breach_count: observation.breached === true ? 1 : 0,
-          recovery_count: 0,
-          active_alert_id: null,
-          last_evaluated_at: evaluatedAt,
-        };
-        states.set(key, state as MonitorAlertStateRow);
-        continue;
+        state = await selectState();
+        if (!state) throw new Error("Monitor alert state could not be created");
+        states.set(key, state);
+        if (inserted.changes > 0) continue;
+        if (Date.parse(state.last_evaluated_at) >= Date.parse(evaluatedAt)) continue;
       }
       if (observation.breached === null) {
         await app.db.prepare(`
@@ -439,6 +473,7 @@ async function applyObservations(
         );
         continue;
       }
+      const severity = monitorAlertSeverityForObservation(observation);
       const activeAlertId = state.active_alert_id || null;
       let breachCount = Number(state.breach_count);
       let recoveryCount = Number(state.recovery_count);
@@ -446,21 +481,66 @@ async function applyObservations(
         recoveryCount = 0;
         if (!activeAlertId) breachCount += 1;
         if (!activeAlertId && breachCount >= environment.settings.consecutiveSamples) {
-          const alertId = randomUUID();
-          const alertStatus = observation.event ? "event" : "active";
-          await app.db.prepare(`
-            INSERT INTO monitor_alerts (
-              id, environment_id, state_id, target_type, target_id, rule_type, rule_key,
-              ssh_connection_id, service_id, deployment_id, environment_name, target_name,
-              connection_name, service_name, status, details_json, triggered_at, recovered_at, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
-          `).run(
-            alertId, environment.id, state.id, observation.targetType, observation.targetId, observation.ruleType,
-            observation.ruleKey, observation.sshConnectionId, observation.serviceId, observation.deploymentId,
-            environment.name, observation.targetName, observation.connectionName, observation.serviceName,
-            alertStatus, JSON.stringify(observation.details), evaluatedAt, now, now,
+          const recoveredAt = state.last_recovered_at ? Date.parse(state.last_recovered_at) : Number.NaN;
+          const canMergeFlap = Boolean(
+            state.last_recovered_alert_id
+            && Number.isFinite(recoveredAt)
+            && Date.parse(evaluatedAt) - recoveredAt >= 0
+            && Date.parse(evaluatedAt) - recoveredAt <= alertFlapMergeWindowMs,
           );
-          state.active_alert_id = alertId;
+          let alertId = state.last_recovered_alert_id;
+          if (canMergeFlap && alertId) {
+            const recoveredAlert = await app.db.prepare(`SELECT peak_severity, status FROM monitor_alerts WHERE id = ?${forUpdate}`).get(alertId) as
+              | { peak_severity: MonitorAlertSeverity; status: string }
+              | undefined;
+            if (recoveredAlert?.status === "recovered") {
+              await app.db.prepare(`
+                UPDATE monitor_alerts SET status = 'active', severity = ?, peak_severity = ?,
+                  occurrence_count = occurrence_count + 1, details_json = ?, recovered_at = NULL,
+                  last_seen_at = ?, updated_at = ? WHERE id = ? AND status = 'recovered'
+              `).run(
+                severity,
+                higherSeverity(recoveredAlert.peak_severity, severity),
+                JSON.stringify({ ...observation.details, flapping: true }),
+                evaluatedAt,
+                now,
+                alertId,
+              );
+              state.active_alert_id = alertId;
+            } else alertId = null;
+          }
+          if (!state.active_alert_id) {
+            alertId = randomUUID();
+            const alertStatus = observation.event ? "event" : "active";
+            await app.db.prepare(`
+              INSERT INTO monitor_alerts (
+                id, environment_id, state_id, target_type, target_id, rule_type, rule_key,
+                ssh_connection_id, service_id, deployment_id, environment_name, target_name,
+                connection_name, service_name, status, severity, peak_severity, occurrence_count,
+                details_json, triggered_at, recovered_at, last_seen_at, created_at, updated_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, NULL, ?, ?, ?)
+            `).run(
+              alertId, environment.id, state.id, observation.targetType, observation.targetId, observation.ruleType,
+              observation.ruleKey, observation.sshConnectionId, observation.serviceId, observation.deploymentId,
+              environment.name, observation.targetName, observation.connectionName, observation.serviceName,
+              alertStatus, severity, severity, JSON.stringify(observation.details), evaluatedAt, evaluatedAt, now, now,
+            );
+            state.active_alert_id = alertId;
+          }
+        } else if (activeAlertId) {
+          const alert = await app.db.prepare(`
+            SELECT severity, peak_severity, last_seen_at FROM monitor_alerts WHERE id = ?${forUpdate}
+          `).get(activeAlertId) as { severity: MonitorAlertSeverity; peak_severity: MonitorAlertSeverity; last_seen_at: string } | undefined;
+          if (alert) {
+            const peakSeverity = higherSeverity(alert.peak_severity, severity);
+            const heartbeatDue = Date.parse(evaluatedAt) - Date.parse(alert.last_seen_at || evaluatedAt) >= alertHeartbeatIntervalMs;
+            if (severity !== alert.severity || peakSeverity !== alert.peak_severity || heartbeatDue) {
+              await app.db.prepare(`
+                UPDATE monitor_alerts SET severity = ?, peak_severity = ?, details_json = ?, last_seen_at = ?, updated_at = ?
+                WHERE id = ? AND status IN ('active', 'event')
+              `).run(severity, peakSeverity, JSON.stringify(observation.details), evaluatedAt, now, activeAlertId);
+            }
+          }
         }
       } else {
         breachCount = 0;
@@ -470,27 +550,33 @@ async function applyObservations(
             const recoveryDetails = observation.ruleType === "disk_missing"
               ? { ...observation.details, recovered: true }
               : observation.details;
-            await app.db.prepare(`
-              UPDATE monitor_alerts SET status = 'recovered', details_json = ?, recovered_at = ?, updated_at = ?
-              WHERE id = ? AND status = 'active'
-            `).run(JSON.stringify(recoveryDetails), evaluatedAt, now, activeAlertId);
-            state.active_alert_id = null;
-            recoveryCount = 0;
+            const recovered = await app.db.prepare(`
+              UPDATE monitor_alerts SET status = 'recovered', details_json = ?, recovered_at = ?,
+                last_seen_at = ?, updated_at = ? WHERE id = ? AND status = 'active'
+            `).run(JSON.stringify(recoveryDetails), evaluatedAt, evaluatedAt, now, activeAlertId);
+            if (recovered.changes > 0) {
+              state.last_recovered_alert_id = activeAlertId;
+              state.last_recovered_at = evaluatedAt;
+              state.active_alert_id = null;
+              recoveryCount = 0;
+            }
           }
         } else recoveryCount = 0;
       }
       await app.db.prepare(`
         UPDATE monitor_alert_states SET ssh_connection_id = ?, service_id = ?, deployment_id = ?,
           target_name = ?, connection_name = ?, service_name = ?, breach_count = ?, recovery_count = ?,
-          active_alert_id = ?, last_value_json = ?, last_evaluated_at = ?, updated_at = ? WHERE id = ?
+          active_alert_id = ?, last_recovered_alert_id = ?, last_recovered_at = ?, last_value_json = ?,
+          last_evaluated_at = ?, updated_at = ? WHERE id = ?
       `).run(
         observation.sshConnectionId, observation.serviceId, observation.deploymentId, observation.targetName,
         observation.connectionName, observation.serviceName, breachCount, recoveryCount, state.active_alert_id,
-        JSON.stringify(observation.details), evaluatedAt, now, state.id,
+        state.last_recovered_alert_id, state.last_recovered_at, JSON.stringify(observation.details), evaluatedAt, now, state.id,
       );
       state.breach_count = breachCount;
       state.recovery_count = recoveryCount;
       state.last_evaluated_at = evaluatedAt;
+      states.set(key, state);
     }
   })();
 }

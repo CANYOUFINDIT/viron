@@ -100,6 +100,11 @@ describe("monitor alert database migration", () => {
       expect(columns.some((column) => column.name === "host_offline_enabled")).toBe(true);
       const userStateColumns = await db.prepare("PRAGMA table_info(monitor_alert_user_states)").all() as Array<{ name: string }>;
       expect(userStateColumns.some((column) => column.name === "cleared_at")).toBe(true);
+      expect(userStateColumns.some((column) => column.name === "severity_notified")).toBe(true);
+      const stateColumns = await db.prepare("PRAGMA table_info(monitor_alert_states)").all() as Array<{ name: string }>;
+      expect(stateColumns.map((column) => column.name)).toEqual(expect.arrayContaining(["last_recovered_alert_id", "last_recovered_at"]));
+      const alertColumns = await db.prepare("PRAGMA table_info(monitor_alerts)").all() as Array<{ name: string }>;
+      expect(alertColumns.map((column) => column.name)).toEqual(expect.arrayContaining(["severity", "peak_severity", "occurrence_count", "last_seen_at"]));
     } finally {
       await db.close();
     }

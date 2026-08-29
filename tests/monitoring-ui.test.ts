@@ -8,6 +8,8 @@ const environment = readFileSync(new URL("../src/client/views/EnvironmentDetailV
 const router = readFileSync(new URL("../src/client/router.ts", import.meta.url), "utf8");
 const alerts = readFileSync(new URL("../src/client/components/MonitorAlertCenter.vue", import.meta.url), "utf8");
 const hostDashboard = readFileSync(new URL("../src/client/components/HostMonitorDashboard.vue", import.meta.url), "utf8");
+const hostFleet = readFileSync(new URL("../src/client/components/monitoring/HostFleetPanel.vue", import.meta.url), "utf8");
+const hostEventCalendar = readFileSync(new URL("../src/client/components/monitoring/HostEventCalendar.vue", import.meta.url), "utf8");
 
 describe("monitoring dashboard wiring", () => {
   it("registers the global monitoring route and cancels overlapping overview requests", () => {
@@ -31,6 +33,14 @@ describe("monitoring dashboard wiring", () => {
   it("sends host and service alerts to the monitoring dashboard", () => {
     expect(alerts).toContain('name: "monitoring"');
     expect(alerts).toContain('name: "ssh-keys"');
+  });
+
+  it("shows a monthly host event calendar with no-data and event drill-down states", () => {
+    expect(hostFleet).toContain("<HostEventCalendar");
+    expect(hostEventCalendar).toContain("/event-calendar?");
+    expect(hostEventCalendar).toContain("/events?");
+    expect(hostEventCalendar).toContain("day.coverageRatio < 0.8");
+    expect(hostEventCalendar).toContain("event.occurrenceCount > 1");
   });
 
   it("loads NOC alerts and shows empty-state copy for APM and NOC panels", () => {

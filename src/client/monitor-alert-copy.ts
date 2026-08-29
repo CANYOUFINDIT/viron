@@ -1,5 +1,5 @@
 import { translate as tr } from "./i18n";
-import type { MonitorAlertItem } from "../shared/monitor-alerts";
+import type { MonitorAlertItem, MonitorAlertNotificationPhase } from "../shared/monitor-alerts";
 
 function number(details: Record<string, unknown>, key: string): number | null {
   const value = Number(details[key]);
@@ -21,15 +21,16 @@ function diskLabel(alert: MonitorAlertItem): string {
   return path || device || alert.ruleKey;
 }
 
-export function monitorAlertTitle(alert: MonitorAlertItem, phase: "active" | "recovered"): string {
+export function monitorAlertTitle(alert: MonitorAlertItem, phase: MonitorAlertNotificationPhase): string {
   const location = `${tr(alert.workspaceName)} / ${alert.environmentName}`;
   if (alert.ruleType === "disk_added") return tr("监控事件 · {0}", [location]);
+  if (phase === "escalated") return tr("监控升级 · {0}", [location]);
   return phase === "active"
     ? tr("监控告警 · {0}", [location])
     : tr("监控已恢复 · {0}", [location]);
 }
 
-export function monitorAlertBody(alert: MonitorAlertItem, phase: "active" | "recovered"): string {
+export function monitorAlertBody(alert: MonitorAlertItem, phase: MonitorAlertNotificationPhase): string {
   const target = alert.targetName || alert.connectionName;
   const recovered = phase === "recovered";
   if (alert.ruleType === "host_offline") {
