@@ -63,5 +63,7 @@ describe("monitoring dashboard wiring", () => {
     expect(monitoringView).toContain("hostOffset");
     expect(monitoringView).toContain("hostsOnly");
     expect(monitoringView).toContain("mergeHostPage");
+    expect(monitoringView).toContain("function isMonitoringRoute()");
+    expect(monitoringView).toContain("if (!isMonitoringRoute()) return;");
   });
 });

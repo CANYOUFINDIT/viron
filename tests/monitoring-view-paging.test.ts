@@ -107,4 +107,48 @@ describe("monitoring host pages", () => {
     expect(wrapper.find(".fleet").text()).toContain("host-second");
     wrapper.unmount();
   });
+
+  it("does not hijack navigation back to monitoring after leaving the page", async () => {
+    let resolveOverview: ((value: unknown) => void) | undefined;
+    mockedApi.mockImplementation(async (path: string) => {
+      const url = String(path);
+      if (url.includes("/environments") && !url.includes("monitoring")) return { items: [{ id: "env-1", name: "dev" }] };
+      if (url.includes("/monitor-alerts")) return { items: [] };
+      if (url.includes("/monitoring/overview")) {
+        return await new Promise((resolve) => {
+          resolveOverview = resolve;
+        });
+      }
+      return {};
+    });
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { name: "monitoring", path: "/monitoring", component: MonitoringView },
+        { name: "overview", path: "/", component: { template: "<div class='home'>home</div>" } },
+      ],
+    });
+    await router.push({ name: "monitoring", query: { view: "services" } });
+    const wrapper = mount(MonitoringView, {
+      global: {
+        plugins: [router, i18nPlugin],
+        stubs: {
+          HostFleetPanel: true,
+          ServiceApmPanel: true,
+          NocScreen: true,
+          "el-select": true,
+          "el-option": true,
+          "el-button": true,
+        },
+      },
+    });
+    await flushPromises();
+    await router.push({ name: "overview" });
+    await flushPromises();
+    resolveOverview?.(overview([{ id: "00000000-0000-4000-8000-000000000001", name: "host-first" }], 1));
+    await flushPromises();
+    expect(router.currentRoute.value.name).toBe("overview");
+    wrapper.unmount();
+  });
 });
