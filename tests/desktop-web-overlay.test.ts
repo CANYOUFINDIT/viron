@@ -87,7 +87,8 @@ describe("desktop Web renderer overlays", () => {
     expect(webBrowser).toContain("freezePageForOverlay");
     expect(webBrowser).toContain('captureDesktopWebView(id, "page")');
     expect(webBrowser.indexOf("captureDesktopWebView(id, \"page\")")).toBeLessThan(webBrowser.indexOf("setDesktopWebViewVisible(id, false)"));
-    expect(webBrowser).toContain("overlayBlocking && overlayFrame");
+    expect(webBrowser).toContain("overlayBlocking && (overlayFrame || previewFrame)");
+    expect(webBrowser).toContain("const pendingCapture = captureDesktopWebView(id, \"page\")");
     expect(webBrowser).toContain("is-overlay-frozen");
     expect(webBrowser).toContain(":class=\"{ 'is-preview': preview, 'is-overlay-frozen': overlayBlocking }\"");
     expect(desktopWebRuntime).toContain("export async function captureDesktopWebViewPage");
