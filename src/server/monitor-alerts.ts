@@ -591,14 +591,27 @@ export async function evaluateRecentMonitorAlerts(
   workspaceType: string,
   workspaceId: string,
 ): Promise<void> {
+  const connection = await app.db.prepare(`
+    SELECT h.ssh_connection_id, h.latest_host_json, h.latest_candidates_json, h.last_collected_at
+    FROM monitor_hosts h
+    JOIN ssh_connections c ON c.id = h.ssh_connection_id
+    WHERE h.agent_id = ? AND c.workspace_type = ? AND c.workspace_id = ?
+    ORDER BY h.install_managed DESC,
+      CASE WHEN h.status = 'ready' THEN 0 ELSE 1 END,
+      COALESCE(h.last_collected_at, '') DESC,
+      h.ssh_connection_id
+    LIMIT 1
+  `).get(agentId, workspaceType, workspaceId) as
+    | { ssh_connection_id: string; latest_host_json: string; latest_candidates_json: string; last_collected_at: string | null }
+    | undefined;
+  if (!connection) return;
   const rows = await app.db.prepare(`
-    SELECT s.payload_json
-    FROM monitor_samples s
-    JOIN ssh_connections c ON c.id = s.ssh_connection_id
-    WHERE s.agent_id = ? AND c.workspace_type = ? AND c.workspace_id = ?
-    ORDER BY s.collected_at DESC, s.sequence_end DESC
+    SELECT payload_json
+    FROM monitor_samples
+    WHERE ssh_connection_id = ? AND agent_id = ?
+    ORDER BY collected_at DESC, sequence_end DESC
     LIMIT 8
-  `).all(agentId, workspaceType, workspaceId) as Array<{ payload_json: string }>;
+  `).all(connection.ssh_connection_id, agentId) as Array<{ payload_json: string }>;
   const samples: MonitorAlertSample[] = [];
   for (const row of rows.reverse()) {
     try {
@@ -606,6 +619,21 @@ export async function evaluateRecentMonitorAlerts(
       if (payload?.host && Array.isArray(payload.candidates) && typeof payload.collectedAt === "string") samples.push(payload);
     } catch {
       // Invalid legacy samples cannot participate in alert evaluation.
+    }
+  }
+  if (!samples.length && connection.last_collected_at) {
+    try {
+      const host = JSON.parse(connection.latest_host_json) as MonitorHostSnapshot;
+      const candidates = JSON.parse(connection.latest_candidates_json) as MonitorCandidate[];
+      if (host && typeof host.hostname === "string") {
+        samples.push({
+          collectedAt: connection.last_collected_at,
+          host,
+          candidates: Array.isArray(candidates) ? candidates : [],
+        });
+      }
+    } catch {
+      // Invalid retained snapshots cannot participate in alert evaluation.
     }
   }
   await evaluateMonitorAlertSamples(app, { agentId, workspaceType, workspaceId, samples });
