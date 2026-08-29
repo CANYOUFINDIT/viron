@@ -18,6 +18,7 @@ import {
 import { MonitorInstallTaskConflictError, sanitizeMonitorInstallOutput, type MonitorInstallTaskReporter } from "../monitor-install-task-manager.js";
 import { parseBody } from "../validation.js";
 import { requireAdmin } from "./auth.js";
+import { PRODUCT_VERSION } from "../product-info.js";
 import { loadServiceDeploymentsPayload, ServiceDeploymentsPayloadError } from "../service-deployments-payload.js";
 import {
   ServiceOperationError,
@@ -107,6 +108,32 @@ function parseJson<T>(value: unknown, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+function parseHostSnapshot(value: unknown): Record<string, unknown> | null {
+  const parsed = parseJson<unknown>(value, null);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  return typeof (parsed as Record<string, unknown>).hostname === "string" ? parsed as Record<string, unknown> : null;
+}
+
+function monitorUpdateAvailable(agentVersion: unknown, snapshot: Record<string, unknown> | null, installManaged: boolean): boolean {
+  const installed = String(agentVersion ?? "").trim();
+  if (!installed && !installManaged) return false;
+  if (snapshot?.collectorUser !== "root") return true;
+  if (Number(snapshot?.metricsVersion ?? 0) < 2) return true;
+  if (!installed || installed === PRODUCT_VERSION) return false;
+  const parse = (value: string) => {
+    const match = /^(\d+)\.(\d+)\.(\d+)(?:-([^+]+))?(?:\+.+)?$/.exec(value);
+    return match ? { numbers: match.slice(1, 4).map(Number), prerelease: match[4] ?? "" } : null;
+  };
+  const installedVersion = parse(installed);
+  const availableVersion = parse(PRODUCT_VERSION);
+  if (!installedVersion || !availableVersion) return true;
+  for (let index = 0; index < installedVersion.numbers.length; index += 1) {
+    const difference = installedVersion.numbers[index]! - availableVersion.numbers[index]!;
+    if (difference !== 0) return difference < 0;
+  }
+  return Boolean(installedVersion.prerelease) && !availableVersion.prerelease;
 }
 
 async function connectionBelongsToEnvironment(app: FastifyInstance, connectionId: string, environmentId: string) {
@@ -393,15 +420,43 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
         return reply.code(404).send({ error: "SSH_CONNECTION_NOT_FOUND", message: "SSH 连接不存在" });
       }
       const row = await app.db.prepare(`
-        SELECT latest_candidates_json, latest_kubernetes_configs_json, status FROM monitor_hosts WHERE ssh_connection_id = ?
-      `).get(connection.id) as { latest_candidates_json?: string; latest_kubernetes_configs_json?: string; status?: string } | undefined;
+        SELECT
+          c.host, c.port, c.username,
+          h.status, h.agent_id, h.agent_version, h.protocol_version, h.last_sequence,
+          h.latest_host_json, h.latest_candidates_json, h.latest_kubernetes_configs_json,
+          h.last_error, h.last_collected_at, h.last_pulled_at,
+          h.install_path, h.install_architecture, h.install_managed, h.installed_at
+        FROM ssh_connections c
+        LEFT JOIN monitor_hosts h ON h.ssh_connection_id = c.id
+        WHERE c.id = ?
+      `).get(connection.id) as Record<string, unknown> | undefined;
+      const snapshot = parseHostSnapshot(row?.latest_host_json);
+      const installManaged = Boolean(row?.install_managed);
+      const monitorStatus = (row?.status as "ready" | "missing" | "error" | "unknown" | undefined) ?? "unknown";
       return {
         item: {
           sshConnectionId: connection.id,
           connectionName: connection.name,
-          monitorStatus: row?.status ?? "unknown",
+          host: String(row?.host ?? ""),
+          port: Number(row?.port ?? 0),
+          username: String(row?.username ?? connection.username ?? ""),
+          monitorStatus,
+          monitorOffline: monitorStatus === "error",
+          agentId: String(row?.agent_id ?? ""),
+          agentVersion: String(row?.agent_version ?? ""),
+          monitorUpdateAvailable: monitorUpdateAvailable(row?.agent_version, snapshot, installManaged),
+          protocolVersion: Number(row?.protocol_version ?? 0),
+          lastSequence: Number(row?.last_sequence ?? 0),
+          snapshot,
           candidates: parseJson(row?.latest_candidates_json, []),
           kubernetesConfigs: parseJson(row?.latest_kubernetes_configs_json, []),
+          lastError: String(row?.last_error ?? ""),
+          lastCollectedAt: row?.last_collected_at ? String(row.last_collected_at) : null,
+          lastPulledAt: row?.last_pulled_at ? String(row.last_pulled_at) : null,
+          installPath: String(row?.install_path ?? ""),
+          installArchitecture: String(row?.install_architecture ?? ""),
+          installManaged,
+          installedAt: row?.installed_at ? String(row.installed_at) : null,
         },
       };
     },
