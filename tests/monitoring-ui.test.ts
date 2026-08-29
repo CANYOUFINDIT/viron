@@ -55,5 +55,9 @@ describe("monitoring dashboard wiring", () => {
     expect(environment).toContain("@open-ssh=\"openServiceSsh\"");
     expect(environment).toContain("tab: \"ssh\", connectionId");
     expect(monitoringView).toContain('query: { tab: "maintenance", serviceId: String(node.serviceId), deploymentId: String(node.id) }');
+    expect(monitoringView).toContain("$t('全部环境')");
+    expect(monitoringView).not.toContain("environmentId: environmentId.value || firstMonitored.environmentId");
+    expect(monitoringView).not.toContain("environmentId: environmentId.value || host.environmentId");
+    expect(monitoringView).toContain("patchQuery({ hostId: firstMonitored.sshConnectionId })");
   });
 });
