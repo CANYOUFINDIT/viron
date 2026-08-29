@@ -1,7 +1,17 @@
 <script setup lang="ts">
-import { Minimize } from "@lucide/vue";
+import {
+  Activity,
+  AlertTriangle,
+  CheckCircle2,
+  Cpu,
+  HardDrive,
+  Minimize,
+  Radio,
+  Server,
+  ShieldAlert,
+  Zap,
+} from "@lucide/vue";
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-
 import type { MonitoringHostCard } from "./HostFleetPanel.vue";
 import type { MonitoringProblemNode, MonitoringServiceCard } from "./ServiceApmPanel.vue";
 
@@ -22,11 +32,12 @@ const props = defineProps<{
   ranking: MonitoringServiceCard[];
   alerts: Array<{ id: string; status: string; targetName: string; environmentName?: string; triggeredAt?: string }>;
 }>();
+
 const emit = defineEmits<{ exit: [] }>();
 const root = ref<HTMLElement | null>(null);
 const reducedMotion = ref(false);
 
-const heatHosts = computed(() => props.hosts.slice(0, 40));
+const heatHosts = computed(() => props.hosts.slice(0, 48));
 const networkRanking = computed(() => props.hosts
   .map((host) => ({ host, total: Number(host.networkReceiveBytesPerSecond ?? 0) + Number(host.networkTransmitBytesPerSecond ?? 0) }))
   .sort((left, right) => right.total - left.total)
@@ -35,12 +46,15 @@ const storageWarnings = computed(() => props.hosts
   .filter((host) => host.worstDisk?.usedPercent != null)
   .sort((left, right) => Number(right.worstDisk?.usedPercent ?? 0) - Number(left.worstDisk?.usedPercent ?? 0))
   .slice(0, 8));
+
 const distributionStyle = computed(() => {
   const total = Math.max(1, props.summary.hostTotal);
-  const online = props.summary.hostOnline / total * 360;
-  const offline = props.summary.hostOffline / total * 360;
-  const missing = props.summary.hostMissing / total * 360;
-  return { background: `conic-gradient(#00f2c3 0deg ${online}deg, #ff5c62 ${online}deg ${online + offline}deg, #87939c ${online + offline}deg ${online + offline + missing}deg, #ffb300 ${online + offline + missing}deg 360deg)` };
+  const online = (props.summary.hostOnline / total) * 360;
+  const offline = (props.summary.hostOffline / total) * 360;
+  const missing = (props.summary.hostMissing / total) * 360;
+  return {
+    background: `conic-gradient(#10b981 0deg ${online}deg, #ef4444 ${online}deg ${online + offline}deg, #64748b ${online + offline}deg ${online + offline + missing}deg, #f59e0b ${online + offline + missing}deg 360deg)`
+  };
 });
 
 function formatPercent(value: number | null) {
@@ -58,8 +72,8 @@ function heatClass(host: MonitoringHostCard) {
   if (host.stale) return "is-unknown";
   const cpu = host.cpuUsedPercent;
   if (cpu === null) return "is-unknown";
-  if (cpu >= 90) return "is-critical";
-  if (cpu >= 80) return "is-warn";
+  if (cpu >= 85) return "is-critical";
+  if (cpu >= 70) return "is-warn";
   return "is-ok";
 }
 
@@ -91,98 +105,510 @@ onBeforeUnmount(() => {
 
 <template>
   <Teleport to="body">
-  <section ref="root" class="noc-screen" :class="{ 'is-reduced': reducedMotion }" role="dialog" aria-label="NOC">
-    <header>
-      <strong>VIRON CLUSTER OPERATIONS CENTER</strong>
-      <span class="noc-live" aria-live="polite">LIVE · {{ generatedAt ? new Date(generatedAt).toLocaleTimeString() : "—" }}</span>
-      <button type="button" :aria-label="$t('退出全屏')" @click="emit('exit')"><Minimize :size="16" />{{ $t('退出全屏') }}</button>
-    </header>
-    <div class="noc-grid">
-      <aside>
-        <h3>{{ $t('节点运行状态') }}</h3>
-        <div class="noc-donut" :style="distributionStyle"><span><strong>{{ summary.hostOnline }}</strong><small>/ {{ summary.hostTotal }} ONLINE</small></span></div>
-        <p class="noc-legend">🟢 {{ summary.hostOnline }} · 🔴 {{ summary.hostOffline }} · ⚪ {{ summary.hostMissing }} · ⚠ {{ summary.hostStale }}</p>
-        <h3>{{ $t('实时告警流') }}</h3>
-        <ol v-if="alerts.length" class="noc-alert-stream">
-          <li v-for="alert in alerts.slice(0, 12)" :key="alert.id">{{ alert.targetName }} · {{ alert.status }}</li>
-        </ol>
-        <p v-else class="noc-empty">{{ $t('暂无活动告警') }}</p>
-      </aside>
-      <main>
-        <div class="noc-gauges">
-          <article><small>CPU</small><strong>{{ formatPercent(summary.avgCpuPercent) }}</strong></article>
-          <article><small>MEM</small><strong>{{ formatPercent(summary.avgMemoryPercent) }}</strong></article>
-          <article><small>DISK</small><strong>{{ summary.diskAlerts }}</strong></article>
+    <section ref="root" class="noc-screen" :class="{ 'is-reduced': reducedMotion }" role="dialog" aria-label="NOC Operations Center">
+      <!-- 顶部控制条 -->
+      <header class="noc-header">
+        <div class="noc-brand">
+          <Radio :size="18" class="text-teal" />
+          <strong>VIRON CLUSTER OPERATIONS CENTER</strong>
+          <span class="noc-live-badge" aria-live="polite">
+            <span class="noc-pulse-dot"></span> LIVE · {{ generatedAt ? new Date(generatedAt).toLocaleTimeString() : "—" }}
+          </span>
         </div>
-        <div class="noc-wave" aria-label="CPU waveform">
-          <i v-for="host in heatHosts.slice(0, 28)" :key="`wave-${host.sshConnectionId}`" :style="{ height: `${Math.max(8, host.cpuUsedPercent || 0)}%` }"></i>
-        </div>
-        <div v-if="heatHosts.length" class="noc-heat">
-          <button v-for="host in heatHosts" :key="host.sshConnectionId" type="button" :class="heatClass(host)" :title="host.connectionName">
-            {{ formatPercent(host.cpuUsedPercent) }}
-          </button>
-        </div>
-        <p v-else class="noc-empty">{{ $t('暂无主机矩阵') }}</p>
-      </main>
-      <aside>
-        <h3>{{ $t('网络吞吐排行') }}</h3>
-        <ol v-if="networkRanking.length">
-          <li v-for="item in networkRanking" :key="item.host.sshConnectionId"><span>{{ item.host.connectionName }}</span><strong>{{ formatRate(item.total) }}</strong></li>
-        </ol>
-        <p v-else class="noc-empty">{{ $t('暂无网络数据') }}</p>
-        <h3>{{ $t('存储容量水位') }}</h3>
-        <ol v-if="storageWarnings.length">
-          <li v-for="host in storageWarnings" :key="`disk-${host.sshConnectionId}`"><span>{{ host.connectionName }} · {{ host.worstDisk?.path }}</span><strong>{{ formatPercent(host.worstDisk?.usedPercent ?? null) }}</strong></li>
-        </ol>
-        <p v-else class="noc-empty">{{ $t('暂无存储数据') }}</p>
-      </aside>
-    </div>
-  </section>
+        <button type="button" class="noc-exit-btn" :aria-label="$t('退出全屏')" @click="emit('exit')">
+          <Minimize :size="14" />
+          <span>{{ $t('退出全屏') }} (ESC)</span>
+        </button>
+      </header>
+
+      <!-- 大屏三列网格 -->
+      <div class="noc-grid">
+        <!-- 左侧面板：节点分布与告警流 -->
+        <aside class="noc-panel">
+          <header class="noc-panel__head">
+            <h3>{{ $t('节点运行状态罗盘') }}</h3>
+          </header>
+          <div class="noc-donut" :style="distributionStyle">
+            <div class="donut-core">
+              <strong>{{ summary.hostOnline }}</strong>
+              <small>/ {{ summary.hostTotal }} ONLINE</small>
+            </div>
+          </div>
+          <div class="noc-legend">
+            <span><i class="dot-green"></i> {{ summary.hostOnline }} {{ $t('在线') }}</span>
+            <span><i class="dot-red"></i> {{ summary.hostOffline }} {{ $t('离线') }}</span>
+            <span><i class="dot-gray"></i> {{ summary.hostMissing }} {{ $t('缺失') }}</span>
+            <span><i class="dot-amber"></i> {{ summary.hostStale }} {{ $t('陈旧') }}</span>
+          </div>
+
+          <header class="noc-panel__head mt-16">
+            <h3>{{ $t('实时告警事件流') }}</h3>
+          </header>
+          <ol v-if="alerts.length" class="noc-alert-stream">
+            <li v-for="alert in alerts.slice(0, 12)" :key="alert.id">
+              <AlertTriangle :size="12" class="text-amber" />
+              <span class="alert-name">{{ alert.targetName }}</span>
+              <span class="alert-status">{{ alert.status }}</span>
+            </li>
+          </ol>
+          <p v-else class="noc-empty">
+            <CheckCircle2 :size="16" class="text-teal" />
+            <span>{{ $t('暂无活动告警') }}</span>
+          </p>
+        </aside>
+
+        <!-- 中间主面板：集群核心仪表、波形与热力矩阵 -->
+        <main class="noc-panel noc-main-panel">
+          <!-- 3 个核心大表盘 -->
+          <div class="noc-gauges">
+            <article class="gauge-card">
+              <div class="gauge-head">
+                <Cpu :size="16" class="text-teal" />
+                <small>CPU AVG</small>
+              </div>
+              <strong>{{ formatPercent(summary.avgCpuPercent) }}</strong>
+            </article>
+            <article class="gauge-card">
+              <div class="gauge-head">
+                <HardDrive :size="16" class="text-purple" />
+                <small>MEM AVG</small>
+              </div>
+              <strong>{{ formatPercent(summary.avgMemoryPercent) }}</strong>
+            </article>
+            <article class="gauge-card">
+              <div class="gauge-head">
+                <ShieldAlert :size="16" class="text-amber" />
+                <small>DISK ALERTS</small>
+              </div>
+              <strong :class="{ 'text-red': summary.diskAlerts > 0 }">{{ summary.diskAlerts }}</strong>
+            </article>
+          </div>
+
+          <!-- 动态波形条 -->
+          <div class="noc-wave-box">
+            <div class="noc-wave" aria-label="CPU waveform">
+              <i
+                v-for="host in heatHosts.slice(0, 36)"
+                :key="`wave-${host.sshConnectionId}`"
+                :style="{ height: `${Math.max(8, host.cpuUsedPercent || 0)}%` }"
+                :title="`${host.connectionName}: ${formatPercent(host.cpuUsedPercent)}`"
+              ></i>
+            </div>
+          </div>
+
+          <!-- 主机热力图矩阵 (Fleet Heatmap) -->
+          <header class="noc-panel__head">
+            <h3>{{ $t('宿主机集群热力矩阵') }}</h3>
+          </header>
+          <div v-if="heatHosts.length" class="noc-heat-grid">
+            <div
+              v-for="host in heatHosts"
+              :key="host.sshConnectionId"
+              class="heat-cell"
+              :class="heatClass(host)"
+              :title="`${host.connectionName} (${host.host}) · CPU: ${formatPercent(host.cpuUsedPercent)}`"
+            >
+              <span class="heat-host-name">{{ host.connectionName }}</span>
+              <strong class="heat-val">{{ formatPercent(host.cpuUsedPercent) }}</strong>
+            </div>
+          </div>
+          <p v-else class="noc-empty">{{ $t('暂无主机矩阵') }}</p>
+        </main>
+
+        <!-- 右侧面板：吞吐排行与存储水位 -->
+        <aside class="noc-panel">
+          <header class="noc-panel__head">
+            <h3>{{ $t('网络吞吐排行') }}</h3>
+          </header>
+          <ol v-if="networkRanking.length" class="noc-rank-list">
+            <li v-for="(item, idx) in networkRanking" :key="item.host.sshConnectionId">
+              <span class="noc-rank-num">{{ idx + 1 }}</span>
+              <span class="noc-rank-name">{{ item.host.connectionName }}</span>
+              <strong class="noc-rank-rate">{{ formatRate(item.total) }}</strong>
+            </li>
+          </ol>
+          <p v-else class="noc-empty">{{ $t('暂无网络数据') }}</p>
+
+          <header class="noc-panel__head mt-16">
+            <h3>{{ $t('存储容量水位') }}</h3>
+          </header>
+          <ol v-if="storageWarnings.length" class="noc-rank-list">
+            <li v-for="host in storageWarnings" :key="`disk-${host.sshConnectionId}`">
+              <span class="noc-rank-name">{{ host.connectionName }} · {{ host.worstDisk?.path }}</span>
+              <strong class="noc-rank-rate" :class="Number(host.worstDisk?.usedPercent ?? 0) >= 85 ? 'text-red' : 'text-amber'">
+                {{ formatPercent(host.worstDisk?.usedPercent ?? null) }}
+              </strong>
+            </li>
+          </ol>
+          <p v-else class="noc-empty">{{ $t('暂无存储预警数据') }}</p>
+        </aside>
+      </div>
+    </section>
   </Teleport>
 </template>
 
 <style scoped>
 .noc-screen {
-  position: fixed; inset: 0; z-index: 90; display: grid; grid-template-rows: auto minmax(0, 1fr);
-  background: #0b1118; color: #d7f7ee; font-family: var(--font-body);
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: #070d12;
+  color: #e2f1ee;
+  font-family: var(--font-ui);
+  user-select: none;
 }
-.noc-screen header {
-  min-height: 3.25rem; padding: 0 1.25rem; display: flex; align-items: center; gap: 1rem;
-  border-block-end: 1px solid #16313a;
+
+/* 顶部操作条 */
+.noc-header {
+  min-height: 52px;
+  padding: 0 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid #14282e;
+  background: #0a131a;
 }
-.noc-screen header button {
-  margin-inline-start: auto; border: 1px solid #1e4d4a; border-radius: 8px; padding: .375rem .75rem;
-  display: inline-flex; gap: .375rem; align-items: center; background: transparent; color: inherit; cursor: pointer;
+
+.noc-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
-.noc-live { color: #00f2c3; letter-spacing: .08em; }
-.noc-grid { min-height: 0; display: grid; grid-template-columns: 18rem minmax(0, 1fr) 18rem; gap: 1rem; padding: 1rem; }
-.noc-grid aside, .noc-grid main { min-width: 0; padding: 1rem; border: 1px solid #16313a; border-radius: 12px; background: #101820; overflow: auto; }
-.noc-grid h3 { margin: 0 0 .75rem; color: #86a9a5; font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; }
-.noc-donut { width: 9rem; aspect-ratio: 1; margin: 1rem auto; border-radius: 50%; display: grid; place-items: center; }
-.noc-donut::before { content: ""; grid-area: 1 / 1; width: 68%; aspect-ratio: 1; border-radius: 50%; background: #101820; }
-.noc-donut span { z-index: 1; grid-area: 1 / 1; display: grid; justify-items: center; }
-.noc-donut strong { color: #00f2c3; font-size: 2rem; }
-.noc-donut small { color: #86a9a5; font-size: .55rem; letter-spacing: .08em; }
-.noc-legend { text-align: center; color: #86a9a5; font-size: .7rem; }
-.noc-alert-stream { max-height: 15rem; overflow: hidden; }
-.noc-alert-stream li { animation: noc-alert-rise 18s linear infinite; }
-.noc-gauges { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem; margin-bottom: 1rem; }
-.noc-gauges article { padding: 1rem; border: 1px solid #16313a; border-radius: 10px; }
-.noc-gauges strong { display: block; font-size: 1.75rem; color: #00f2c3; }
-.noc-wave { height: 7rem; margin-bottom: 1rem; padding: .5rem; border: 1px solid #16313a; display: flex; align-items: flex-end; gap: 3px; overflow: hidden; background: linear-gradient(to bottom, transparent 24%, #16313a 25%, transparent 26%, transparent 49%, #16313a 50%, transparent 51%, transparent 74%, #16313a 75%, transparent 76%); }
-.noc-wave i { flex: 1; min-width: 3px; border-radius: 2px 2px 0 0; background: #00f2c3; box-shadow: 0 0 8px rgba(0, 242, 195, .34); transition: height .5s ease; }
-.noc-heat { display: grid; grid-template-columns: repeat(auto-fill, minmax(3.5rem, 1fr)); gap: .375rem; }
-.noc-heat button { min-height: 2.75rem; border: 0; border-radius: 6px; color: #0b1118; font-family: var(--font-mono); cursor: default; }
-.noc-heat .is-ok { background: #00f2c3; }
-.noc-heat .is-warn { background: #ffb300; }
-.noc-grid aside ol { margin: 0 0 1.25rem; padding: 0; display: grid; gap: .4rem; list-style: none; }
-.noc-grid aside li { padding: .45rem .55rem; border-left: 2px solid #1e4d4a; display: flex; justify-content: space-between; gap: .75rem; background: #0b1118; color: #a8c2be; font-size: .68rem; }
-.noc-grid aside li strong { color: #d7f7ee; font-family: var(--font-mono); }
-@keyframes noc-alert-rise { from { transform: translateY(0); } to { transform: translateY(-18px); } }
-.noc-heat .is-critical { background: #ff4d4f; color: #fff; }
-.noc-heat .is-down, .noc-heat .is-unknown { background: #2a3640; color: #8aa; }
-.noc-screen ol { margin: 0; padding-left: 1.1rem; display: grid; gap: .375rem; font-size: .75rem; }
-.noc-empty { margin: .75rem 0; color: #6f8890; font-size: .75rem; }
-.noc-screen.is-reduced .noc-live { animation: none; }
-@media (max-width: 899px) { .noc-grid { grid-template-columns: minmax(0, 1fr); } }
+
+.noc-brand strong {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  color: #f1f5f9;
+}
+
+.noc-live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.noc-pulse-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 8px #10b981;
+}
+
+.noc-exit-btn {
+  padding: 6px 14px;
+  border: 1px solid #1b383f;
+  border-radius: 8px;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: all .16s ease;
+}
+
+.noc-exit-btn:hover {
+  border-color: #10b981;
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.08);
+}
+
+/* 主网格 */
+.noc-grid {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 20rem minmax(0, 1fr) 20rem;
+  gap: 14px;
+  padding: 14px;
+}
+
+.noc-panel {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid #14282e;
+  border-radius: 12px;
+  background: #0c161d;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.noc-panel__head h3 {
+  margin: 0;
+  color: #7dd3fc;
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.mt-16 { margin-top: 14px; }
+
+/* 环形状态罗盘 */
+.noc-donut {
+  width: 130px;
+  height: 130px;
+  margin: 8px auto;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 0 20px rgba(16, 185, 129, 0.15);
+}
+
+.donut-core {
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  background: #0c161d;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.donut-core strong {
+  font-size: 24px;
+  font-family: var(--font-mono);
+  color: #10b981;
+  line-height: 1;
+}
+
+.donut-core small {
+  font-size: 9px;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+.noc-legend {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  font-size: 11px;
+  color: #94a3b8;
+  padding: 8px;
+  border-radius: 8px;
+  background: #081016;
+}
+
+.noc-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dot-green { width: 7px; height: 7px; border-radius: 50%; background: #10b981; }
+.dot-red { width: 7px; height: 7px; border-radius: 50%; background: #ef4444; }
+.dot-gray { width: 7px; height: 7px; border-radius: 50%; background: #64748b; }
+.dot-amber { width: 7px; height: 7px; border-radius: 50%; background: #f59e0b; }
+
+/* 告警流 */
+.noc-alert-stream {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.noc-alert-stream li {
+  padding: 8px 10px;
+  border-left: 2px solid #f59e0b;
+  border-radius: 0 6px 6px 0;
+  background: #081016;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.alert-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.alert-status { font-family: var(--font-mono); font-size: 10px; color: #f59e0b; }
+
+/* 核心仪表卡片 */
+.noc-gauges {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.gauge-card {
+  padding: 14px;
+  border: 1px solid #18333c;
+  border-radius: 10px;
+  background: #091218;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gauge-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.gauge-head small {
+  font-size: 10px;
+  font-weight: 750;
+  color: #64748b;
+  letter-spacing: .06em;
+}
+
+.gauge-card strong {
+  font-size: 28px;
+  font-family: var(--font-mono);
+  color: #38bdf8;
+  line-height: 1;
+}
+
+/* 动态波形 */
+.noc-wave-box {
+  padding: 10px;
+  border: 1px solid #14282e;
+  border-radius: 10px;
+  background: #081016;
+}
+
+.noc-wave {
+  height: 80px;
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  overflow: hidden;
+}
+
+.noc-wave i {
+  flex: 1;
+  min-width: 4px;
+  border-radius: 3px 3px 0 0;
+  background: #10b981;
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.4);
+  transition: height .4s ease;
+}
+
+/* 热力图网格 */
+.noc-heat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(5rem, 1fr));
+  gap: 6px;
+}
+
+.heat-cell {
+  height: 48px;
+  padding: 6px;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  transition: transform .15s ease;
+}
+
+.heat-cell:hover {
+  transform: scale(1.05);
+}
+
+.heat-host-name {
+  font-size: 9px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: .85;
+}
+
+.heat-val {
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.heat-cell.is-ok { background: #064e3b; color: #6ee7b7; border: 1px solid #059669; }
+.heat-cell.is-warn { background: #78350f; color: #fde68a; border: 1px solid #d97706; }
+.heat-cell.is-critical { background: #7f1d1d; color: #fecaca; border: 1px solid #dc2626; }
+.heat-cell.is-down, .heat-cell.is-unknown { background: #1e293b; color: #94a3b8; border: 1px solid #334155; }
+
+/* 排行列表 */
+.noc-rank-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.noc-rank-list li {
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: #081016;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.noc-rank-num {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: #1e293b;
+  color: #38bdf8;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  display: grid;
+  place-items: center;
+}
+
+.noc-rank-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #cbd5e1;
+}
+
+.noc-rank-rate {
+  font-family: var(--font-mono);
+  color: #38bdf8;
+}
+
+.noc-empty {
+  padding: 16px;
+  text-align: center;
+  color: #64748b;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.text-teal { color: #10b981; }
+.text-purple { color: #a855f7; }
+.text-amber { color: #f59e0b; }
+.text-red { color: #ef4444; }
+
+@media (max-width: 1024px) {
+  .noc-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 </style>
+
