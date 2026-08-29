@@ -137,6 +137,7 @@ const immersiveCredentialLoading = ref<Set<string>>(new Set());
 const revealed = ref<Record<string, string>>({});
 const activeTab = ref<WorkspaceTab>("web");
 const entryDialog = ref(false);
+const configuringEntrySsl = ref(false);
 const credentialDialog = ref(false);
 const environmentDialog = ref(false);
 const editingEntryId = ref("");
@@ -697,15 +698,32 @@ function exitEnvironmentImmersive() {
 }
 
 function openEntryCreate() {
+  configuringEntrySsl.value = false;
   editingEntryId.value = "";
   Object.assign(entryForm, { name: "", url: "", description: "", tags: "" });
   entryDialog.value = true;
 }
 
 function openEntryEdit(entry: WebEntry) {
+  configuringEntrySsl.value = false;
   editingEntryId.value = entry.id;
   Object.assign(entryForm, { name: entry.name, url: entry.url, description: entry.description, tags: entry.tags.join(", ") });
   entryDialog.value = true;
+}
+
+function openSslConfiguration(entry: WebEntry) {
+  openEntryEdit(entry);
+  configuringEntrySsl.value = true;
+  try {
+    const url = new URL(entryForm.url);
+    if (url.protocol === "http:") {
+      url.protocol = "https:";
+      if (url.port === "80") url.port = "";
+      entryForm.url = url.toString();
+    }
+  } catch {
+    // Keep the original value visible so the user can correct it in the form.
+  }
 }
 
 async function saveEntry() {
@@ -968,13 +986,12 @@ onBeforeUnmount(() => {
           <button
             v-for="entry in webEntries"
             :key="entry.id"
-            class="resource-list__item"
+            class="resource-list__item has-tls"
             :class="{
               'is-active': selectedEntryId === entry.id,
               'is-dragging': draggingEntryId === entry.id,
               'is-drop-before': entryDropTarget?.id === entry.id && !entryDropTarget.after,
               'is-drop-after': entryDropTarget?.id === entry.id && entryDropTarget.after,
-              'has-tls': Boolean(entry.tls),
             }"
             :data-tab-id="entry.id"
             :title="entry.name"
@@ -989,8 +1006,8 @@ onBeforeUnmount(() => {
           >
             <span class="resource-list__icon"><img v-if="entryFavicons[entry.id]" :src="entryFavicons[entry.id]" alt="" @error="discardEntryFavicon(entry.id)" /><Globe2 v-else :size="17" /></span>
             <strong>{{ entry.name }}</strong>
-            <span v-if="entry.tls" class="web-entry-tls" @click.stop>
-              <TlsPopover :tls="entry.tls" :entry-id="entry.id" :entry-name="entry.name" :related-entries="relatedTlsEntries(entry)" @refreshed="loadEnvironment" />
+            <span class="web-entry-tls" @click.stop>
+              <TlsPopover :tls="entry.tls" :entry-id="entry.id" :entry-name="entry.name" :entry-url="entry.url" :related-entries="relatedTlsEntries(entry)" @configure-https="openSslConfiguration(entry)" @refreshed="loadEnvironment" />
             </span>
             <em>{{ entry.credentialCount }}</em>
           </button>
@@ -1136,8 +1153,9 @@ onBeforeUnmount(() => {
       </KeepAlive>
     </div>
 
-    <el-dialog v-model="entryDialog" align-center class="envman-dialog" :title="editingEntryId ? $t('编辑 Web 入口') : $t('添加 Web 入口')" width="600px">
+    <el-dialog v-model="entryDialog" align-center class="envman-dialog" :title="configuringEntrySsl ? $t('配置 Web 入口 SSL') : editingEntryId ? $t('编辑 Web 入口') : $t('添加 Web 入口')" width="600px">
       <el-form label-position="top">
+        <el-alert v-if="configuringEntrySsl" class="ssl-config-alert" type="info" :closable="false" show-icon :title="$t('保存后将启用 HTTPS 并创建 SSL 证书探测端点')" :description="$t('系统会根据 HTTPS 地址自动识别域名和端口；若当前环境存在匹配的 SSH 主机，还会自动绑定并开始探测。')" />
         <el-form-item :label="$t('入口名称')" required><el-input v-model="entryForm.name" :placeholder="$t('例如：管理控制台')" /></el-form-item>
         <el-form-item :label="$t('页面地址')" required><el-input v-model="entryForm.url" placeholder="https://console.example.com" /></el-form-item>
         <el-form-item :label="$t('说明')"><el-input v-model="entryForm.description" type="textarea" :rows="3" /></el-form-item>
