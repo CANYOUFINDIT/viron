@@ -1,6 +1,6 @@
 <script setup lang="ts">import { translate as tr } from "../i18n";
 
-import { ArrowLeft, ArrowRight, Globe2, KeyRound, LoaderCircle, Maximize2, Minimize2, Plus, RefreshCw, RotateCcw, ShieldCheck } from "@lucide/vue";
+import { ArrowLeft, ArrowRight, Globe2, KeyRound, Laptop, LoaderCircle, Maximize2, Minimize2, Plus, RefreshCw, RotateCcw } from "@lucide/vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from "vue";
 import { loadActiveConnections } from "../active-connections";
@@ -23,13 +23,19 @@ import { rendererOverlayCoversSurface, type RectangleBounds } from "../desktop-w
 import { normalizeWebAddress } from "../../shared/web-address";
 import { historyNavigationFromMouseButton } from "../../shared/history-navigation-gesture";
 import { applyHistoryNavigationCommand, applyHistoryNavigationWheel } from "../history-navigation";
+import type { TlsWebEntryBadge } from "../../shared/tls-certificates";
+import TlsPopover from "./credentials/TlsPopover.vue";
 import WebPageTabStrip from "./WebPageTabStrip.vue";
 
 const props = withDefaults(defineProps<{
   environmentId: string;
   credentialId: string;
+  entryId: string;
+  entryName: string;
   username: string;
   entryUrl: string;
+  entryTls?: TlsWebEntryBadge | null;
+  relatedTlsEntries?: Array<{ id: string; name: string; url: string }>;
   active: boolean;
   focused: boolean;
   preview?: boolean;
@@ -39,6 +45,8 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   focusChange: [focused: boolean];
   previewFrame: [dataUrl: string];
+  configureEntryHttps: [];
+  tlsRefreshed: [];
 }>();
 
 const surface = ref<HTMLElement | null>(null);
@@ -485,13 +493,22 @@ onBeforeUnmount(() => {
         <button type="button" :aria-label="$t('刷新')" :title="$t('刷新')" :disabled="!state || Boolean(state.closedReason)" @click="runAction('reload')"><RefreshCw :size="15" /></button>
       </div>
       <form class="web-browser-address" @submit.prevent="navigate">
-        <i :class="{ 'is-connected': state && !state.loading && !state.error }"></i>
+        <TlsPopover
+          icon-only
+          :tls="entryTls"
+          :entry-id="entryId"
+          :entry-name="entryName"
+          :entry-url="address || entryUrl"
+          :related-entries="relatedTlsEntries"
+          @configure-https="emit('configureEntryHttps')"
+          @refreshed="emit('tlsRefreshed')"
+        />
         <input v-model="address" :aria-label="$t('页面地址')" autocomplete="off" spellcheck="false" :readonly="!state" />
       </form>
       <div class="web-browser-tools">
         <button type="button" :aria-label="$t('新建空白标签页')" :title="$t('新建空白标签页')" @click="createBlankPage"><Plus :size="15" /></button>
         <span v-if="state?.loading" class="desktop-web-view-status" :title="$t('本机页面加载中')"><LoaderCircle :size="14" class="is-spinning" /></span>
-        <span v-else class="desktop-web-view-status is-local" :title="state?.autofillMessage || $t('页面由当前电脑本机直接访问')"><ShieldCheck :size="14" /></span>
+        <span v-else class="desktop-web-view-status is-local" :title="state?.autofillMessage || $t('页面由当前电脑本机直接访问')"><Laptop :size="14" /></span>
         <button type="button" :aria-label="$t('重新填充账号密码')" :title="$t('在入口原始域名的当前页面重新填充账号密码')" :disabled="!state" @click="runAction('refill')"><KeyRound :size="15" /></button>
         <button type="button" :aria-label="$t('重新登录')" :title="$t('清除本机登录状态并重新登录')" :disabled="!state || resetting" @click="resetLogin"><RotateCcw :size="15" /></button>
         <button type="button" :aria-label="focused ? $t('退出沉浸模式') : $t('进入沉浸模式')" :title="focused ? $t('退出沉浸模式') : $t('进入沉浸模式')" @click="emit('focusChange', !focused)"><Minimize2 v-if="focused" :size="15" /><Maximize2 v-else :size="15" /></button>

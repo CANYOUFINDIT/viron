@@ -22,6 +22,8 @@ import { ServiceSocket } from "../service-socket";
 import { normalizeWebAddress } from "../../shared/web-address";
 import { historyNavigationFromMouseButton } from "../../shared/history-navigation-gesture";
 import { applyHistoryNavigationCommand, applyHistoryNavigationWheel } from "../history-navigation";
+import type { TlsWebEntryBadge } from "../../shared/tls-certificates";
+import TlsPopover from "./credentials/TlsPopover.vue";
 import WebPageTabStrip from "./WebPageTabStrip.vue";
 
 interface BrowserPage {
@@ -46,15 +48,23 @@ interface BrowserView {
 
 const props = defineProps<{
   credentialId: string;
+  entryId: string;
+  entryName: string;
   username: string;
   entryUrl: string;
+  entryTls?: TlsWebEntryBadge | null;
+  relatedTlsEntries?: Array<{ id: string; name: string; url: string }>;
   externalHref: string;
   active: boolean;
   focused?: boolean;
   autoConnect?: boolean;
   preloadConnect?: boolean;
 }>();
-const emit = defineEmits<{ focusChange: [focused: boolean] }>();
+const emit = defineEmits<{
+  focusChange: [focused: boolean];
+  configureEntryHttps: [];
+  tlsRefreshed: [];
+}>();
 const desktopApp = isDesktopApp();
 
 const surface = ref<HTMLElement | null>(null);
@@ -490,7 +500,16 @@ onBeforeUnmount(() => {
         <button type="button" :aria-label="$t('刷新')" :title="$t('刷新')" :disabled="!view" @click="send({ type: 'reload' })"><RefreshCw :size="15" /></button>
       </div>
       <form class="web-browser-address" @submit.prevent="navigate">
-        <i :class="{ 'is-connected': status === 'connected' }"></i>
+        <TlsPopover
+          icon-only
+          :tls="entryTls"
+          :entry-id="entryId"
+          :entry-name="entryName"
+          :entry-url="address || entryUrl"
+          :related-entries="relatedTlsEntries"
+          @configure-https="emit('configureEntryHttps')"
+          @refreshed="emit('tlsRefreshed')"
+        />
         <input v-model="address" :aria-label="$t('页面地址')" autocomplete="off" spellcheck="false" :readonly="status === 'idle'" />
       </form>
       <div class="web-browser-tools">
