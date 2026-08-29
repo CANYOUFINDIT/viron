@@ -491,18 +491,72 @@ const charts = computed(() => {
     },
   ];
 });
-const focusOptions = computed(() => ([
-  { value: "cpu" as const, label: "CPU", available: true },
-  { value: "memory" as const, label: tr("内存"), available: true },
-  { value: "disk" as const, label: tr("磁盘"), available: diskOptions.value.length > 0 },
-  { value: "network" as const, label: tr("网络"), available: hasValues(networkSeries.value) || hasValues(networkErrorSeries.value) },
-  { value: "load" as const, label: tr("负载"), available: hasValues(loadSeries.value) },
-  { value: "io" as const, label: "I/O", available: hasValues(ioComposition.value.series) || hasValues(diskIOPS.value) },
-  { value: "pressure" as const, label: "PSI", available: hasValues(pressureSeries.value) },
-  { value: "swap" as const, label: "Swap", available: hasValues(swapPercentSeries.value) || hasValues(swapRateSeries.value) },
-  { value: "uptime" as const, label: tr("运行时间"), available: hasValues(uptimeSeries.value) },
-  { value: "temperature" as const, label: tr("温度"), available: hasValues(temperatureSeries.value) },
-] as const).filter((item) => item.available));
+const focusOptions = computed(() => {
+  const latestPoint = points.value.at(-1);
+  const activeDiskPoint = latestPoint ? diskAt(latestPoint) : undefined;
+  return ([
+    {
+      value: "cpu" as const,
+      label: "CPU",
+      preview: history.value.summary.cpu.latest !== null ? `${history.value.summary.cpu.latest?.toFixed(1)}%` : "",
+      available: true,
+    },
+    {
+      value: "memory" as const,
+      label: tr("内存"),
+      preview: history.value.summary.memory.latest !== null ? `${history.value.summary.memory.latest?.toFixed(1)}%` : "",
+      available: true,
+    },
+    {
+      value: "disk" as const,
+      label: tr("磁盘"),
+      preview: activeDiskPoint?.usedPercent != null ? `${activeDiskPoint.usedPercent?.toFixed(1)}%` : "",
+      available: diskOptions.value.length > 0,
+    },
+    {
+      value: "network" as const,
+      label: tr("网络"),
+      preview: history.value.summary.networkThroughput.latest !== null ? summaryValue(history.value.summary.networkThroughput.latest, "rate") : "",
+      available: hasValues(networkSeries.value) || hasValues(networkErrorSeries.value),
+    },
+    {
+      value: "load" as const,
+      label: tr("负载"),
+      preview: history.value.summary.loadPerCpu.latest !== null ? history.value.summary.loadPerCpu.latest?.toFixed(2) ?? "" : "",
+      available: hasValues(loadSeries.value),
+    },
+    {
+      value: "io" as const,
+      label: "I/O",
+      preview: history.value.summary.diskThroughput.latest !== null ? summaryValue(history.value.summary.diskThroughput.latest, "rate") : "",
+      available: hasValues(ioComposition.value.series) || hasValues(diskIOPS.value),
+    },
+    {
+      value: "pressure" as const,
+      label: "PSI",
+      preview: history.value.summary.pressure.latest !== null ? `${history.value.summary.pressure.latest?.toFixed(1)}%` : "",
+      available: hasValues(pressureSeries.value),
+    },
+    {
+      value: "swap" as const,
+      label: "Swap",
+      preview: latestPoint?.host.swapUsedPercent != null ? `${latestPoint.host.swapUsedPercent.toFixed(1)}%` : "",
+      available: hasValues(swapPercentSeries.value) || hasValues(swapRateSeries.value),
+    },
+    {
+      value: "uptime" as const,
+      label: tr("运行时间"),
+      preview: "",
+      available: hasValues(uptimeSeries.value),
+    },
+    {
+      value: "temperature" as const,
+      label: tr("温度"),
+      preview: latestPoint?.host.temperatures[0]?.celsius != null ? `${latestPoint.host.temperatures[0].celsius.toFixed(1)}°C` : "",
+      available: hasValues(temperatureSeries.value),
+    },
+  ] as const).filter((item) => item.available);
+});
 const heroChartId = computed<ChartId>(() => {
   if (selectedFocus.value === "cpu") return cpuView.value === "mode" ? "cpu-mode" : "cpu-process";
   if (selectedFocus.value === "memory") return memoryView.value === "process" ? "memory-process" : "memory-percent";
@@ -599,6 +653,7 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
 
 <template>
   <section class="monitor-history">
+    <!-- 指标与范围选择工具栏 -->
     <header class="monitor-history__toolbar">
       <div class="monitor-history__focus" role="tablist" :aria-label="$t('监控指标')">
         <button
@@ -609,24 +664,65 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
           :aria-selected="selectedFocus === item.value"
           :class="{ 'is-active': selectedFocus === item.value }"
           @click="setFocus(item.value)"
-        >{{ item.label }}</button>
+        >
+          <span>{{ item.label }}</span>
+          <small v-if="item.preview" class="focus-pill-preview">{{ item.preview }}</small>
+        </button>
       </div>
-      <div class="monitor-history__ranges" role="group" :aria-label="$t('监控时间范围')">
-        <button v-for="item in ranges" :key="item.value" type="button" :class="{ 'is-active': range === item.value }" @click="range = item.value">{{ item.label }}</button>
+
+      <div class="toolbar-right-controls">
+        <div class="monitor-history__ranges" role="group" :aria-label="$t('监控时间范围')">
+          <button
+            v-for="item in ranges"
+            :key="item.value"
+            type="button"
+            :class="{ 'is-active': range === item.value }"
+            @click="range = item.value"
+          >
+            {{ item.label }}
+          </button>
+        </div>
+
+        <button
+          class="monitor-history__refresh"
+          type="button"
+          :disabled="loading"
+          :title="$t('刷新监控历史')"
+          @click="loadHistory"
+        >
+          <RefreshCw :size="14" :class="{ 'is-spinning': loading }" />
+        </button>
       </div>
-      <button class="monitor-history__refresh" type="button" :disabled="loading" :title="$t('刷新监控历史')" @click="loadHistory"><RefreshCw :size="15" :class="{ 'is-spinning': loading }" /></button>
     </header>
 
-    <div v-if="error && !points.length" class="monitor-history__notice is-error"><CircleGauge :size="18" /><span>{{ error }}</span><button type="button" @click="loadHistory">{{ $t('重试') }}</button></div>
-    <div v-else-if="loading && !points.length" class="monitor-history__notice"><RefreshCw :size="18" class="is-spinning" /><span>{{ initialLoadingLabel }}</span></div>
-    <div v-else-if="!points.length" class="monitor-history__notice"><Activity :size="19" /><span>{{ $t('当前时间范围还没有监控样本') }}</span></div>
+    <div v-if="error && !points.length" class="monitor-history__notice is-error">
+      <CircleGauge :size="18" />
+      <span>{{ error }}</span>
+      <button type="button" @click="loadHistory">{{ $t('重试') }}</button>
+    </div>
+    <div v-else-if="loading && !points.length" class="monitor-history__notice">
+      <RefreshCw :size="18" class="is-spinning" />
+      <span>{{ initialLoadingLabel }}</span>
+    </div>
+    <div v-else-if="!points.length" class="monitor-history__notice">
+      <Activity :size="19" />
+      <span>{{ $t('当前时间范围还没有监控样本') }}</span>
+    </div>
 
     <template v-else>
       <div class="monitor-history__meta">
-        <span :title="sampleMeta ? sampledPointLabel(history.sampledPointCount || history.sourceSampleCount) : ''">{{ formatTime(history.from) }} - {{ formatTime(history.to) }}</span>
-        <span v-if="loadingStatus" class="monitor-history__load-status"><RefreshCw :size="12" class="is-spinning" />{{ loadingStatus }}</span>
-        <button v-else-if="error" class="monitor-history__load-status is-error" type="button" :title="error" @click="loadHistory"><CircleGauge :size="12" />{{ $t('后台更新失败，点击重试') }}</button>
-        <span v-if="history.gaps.length" class="is-warning">{{ history.gaps.length }} {{ $t('处采集断档') }}</span>
+        <span class="time-span-badge" :title="sampleMeta ? sampledPointLabel(history.sampledPointCount || history.sourceSampleCount) : ''">
+          {{ formatTime(history.from) }} ~ {{ formatTime(history.to) }}
+        </span>
+        <span v-if="loadingStatus" class="monitor-history__load-status">
+          <RefreshCw :size="11" class="is-spinning" />{{ loadingStatus }}
+        </span>
+        <button v-else-if="error" class="monitor-history__load-status is-error" type="button" :title="error" @click="loadHistory">
+          <CircleGauge :size="11" />{{ $t('后台更新失败，点击重试') }}
+        </button>
+        <span v-if="history.gaps.length" class="gap-warning">
+          {{ history.gaps.length }} {{ $t('处采集断档') }}
+        </span>
         <span v-if="diskOptions.length && selectedFocus === 'disk'" class="monitor-history__disk">
           <el-select v-model="selectedDisk" size="small">
             <el-option v-for="item in diskOptions" :key="item.value" :value="item.value" :label="item.label" />
@@ -634,29 +730,57 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
         </span>
       </div>
 
+      <!-- 智能诊断卡片 -->
       <section v-if="diagnosticItems.length" class="monitor-diagnostics" :aria-label="$t('自动性能诊断')">
-        <header><strong>{{ $t('诊断') }}</strong><b>{{ diagnosticItems.length }}</b></header>
-        <div>
+        <header>
+          <div class="diagnostics-title">
+            <Activity :size="15" />
+            <strong>{{ $t('性能智能诊断') }}</strong>
+          </div>
+          <b>{{ diagnosticItems.length }} {{ $t('条事件') }}</b>
+        </header>
+        <div class="diagnostics-grid">
           <article v-for="finding in diagnosticItems" :key="finding.id" :class="`is-${finding.severity}`">
-            <header><strong>{{ diagnosticLabel(finding.type) }}</strong><span>{{ finding.severity === 'critical' ? $t('严重') : $t('注意') }}</span></header>
+            <header>
+              <strong>{{ diagnosticLabel(finding.type) }}</strong>
+              <span class="finding-severity" :class="`is-${finding.severity}`">
+                {{ finding.severity === 'critical' ? $t('严重') : $t('注意') }}
+              </span>
+            </header>
             <p>{{ formatTime(finding.startedAt) }} - {{ formatTime(finding.endedAt) }} · {{ $t('峰值') }} {{ diagnosticPeak(finding) }}</p>
             <small v-if="finding.topProcesses.length">{{ finding.topProcesses.slice(0, 3).map((process) => monitorProcessLabel(process)).join('、') }}</small>
-            <button type="button" class="monitor-diagnostics__link" @click="emit('open-maintenance')">{{ $t('前往服务维护') }}</button>
+            <button type="button" class="monitor-diagnostics__link" @click="emit('open-maintenance')">
+              {{ $t('前往服务维护') }} →
+            </button>
           </article>
         </div>
       </section>
 
+      <!-- Hero 核心图表区域 -->
       <div v-if="heroChart" class="monitor-history__hero">
         <div class="monitor-history__hero-bar">
           <div v-if="heroViews.length" class="monitor-history__views" role="group">
-            <button v-for="item in heroViews" :key="item.value" type="button" :class="{ 'is-active': item.current }" @click="item.apply()">{{ item.label }}</button>
+            <button
+              v-for="item in heroViews"
+              :key="item.value"
+              type="button"
+              :class="{ 'is-active': item.current }"
+              @click="item.apply()"
+            >
+              {{ item.label }}
+            </button>
           </div>
           <dl class="monitor-history__stats">
-            <div><dt>{{ $t('当前') }}</dt><dd>{{ summaryValue(focusedSummary.value.latest, focusedSummary.format) }}</dd></div>
-            <div><dt>{{ $t('平均') }}</dt><dd>{{ summaryValue(focusedSummary.value.average, focusedSummary.format) }}</dd></div>
-            <div><dt>P95</dt><dd>{{ summaryValue(focusedSummary.value.p95, focusedSummary.format) }}</dd></div>
-            <div><dt>{{ $t('峰值') }}</dt><dd>{{ summaryValue(focusedSummary.value.maximum, focusedSummary.format) }}</dd></div>
-            <div v-if="meaningfulChange(focusedSummary.value.changePercent)"><dt>{{ $t('变化') }}</dt><dd :class="(focusedSummary.value.changePercent || 0) > 0 ? 'is-up' : 'is-down'">{{ meaningfulChange(focusedSummary.value.changePercent) }}</dd></div>
+            <div class="stat-cell"><dt>{{ $t('当前') }}</dt><dd>{{ summaryValue(focusedSummary.value.latest, focusedSummary.format) }}</dd></div>
+            <div class="stat-cell"><dt>{{ $t('平均') }}</dt><dd>{{ summaryValue(focusedSummary.value.average, focusedSummary.format) }}</dd></div>
+            <div class="stat-cell"><dt>P95</dt><dd>{{ summaryValue(focusedSummary.value.p95, focusedSummary.format) }}</dd></div>
+            <div class="stat-cell"><dt>{{ $t('峰值') }}</dt><dd>{{ summaryValue(focusedSummary.value.maximum, focusedSummary.format) }}</dd></div>
+            <div v-if="meaningfulChange(focusedSummary.value.changePercent)" class="stat-cell">
+              <dt>{{ $t('变化') }}</dt>
+              <dd :class="(focusedSummary.value.changePercent || 0) > 0 ? 'is-up' : 'is-down'">
+                {{ meaningfulChange(focusedSummary.value.changePercent) }}
+              </dd>
+            </div>
           </dl>
         </div>
         <MonitorTimeSeriesChart
@@ -677,6 +801,7 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
         />
       </div>
 
+      <!-- 次要图表网格 -->
       <div class="monitor-history__secondary">
         <MonitorTimeSeriesChart
           v-for="chart in secondaryCharts"
@@ -697,13 +822,16 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
         />
       </div>
 
+      <!-- 区间趋势摘要卡片 -->
       <details class="monitor-history__summary" :aria-label="$t('趋势摘要')">
-        <summary>{{ $t('区间摘要') }}</summary>
-        <div>
-          <article v-for="item in summaryCards" :key="item.key">
-            <span>{{ item.label }}</span>
-            <strong>{{ summaryValue(item.value.latest, item.format) }}</strong>
-            <small>{{ $t('平均') }} {{ summaryValue(item.value.average, item.format) }} · P95 {{ summaryValue(item.value.p95, item.format) }} · {{ $t('峰值') }} {{ summaryValue(item.value.maximum, item.format) }}</small>
+        <summary>{{ $t('区间多指标统计摘要') }}</summary>
+        <div class="summary-cards-grid">
+          <article v-for="item in summaryCards" :key="item.key" class="summary-card-item">
+            <span class="summary-card-label">{{ item.label }}</span>
+            <strong class="summary-card-val">{{ summaryValue(item.value.latest, item.format) }}</strong>
+            <small class="summary-card-detail">
+              {{ $t('平均') }} {{ summaryValue(item.value.average, item.format) }} · P95 {{ summaryValue(item.value.p95, item.format) }} · {{ $t('峰值') }} {{ summaryValue(item.value.maximum, item.format) }}
+            </small>
           </article>
         </div>
       </details>
@@ -741,172 +869,421 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
 </template>
 
 <style scoped>
-.monitor-history { margin-block-start: var(--space-md); display: grid; gap: var(--space-sm); }
+.monitor-history {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* 工具栏 */
 .monitor-history__toolbar {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: var(--space-sm);
-}
-.monitor-history__focus,
-.monitor-history__ranges,
-.monitor-history__views {
-  padding: 3px;
-  border: 1px solid var(--color-rule);
-  border-radius: var(--radius-control);
-  display: flex;
-  flex-wrap: wrap;
-  background: var(--color-paper-muted);
-}
-.monitor-history__focus button,
-.monitor-history__ranges button,
-.monitor-history__views button {
-  min-width: 2.5rem;
-  height: 1.85rem;
-  padding-inline: var(--space-xs);
-  border: 0;
-  border-radius: calc(var(--radius-control) - 3px);
-  background: transparent;
-  color: var(--color-muted);
-  font: inherit;
-  font-size: var(--text-2xs);
-  cursor: pointer;
-}
-.monitor-history__focus button.is-active,
-.monitor-history__ranges button.is-active,
-.monitor-history__views button.is-active {
-  background: var(--color-ink);
-  color: var(--color-sidebar-ink);
-}
-.monitor-history__refresh {
-  width: 2.25rem;
-  height: 2.25rem;
-  border: 1px solid var(--color-rule);
-  border-radius: var(--radius-control);
-  display: grid;
-  place-items: center;
-  background: var(--color-paper);
-  color: var(--color-ink-soft);
-  cursor: pointer;
-}
-.monitor-history__refresh:disabled { opacity: .55; cursor: wait; }
-.monitor-history__notice {
-  min-height: 7rem;
-  padding: var(--space-lg);
-  border: 1px dashed var(--color-rule-strong);
-  border-radius: var(--radius-panel);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-sm);
-  color: var(--color-muted);
-  font-size: var(--text-sm);
-}
-.monitor-history__notice.is-error { border-color: color-mix(in srgb, var(--color-danger) 35%, var(--color-rule)); color: var(--color-danger); }
-.monitor-history__notice button { border: 0; background: none; color: inherit; font-weight: 700; text-decoration: underline; cursor: pointer; }
-.monitor-history__meta {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-xs) var(--space-md);
-  color: var(--color-muted);
-  font-family: var(--font-mono);
-  font-size: var(--text-2xs);
-}
-.monitor-history__meta .is-warning { color: var(--color-warning); }
-.monitor-history__load-status {
-  min-height: 1.5rem;
-  padding: 0 var(--space-xs);
-  border: 0;
-  border-radius: 999px;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  background: var(--color-info-soft);
-  color: var(--color-info);
-  font: inherit;
-  font-size: var(--text-2xs);
-}
-.monitor-history__load-status.is-error { background: var(--color-danger-soft); color: var(--color-danger); cursor: pointer; }
-.monitor-history__disk :deep(.el-select),
-.monitor-history__disk-more :deep(.el-select) { width: min(18rem, 100%); }
-.monitor-diagnostics {
-  min-width: 0;
-  padding: var(--space-sm);
-  border: 1px solid color-mix(in srgb, var(--color-warning) 28%, var(--color-rule));
-  border-radius: var(--radius-panel);
-  display: grid;
-  gap: var(--space-sm);
-  background: color-mix(in srgb, var(--color-warning) 6%, var(--color-paper));
-}
-.monitor-diagnostics > header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); }
-.monitor-diagnostics > header strong { font-size: var(--text-sm); }
-.monitor-diagnostics > header b { color: var(--color-muted); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 500; }
-.monitor-diagnostics > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-sm); }
-.monitor-diagnostics article { min-width: 0; padding: var(--space-sm); border-radius: var(--radius-control); background: var(--color-paper); }
-.monitor-diagnostics article.is-critical { background: color-mix(in srgb, var(--color-danger-soft) 55%, var(--color-paper)); }
-.monitor-diagnostics article header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); }
-.monitor-diagnostics article header strong { font-size: var(--text-xs); }
-.monitor-diagnostics article header span { color: var(--color-warning); font-size: var(--text-2xs); }
-.monitor-diagnostics article.is-critical header span { color: var(--color-danger); }
-.monitor-diagnostics article p { margin: 5px 0 0; color: var(--color-muted); font-family: var(--font-mono); font-size: var(--text-2xs); }
-.monitor-diagnostics article small { display: block; margin-block-start: 5px; overflow: hidden; color: var(--color-ink-soft); font-size: var(--text-2xs); text-overflow: ellipsis; white-space: nowrap; }
-.monitor-diagnostics__link {
-  margin-block-start: .5rem; border: 0; padding: 0; background: transparent; color: var(--teal-700); font-size: var(--text-2xs); font-weight: 650; cursor: pointer;
-}
-.monitor-history__hero,
-.monitor-history__secondary,
-.monitor-chart-grid { min-width: 0; display: grid; gap: var(--space-sm); }
-.monitor-history__secondary,
-.monitor-chart-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.monitor-history__hero-bar {
   min-width: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   flex-wrap: wrap;
-  gap: var(--space-sm);
 }
-.monitor-history__stats { margin: 0; display: flex; flex-wrap: wrap; gap: var(--space-sm) var(--space-md); }
-.monitor-history__stats div { display: grid; gap: 2px; }
-.monitor-history__stats dt { color: var(--color-muted); font-size: var(--text-2xs); }
-.monitor-history__stats dd { margin: 0; font-family: var(--font-mono); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
-.monitor-history__stats .is-up { color: var(--color-warning); }
-.monitor-history__stats .is-down { color: var(--color-accent); }
-.monitor-history__summary { min-width: 0; border-top: 1px solid var(--color-rule); padding-block-start: var(--space-xs); }
-.monitor-history__summary summary { color: var(--color-muted); font-size: var(--text-xs); cursor: pointer; }
-.monitor-history__summary > div { margin-block-start: var(--space-sm); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-sm); }
-.monitor-history__summary article { min-width: 0; display: grid; gap: 2px; }
-.monitor-history__summary span { color: var(--color-muted); font-size: var(--text-2xs); }
-.monitor-history__summary strong { font-family: var(--font-mono); font-size: var(--text-sm); }
-.monitor-history__summary small { color: var(--color-muted); font-size: var(--text-2xs); }
+
+.monitor-history__focus {
+  padding: 3px;
+  border: 1px solid var(--ink-100);
+  border-radius: 9px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  background: color-mix(in srgb, var(--ink-100) 45%, var(--surface));
+}
+
+.monitor-history__focus button {
+  height: 28px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-600);
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  transition: all .16s ease;
+}
+
+.monitor-history__focus button:hover {
+  color: var(--ink-950);
+}
+
+.monitor-history__focus button.is-active {
+  background: var(--surface);
+  color: var(--teal-700);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .06);
+}
+
+.focus-pill-preview {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--ink-200) 50%, transparent);
+  color: var(--ink-700);
+}
+
+.monitor-history__focus button.is-active .focus-pill-preview {
+  background: var(--teal-100);
+  color: var(--teal-800);
+}
+
+.toolbar-right-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.monitor-history__ranges,
+.monitor-history__views {
+  padding: 3px;
+  border: 1px solid var(--ink-100);
+  border-radius: 8px;
+  display: flex;
+  gap: 2px;
+  background: color-mix(in srgb, var(--ink-100) 45%, var(--surface));
+}
+
+.monitor-history__ranges button,
+.monitor-history__views button {
+  height: 26px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink-500);
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: all .15s ease;
+}
+
+.monitor-history__ranges button:hover,
+.monitor-history__views button:hover {
+  color: var(--ink-900);
+}
+
+.monitor-history__ranges button.is-active,
+.monitor-history__views button.is-active {
+  background: var(--surface);
+  color: var(--teal-700);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .05);
+}
+
+.monitor-history__refresh {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--ink-100);
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: var(--surface);
+  color: var(--ink-600);
+  cursor: pointer;
+  transition: all .16s ease;
+}
+
+.monitor-history__refresh:hover:not(:disabled) {
+  border-color: var(--teal-500);
+  color: var(--teal-700);
+}
+
+.monitor-history__refresh:disabled {
+  opacity: .5;
+  cursor: wait;
+}
+
+/* 提示与状态条 */
+.monitor-history__notice {
+  min-height: 80px;
+  padding: 20px;
+  border: 1px dashed var(--ink-200);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--ink-400);
+  font-size: 12px;
+}
+
+.monitor-history__notice.is-error {
+  border-color: var(--red-100);
+  color: var(--red-600);
+}
+
+.monitor-history__notice button {
+  border: 0;
+  background: none;
+  color: var(--teal-700);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.monitor-history__meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.time-span-badge {
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--ink-50);
+  color: var(--ink-600);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.monitor-history__load-status {
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--teal-50);
+  color: var(--teal-700);
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.gap-warning {
+  color: #d97706;
+  font-size: 11px;
+}
+
+/* 诊断信息面板 */
+.monitor-diagnostics {
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--amber-100) 80%, var(--ink-100));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--amber-100) 25%, var(--surface));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.monitor-diagnostics > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+}
+
+.diagnostics-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #d97706;
+}
+
+.diagnostics-title strong {
+  color: var(--ink-900);
+}
+
+.diagnostics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.diagnostics-grid article {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--ink-100);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.diagnostics-grid article.is-critical {
+  border-color: color-mix(in srgb, var(--red-100) 80%, transparent);
+  background: color-mix(in srgb, var(--red-100) 20%, var(--surface));
+}
+
+.diagnostics-grid article header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+}
+
+.finding-severity {
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.finding-severity.is-critical { background: var(--red-100); color: var(--red-600); }
+.finding-severity.is-warning { background: var(--amber-100); color: var(--amber-600); }
+
+.diagnostics-grid article p {
+  margin: 0;
+  font-size: 11px;
+  color: var(--ink-400);
+  font-family: var(--font-mono);
+}
+
+.diagnostics-grid article small {
+  font-size: 11px;
+  color: var(--ink-700);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monitor-diagnostics__link {
+  margin-top: 4px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--teal-700);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* 图表与状态条 */
+.monitor-history__hero,
+.monitor-history__secondary,
+.monitor-chart-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.monitor-history__secondary,
+.monitor-chart-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.monitor-history__hero-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--ink-50);
+}
+
+.monitor-history__stats {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.stat-cell {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.stat-cell dt {
+  font-size: 11px;
+  color: var(--ink-400);
+}
+
+.stat-cell dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 750;
+  color: var(--ink-950);
+}
+
+.stat-cell .is-up { color: #d97706; }
+.stat-cell .is-down { color: var(--teal-700); }
+
+.monitor-history__summary {
+  border-top: 1px solid var(--ink-100);
+  padding-top: 10px;
+}
+
+.monitor-history__summary summary {
+  color: var(--ink-500);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.summary-cards-grid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.summary-card-item {
+  padding: 10px 12px;
+  border: 1px solid var(--ink-100);
+  border-radius: 8px;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.summary-card-label {
+  font-size: 11px;
+  color: var(--ink-400);
+}
+
+.summary-card-val {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: var(--ink-900);
+}
+
+.summary-card-detail {
+  font-size: 10px;
+  color: var(--ink-400);
+}
+
 .monitor-history__more {
   width: fit-content;
-  min-height: 2rem;
-  padding: 0 var(--space-sm);
-  border: 1px solid var(--color-rule);
-  border-radius: var(--radius-control);
-  background: var(--color-paper);
-  color: var(--color-ink-soft);
-  font: inherit;
-  font-size: var(--text-xs);
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--ink-100);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink-700);
+  font-size: 12px;
+  font-weight: 700;
   cursor: pointer;
+  transition: all .15s ease;
+}
+
+.monitor-history__more:hover {
+  border-color: var(--teal-500);
+  color: var(--teal-700);
+}
+
+.is-spinning {
+  animation: spin 1s linear infinite;
 }
 
 @media (max-width: 1080px) {
   .monitor-history__secondary,
   .monitor-chart-grid,
-  .monitor-diagnostics > div,
-  .monitor-history__summary > div { grid-template-columns: 1fr; }
-}
-@media (max-width: 760px) {
-  .monitor-history__toolbar { grid-template-columns: minmax(0, 1fr) auto; }
-  .monitor-history__focus,
-  .monitor-history__ranges { grid-column: 1 / -1; overflow-x: auto; }
-  .monitor-history__refresh { grid-column: 2; grid-row: 1; }
-  .monitor-history__focus button,
-  .monitor-history__ranges button { flex: 1 0 3.2rem; }
+  .diagnostics-grid,
+  .summary-cards-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
+
