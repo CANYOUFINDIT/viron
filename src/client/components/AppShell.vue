@@ -56,13 +56,13 @@ let removeHistoryNavigation: (() => void) | undefined;
 let removeVisitHistory: (() => void) | undefined;
 
 const menuItems = [
+  { key: "monitoring", label: tr("监控大盘"), icon: Activity, routeName: "monitoring", routeNames: ["monitoring"], planned: false },
   { key: "overview", label: tr("环境总览"), icon: CircleGauge, routeName: "overview", routeNames: ["overview", "environment"], planned: false },
   { key: "connections", label: tr("连接资源池"), icon: Boxes, routeName: "connections", routeNames: ["connections", "connection-tools"], planned: false },
   { key: "ssh-keys", label: tr("密钥与证书"), icon: KeyRound, routeName: "ssh-keys", routeNames: ["ssh-keys"], planned: false, managerOnly: true },
   { key: "ssh", label: tr("SSH 工作台"), icon: TerminalSquare, routeName: "ssh", routeNames: ["ssh"], planned: false },
   { key: "database", label: tr("数据库工作台"), icon: Database, routeName: "database", routeNames: ["database"], planned: false },
   { key: "redis", label: tr("Redis 工作台"), icon: MemoryStick, routeName: "redis", routeNames: ["redis"], planned: false },
-  { key: "monitoring", label: tr("监控大盘"), icon: Activity, routeName: "monitoring", routeNames: ["monitoring"], planned: false },
   { key: "knowledge", label: tr("知识库"), icon: BookOpen, routeName: "knowledge", routeNames: ["knowledge"], planned: false },
   { key: "audit", label: tr("操作审计"), icon: ClipboardList, routeName: "audit", routeNames: ["audit"], planned: false },
   { key: "organization", label: tr("组织与用户"), icon: Users, routeName: "organization", routeNames: ["organization"], planned: false },
