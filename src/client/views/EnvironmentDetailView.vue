@@ -962,7 +962,7 @@ onBeforeUnmount(() => {
 
     <section v-if="environment && !focusedWebView && !environmentImmersive" class="environment-hero">
       <div class="environment-hero__identity">
-        <RouterLink to="/" class="environment-back-action" :aria-label="$t('返回环境总览')" :title="$t('返回环境总览')"><ArrowLeft :size="16" /></RouterLink>
+        <RouterLink :to="{ name: 'overview' }" class="environment-back-action" :aria-label="$t('返回环境总览')" :title="$t('返回环境总览')"><ArrowLeft :size="16" /></RouterLink>
         <span class="environment-avatar environment-avatar--large">{{ environment.name.slice(0, 2) }}</span>
         <div class="environment-hero__copy">
           <div class="hero-title-row"><h2>{{ environment.name }}</h2><span class="hero-group">{{ environment.groupName || $t('未分组') }}</span></div>

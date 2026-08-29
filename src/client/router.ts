@@ -22,7 +22,8 @@ export const router = createRouter({
   scrollBehavior: resolveRouteScrollPosition,
   routes: [
     { path: "/login", name: "login", component: () => import("./views/LoginView.vue"), meta: { public: true } },
-    { path: "/", name: "overview", component: () => import("./views/OverviewView.vue") },
+    { path: "/", redirect: { name: "monitoring" } },
+    { path: "/overview", name: "overview", component: () => import("./views/OverviewView.vue") },
     { path: "/environments/:id", name: "environment", component: () => import("./views/EnvironmentDetailView.vue") },
     { path: "/knowledge", name: "knowledge", component: () => import("./views/KnowledgeBaseView.vue") },
     { path: "/connections", name: "connections", component: () => import("./views/ConnectionPoolView.vue") },
@@ -41,7 +42,7 @@ export const router = createRouter({
     { path: "/settings", name: "settings", component: () => import("./views/SettingsView.vue") },
     { path: "/organization", name: "organization", component: () => import("./views/OrganizationView.vue") },
     { path: "/join/:token", name: "organization-invitation", component: () => import("./views/OrganizationInvitationView.vue") },
-    { path: "/:pathMatch(.*)*", redirect: "/" },
+    { path: "/:pathMatch(.*)*", redirect: { name: "monitoring" } },
   ],
 });
 
@@ -60,7 +61,7 @@ onAuthenticationRequired(() => {
 router.beforeEach(async (to) => {
   if (!session.loaded) await loadSession();
   if (!to.meta.public && !session.user) return { name: "login", query: { redirect: to.fullPath } };
-  if (to.name === "login" && session.user) return { name: "overview" };
+  if (to.name === "login" && session.user) return { name: "monitoring" };
   if (to.meta.webOnly && isDesktopApp()) return { name: "overview" };
   if (to.meta.managerOnly && !["owner", "admin"].includes(session.workspace?.role ?? "")) return { name: "overview" };
   return true;

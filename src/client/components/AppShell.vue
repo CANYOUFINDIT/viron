@@ -145,7 +145,7 @@ async function activateWorkspace(command: string) {
   try {
     await switchWorkspace(workspace);
     if (desktop) {
-      await router.replace({ name: "overview" });
+      await router.replace({ name: "monitoring" });
       window.location.reload();
     } else window.location.assign("/");
   } catch (error) {

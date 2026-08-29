@@ -7,6 +7,16 @@ const source = (path: string) => readFileSync(resolve(process.cwd(), path), "utf
 describe("app shell navigation", () => {
   const shell = source("src/client/components/AppShell.vue");
 
+  it("opens the monitoring dashboard as the default home route", () => {
+    const router = source("src/client/router.ts");
+    const login = source("src/client/views/LoginView.vue");
+    expect(router).toContain('{ path: "/", redirect: { name: "monitoring" } }');
+    expect(router).toContain('{ path: "/overview", name: "overview"');
+    expect(router).toContain('if (to.name === "login" && session.user) return { name: "monitoring" };');
+    expect(login).toContain('{ name: "monitoring" }');
+    expect(shell).toContain('await router.replace({ name: "monitoring" });');
+  });
+
   it("keeps monitoring first, knowledge above audit, and the sidebar toggle above client downloads", () => {
     expect(shell).toContain('{ key: "monitoring"');
     expect(shell.indexOf('{ key: "monitoring"')).toBeLessThan(shell.indexOf('{ key: "overview"'));
