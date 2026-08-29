@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ensureAdmin, openDatabase } from "../src/server/database.js";
 import {
   runDuplicateJunctionFailureTest,
+  runHttpsWebEntryBackfillTests,
   runSslMigrationBehaviorTests,
   sslTestConfig,
 } from "./helpers/ssl-asset-harness.js";
@@ -38,6 +39,20 @@ describe("ssl asset migration", () => {
     await ensureAdmin(db, config);
     const user = await db.prepare("SELECT id FROM admin_users LIMIT 1").get() as { id: string };
     await runDuplicateJunctionFailureTest(db, user.id);
+    await db.close();
+  });
+
+  it("backfills existing HTTPS web entries without touching HTTP entries", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "viron-ssl-web-entry-backfill-"));
+    directories.push(directory);
+    const config = sslTestConfig(directory);
+    const db = await openDatabase(config);
+    await ensureAdmin(db, config);
+    const user = await db.prepare("SELECT id FROM admin_users LIMIT 1").get() as { id: string };
+    await runHttpsWebEntryBackfillTests(db, user.id);
+    if (db.dialect === "sqlite") {
+      expect(await db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    }
     await db.close();
   });
 

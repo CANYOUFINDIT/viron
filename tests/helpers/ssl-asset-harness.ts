@@ -220,6 +220,37 @@ export async function runSslMigrationBehaviorTests(db: EnvmanDatabase, workspace
   });
 }
 
+export async function runHttpsWebEntryBackfillTests(db: EnvmanDatabase, workspaceId: string): Promise<void> {
+  await clearTlsState(db);
+  const now = new Date().toISOString();
+  const environmentId = randomUUID();
+  const firstHttpsId = randomUUID();
+  const secondHttpsId = randomUUID();
+  const httpId = randomUUID();
+  await insertEnvironment(db, environmentId, workspaceId, "HTTPS backfill", now);
+  await insertWebEntry(db, firstHttpsId, environmentId, "https://shared.example.com/admin", now);
+  await insertWebEntry(db, secondHttpsId, environmentId, "https://shared.example.com/docs", now);
+  await insertWebEntry(db, httpId, environmentId, "http://plain.example.com", now);
+
+  await migrateSslAssets(db);
+  await migrateSslAssets(db);
+
+  expect(await countTable(db, "tls_endpoints")).toBe(1);
+  expect(await countTable(db, "ssl_endpoints")).toBe(1);
+  expect(await countTable(db, "tls_endpoint_web_entries")).toBe(2);
+  expect(await countTable(db, "ssl_endpoint_web_entries")).toBe(2);
+  expect(await db.prepare(`
+    SELECT source, probe_status, host, port, sni FROM ssl_endpoints
+  `).get()).toEqual({
+    source: "web_entry",
+    probe_status: "never",
+    host: "shared.example.com",
+    port: 443,
+    sni: "shared.example.com",
+  });
+  expect(await db.prepare("SELECT endpoint_id FROM ssl_endpoint_web_entries WHERE web_entry_id = ?").get(httpId)).toBeUndefined();
+}
+
 export async function runDuplicateJunctionFailureTest(db: EnvmanDatabase, workspaceId: string): Promise<void> {
   await clearTlsState(db);
   const now = new Date().toISOString();

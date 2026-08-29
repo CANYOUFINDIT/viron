@@ -4,9 +4,12 @@ import {
   canonicalFingerprint,
   isTlsEndpointSource,
   isTlsProbeStatus,
+  isForbiddenTlsProbeTarget,
   isValidTlsHost,
   isValidTlsPort,
   isValidTlsSni,
+  normalizeTlsHost,
+  parseHttpsOrigin,
 } from "../shared/tls-certificates.js";
 
 export const SSL_ASSET_MIGRATION_ID = "20260827_ssl_asset_v1";
@@ -75,6 +78,12 @@ interface ExistingSslEndpointRow {
   last_success_at: string | null;
   certificate_workspace_type: string | null;
   certificate_workspace_id: string | null;
+}
+
+interface UnlinkedWebEntryRow {
+  id: string;
+  environment_id: string;
+  url: string;
 }
 
 function flag(value: number | string | null | undefined): number | null {
@@ -211,6 +220,65 @@ async function loadLegacyLinks(db: EnvmanDatabase): Promise<LegacyLinkRow[]> {
     JOIN tls_endpoints e ON e.id = l.endpoint_id
     JOIN web_entries w ON w.id = l.web_entry_id
   `).all() as LegacyLinkRow[];
+}
+
+async function backfillHttpsWebEntryEndpoints(db: EnvmanDatabase): Promise<void> {
+  const entries = await db.prepare(`
+    SELECT w.id, w.environment_id, w.url
+    FROM web_entries w
+    LEFT JOIN tls_endpoint_web_entries l ON l.web_entry_id = w.id
+    WHERE l.web_entry_id IS NULL
+    ORDER BY w.created_at, w.id
+  `).all() as UnlinkedWebEntryRow[];
+
+  for (const entry of entries) {
+    const origin = parseHttpsOrigin(entry.url);
+    if (!origin || isForbiddenTlsProbeTarget(origin.host)) continue;
+
+    const existing = await db.prepare(`
+      SELECT id FROM tls_endpoints
+      WHERE environment_id = ? AND host = ? AND port = ? AND sni = ?
+      ORDER BY CASE WHEN ssh_connection_id IS NULL THEN 1 ELSE 0 END, updated_at DESC
+    `).get(entry.environment_id, origin.host, origin.port, origin.sni) as { id: string } | undefined;
+
+    let endpointId = existing?.id;
+    if (!endpointId) {
+      const sshHosts = await db.prepare(`
+        SELECT c.id, c.host FROM ssh_connections c
+        JOIN ssh_connection_environments ce ON ce.connection_id = c.id
+        WHERE ce.environment_id = ? AND c.source_deleted = 0
+      `).all(entry.environment_id) as Array<{ id: string; host: string }>;
+      const matchingSshHosts = sshHosts.filter((item) => normalizeTlsHost(item.host) === origin.host);
+      const sshConnectionId = matchingSshHosts.length === 1 ? matchingSshHosts[0]!.id : null;
+      const nextOrder = await db.prepare(`
+        SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_sort_order
+        FROM tls_endpoints WHERE environment_id = ?
+      `).get(entry.environment_id) as { next_sort_order: number | string };
+      endpointId = crypto.randomUUID();
+      const now = new Date().toISOString();
+      await db.prepare(`
+        INSERT INTO tls_endpoints (
+          id, environment_id, ssh_connection_id, ssh_bind_key, host, port, sni, source,
+          observe_enabled, customized, sort_order, probe_status, probe_error, leaf_sans_json,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'web_entry', 1, 0, ?, 'never', '', '[]', ?, ?)
+      `).run(
+        endpointId,
+        entry.environment_id,
+        sshConnectionId,
+        sshConnectionId ?? "",
+        origin.host,
+        origin.port,
+        origin.sni,
+        Number(nextOrder.next_sort_order),
+        now,
+        now,
+      );
+    }
+
+    await db.prepare("INSERT INTO tls_endpoint_web_entries (endpoint_id, web_entry_id) VALUES (?, ?)")
+      .run(endpointId, entry.id);
+  }
 }
 
 async function upsertEndpoint(
@@ -444,6 +512,7 @@ export async function migrateSslAssets(db: EnvmanDatabase): Promise<void> {
   const applied = await migrationApplied(db);
   try {
     await db.transaction(async () => {
+      await backfillHttpsWebEntryEndpoints(db);
       await reconcile(db, applied);
       await validate(db, applied);
       if (!applied) {

@@ -19,6 +19,7 @@ import {
   clearTlsState,
   countTable,
   runDuplicateJunctionFailureTest,
+  runHttpsWebEntryBackfillTests,
   runSslMigrationBehaviorTests,
   sslTestConfig,
 } from "./helpers/ssl-asset-harness.js";
@@ -103,6 +104,12 @@ describe("ssl asset MySQL equivalence", () => {
     const user = await db!.prepare("SELECT id FROM admin_users LIMIT 1").get() as { id: string };
     await runSslMigrationBehaviorTests(db!, user.id);
     await runDuplicateJunctionFailureTest(db!, user.id);
+  });
+
+  mysqlIt("backfills existing HTTPS web entries without touching HTTP entries", async () => {
+    expect(db).toBeDefined();
+    const user = await db!.prepare("SELECT id FROM admin_users LIMIT 1").get() as { id: string };
+    await runHttpsWebEntryBackfillTests(db!, user.id);
   });
 
   mysqlIt("dual-writes CRUD, unique identity, unbind bind-key, and rolls back when the legacy write fails", async () => {
