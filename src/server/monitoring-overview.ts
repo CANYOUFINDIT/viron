@@ -4,6 +4,7 @@ import {
   MONITORING_MAX_HOSTS,
   MONITORING_MAX_SERVICES,
   MONITORING_OVERVIEW_CACHE_MS,
+  compareMonitoringHosts,
   finiteMetric,
   isMonitorStale,
 } from "../shared/monitoring.js";
@@ -62,7 +63,9 @@ export async function loadMonitoringOverview(
     JOIN ssh_connection_environments ce ON ce.environment_id = e.id
     JOIN ssh_connections c ON c.id = ce.connection_id
     LEFT JOIN monitor_hosts h ON h.ssh_connection_id = c.id
-    WHERE e.workspace_type = ? AND e.workspace_id = ? AND c.source_deleted = 0 ${environmentFilter}
+    WHERE e.workspace_type = ? AND e.workspace_id = ?
+      AND c.workspace_type = e.workspace_type AND c.workspace_id = e.workspace_id
+      AND c.source_deleted = 0 ${environmentFilter}
     ORDER BY e.name, c.name, c.id
   `).all(workspaceType, workspaceId, ...environmentParams) as Record<string, unknown>[];
 
@@ -126,6 +129,8 @@ export async function loadMonitoringOverview(
       } : null,
     };
   });
+
+  mappedHosts.sort(compareMonitoringHosts);
 
   let hostStart = 0;
   if (query.hostCursor) {
@@ -202,7 +207,17 @@ export async function loadMonitoringOverview(
       health: service.status === "disabled" ? "disabled" : problem ? "degraded" : running && running === service.deployments.length ? "running" : service.deployments.length ? "unknown" : "empty",
     };
   });
-  const rankedServices = [...services].sort((left, right) => (right.cpuUsedPercent ?? -1) - (left.cpuUsedPercent ?? -1)).slice(0, 10);
+  const rankedServices = [...services].sort((left, right) => {
+    if (right.problemCount !== left.problemCount) return right.problemCount - left.problemCount;
+    return (right.cpuUsedPercent ?? -1) - (left.cpuUsedPercent ?? -1);
+  }).slice(0, 10);
+  services.sort((left, right) => {
+    if (right.problemCount !== left.problemCount) return right.problemCount - left.problemCount;
+    if ((right.health === "degraded" ? 1 : 0) !== (left.health === "degraded" ? 1 : 0)) {
+      return (right.health === "degraded" ? 1 : 0) - (left.health === "degraded" ? 1 : 0);
+    }
+    return (right.cpuUsedPercent ?? -1) - (left.cpuUsedPercent ?? -1);
+  });
   const problemNodes = allServices.flatMap((service) => service.deployments.map((deployment) => ({
     serviceId: service.id,
     serviceName: service.name,

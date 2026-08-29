@@ -27,6 +27,43 @@ export function finiteMetric(value: unknown): number | null {
   return Number.isFinite(number) ? number : null;
 }
 
+export interface MonitoringSeverityHost {
+  connectionName?: unknown;
+  name?: unknown;
+  offline?: boolean;
+  missing?: boolean;
+  stale?: boolean;
+  status?: unknown;
+  cpuUsedPercent?: number | null;
+  memoryUsedPercent?: number | null;
+  diskUsedPercent?: number | null;
+}
+
+export function monitoringPressure(host: MonitoringSeverityHost): number {
+  return Math.max(finiteMetric(host.diskUsedPercent) ?? 0, finiteMetric(host.cpuUsedPercent) ?? 0, finiteMetric(host.memoryUsedPercent) ?? 0);
+}
+
+export function monitoringSeverityRank(host: MonitoringSeverityHost): number {
+  const cpu = finiteMetric(host.cpuUsedPercent) ?? 0;
+  const memory = finiteMetric(host.memoryUsedPercent) ?? 0;
+  const disk = finiteMetric(host.diskUsedPercent) ?? 0;
+  if (host.offline) return 0;
+  if (disk >= 90 || cpu >= 85 || memory >= 90) return 1;
+  if (host.stale) return 2;
+  if (disk >= 80 || cpu >= 70 || memory >= 75) return 3;
+  if (host.missing) return 4;
+  if (host.status && host.status !== "ready") return 5;
+  return 6;
+}
+
+export function compareMonitoringHosts(left: MonitoringSeverityHost, right: MonitoringSeverityHost): number {
+  const rank = monitoringSeverityRank(left) - monitoringSeverityRank(right);
+  if (rank !== 0) return rank;
+  const pressure = monitoringPressure(right) - monitoringPressure(left);
+  if (pressure !== 0) return pressure;
+  return String(left.connectionName || left.name || "").localeCompare(String(right.connectionName || right.name || ""), "zh");
+}
+
 export function isMonitorStale(lastCollectedAt: string | null | undefined, resolutionSeconds = MONITORING_DEFAULT_RESOLUTION_SECONDS, now = Date.now()): boolean {
   if (!lastCollectedAt) return false;
   const collected = Date.parse(lastCollectedAt);
