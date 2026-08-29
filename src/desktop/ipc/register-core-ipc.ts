@@ -97,6 +97,7 @@ import { currentDesktopSshContext } from "../execution-router.js";
 import { endpointFetch, endpointJson, suggestedFilename } from "../http-proxy.js";
 import {
   captureDesktopRendererPreview,
+  captureDesktopWebViewPage,
   captureDesktopWebViewPreview,
   closeDesktopWebView,
   handleDesktopWebViewAction,
@@ -557,9 +558,11 @@ export function registerDesktopCoreIpc(desktopUpdater: DesktopUpdater): void {
     return webViewState(view);
   });
 
-  ipcMain.handle("viron:web-view:capture", async (event, id: string) => {
+  ipcMain.handle("viron:web-view:capture", async (event, id: string, mode?: string) => {
     trustedSender(event);
-    return await captureDesktopWebViewPreview(localWebView(id));
+    const view = localWebView(id);
+    if (mode === "page") return await captureDesktopWebViewPage(view);
+    return await captureDesktopWebViewPreview(view);
   });
 
   ipcMain.handle("viron:web-view:action", async (event, id: string, action: { type?: string; url?: string; pageId?: string; orderedPageIds?: string[] }) => {

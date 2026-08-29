@@ -57,6 +57,8 @@ const started = ref(false);
 const starting = ref(false);
 const resetting = ref(false);
 const previewFrame = ref("");
+const overlayBlocking = ref(false);
+const overlayFrame = ref("");
 const pageTabs = computed(() => state.value?.pages ?? []);
 const activePageId = computed(() => state.value?.activePageId ?? "");
 let resizeObserver: ResizeObserver | null = null;
@@ -71,6 +73,8 @@ let nativeOverlayHeld = false;
 let pendingNewPage = false;
 let previewTimer: number | undefined;
 let previewSyncSequence = 0;
+let overlayFreezeSeq = 0;
+let overlayCaptureFailed = false;
 const preloading = ref(false);
 let removeNativeViewPointerDownListener: (() => void) | null = null;
 let startRequestVersion = 0;
@@ -149,19 +153,64 @@ function syncNativeOverlay(needed: boolean) {
   else releaseAgentNativeOverlay();
 }
 
+function clearOverlayFreeze() {
+  overlayFreezeSeq += 1;
+  overlayCaptureFailed = false;
+  overlayBlocking.value = false;
+  overlayFrame.value = "";
+}
+
+async function freezePageForOverlay(id: string) {
+  if (overlayBlocking.value || overlayCaptureFailed) return;
+  overlayBlocking.value = true;
+  const seq = ++overlayFreezeSeq;
+  if (!overlayFrame.value) {
+    try {
+      const frame = await captureDesktopWebView(id, "page");
+      if (seq !== overlayFreezeSeq) return;
+      if (frame) overlayFrame.value = frame;
+    } catch {
+      // Keep the live native page if a full-page snapshot is unavailable.
+    }
+  }
+  if (seq !== overlayFreezeSeq || state.value?.id !== id) return;
+  if (!rendererOverlayVisible()) {
+    overlayBlocking.value = false;
+    syncVisibility();
+    return;
+  }
+  if (!overlayFrame.value) {
+    overlayCaptureFailed = true;
+    overlayBlocking.value = false;
+    return;
+  }
+  window.clearTimeout(previewTimer);
+  syncNativeOverlay(false);
+  void setDesktopWebViewVisible(id, false).then(applyState).catch(() => undefined);
+}
+
 function syncVisibility() {
   if (!state.value || state.value.closedReason) {
+    clearOverlayFreeze();
     syncNativeOverlay(false);
     return;
   }
   if (props.preview) {
+    clearOverlayFreeze();
     window.clearTimeout(previewTimer);
     syncNativeOverlay(false);
     void setDesktopWebViewVisible(state.value.id, false).then(applyState).catch(() => undefined);
     return;
   }
   const bounds = surfaceBounds();
-  const visible = componentActive && props.active && !preloading.value && Boolean(bounds) && !rendererOverlayVisible();
+  const overlay = rendererOverlayVisible();
+  const canShow = componentActive && props.active && !preloading.value && Boolean(bounds);
+  if (canShow && overlay) {
+    void freezePageForOverlay(state.value.id);
+    return;
+  }
+  if (overlayBlocking.value) clearOverlayFreeze();
+  const visible = canShow;
   syncNativeOverlay(visible);
   void setDesktopWebViewVisible(state.value.id, visible).then((next) => {
     applyState(next);
@@ -173,7 +222,7 @@ function syncVisibility() {
 
 function schedulePreviewCapture(delay = 900) {
   window.clearTimeout(previewTimer);
-  if (props.preview || !props.active || !state.value || state.value.closedReason || document.visibilityState === "hidden") return;
+  if (props.preview || overlayBlocking.value || !props.active || !state.value || state.value.closedReason || document.visibilityState === "hidden") return;
   previewTimer = window.setTimeout(() => void refreshPreviewFrame(), delay);
 }
 
@@ -189,7 +238,7 @@ async function refreshPreviewFrame() {
   } catch {
     // The normal disconnected state remains visible while capture is unavailable.
   } finally {
-    if (!props.preview) schedulePreviewCapture();
+    if (!props.preview && !overlayBlocking.value) schedulePreviewCapture();
   }
 }
 
@@ -423,6 +472,7 @@ onActivated(() => {
 
 onDeactivated(() => {
   componentActive = false;
+  clearOverlayFreeze();
   syncNativeOverlay(false);
   if (boundsFrame) {
     window.cancelAnimationFrame(boundsFrame);
@@ -457,6 +507,7 @@ watch(
 
 onBeforeUnmount(() => {
   closed = true;
+  clearOverlayFreeze();
   syncNativeOverlay(false);
   if (boundsFrame) window.cancelAnimationFrame(boundsFrame);
   window.clearTimeout(previewTimer);
@@ -514,8 +565,9 @@ onBeforeUnmount(() => {
         <button type="button" :aria-label="focused ? $t('退出沉浸模式') : $t('进入沉浸模式')" :title="focused ? $t('退出沉浸模式') : $t('进入沉浸模式')" @click="emit('focusChange', !focused)"><Minimize2 v-if="focused" :size="15" /><Maximize2 v-else :size="15" /></button>
       </div>
     </header>
-    <div ref="surface" class="web-browser-surface desktop-web-browser-surface" :class="{ 'is-preview': preview }">
+    <div ref="surface" class="web-browser-surface desktop-web-browser-surface" :class="{ 'is-preview': preview, 'is-overlay-frozen': overlayBlocking }">
       <img v-if="preview && previewFrame" :src="previewFrame" :alt="$t('{0} 的页面画面', [username])" draggable="false" />
+      <img v-else-if="overlayBlocking && overlayFrame" :src="overlayFrame" :alt="$t('{0} 的页面画面', [username])" draggable="false" />
       <div v-else-if="!started || preloading" class="web-browser-loading web-browser-idle" :title="$t('双击空白处访问页面')" @pointerdown.stop @mousedown.stop @dblclick="visitPage">
         <div class="web-browser-idle__icon"><Globe2 :size="24" /></div>
         <strong>{{ $t('准备访问此页面') }}</strong>
@@ -540,7 +592,8 @@ onBeforeUnmount(() => {
 <style scoped>
 .desktop-web-account-browser { position: relative; }
 .desktop-web-browser-surface { background: #fff; }
-.desktop-web-browser-surface.is-preview { cursor: default; }
+.desktop-web-browser-surface.is-preview,
+.desktop-web-browser-surface.is-overlay-frozen { cursor: default; }
 .desktop-web-view-status { width: 28px; height: 28px; color: var(--ink-400); display: grid; place-items: center; }
 .desktop-web-view-status.is-local { color: var(--teal-600); }
 .web-browser-nav button:disabled, .web-browser-tools button:disabled { opacity: .34; cursor: not-allowed; }

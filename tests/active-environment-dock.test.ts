@@ -355,7 +355,7 @@ describe("active environment picture-in-picture", () => {
     expect(desktopBrowser).toContain('emit("previewFrame", frame)');
     expect(desktopBrowser).toContain("schedulePreviewCapture");
     expect(desktopBrowser).toContain("setDesktopWebViewVisible(state.value.id, false)");
-    expect(desktopBrowser).toContain("if (props.preview || !props.active");
+    expect(desktopBrowser).toContain("if (props.preview || overlayBlocking.value || !props.active");
     expect(desktopBrowser).toContain("if (props.preview) {");
     expect(desktopBrowser).toContain("schedulePreviewCapture(120)");
     expect(desktopBrowser).toContain("await refreshPreviewFrame();");

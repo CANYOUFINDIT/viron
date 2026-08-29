@@ -79,6 +79,23 @@ describe("desktop Web renderer overlays", () => {
     expect(desktopChatOverlay).toContain("desktop-agent-chat.html");
   });
 
+  it("freezes a full-page snapshot before hiding the native view under a renderer popover", () => {
+    const webBrowser = readFileSync(new URL("../src/client/components/DesktopWebAccountBrowser.vue", import.meta.url), "utf8");
+    const desktopWebRuntime = readFileSync(new URL("../src/desktop/web-view-runtime.ts", import.meta.url), "utf8");
+    const desktopCoreIpc = readFileSync(new URL("../src/desktop/ipc/register-core-ipc.ts", import.meta.url), "utf8");
+    const preload = readFileSync(new URL("../src/desktop/preload.cts", import.meta.url), "utf8");
+    expect(webBrowser).toContain("freezePageForOverlay");
+    expect(webBrowser).toContain('captureDesktopWebView(id, "page")');
+    expect(webBrowser.indexOf("captureDesktopWebView(id, \"page\")")).toBeLessThan(webBrowser.indexOf("setDesktopWebViewVisible(id, false)"));
+    expect(webBrowser).toContain("overlayBlocking && overlayFrame");
+    expect(webBrowser).toContain("is-overlay-frozen");
+    expect(webBrowser).toContain(":class=\"{ 'is-preview': preview, 'is-overlay-frozen': overlayBlocking }\"");
+    expect(desktopWebRuntime).toContain("export async function captureDesktopWebViewPage");
+    expect(desktopWebRuntime).toContain("image.toJPEG(82)");
+    expect(desktopCoreIpc).toContain('if (mode === "page") return await captureDesktopWebViewPage(view)');
+    expect(preload).toContain("captureWebView: (id: string, mode?: string)");
+  });
+
   it("hides the native page while its cached environment page is deactivated", () => {
     const webBrowser = readFileSync(new URL("../src/client/components/DesktopWebAccountBrowser.vue", import.meta.url), "utf8");
     expect(webBrowser).toContain("onDeactivated(() => {");

@@ -173,6 +173,16 @@ export async function captureDesktopWebViewPreview(view: ManagedDesktopWebView):
   return await captureWebContentsPreview(activeDesktopWebPage(view).view.webContents);
 }
 
+export async function captureDesktopWebViewPage(view: ManagedDesktopWebView): Promise<string> {
+  const webContents = activeDesktopWebPage(view).view.webContents;
+  if (webContents.isDestroyed()) return "";
+  const image = await webContents.capturePage();
+  if (image.isEmpty()) return "";
+  const size = image.getSize();
+  if (size.width < 2 || size.height < 2) return "";
+  return `data:image/jpeg;base64,${image.toJPEG(82).toString("base64")}`;
+}
+
 export function desktopRendererPreviewBounds(value: unknown): Rectangle {
   if (!mainWindow || mainWindow.isDestroyed()) throw new Error(tr("主窗口不可用"));
   if (!value || typeof value !== "object") throw new Error(tr("画中画截图区域无效"));

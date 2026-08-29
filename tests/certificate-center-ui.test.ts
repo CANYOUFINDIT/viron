@@ -179,6 +179,11 @@ describe("certificate center UI", () => {
     }
     expect(source("src/client/components/credentials/TlsPopover.vue")).toContain("绑定并探测");
     expect(source("src/client/components/credentials/TlsPopover.vue")).toContain("tls-address-control");
+    expect(source("src/client/components/credentials/TlsPopover.vue")).toContain("is-labeled");
+    expect(source("src/client/components/credentials/TlsPopover.vue")).toContain("<LockOpen");
+    expect(source("src/client/components/credentials/TlsPopover.vue")).toContain("<Lock");
+    expect(source("src/client/components/credentials/TlsPopover.vue")).toContain("<ShieldOff");
+    expect(source("src/client/components/credentials/TlsPopover.vue")).toContain("tls-popover__mark.is-insecure");
     expect(source("src/client/components/credentials/TlsPopover.vue")).toContain("启用 HTTPS");
     expect(source("src/client/components/credentials/TlsPopover.vue")).toContain("/api/v1/certificates/${endpoint.value.certificateId}/probe");
     expect(source("src/client/components/credentials/CertificateCenter.vue")).toContain("待关联 / 探测异常");

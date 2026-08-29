@@ -114,7 +114,7 @@ interface Window {
     updateWebViewBounds(id: string, bounds: import("./desktop").DesktopWebViewBounds): Promise<import("./desktop").DesktopWebViewState>;
     setWebViewVisible(id: string, visible: boolean): Promise<import("./desktop").DesktopWebViewState>;
     setWebViewPreviewing(id: string, previewing: boolean): Promise<import("./desktop").DesktopWebViewState>;
-    captureWebView(id: string): Promise<string>;
+    captureWebView(id: string, mode?: "preview" | "page"): Promise<string>;
     webViewAction(id: string, action: import("./desktop").DesktopWebViewAction): Promise<import("./desktop").DesktopWebViewState>;
     closeWebView(id: string): Promise<{ closed: boolean }>;
     onWebViewState(listener: (state: import("./desktop").DesktopWebViewState) => void): () => void;
