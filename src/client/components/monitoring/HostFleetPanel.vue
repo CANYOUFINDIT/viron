@@ -23,6 +23,7 @@ import {
 } from "@lucide/vue";
 import { computed, ref } from "vue";
 import { translate as tr } from "../../i18n";
+import { compareMonitoringHosts } from "../../../shared/monitoring";
 import HostMonitorDashboard from "../HostMonitorDashboard.vue";
 
 export interface MonitoringHostCard {
@@ -64,7 +65,7 @@ const emit = defineEmits<{
 const showUnmonitoredList = ref(false);
 
 // 过滤已安装探针的监控主机与未安装探针的主机
-const monitoredHosts = computed(() => props.hosts.filter((host) => !host.missing));
+const monitoredHosts = computed(() => [...props.hosts.filter((host) => !host.missing)].sort(compareMonitoringHosts));
 const unmonitoredHosts = computed(() => props.hosts.filter((host) => host.missing));
 
 const selected = computed(() => {
@@ -114,7 +115,7 @@ function presence(host: MonitoringHostCard) {
         <Info :size="16" class="text-amber" />
         <div class="notice-text">
           <span>
-            {{ $t('检测到当前环境有') }} <strong>{{ unmonitoredHosts.length }}</strong> {{ $t('台主机尚未接入监控探针，暂未纳入监控大盘。') }}
+            {{ $t('检测到有') }} <strong>{{ unmonitoredHosts.length }}</strong> {{ $t('台主机尚未接入监控探针，暂未纳入监控大盘。') }}
           </span>
         </div>
       </div>

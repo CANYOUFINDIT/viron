@@ -114,9 +114,7 @@ async function loadOverview(silent = false) {
     void loadAlerts();
     if (view.value === "hosts" && !selectedHostId.value && response.hosts.length) {
       const firstMonitored = response.hosts.find((h) => !h.missing) || response.hosts[0];
-      if (firstMonitored) {
-        patchQuery({ hostId: firstMonitored.sshConnectionId, environmentId: environmentId.value || firstMonitored.environmentId });
-      }
+      if (firstMonitored) patchQuery({ hostId: firstMonitored.sshConnectionId });
     }
   } catch (caught) {
     if ((caught as { name?: string }).name === "AbortError" || signal.aborted) return;
@@ -222,10 +220,10 @@ watch([selectedServiceId, range, view], () => {
 watch(refreshSeconds, () => startRefresh());
 
 function selectHost(host: MonitoringHostCard) {
-  patchQuery({ view: "hosts", hostId: host.sshConnectionId, environmentId: environmentId.value || host.environmentId });
+  patchQuery({ view: "hosts", hostId: host.sshConnectionId });
 }
 function selectService(service: MonitoringServiceCard) {
-  patchQuery({ view: "services", serviceId: service.id, environmentId: environmentId.value || service.environmentId });
+  patchQuery({ view: "services", serviceId: service.id });
 }
 function inspectNode(node: MonitoringProblemNode) {
   if (!node.environmentId) {
@@ -654,7 +652,7 @@ function memTone(val: number | null) {
 }
 
 .control-env-select {
-  width: 130px;
+  width: 9.5rem;
 }
 
 /* 视图模式分段选择器 */
