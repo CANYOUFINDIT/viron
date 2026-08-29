@@ -122,6 +122,7 @@ export interface MaintenanceApi {
   "moveDirectoryItem": (kind: MaintenanceDirectory, id: string, direction: DirectoryMoveDirection) => Promise<void>;
   "handleDirectoryMove": (kind: MaintenanceDirectory, id: string, command: string | number | object) => void;
   "installingHosts": Ref<Set<string> & Omit<Set<string>, keyof Set<any>>, Set<string> | (Set<string> & Omit<Set<string>, keyof Set<any>>)>;
+  "restartingHosts": Ref<Set<string> & Omit<Set<string>, keyof Set<any>>, Set<string> | (Set<string> & Omit<Set<string>, keyof Set<any>>)>;
   "clearingHosts": Ref<Set<string> & Omit<Set<string>, keyof Set<any>>, Set<string> | (Set<string> & Omit<Set<string>, keyof Set<any>>)>;
   "installTask": Ref<{ id: string; environmentId: string; connectionId: string; connectionName: string; installPath: string; status: MonitorInstallTaskStatus; phase: MonitorInstallTaskPhase; progress: number; currentMessage: string; logs: { at: string; kind: "progress" | "output"; message: string; }[]; error: string; result: { monitorWarning?: string | undefined; }; createdAt: string; startedAt: string | null; completedAt: string | null; updatedAt: string; } | null, MonitorInstallTask | { id: string; environmentId: string; connectionId: string; connectionName: string; installPath: string; status: MonitorInstallTaskStatus; phase: MonitorInstallTaskPhase; progress: number; currentMessage: string; logs: { at: string; kind: "progress" | "output"; message: string; }[]; error: string; result: { monitorWarning?: string | undefined; }; createdAt: string; startedAt: string | null; completedAt: string | null; updatedAt: string; } | null>;
   "installTaskConnectionId": Ref<string, string>;
@@ -143,7 +144,9 @@ export interface MaintenanceApi {
   "isMonitorInstalled": (host: MonitorHost) => boolean;
   "validMonitorInstallPath": (value: string) => boolean;
   "promptMonitorInstallPath": (currentPath: string, message: string) => Promise<string | null>;
-  "installMonitorOnHost": (host: MonitorHost) => Promise<void>;
+  "installMonitorOnHost": (host: MonitorHost, intent?: "auto" | "reinstall") => Promise<void>;
+  "reinstallMonitorOnHost": (host: MonitorHost) => Promise<void>;
+  "restartMonitorOnHost": (host: MonitorHost) => Promise<void>;
   "clearMonitorData": (host: MonitorHost) => Promise<void>;
   "scriptActionIconComponents": Record<ScriptActionIcon, Component>;
   "scriptActionIconOptions": ScriptActionIcon[];

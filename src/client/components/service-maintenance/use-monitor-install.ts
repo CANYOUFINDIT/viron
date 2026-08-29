@@ -21,6 +21,8 @@ export function useMonitorInstall(ctx: MaintenanceContext, props: Readonly<Maint
 
   const clearingHosts = ref(new Set<string>());
 
+  const restartingHosts = ref(new Set<string>());
+
   const installTask = ref<MonitorInstallTask | null>(null);
 
   const installTaskConnectionId = ref("");
@@ -182,7 +184,7 @@ export function useMonitorInstall(ctx: MaintenanceContext, props: Readonly<Maint
       }
   }
 
-  async function installMonitorOnHost(host: MonitorHost) {
+  async function installMonitorOnHost(host: MonitorHost, intent: "auto" | "reinstall" = "auto") {
       const next = new Set(installingHosts.value);
       next.add(host.sshConnectionId);
       installingHosts.value = next;
@@ -208,15 +210,29 @@ export function useMonitorInstall(ctx: MaintenanceContext, props: Readonly<Maint
                   });
                   return;
               }
-              const upgrading = preflight.pathState === "upgrade";
+              const reinstalling = intent === "reinstall";
+              const upgrading = !reinstalling && preflight.pathState === "upgrade";
               const privilege = preflight.privilege === "root" ? "root" : tr("免密 sudo");
-              await ElMessageBox.confirm(tr("目标主机：{{0}}\n安装目录：{{1}}\n安装版本：{{2}} · {{3}}\n执行权限：{{4}}\n\n确认后将上传安装包、写入 systemd 单元并启动监控服务。", [
-                  `${host.connectionName} (${host.host})`,
-                  preflight.installPath,
-                  preflight.packageVersion,
-                  preflight.architecture ?? preflight.machineArchitecture,
-                  privilege,
-              ]), upgrading ? tr("确认更新监控服务") : tr("确认安装监控服务"), { confirmButtonText: upgrading ? tr("更新并重启") : tr("安装并启动"), cancelButtonText: tr("取消"), type: "warning" });
+              const confirmBody = reinstalling
+                  ? tr("目标主机：{{0}}\n安装目录：{{1}}\n安装版本：{{2}} · {{3}}\n执行权限：{{4}}\n\n确认后将重新上传当前版本安装包、覆盖 systemd 单元并重启 viron-monitor。中心已入库的监控数据不会删除。", [
+                      `${host.connectionName} (${host.host})`,
+                      preflight.installPath,
+                      preflight.packageVersion,
+                      preflight.architecture ?? preflight.machineArchitecture,
+                      privilege,
+                  ])
+                  : tr("目标主机：{{0}}\n安装目录：{{1}}\n安装版本：{{2}} · {{3}}\n执行权限：{{4}}\n\n确认后将上传安装包、写入 systemd 单元并启动监控服务。", [
+                      `${host.connectionName} (${host.host})`,
+                      preflight.installPath,
+                      preflight.packageVersion,
+                      preflight.architecture ?? preflight.machineArchitecture,
+                      privilege,
+                  ]);
+              await ElMessageBox.confirm(confirmBody, reinstalling ? tr("确认重装监控服务") : upgrading ? tr("确认更新监控服务") : tr("确认安装监控服务"), {
+                  confirmButtonText: reinstalling ? tr("重装并重启") : upgrading ? tr("更新并重启") : tr("安装并启动"),
+                  cancelButtonText: tr("取消"),
+                  type: "warning",
+              });
               const started = await api<{
                   item: MonitorInstallTask;
               }>(`/api/v1/environments/${props.environmentId}/monitor-hosts/${host.sshConnectionId}/install-tasks`, { method: "POST", body: JSON.stringify({ installPath: preflight.installPath }) });
@@ -240,6 +256,41 @@ export function useMonitorInstall(ctx: MaintenanceContext, props: Readonly<Maint
           const updated = new Set(installingHosts.value);
           updated.delete(host.sshConnectionId);
           installingHosts.value = updated;
+      }
+  }
+
+  function reinstallMonitorOnHost(host: MonitorHost) {
+      return installMonitorOnHost(host, "reinstall");
+  }
+
+  async function restartMonitorOnHost(host: MonitorHost) {
+      try {
+          await ElMessageBox.confirm(tr("确定重启目标主机上的 viron-monitor 服务吗？正在进行的采集会被中断，随后可再次扫描并拉取。"), tr("确认重启监控服务"), { confirmButtonText: tr("重启"), cancelButtonText: tr("取消"), type: "warning" });
+      }
+      catch {
+          return;
+      }
+      const next = new Set(restartingHosts.value);
+      next.add(host.sshConnectionId);
+      restartingHosts.value = next;
+      try {
+          const result = await api<{
+              ok: boolean;
+              monitorWarning?: string;
+          }>(`/api/v1/environments/${props.environmentId}/monitor-hosts/${host.sshConnectionId}/restart`, { method: "POST" });
+          await $payload.reload(true);
+          if (result.monitorWarning)
+              ElMessage.warning(tr("监控服务已重启，但立即扫描失败：{{0}}", [localizeMessage(result.monitorWarning)]));
+          else
+              ElMessage.success(tr("监控服务已重启"));
+      }
+      catch (error) {
+          ElMessage.error(error instanceof ApiError || error instanceof Error ? error.message : tr("重启监控服务失败"));
+      }
+      finally {
+          const updated = new Set(restartingHosts.value);
+          updated.delete(host.sshConnectionId);
+          restartingHosts.value = updated;
       }
   }
 
@@ -272,6 +323,7 @@ export function useMonitorInstall(ctx: MaintenanceContext, props: Readonly<Maint
   return {
     installingHosts,
     clearingHosts,
+    restartingHosts,
     installTask,
     installTaskConnectionId,
     installProgressDialog,
@@ -293,6 +345,8 @@ export function useMonitorInstall(ctx: MaintenanceContext, props: Readonly<Maint
     validMonitorInstallPath,
     promptMonitorInstallPath,
     installMonitorOnHost,
+    reinstallMonitorOnHost,
+    restartMonitorOnHost,
     clearMonitorData,
   };
 }

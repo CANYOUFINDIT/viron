@@ -39,6 +39,16 @@ const maximumPackageFileBytes = 64 * 1024 * 1024;
 const preflightMarker = "VIRON_MONITOR_PREFLIGHT_V1";
 const stagingPathPattern = /^\/tmp\/viron-monitor-install\.[A-Za-z0-9]+$/;
 
+export function restartMonitorServiceCommand(): string {
+  return [
+    "command -v viron-monitor >/dev/null 2>&1 || exit 127",
+    "if [ \"$(id -u)\" = 0 ]; then systemctl restart viron-monitor",
+    "elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then sudo -n systemctl restart viron-monitor",
+    "else exit 126",
+    "fi",
+  ].join("; ");
+}
+
 export type MonitorArchitecture = "amd64" | "arm64";
 export type MonitorInstallPrivilege = "root" | "passwordless_sudo" | "unavailable";
 export type MonitorInstallPathState = "available" | "upgrade" | "conflict" | "legacy";
