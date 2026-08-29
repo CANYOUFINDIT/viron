@@ -6,9 +6,12 @@ import {
   ArrowDown,
   ArrowUp,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   CircleAlert,
   Cpu,
   HardDrive,
+  Info,
   Layers,
   MemoryStick,
   PlusCircle,
@@ -18,7 +21,7 @@ import {
   Thermometer,
   Wrench,
 } from "@lucide/vue";
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { translate as tr } from "../../i18n";
 import HostMonitorDashboard from "../HostMonitorDashboard.vue";
 
@@ -58,7 +61,19 @@ const emit = defineEmits<{
   "open-maintenance": [host: MonitoringHostCard];
 }>();
 
-const selected = computed(() => props.hosts.find((host) => host.sshConnectionId === props.selectedHostId) ?? null);
+const showUnmonitoredList = ref(false);
+
+// 过滤已安装探针的监控主机与未安装探针的主机
+const monitoredHosts = computed(() => props.hosts.filter((host) => !host.missing));
+const unmonitoredHosts = computed(() => props.hosts.filter((host) => host.missing));
+
+const selected = computed(() => {
+  if (props.selectedHostId) {
+    const found = props.hosts.find((host) => host.sshConnectionId === props.selectedHostId);
+    if (found) return found;
+  }
+  return monitoredHosts.value[0] ?? props.hosts[0] ?? null;
+});
 
 function formatPercent(value: number | null) {
   return value === null ? "—" : `${value.toFixed(1)}%`;
@@ -84,7 +99,7 @@ function metricTone(value: number | null, warnThreshold = 75, critThreshold = 90
 
 function presence(host: MonitoringHostCard) {
   if (host.offline) return { key: "offline", label: tr("离线"), icon: AlertCircle };
-  if (host.missing) return { key: "missing", label: tr("探针缺失"), icon: CircleAlert };
+  if (host.missing) return { key: "missing", label: tr("探针未安装"), icon: CircleAlert };
   if (host.stale) return { key: "stale", label: tr("陈旧数据"), icon: AlertTriangle };
   if (host.status === "ready") return { key: "online", label: tr("在线"), icon: CheckCircle2 };
   return { key: "unknown", label: tr("未知"), icon: Activity };
@@ -93,10 +108,74 @@ function presence(host: MonitoringHostCard) {
 
 <template>
   <section class="host-fleet">
-    <!-- 主机卡片网格矩阵 -->
-    <div class="host-fleet__grid">
+    <!-- 未安装探针主机轻量提示横幅 -->
+    <div v-if="unmonitoredHosts.length" class="unmonitored-notice-banner">
+      <div class="notice-left">
+        <Info :size="16" class="text-amber" />
+        <div class="notice-text">
+          <span>
+            {{ $t('检测到当前环境有') }} <strong>{{ unmonitoredHosts.length }}</strong> {{ $t('台主机尚未接入监控探针，暂未纳入监控大盘。') }}
+          </span>
+        </div>
+      </div>
+      <div class="notice-actions">
+        <button
+          type="button"
+          class="notice-toggle-btn"
+          @click="showUnmonitoredList = !showUnmonitoredList"
+        >
+          <span>{{ showUnmonitoredList ? $t('收起未接入主机') : $t('查看未接入主机') }}</span>
+          <component :is="showUnmonitoredList ? ChevronUp : ChevronDown" :size="14" />
+        </button>
+        <button
+          v-if="canOperate && unmonitoredHosts[0]"
+          type="button"
+          class="notice-action-link"
+          @click="emit('open-maintenance', unmonitoredHosts[0])"
+        >
+          {{ $t('前往服务维护批量安装') }} →
+        </button>
+      </div>
+    </div>
+
+    <!-- 展开的未安装探针主机列表抽屉/轻量容器 -->
+    <div v-if="unmonitoredHosts.length && showUnmonitoredList" class="unmonitored-hosts-drawer">
+      <header class="drawer-header">
+        <h4>{{ $t('未接入监控主机列表') }} ({{ unmonitoredHosts.length }})</h4>
+        <small>{{ $t('安装轻量级监控探针（viron-monitor）后即可在大盘实时采集其指标') }}</small>
+      </header>
+      <div class="unmonitored-hosts-grid">
+        <div
+          v-for="host in unmonitoredHosts"
+          :key="host.sshConnectionId"
+          class="unmonitored-host-item"
+        >
+          <div class="item-main">
+            <span class="item-icon"><Server :size="14" /></span>
+            <div class="item-text">
+              <strong>{{ host.connectionName }}</strong>
+              <small>{{ host.host }} · {{ host.environmentName }}</small>
+            </div>
+          </div>
+          <el-button
+            v-if="canOperate"
+            size="small"
+            type="primary"
+            plain
+            class="item-install-btn"
+            @click="emit('install', host)"
+          >
+            <PlusCircle :size="12" />
+            <span>{{ $t('一键安装探针') }}</span>
+          </el-button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 已安装探针的主机卡片网格矩阵 (仅展示已纳管监控的主机) -->
+    <div v-if="monitoredHosts.length" class="host-fleet__grid">
       <button
-        v-for="host in hosts"
+        v-for="host in monitoredHosts"
         :key="host.sshConnectionId"
         type="button"
         class="host-card"
@@ -121,8 +200,8 @@ function presence(host: MonitoringHostCard) {
           </span>
         </header>
 
-        <!-- 卡片中部：探针已安装时的可视化指标 -->
-        <div v-if="!host.missing" class="host-card__metrics">
+        <!-- 卡片中部：各维度的实时监控数据与进度槽 -->
+        <div class="host-card__metrics">
           <!-- CPU 仪表槽 -->
           <div class="metric-row">
             <div class="metric-info">
@@ -189,26 +268,6 @@ function presence(host: MonitoringHostCard) {
           </div>
         </div>
 
-        <!-- 探针缺失引导态 -->
-        <div v-else class="host-card__missing-guide">
-          <CircleAlert :size="20" class="text-muted" />
-          <div class="missing-text">
-            <strong>{{ $t('尚未安装监控探针') }}</strong>
-            <small>{{ $t('安装探针后可实时采集 CPU、内存及服务时序') }}</small>
-          </div>
-          <el-button
-            v-if="canOperate"
-            size="small"
-            type="primary"
-            plain
-            class="missing-install-btn"
-            @click.stop="emit('install', host)"
-          >
-            <PlusCircle :size="12" />
-            <span>{{ $t('一键安装探针') }}</span>
-          </el-button>
-        </div>
-
         <!-- 卡片底部元数据 -->
         <footer class="host-card__foot">
           <span class="agent-ver">Agent {{ host.agentVersion || '—' }}</span>
@@ -216,16 +275,29 @@ function presence(host: MonitoringHostCard) {
           <span v-else class="collected-time">{{ $t('采集') }} {{ formatCollected(host.lastCollectedAt) }}</span>
         </footer>
       </button>
+    </div>
 
-      <!-- 空状态 -->
-      <div v-if="!hosts.length" class="host-fleet__empty">
-        <Server :size="28" />
-        <strong>{{ $t('当前环境暂无关联主机') }}</strong>
+    <!-- 当环境中所有机器都尚未接入探针时的空状态引导 -->
+    <div v-else class="host-fleet__no-monitored">
+      <div class="no-monitored-card">
+        <Server :size="36" class="text-teal" />
+        <div class="no-monitored-text">
+          <h3>{{ $t('当前环境尚未接入已安装探针的主机') }}</h3>
+          <p>{{ $t('监控大盘仅陈列已安装探针的主机。请先为环境中的主机安装监控探针以开始实时指标采集。') }}</p>
+        </div>
+        <el-button
+          v-if="canOperate && unmonitoredHosts[0]"
+          type="primary"
+          @click="emit('open-maintenance', unmonitoredHosts[0])"
+        >
+          <PlusCircle :size="14" />
+          <span>{{ $t('前往服务维护安装探针') }}</span>
+        </el-button>
       </div>
     </div>
 
-    <!-- 选定主机的可观测性看板 -->
-    <div v-if="selected" class="host-fleet__detail-card">
+    <!-- 选定主机的可观测性看板（直接展示对应机器的监控数据与时序图表） -->
+    <div v-if="selected && !selected.missing" class="host-fleet__detail-card">
       <header class="detail-header">
         <div class="detail-header__main">
           <div class="detail-icon"><Server :size="20" /></div>
@@ -274,37 +346,22 @@ function presence(host: MonitoringHostCard) {
 
       <div class="detail-body">
         <HostMonitorDashboard
-          v-if="!selected.missing"
           :environment-id="selected.environmentId"
           :host-id="selected.sshConnectionId"
           :last-collected-at="selected.lastCollectedAt"
           @open-maintenance="emit('open-maintenance', selected)"
         />
-        <div v-else class="host-fleet__missing-full">
-          <CircleAlert :size="28" />
-          <div>
-            <strong>{{ $t('该主机未安装监控探针或数据已下线') }}</strong>
-            <p>{{ $t('前往服务维护页面为该主机安装轻量级监控探针以启用实时指标与诊断。') }}</p>
-          </div>
-          <el-button
-            v-if="canOperate"
-            type="primary"
-            @click="emit('install', selected)"
-          >
-            <PlusCircle :size="14" />
-            {{ $t('前往服务维护安装探针') }}
-          </el-button>
-        </div>
       </div>
     </div>
 
     <!-- 未选择提示 -->
-    <div v-else class="host-fleet__hint">
+    <div v-else-if="monitoredHosts.length" class="host-fleet__hint">
       <Activity :size="20" />
       <span>{{ $t('点击上方主机卡片，查看深度时序图表与智能诊断') }}</span>
     </div>
   </section>
 </template>
+
 
 <style scoped>
 .host-fleet {
@@ -312,6 +369,157 @@ function presence(host: MonitoringHostCard) {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+/* 未纳管主机轻量提示横幅 */
+.unmonitored-notice-banner {
+  padding: 10px 14px;
+  border: 1px solid color-mix(in srgb, #f59e0b 35%, var(--ink-100));
+  border-radius: 10px;
+  background: color-mix(in srgb, #fef3c7 40%, var(--surface));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.notice-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.notice-text {
+  font-size: 12px;
+  color: var(--ink-800);
+}
+
+.notice-text strong {
+  color: #b45309;
+  font-family: var(--font-mono);
+}
+
+.notice-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.notice-toggle-btn {
+  border: 0;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-600);
+  font-size: 11px;
+  font-weight: 650;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  transition: all .15s ease;
+}
+
+.notice-toggle-btn:hover {
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--ink-900);
+}
+
+.notice-action-link {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--teal-700);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.notice-action-link:hover {
+  text-decoration: underline;
+}
+
+/* 展开的未安装探针主机抽屉 */
+.unmonitored-hosts-drawer {
+  padding: 14px 16px;
+  border: 1px dashed var(--ink-200);
+  border-radius: 12px;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.drawer-header h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 750;
+  color: var(--ink-900);
+}
+
+.drawer-header small {
+  font-size: 11px;
+  color: var(--ink-400);
+}
+
+.unmonitored-hosts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+  gap: 10px;
+}
+
+.unmonitored-host-item {
+  padding: 10px 12px;
+  border: 1px solid var(--ink-100);
+  border-radius: 8px;
+  background: var(--ink-50);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.item-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.item-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: var(--ink-100);
+  color: var(--ink-500);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.item-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.item-text strong {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink-900);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.item-text small {
+  font-size: 10px;
+  color: var(--ink-400);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 主机卡片网格 */
@@ -516,37 +724,6 @@ function presence(host: MonitoringHostCard) {
 .text-teal { color: var(--teal-600); }
 .text-amber { color: #d97706; }
 
-/* 探针缺失引导态 */
-.host-card__missing-guide {
-  min-height: 80px;
-  padding: 10px;
-  border-radius: 8px;
-  background: var(--ink-50);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  gap: 6px;
-}
-
-.missing-text strong {
-  display: block;
-  font-size: 11px;
-  color: var(--ink-700);
-}
-
-.missing-text small {
-  display: block;
-  font-size: 10px;
-  color: var(--ink-400);
-  margin-top: 2px;
-}
-
-.missing-install-btn {
-  margin-top: 2px;
-}
-
 /* 卡片底部 */
 .host-card__foot {
   display: flex;
@@ -563,6 +740,40 @@ function presence(host: MonitoringHostCard) {
 .stale-badge {
   color: #d97706;
   font-weight: 700;
+}
+
+/* 全空态 */
+.host-fleet__no-monitored {
+  padding: 36px 20px;
+  border: 1px dashed var(--ink-200);
+  border-radius: 14px;
+  background: var(--surface);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.no-monitored-card {
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+}
+
+.no-monitored-text h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--ink-900);
+}
+
+.no-monitored-text p {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--ink-400);
+  line-height: 1.5;
 }
 
 /* 详情面板大卡片 */
@@ -652,29 +863,6 @@ function presence(host: MonitoringHostCard) {
   padding: 0 16px 16px;
 }
 
-.host-fleet__missing-full {
-  padding: 48px 24px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  gap: 14px;
-  color: var(--ink-400);
-}
-
-.host-fleet__missing-full strong {
-  font-size: 14px;
-  color: var(--ink-800);
-}
-
-.host-fleet__missing-full p {
-  margin: 6px 0 0;
-  font-size: 12px;
-  max-width: 480px;
-}
-
-.host-fleet__empty,
 .host-fleet__hint {
   padding: 40px;
   border: 1px dashed var(--ink-200);
