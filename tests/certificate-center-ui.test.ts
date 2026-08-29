@@ -180,6 +180,8 @@ describe("certificate center UI", () => {
     }
     expect(source("src/client/components/credentials/TlsPopover.vue")).toContain("绑定并探测");
     expect(source("src/client/components/credentials/TlsPopover.vue")).toContain("tls-address-control");
+    expect(source("src/client/styles/base.css")).toContain(".web-browser-address input { min-width: 0; flex: 1; width: 0;");
+    expect(source("src/client/components/credentials/TlsPopover.vue")).toContain("@pointerdown.stop");
     expect(source("src/client/components/credentials/TlsPopover.vue")).toContain("is-labeled");
     expect(source("src/client/components/credentials/TlsPopover.vue")).toContain("<LockOpen");
     expect(source("src/client/components/credentials/TlsPopover.vue")).toContain("<Lock");

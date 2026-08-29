@@ -212,6 +212,8 @@ function openCenter() {
         tabindex="0"
         :aria-label="securityLabel"
         :title="securityLabel"
+        @pointerdown.stop
+        @mousedown.stop
       >
         <LockOpen v-if="securityState === 'insecure'" :size="14" />
         <Lock v-else-if="securityState === 'secure'" :size="14" />
@@ -291,7 +293,7 @@ function openCenter() {
 
 <style scoped>
 .tls-popover { display: grid; gap: 12px; color: var(--ink-800); }
-.tls-address-control { width: 24px; height: 24px; margin-left: -3px; flex: 0 0 24px; border: 1px solid transparent; border-radius: 50%; display: grid; place-items: center; color: var(--ink-400); cursor: pointer; transition: background-color var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out), border-color var(--dur-micro) var(--ease-out); }
+.tls-address-control { position: relative; z-index: 1; width: 24px; height: 24px; margin-left: -3px; flex: 0 0 24px; border: 1px solid transparent; border-radius: 50%; display: grid; place-items: center; color: var(--ink-400); cursor: pointer; pointer-events: auto; transition: background-color var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out), border-color var(--dur-micro) var(--ease-out); }
 .tls-address-control.is-labeled { width: auto; height: 22px; padding: 0 7px 0 5px; flex: 0 0 auto; border-radius: 999px; display: inline-flex; align-items: center; gap: 4px; }
 .tls-address-control.is-labeled em { font-size: 10px; font-weight: 800; font-style: normal; letter-spacing: .02em; line-height: 1; white-space: nowrap; }
 .tls-address-control:hover, .tls-address-control:focus-visible { outline: none; background: var(--ink-50); color: var(--ink-700); }

@@ -74,7 +74,6 @@ let pendingNewPage = false;
 let previewTimer: number | undefined;
 let previewSyncSequence = 0;
 let overlayFreezeSeq = 0;
-let overlayCaptureFailed = false;
 const preloading = ref(false);
 let removeNativeViewPointerDownListener: (() => void) | null = null;
 let startRequestVersion = 0;
@@ -155,38 +154,22 @@ function syncNativeOverlay(needed: boolean) {
 
 function clearOverlayFreeze() {
   overlayFreezeSeq += 1;
-  overlayCaptureFailed = false;
   overlayBlocking.value = false;
   overlayFrame.value = "";
 }
 
 async function freezePageForOverlay(id: string) {
-  if (overlayBlocking.value || overlayCaptureFailed) return;
+  if (overlayBlocking.value) return;
   overlayBlocking.value = true;
   const seq = ++overlayFreezeSeq;
-  if (!overlayFrame.value) {
-    try {
-      const frame = await captureDesktopWebView(id, "page");
-      if (seq !== overlayFreezeSeq) return;
-      if (frame) overlayFrame.value = frame;
-    } catch {
-      // Keep the live native page if a full-page snapshot is unavailable.
-    }
-  }
-  if (seq !== overlayFreezeSeq || state.value?.id !== id) return;
-  if (!rendererOverlayVisible()) {
-    overlayBlocking.value = false;
-    syncVisibility();
-    return;
-  }
-  if (!overlayFrame.value) {
-    overlayCaptureFailed = true;
-    overlayBlocking.value = false;
-    return;
-  }
+  if (!overlayFrame.value && previewFrame.value) overlayFrame.value = previewFrame.value;
   window.clearTimeout(previewTimer);
   syncNativeOverlay(false);
+  const pendingCapture = captureDesktopWebView(id, "page").catch(() => "");
   void setDesktopWebViewVisible(id, false).then(applyState).catch(() => undefined);
+  const frame = await pendingCapture;
+  if (seq !== overlayFreezeSeq || state.value?.id !== id) return;
+  if (frame) overlayFrame.value = frame;
 }
 
 function syncVisibility() {
@@ -567,7 +550,7 @@ onBeforeUnmount(() => {
     </header>
     <div ref="surface" class="web-browser-surface desktop-web-browser-surface" :class="{ 'is-preview': preview, 'is-overlay-frozen': overlayBlocking }">
       <img v-if="preview && previewFrame" :src="previewFrame" :alt="$t('{0} 的页面画面', [username])" draggable="false" />
-      <img v-else-if="overlayBlocking && overlayFrame" :src="overlayFrame" :alt="$t('{0} 的页面画面', [username])" draggable="false" />
+      <img v-else-if="overlayBlocking && (overlayFrame || previewFrame)" :src="overlayFrame || previewFrame" :alt="$t('{0} 的页面画面', [username])" draggable="false" />
       <div v-else-if="!started || preloading" class="web-browser-loading web-browser-idle" :title="$t('双击空白处访问页面')" @pointerdown.stop @mousedown.stop @dblclick="visitPage">
         <div class="web-browser-idle__icon"><Globe2 :size="24" /></div>
         <strong>{{ $t('准备访问此页面') }}</strong>
