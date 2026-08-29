@@ -86,6 +86,7 @@ async function mountShell(handleOpen: ReturnType<typeof vi.fn>, handleClose: Ret
   await router.push({ name: "overview" });
   const DropdownStub = defineComponent({
     name: "ElDropdown",
+    props: ["popperOptions", "placement"],
     setup(_, { slots, expose }) {
       expose({ handleOpen, handleClose });
       return () => h("div", { class: "el-dropdown" }, [slots.default?.(), slots.dropdown?.()]);
@@ -126,6 +127,10 @@ describe("workspace switcher sidebar sequence", () => {
 
     await wrapper.get(".workspace-switcher__trigger").trigger("click");
     expect(wrapper.get(".app-frame").classes()).toContain("is-sidebar-expanded");
+    expect(wrapper.getComponent({ name: "ElDropdown" }).props("placement")).toBe("right-start");
+    expect(wrapper.getComponent({ name: "ElDropdown" }).props("popperOptions").modifiers).toEqual(
+      expect.arrayContaining([{ name: "flip", enabled: false }]),
+    );
     expect(handleOpen).not.toHaveBeenCalled();
 
     wrapper.get(".app-sidebar__panel").element.dispatchEvent(new Event("transitionend"));

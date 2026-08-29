@@ -52,6 +52,13 @@ const rememberedEnvironmentId = ref<string | null>(null);
 const sidebarPanel = ref<HTMLElement | null>(null);
 const workspaceSwitcherDropdown = ref<{ handleOpen: () => void; handleClose: () => void } | null>(null);
 const WORKSPACE_MENU_TRIGGER_KEYS = new Set(["Enter", "NumpadEnter", "Space", "ArrowDown"]);
+const workspaceSwitcherPopperOptions = {
+  strategy: "fixed" as const,
+  modifiers: [
+    { name: "flip", enabled: false },
+    { name: "preventOverflow", options: { altAxis: false, boundary: "viewport" } },
+  ],
+};
 let workspaceMenuToken = 0;
 const workspaceMenuPending = ref(false);
 let connectionPollTimer: number | undefined;
@@ -329,6 +336,7 @@ onBeforeUnmount(() => {
             ref="workspaceSwitcherDropdown"
             trigger="click"
             placement="right-start"
+            :popper-options="workspaceSwitcherPopperOptions"
             popper-class="workspace-switcher-popper"
             :disabled="workspaceSwitching || !sidebarExpanded"
             @command="activateWorkspace"

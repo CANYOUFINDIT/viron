@@ -39,6 +39,9 @@ describe("app shell navigation", () => {
     expect(shell).toContain('@click="onWorkspaceSwitcherClick"');
     expect(shell).toContain('@keydown="onWorkspaceSwitcherKeydown"');
     expect(shell).toContain('trigger="click"');
+    expect(shell).toContain('placement="right-start"');
+    expect(shell).toContain(':popper-options="workspaceSwitcherPopperOptions"');
+    expect(shell).toContain('{ name: "flip", enabled: false }');
     expect(shell).toContain(':disabled="workspaceSwitching || !sidebarExpanded"');
   });
 
