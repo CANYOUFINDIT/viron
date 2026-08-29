@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Link2, Pencil, RefreshCw, Server, Shield, ShieldAlert, ShieldCheck } from "@lucide/vue";
+import { Link2, Lock, LockOpen, Pencil, RefreshCw, Server, Shield, ShieldAlert, ShieldCheck, ShieldOff } from "@lucide/vue";
 import { ElMessage } from "element-plus";
 import { computed, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
@@ -58,6 +58,30 @@ const securityLabel = computed(() => {
   if (securityState.value === "danger") return tr("SSL 证书存在异常");
   if (securityState.value === "pending") return tr("SSL 证书待配置");
   return tr("连接未启用 SSL");
+});
+const addressLabel = computed(() => {
+  if (securityState.value === "insecure") return tr("未启用");
+  if (securityState.value === "pending") return tr("待配置");
+  return "";
+});
+const addressHost = computed(() => {
+  try {
+    return new URL(props.entryUrl || "").host;
+  } catch {
+    return "";
+  }
+});
+const popoverTitle = computed(() => {
+  if (asset.value?.leafCn) return asset.value.leafCn;
+  if (endpoint.value?.sni) return endpoint.value.sni;
+  if (endpoint.value?.host) return endpoint.value.host;
+  if (securityState.value === "insecure") return addressHost.value || tr("连接未启用 SSL");
+  if (securityState.value === "pending") return addressHost.value || tr("SSL 证书待配置");
+  return props.entryName || tr("SSL 证书详情");
+});
+const popoverSubtitle = computed(() => {
+  const name = props.entryName || "";
+  return name && name !== popoverTitle.value ? name : "";
 });
 const sshOptions = computed(() => sshConnections.value.filter((item) => !endpoint.value || item.environmentIds.includes(endpoint.value.environmentId)));
 const related = computed(() => {
@@ -167,12 +191,22 @@ function openCenter() {
 </script>
 
 <template>
-  <el-popover :placement="iconOnly ? 'bottom-start' : 'bottom-end'" :width="400" trigger="click" :show-arrow="true" @show="loadDetail">
+  <el-popover :placement="iconOnly ? 'bottom-start' : 'bottom-end'" :width="400" trigger="click" :show-arrow="true" popper-class="tls-site-info-popper" @show="loadDetail">
     <template #reference>
-      <span v-if="iconOnly" class="tls-address-control" :class="`is-${securityState}`" role="button" tabindex="0" :aria-label="securityLabel" :title="securityLabel">
-        <ShieldCheck v-if="securityState === 'secure'" :size="15" />
-        <ShieldAlert v-else-if="securityState === 'warning' || securityState === 'danger' || securityState === 'insecure'" :size="15" />
+      <span
+        v-if="iconOnly"
+        class="tls-address-control"
+        :class="[`is-${securityState}`, { 'is-labeled': Boolean(addressLabel) }]"
+        role="button"
+        tabindex="0"
+        :aria-label="securityLabel"
+        :title="securityLabel"
+      >
+        <LockOpen v-if="securityState === 'insecure'" :size="14" />
+        <Lock v-else-if="securityState === 'secure'" :size="14" />
+        <ShieldAlert v-else-if="securityState === 'warning' || securityState === 'danger'" :size="15" />
         <Shield v-else :size="15" />
+        <em v-if="addressLabel">{{ addressLabel }}</em>
       </span>
       <TlsStatusBadge
         v-else
@@ -184,15 +218,20 @@ function openCenter() {
         :unconfigured-label="isHttps ? $t('待配置') : $t('未启用')"
       />
     </template>
-    <div class="tls-popover" v-loading="loadingDetail">
+    <div class="tls-popover" :class="`is-${securityState}`" v-loading="loadingDetail">
       <header>
-        <span class="tls-popover__mark"><ShieldCheck :size="17" /></span>
-        <div><strong>{{ asset?.leafCn || endpoint?.sni || endpoint?.host || entryName || $t('SSL 证书详情') }}</strong><small>{{ entryName }}</small></div>
+        <span class="tls-popover__mark" :class="`is-${securityState}`">
+          <ShieldOff v-if="securityState === 'insecure'" :size="17" />
+          <ShieldAlert v-else-if="securityState === 'warning' || securityState === 'danger'" :size="17" />
+          <ShieldCheck v-else-if="securityState === 'secure'" :size="17" />
+          <Shield v-else :size="17" />
+        </span>
+        <div><strong>{{ popoverTitle }}</strong><small v-if="popoverSubtitle">{{ popoverSubtitle }}</small></div>
         <TlsStatusBadge :status="tls?.status || 'unconfigured'" :days-remaining="tls?.daysRemaining" :stale="tls?.stale" :probing="probing" :unconfigured-label="isHttps ? $t('待配置') : $t('未启用')" />
       </header>
 
       <section v-if="!isHttps" class="tls-disabled-state">
-        <ShieldCheck :size="22" />
+        <ShieldOff :size="22" />
         <div>
           <strong>{{ $t('当前入口尚未启用 SSL') }}</strong>
           <p>{{ $t('该 Web 入口仍使用 HTTP。切换为 HTTPS 后，系统会自动创建证书探测端点，并在这里持续显示有效期和异常状态。') }}</p>
@@ -200,7 +239,7 @@ function openCenter() {
       </section>
 
       <section v-else-if="!tls?.endpointId" class="tls-disabled-state is-pending">
-        <ShieldCheck :size="22" />
+        <Shield :size="22" />
         <div>
           <strong>{{ $t('SSL 探测端点尚未建立') }}</strong>
           <p>{{ $t('重新保存入口即可初始化证书探测端点。') }}</p>
@@ -249,18 +288,28 @@ function openCenter() {
 
 <style scoped>
 .tls-popover { display: grid; gap: 12px; color: var(--ink-800); }
-.tls-address-control { width: 24px; height: 24px; margin-left: -3px; flex: 0 0 24px; border-radius: 50%; display: grid; place-items: center; color: var(--ink-400); cursor: pointer; transition: background-color var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out); }
+.tls-address-control { width: 24px; height: 24px; margin-left: -3px; flex: 0 0 24px; border: 1px solid transparent; border-radius: 50%; display: grid; place-items: center; color: var(--ink-400); cursor: pointer; transition: background-color var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out), border-color var(--dur-micro) var(--ease-out); }
+.tls-address-control.is-labeled { width: auto; height: 22px; padding: 0 7px 0 5px; flex: 0 0 auto; border-radius: 999px; display: inline-flex; align-items: center; gap: 4px; }
+.tls-address-control.is-labeled em { font-size: 10px; font-weight: 800; font-style: normal; letter-spacing: .02em; line-height: 1; white-space: nowrap; }
 .tls-address-control:hover, .tls-address-control:focus-visible { outline: none; background: var(--ink-50); color: var(--ink-700); }
 .tls-address-control.is-secure { color: var(--teal-700); }
+.tls-address-control.is-secure:hover, .tls-address-control.is-secure:focus-visible { background: var(--teal-50); color: var(--teal-800, #0f6b58); }
 .tls-address-control.is-warning { color: var(--amber-600, #b46b0d); }
 .tls-address-control.is-danger { color: var(--red-600, #b7473f); }
-.tls-address-control.is-insecure { color: var(--ink-400); }
-.tls-address-control.is-pending { color: var(--ink-500); }
+.tls-address-control.is-insecure { color: #8a5a12; background: #f6efe4; border-color: #ead9c0; }
+.tls-address-control.is-insecure:hover, .tls-address-control.is-insecure:focus-visible { background: #efe4d4; color: #6d450c; }
+.tls-address-control.is-pending { color: var(--ink-500); background: var(--ink-50); border-color: var(--ink-200); border-style: dashed; }
+.tls-address-control.is-pending:hover, .tls-address-control.is-pending:focus-visible { background: var(--ink-100); color: var(--ink-700); }
 .tls-popover > header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 9px; padding-bottom: 10px; border-bottom: 1px solid var(--ink-100); }
 .tls-popover > header > div { min-width: 0; display: grid; gap: 2px; }
 .tls-popover > header strong { overflow: hidden; text-overflow: ellipsis; font-size: 13px; white-space: nowrap; }
 .tls-popover > header small { color: var(--ink-400); font-size: 10px; }
 .tls-popover__mark { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid var(--teal-200); border-radius: 8px; background: var(--teal-50); color: var(--teal-700); }
+.tls-popover__mark.is-insecure { border-color: #ead9c0; background: #f6efe4; color: #8a5a12; }
+.tls-popover__mark.is-pending { border-color: var(--ink-200); background: var(--ink-50); color: var(--ink-500); }
+.tls-popover__mark.is-warning { border-color: #f3d48a; background: #fff8e8; color: #b46b0d; }
+.tls-popover__mark.is-danger { border-color: #f0c4c0; background: #fdeeee; color: #b7473f; }
+.tls-popover.is-insecure .tls-disabled-state strong { color: #6d450c; }
 .tls-popover dl { margin: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 9px 14px; }
 .tls-popover dl > div { min-width: 0; display: grid; gap: 3px; }
 .tls-popover dt { color: var(--ink-400); font-size: 10px; font-weight: 700; }
