@@ -207,6 +207,10 @@ button { color: inherit; }
 .is-sidebar-expanded .workspace-switcher__trigger { width: 100%; padding: 0 9px; justify-content: flex-start; transition-duration: .52s, .52s, .15s, .15s, .15s; transition-timing-function: cubic-bezier(.22, 1, .36, 1), cubic-bezier(.22, 1, .36, 1), ease, ease, ease; }
 .workspace-switcher__trigger:hover, .workspace-switcher__trigger[aria-expanded="true"] { border-color: #3e786a; background: #17312c; color: #6bd3b1; }
 .workspace-switcher__trigger.is-switching { opacity: .58; cursor: wait; }
+.app-frame:not(.is-sidebar-expanded) .workspace-switcher .el-dropdown.is-disabled {
+  color: inherit;
+  cursor: pointer;
+}
 .workspace-switcher__icon { width: 22px; height: 22px; flex: 0 0 22px; display: grid; place-items: center; color: #67c8a8; }
 .workspace-switcher .sidebar-label-wrap { height: 32px; }
 .workspace-switcher__copy { min-width: 0; height: 32px; display: flex; flex-direction: column; justify-content: center; }

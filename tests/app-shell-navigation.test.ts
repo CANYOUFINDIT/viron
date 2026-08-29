@@ -25,11 +25,21 @@ describe("app shell navigation", () => {
 );`);
   });
 
-  it("expands the shared sidebar when opening the workspace switcher", () => {
+  it("expands the shared sidebar before opening the workspace switcher", () => {
     expect(shell).toContain(`function expandSidebar() {
   sidebarExpanded.value = true;
 }`);
-    expect(shell).toContain('@click="expandSidebar"');
+    expect(shell).toContain("function onWorkspaceSwitcherClick(event: MouseEvent)");
+    expect(shell).toContain("function openWorkspaceMenuAfterExpand()");
+    expect(shell).toContain("const wait = waitForSidebarExpand();");
+    expect(shell).toContain("expandSidebar();");
+    expect(shell).toContain("workspaceSwitcherDropdown.value?.handleOpen()");
+    expect(shell).toContain("if (workspaceMenuPending.value) return;");
+    expect(shell).toContain("event.stopImmediatePropagation()");
+    expect(shell).toContain('@click="onWorkspaceSwitcherClick"');
+    expect(shell).toContain('@keydown="onWorkspaceSwitcherKeydown"');
+    expect(shell).toContain('trigger="click"');
+    expect(shell).toContain(':disabled="workspaceSwitching || !sidebarExpanded"');
   });
 
   it("uses the environment overview return context for the shared overview entry", () => {
