@@ -4538,6 +4538,8 @@ const enOverrides: Record<string, string> = {
   "业务服务": "Service APM",
   "NOC 全屏": "NOC fullscreen",
   "全部环境": "All environments",
+  "检测到有": "Detected",
+  "台主机尚未接入监控探针，暂未纳入监控大盘。": "host(s) have no monitoring probe yet and are kept out of the fleet grid.",
   "自动刷新": "Auto refresh",
   "暂停刷新": "Pause refresh",
   "立即刷新": "Refresh now",
