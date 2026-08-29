@@ -125,7 +125,7 @@ async function submit() {
       await login(form.username, form.password);
       saveRememberedLogin();
     }
-    const redirect = typeof route.query.redirect === "string" ? route.query.redirect : "/";
+    const redirect = typeof route.query.redirect === "string" ? route.query.redirect : { name: "monitoring" };
     await router.replace(redirect);
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : tr("登录失败"));

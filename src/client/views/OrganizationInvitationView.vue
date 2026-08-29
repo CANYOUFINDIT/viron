@@ -101,7 +101,7 @@ onMounted(loadInvitation);
         <small>{{ error.code === 'INVITATION_EXPIRED' ? 'INVITATION EXPIRED' : error.code === 'INVITATION_REVOKED' ? 'INVITATION REVOKED' : ['INVITATION_EXHAUSTED', 'INVITATION_USED'].includes(error.code || '') ? 'INVITATION EXHAUSTED' : 'INVALID INVITATION' }}</small>
         <h1 id="invitation-title">{{ error.message }}</h1>
         <p>{{ error.code === 'INVITATION_EXPIRED' ? $t('请联系组织管理员重新生成一个仍在有效期内的邀请链接。') : error.code === 'INVITATION_REVOKED' ? $t('该链接已被组织管理员撤销。') : ['INVITATION_EXHAUSTED', 'INVITATION_USED'].includes(error.code || '') ? $t('该链接的可加入名额已经全部使用。') : $t('请检查链接是否完整，或联系邀请人重新获取。') }}</p>
-        <button class="secondary-action" type="button" @click="router.replace('/')">{{ $t('返回环境总览') }}</button>
+        <button class="secondary-action" type="button" @click="router.replace({ name: 'overview' })">{{ $t('返回环境总览') }}</button>
       </div>
 
       <template v-else-if="invitation">
