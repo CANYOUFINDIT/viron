@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildApp } from "../src/server/app.js";
 import { ensureAdmin, openDatabase } from "../src/server/database.js";
 import { capSeriesPoints, compareMonitoringHosts, monitoringSeverityRank } from "../src/shared/monitoring.js";
+import { clearMonitoringOverviewCache } from "../src/server/monitoring-overview.js";
 import { monitoringTestConfig, runMonitoringContractSuite } from "./helpers/monitoring-harness.js";
 
 const directories: string[] = [];
@@ -119,6 +120,7 @@ describe("monitoring overview and service timeseries", () => {
         ) VALUES (?, ?, '0.1.6', 1, 'error', 1, ?, '[]', '[]', 'offline', ?, ?, 1, ?)
       `).run(offline.json().id, randomUUID(), JSON.stringify({ cpuUsedPercent: 1, memoryUsedPercent: 1, disks: [{ path: "/", usedPercent: 1 }], resolutionSeconds: 30 }), now, now, now);
 
+      clearMonitoringOverviewCache();
       const overview = await app.inject({ method: "GET", url: "/api/v1/monitoring/overview", cookies });
       expect(overview.statusCode).toBe(200);
       const names = overview.json().hosts.map((host: { connectionName: string }) => host.connectionName);
