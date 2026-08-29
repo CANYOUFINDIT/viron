@@ -168,7 +168,8 @@ describe("certificate center UI", () => {
     expect(source("src/client/views/EnvironmentDetailView.vue")).not.toContain("EnvironmentMonitoringDashboard");
     expect(source("src/client/views/EnvironmentDetailView.vue")).not.toContain("web-entry-tls");
     expect(source("src/client/views/EnvironmentDetailView.vue")).toContain(':entry-tls="webEntryFor(opened.entryId)?.tls"');
-    expect(source("src/client/views/EnvironmentDetailView.vue")).toContain("配置 Web 入口 SSL");
+    expect(source("src/client/views/EnvironmentDetailView.vue")).toContain("SslBindDialog");
+    expect(source("src/client/views/EnvironmentDetailView.vue")).not.toContain("配置 Web 入口 SSL");
     for (const path of ["src/client/components/WebAccountBrowser.vue", "src/client/components/DesktopWebAccountBrowser.vue"]) {
       const browser = source(path);
       const addressStart = browser.indexOf('<form class="web-browser-address"');
@@ -184,7 +185,10 @@ describe("certificate center UI", () => {
     expect(source("src/client/components/credentials/TlsPopover.vue")).toContain("<Lock");
     expect(source("src/client/components/credentials/TlsPopover.vue")).toContain("<ShieldOff");
     expect(source("src/client/components/credentials/TlsPopover.vue")).toContain("tls-popover__mark.is-insecure");
-    expect(source("src/client/components/credentials/TlsPopover.vue")).toContain("启用 HTTPS");
+    expect(source("src/client/components/credentials/TlsPopover.vue")).toContain("绑定 SSL");
+    expect(source("src/client/components/credentials/TlsPopover.vue")).not.toContain("启用 HTTPS");
+    expect(source("src/client/components/credentials/SslBindDialog.vue")).toContain("/api/v1/web-entries/${props.entryId}/tls-endpoint");
+    expect(source("src/client/components/credentials/SslBindDialog.vue")).toContain("新建探测端点");
     expect(source("src/client/components/credentials/TlsPopover.vue")).toContain('v-model:visible="open"');
     expect(source("src/client/components/credentials/TlsPopover.vue")).toContain("function configureHttps()");
     expect(source("src/client/components/credentials/TlsPopover.vue")).toContain("dismiss();");

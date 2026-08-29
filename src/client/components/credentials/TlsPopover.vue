@@ -47,18 +47,18 @@ const isHttps = computed(() => {
   }
 });
 const securityState = computed(() => {
-  if (!isHttps.value) return "insecure";
   if (props.tls?.status === "valid") return "secure";
   if (props.tls?.status === "expiring") return "warning";
   if (["expired", "mismatch", "error"].includes(props.tls?.status || "")) return "danger";
-  return "pending";
+  if (props.tls?.endpointId) return "pending";
+  return "insecure";
 });
 const securityLabel = computed(() => {
   if (securityState.value === "secure") return tr("连接安全，查看 SSL 证书");
   if (securityState.value === "warning") return tr("SSL 证书即将到期");
   if (securityState.value === "danger") return tr("SSL 证书存在异常");
   if (securityState.value === "pending") return tr("SSL 证书待配置");
-  return tr("连接未启用 SSL");
+  return tr("尚未绑定 SSL 配置");
 });
 const addressLabel = computed(() => {
   if (securityState.value === "insecure") return tr("未启用");
@@ -76,7 +76,7 @@ const popoverTitle = computed(() => {
   if (asset.value?.leafCn) return asset.value.leafCn;
   if (endpoint.value?.sni) return endpoint.value.sni;
   if (endpoint.value?.host) return endpoint.value.host;
-  if (securityState.value === "insecure") return addressHost.value || tr("连接未启用 SSL");
+  if (securityState.value === "insecure") return addressHost.value || tr("尚未绑定 SSL 配置");
   if (securityState.value === "pending") return addressHost.value || tr("SSL 证书待配置");
   return props.entryName || tr("SSL 证书详情");
 });
@@ -226,7 +226,7 @@ function openCenter() {
         :stale="tls?.stale"
         :probing="probing"
         :label-prefix="$t('SSL · ')"
-        :unconfigured-label="isHttps ? $t('待配置') : $t('未启用')"
+        :unconfigured-label="(tls?.endpointId || isHttps) ? $t('待配置') : $t('未启用')"
       />
     </template>
     <div class="tls-popover" :class="`is-${securityState}`" v-loading="loadingDetail">
@@ -241,19 +241,11 @@ function openCenter() {
         <TlsStatusBadge :status="tls?.status || 'unconfigured'" :days-remaining="tls?.daysRemaining" :stale="tls?.stale" :probing="probing" :unconfigured-label="isHttps ? $t('待配置') : $t('未启用')" />
       </header>
 
-      <section v-if="!isHttps" class="tls-disabled-state">
+      <section v-if="!tls?.endpointId" class="tls-disabled-state">
         <ShieldOff :size="22" />
         <div>
-          <strong>{{ $t('当前入口尚未启用 SSL') }}</strong>
-          <p>{{ $t('该 Web 入口仍使用 HTTP。切换为 HTTPS 后，系统会自动创建证书探测端点，并在这里持续显示有效期和异常状态。') }}</p>
-        </div>
-      </section>
-
-      <section v-else-if="!tls?.endpointId" class="tls-disabled-state is-pending">
-        <Shield :size="22" />
-        <div>
-          <strong>{{ $t('SSL 探测端点尚未建立') }}</strong>
-          <p>{{ $t('重新保存入口即可初始化证书探测端点。') }}</p>
+          <strong>{{ $t('尚未绑定 SSL 配置') }}</strong>
+          <p>{{ $t('选择当前环境中已有的证书探测配置，或新建探测端点后绑定到此入口。绑定后会持续显示有效期和异常状态，不会改写访问地址。') }}</p>
         </div>
       </section>
 
@@ -290,8 +282,8 @@ function openCenter() {
           <RefreshCw :size="14" />{{ asset ? $t('重新探测全部端点') : $t('立即重新探测') }}
         </el-button>
         <el-button v-if="canManage && endpoint" @click="bindingOpen = !bindingOpen"><Pencil :size="14" />{{ $t('编辑/绑定') }}</el-button>
-        <el-button v-if="canManage && !tls?.endpointId" type="primary" @click="configureHttps"><ShieldCheck :size="14" />{{ isHttps ? $t('初始化 SSL 探测') : $t('启用 HTTPS') }}</el-button>
-        <el-button v-if="canManage && isHttps" type="primary" plain @click="openCenter"><ShieldCheck :size="14" />{{ $t('在凭据中心管理') }}</el-button>
+        <el-button v-if="canManage && !tls?.endpointId" type="primary" @click="configureHttps"><ShieldCheck :size="14" />{{ $t('绑定 SSL') }}</el-button>
+        <el-button v-if="canManage && (tls?.certificateId || tls?.fingerprintSha256)" type="primary" plain @click="openCenter"><ShieldCheck :size="14" />{{ $t('在凭据中心管理') }}</el-button>
       </footer>
     </div>
   </el-popover>

@@ -271,4 +271,75 @@ describe("TLS certificate maintenance", () => {
       ssh.server.close();
     }
   });
+
+  it("binds an existing TLS endpoint to a web entry without changing its URL", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "viron-tls-bind-"));
+    directories.push(directory);
+    const config = testConfig(directory);
+    const db = await openDatabase(config);
+    await ensureAdmin(db, config);
+    const app = await buildApp({ config, db, logger: false });
+    try {
+      const login = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { username: "admin", password: config.adminPassword } });
+      const cookies = { envman_session: login.cookies.find((item) => item.name === "envman_session")!.value };
+      const environment = await app.inject({ method: "POST", url: "/api/v1/environments", cookies, payload: { name: "绑定环境" } });
+      const environmentId = environment.json().id as string;
+      const other = await app.inject({ method: "POST", url: "/api/v1/environments", cookies, payload: { name: "其它环境" } });
+      const web = await app.inject({
+        method: "POST",
+        url: `/api/v1/environments/${environmentId}/web-entries`,
+        cookies,
+        payload: { name: "控制台", url: "http://dev.example.com/app", description: "", tags: [] },
+      });
+      expect(web.statusCode).toBe(201);
+      expect(web.json().tlsEndpointId).toBeNull();
+      const created = await app.inject({
+        method: "POST",
+        url: `/api/v1/environments/${environmentId}/tls-endpoints`,
+        cookies,
+        payload: { host: "dev.example.com", port: 443, sni: "dev.example.com" },
+      });
+      expect(created.statusCode).toBe(201);
+      const endpointId = created.json().id as string;
+      const listed = await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/tls-endpoints`, cookies });
+      expect(listed.statusCode).toBe(200);
+      expect(listed.json().items).toEqual(expect.arrayContaining([expect.objectContaining({ id: endpointId, host: "dev.example.com" })]));
+      const bound = await app.inject({
+        method: "PUT",
+        url: `/api/v1/web-entries/${web.json().id}/tls-endpoint`,
+        cookies,
+        payload: { endpointId },
+      });
+      expect(bound.statusCode).toBe(200);
+      expect(bound.json()).toMatchObject({ ok: true, endpointId, tlsProbeReady: false });
+      const entries = await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/web-entries`, cookies });
+      expect(entries.json().items[0]).toEqual(expect.objectContaining({
+        url: "http://dev.example.com/app",
+        tls: expect.objectContaining({ endpointId }),
+      }));
+      const otherEndpoint = await app.inject({
+        method: "POST",
+        url: `/api/v1/environments/${other.json().id}/tls-endpoints`,
+        cookies,
+        payload: { host: "other.example.com", port: 443 },
+      });
+      const cross = await app.inject({
+        method: "PUT",
+        url: `/api/v1/web-entries/${web.json().id}/tls-endpoint`,
+        cookies,
+        payload: { endpointId: otherEndpoint.json().id },
+      });
+      expect(cross.statusCode).toBe(400);
+      const unbound = await app.inject({
+        method: "PUT",
+        url: `/api/v1/web-entries/${web.json().id}/tls-endpoint`,
+        cookies,
+        payload: { endpointId: null },
+      });
+      expect(unbound.statusCode).toBe(200);
+      expect(unbound.json()).toMatchObject({ ok: true, endpointId: null });
+    } finally {
+      await app.close();
+    }
+  });
 });

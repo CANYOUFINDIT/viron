@@ -9,7 +9,7 @@ import { tlsWebEntryBadge } from "../../shared/tls-certificates.js";
 import { monitorAlertSettingsForEnvironment } from "../monitor-alerts.js";
 import { hasExactIds } from "../../shared/tab-order.js";
 import { requireAdmin } from "./auth.js";
-import { getTlsEndpoint, listTlsEndpoints, removeWebEntryTlsEndpoint, syncWebEntryTlsEndpoint } from "../tls-certificates.js";
+import { bindWebEntryTlsEndpoint, getTlsEndpoint, listTlsEndpoints, removeWebEntryTlsEndpoint, syncWebEntryTlsEndpoint, TlsCertificateError } from "../tls-certificates.js";
 
 const entrySchema = z.object({
   name: z.string().trim().min(1).max(120),
@@ -27,6 +27,7 @@ const credentialSchema = z.object({
 
 const credentialUpdateSchema = credentialSchema.extend({ password: z.string().max(4096).optional() });
 const orderSchema = z.object({ orderedIds: z.array(z.string().uuid()).max(200) });
+const tlsBindSchema = z.object({ endpointId: z.string().uuid().nullable() });
 
 async function entryEnvironmentId(app: FastifyInstance, entryId: string): Promise<string | null> {
   const row = await app.db.prepare("SELECT environment_id FROM web_entries WHERE id = ?").get(entryId) as { environment_id: string } | undefined;
@@ -171,6 +172,35 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
       const tlsEndpoint = tlsEndpointId ? await getTlsEndpoint(app, tlsEndpointId) : null;
       await writeAudit(app.db, { action: "web_entry.updated", resourceType: "web_entry", resourceId: request.params.id, summary: `更新 Web 入口 ${body.name}`, request });
       return { ok: true, tlsEndpointId, tlsProbeReady: Boolean(tlsEndpoint?.sshConnectionId) };
+    },
+  );
+
+  app.put<{ Params: { id: string } }>(
+    "/api/v1/web-entries/:id/tls-endpoint",
+    { preHandler: requireAdmin },
+    async (request, reply) => {
+      if (!requireManager(request, reply)) return;
+      const body = parseBody(tlsBindSchema, request.body, reply);
+      if (!body) return;
+      const environmentId = await entryEnvironmentId(app, request.params.id);
+      if (!environmentId || !await canAccessEnvironment(app.db, request.admin!, environmentId)) {
+        return reply.code(404).send({ error: "NOT_FOUND", message: "Web 入口不存在" });
+      }
+      try {
+        const result = await bindWebEntryTlsEndpoint(app, request.params.id, body.endpointId);
+        await writeAudit(app.db, {
+          action: body.endpointId ? "web_entry.tls_bound" : "web_entry.tls_unbound",
+          resourceType: "web_entry",
+          resourceId: request.params.id,
+          summary: body.endpointId ? "绑定 Web 入口 SSL 配置" : "解除 Web 入口 SSL 绑定",
+          details: { endpointId: body.endpointId },
+          request,
+        });
+        return { ok: true, ...result };
+      } catch (error) {
+        if (error instanceof TlsCertificateError) return reply.code(error.statusCode).send({ error: error.code, message: error.message });
+        throw error;
+      }
     },
   );
 

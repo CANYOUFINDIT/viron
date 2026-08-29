@@ -40,6 +40,7 @@ import {
   createTlsEndpoint,
   deleteTlsEndpoint,
   getTlsEndpoint,
+  listTlsEndpoints,
   probeTlsEndpoint,
   replaceEndpointWebEntries,
   updateTlsEndpoint,
@@ -414,6 +415,17 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
       throw error;
     }
   });
+
+  app.get<{ Params: { environmentId: string } }>(
+    "/api/v1/environments/:environmentId/tls-endpoints",
+    { preHandler: requireAdmin },
+    async (request, reply) => {
+      if (!await canAccessEnvironment(app.db, request.admin!, request.params.environmentId)) {
+        return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
+      }
+      return { items: await listTlsEndpoints(app, request.params.environmentId) };
+    },
+  );
 
   app.post<{ Params: { environmentId: string } }>(
     "/api/v1/environments/:environmentId/tls-endpoints",

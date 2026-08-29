@@ -659,6 +659,33 @@ export async function removeWebEntryTlsEndpoint(app: FastifyInstance, webEntryId
   })();
 }
 
+export async function bindWebEntryTlsEndpoint(
+  app: FastifyInstance,
+  webEntryId: string,
+  endpointId: string | null,
+): Promise<{ endpointId: string | null; tlsProbeReady: boolean }> {
+  const entry = await app.db.prepare("SELECT id, environment_id FROM web_entries WHERE id = ?").get(webEntryId) as
+    | { id: string; environment_id: string }
+    | undefined;
+  if (!entry) throw new TlsCertificateError("WEB_ENTRY_NOT_FOUND", "Web 入口不存在", 404);
+  if (!endpointId) {
+    await removeWebEntryTlsEndpoint(app, webEntryId);
+    return { endpointId: null, tlsProbeReady: false };
+  }
+  const endpoint = await getTlsEndpoint(app, endpointId);
+  if (!endpoint) throw new TlsCertificateError("TLS_ENDPOINT_NOT_FOUND", "证书端点不存在", 404);
+  if (endpoint.environmentId !== entry.environment_id) {
+    throw new TlsCertificateError("TLS_ENDPOINT_ENVIRONMENT_MISMATCH", "只能绑定同一环境中的 SSL 配置", 400);
+  }
+  await app.db.transaction(async () => {
+    const previous = await unlinkWebEntry(app, webEntryId);
+    await linkWebEntry(app, endpointId, webEntryId);
+    await cleanupOrphanWebEntryEndpoints(app, previous.filter((id) => id !== endpointId));
+  })();
+  const linked = await getTlsEndpoint(app, endpointId);
+  return { endpointId, tlsProbeReady: Boolean(linked?.sshConnectionId) };
+}
+
 export async function replaceEndpointWebEntries(app: FastifyInstance, endpointId: string, webEntryIds: string[]): Promise<TlsEndpoint> {
   const row = await loadEndpointRow(app, endpointId);
   if (!row) throw new TlsCertificateError("TLS_ENDPOINT_NOT_FOUND", "证书端点不存在", 404);
