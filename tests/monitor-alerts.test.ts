@@ -149,20 +149,28 @@ describe("monitor alerts", () => {
       });
       const at = (seconds: number) => new Date(Date.parse(now) + seconds * 1000).toISOString();
 
-      await evaluate(sample(at(30), { cpu: 95, dataDisk: true, deploymentStatus: "running" }));
+      await evaluate(sample(at(30), { cpu: 82, dataDisk: true, deploymentStatus: "running" }));
       expect((await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies })).json().items).toHaveLength(0);
-      await evaluate(sample(at(60), { cpu: 95, dataDisk: true, deploymentStatus: "running" }));
+      await evaluate(sample(at(60), { cpu: 82, dataDisk: true, deploymentStatus: "running" }));
 
       let listed = await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies });
       expect(listed.json()).toMatchObject({ unread: 1, items: [expect.objectContaining({ ruleType: "cpu", status: "active", notificationPhase: "active", read: false })] });
       const cpuAlertId = listed.json().items[0].id as string;
-      expect((await app.inject({ method: "POST", url: `/api/v1/monitor-alerts/${cpuAlertId}/notified`, cookies, payload: { phase: "active" } })).statusCode).toBe(200);
+      expect((await app.inject({ method: "POST", url: `/api/v1/monitor-alerts/${cpuAlertId}/notified`, cookies, payload: { phase: "active" } })).json()).toMatchObject({ claimed: true });
+      expect((await app.inject({ method: "POST", url: `/api/v1/monitor-alerts/${cpuAlertId}/notified`, cookies, payload: { phase: "active" } })).json()).toMatchObject({ claimed: false });
       expect((await app.inject({ method: "POST", url: `/api/v1/monitor-alerts/${cpuAlertId}/read`, cookies })).statusCode).toBe(200);
 
       await evaluate(sample(at(90), { cpu: 95, dataDisk: false, deploymentStatus: "stopped" }));
       await evaluate(sample(at(120), { cpu: 95, dataDisk: false, deploymentStatus: "stopped" }));
       listed = await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies });
       expect(listed.json().items.map((item: { ruleType: string }) => item.ruleType)).toEqual(expect.arrayContaining(["cpu", "disk_missing", "deployment_status"]));
+      expect(listed.json().items.find((item: { ruleType: string }) => item.ruleType === "cpu")).toMatchObject({
+        severity: "critical",
+        peakSeverity: "critical",
+        notificationPhase: "escalated",
+      });
+      expect((await app.inject({ method: "POST", url: `/api/v1/monitor-alerts/${cpuAlertId}/notified`, cookies, payload: { phase: "escalated" } })).json()).toMatchObject({ claimed: true });
+      expect((await app.inject({ method: "POST", url: `/api/v1/monitor-alerts/${cpuAlertId}/notified`, cookies, payload: { phase: "escalated" } })).json()).toMatchObject({ claimed: false });
       expect(listed.json().items.find((item: { ruleType: string }) => item.ruleType === "disk_missing")).toMatchObject({
         status: "active",
         details: { device: "/dev/sdb1", path: "/data", missing: true },
@@ -257,7 +265,7 @@ describe("monitor alerts", () => {
       });
       const connectionId = connection.json().id as string;
       const agentId = "f8b148e8-eaa3-45d4-a8d0-839d4a8a0ab3";
-      const now = new Date().toISOString();
+      const now = new Date(Date.now() - 10 * 60 * 1000).toISOString();
       await app.db.prepare(`
         INSERT INTO monitor_hosts (
           ssh_connection_id, agent_id, agent_version, protocol_version, status, last_sequence,
@@ -297,7 +305,7 @@ describe("monitor alerts", () => {
 
       await check(30, false);
       expect((await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies })).json().items).toHaveLength(0);
-      await check(60, false);
+      await Promise.all(Array.from({ length: 20 }, () => check(60, false)));
       let listed = await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies });
       expect(listed.json().items).toEqual([
         expect.objectContaining({
@@ -306,17 +314,52 @@ describe("monitor alerts", () => {
           targetName: "offline-node",
           sshConnectionId: connectionId,
           status: "active",
+          severity: "critical",
+          peakSeverity: "critical",
+          occurrenceCount: 1,
           details: expect.objectContaining({ reason: "pull_failed", lastError: "SSH 连接失败" }),
         }),
       ]);
+      const originalAlertId = listed.json().items[0].id as string;
+      for (let second = 61; second <= 180; second += 1) await check(second, false);
+      expect(await app.db.prepare("SELECT COUNT(*) AS count FROM monitor_alerts WHERE environment_id = ? AND rule_type = 'host_offline'").get(environmentId)).toEqual({ count: 1 });
+      expect((await app.inject({ method: "POST", url: `/api/v1/monitor-alerts/${originalAlertId}/notified`, cookies, payload: { phase: "active" } })).json()).toMatchObject({ claimed: true });
+      expect((await app.inject({ method: "POST", url: `/api/v1/monitor-alerts/${originalAlertId}/notified`, cookies, payload: { phase: "active" } })).json()).toMatchObject({ claimed: false });
       expect((await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/service-deployments`, cookies })).json().discovery.hosts[0].sshConnectionId).toBe(connectionId);
 
-      await check(90, true);
+      await check(210, true);
       listed = await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies });
       expect(listed.json().items[0]).toMatchObject({ ruleType: "host_offline", status: "active" });
-      await check(120, true);
+      await check(240, true);
       listed = await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies });
       expect(listed.json().items[0]).toMatchObject({ ruleType: "host_offline", status: "recovered", details: { available: true, reason: "healthy" } });
+
+      await check(270, false);
+      await check(300, false);
+      listed = await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies });
+      expect(listed.json().items[0]).toMatchObject({ id: originalAlertId, status: "active", occurrenceCount: 2, details: { flapping: true } });
+      expect(await app.db.prepare("SELECT COUNT(*) AS count FROM monitor_alerts WHERE environment_id = ? AND rule_type = 'host_offline'").get(environmentId)).toEqual({ count: 1 });
+      await check(330, true);
+      await check(360, true);
+
+      const calendar = await app.inject({
+        method: "GET",
+        url: `/api/v1/environments/${environmentId}/monitor-hosts/${connectionId}/event-calendar?month=${now.slice(0, 7)}&timezone=UTC`,
+        cookies,
+      });
+      expect(calendar.statusCode).toBe(200);
+      expect(calendar.json().summary).toMatchObject({ totalEvents: 1, criticalEvents: 1 });
+      expect(calendar.json().days.find((day: { date: string }) => day.date === now.slice(0, 10))).toMatchObject({
+        newEventCount: 1,
+        activeEventCount: 1,
+        peakSeverity: "critical",
+      });
+      const events = await app.inject({
+        method: "GET",
+        url: `/api/v1/environments/${environmentId}/monitor-hosts/${connectionId}/events?date=${now.slice(0, 10)}&timezone=UTC`,
+        cookies,
+      });
+      expect(events.json().items).toEqual([expect.objectContaining({ id: originalAlertId, occurrenceCount: 2, peakSeverity: "critical" })]);
       expect((await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/service-deployments`, cookies })).json().discovery.hosts[0].sshConnectionId).toBe(connectionId);
     } finally {
       await app.close();

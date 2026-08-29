@@ -25,6 +25,7 @@ import { computed, ref } from "vue";
 import { translate as tr } from "../../i18n";
 import { compareMonitoringHosts } from "../../../shared/monitoring";
 import HostMonitorDashboard from "../HostMonitorDashboard.vue";
+import HostEventCalendar from "./HostEventCalendar.vue";
 
 export interface MonitoringHostCard {
   sshConnectionId: string;
@@ -354,6 +355,10 @@ function presence(host: MonitoringHostCard) {
       </header>
 
       <div class="detail-body">
+        <HostEventCalendar
+          :environment-id="selected.environmentId"
+          :host-id="selected.sshConnectionId"
+        />
         <HostMonitorDashboard
           :environment-id="selected.environmentId"
           :host-id="selected.sshConnectionId"
@@ -919,4 +924,3 @@ function presence(host: MonitoringHostCard) {
   }
 }
 </style>
-

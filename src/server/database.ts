@@ -59,10 +59,20 @@ export async function openDatabase(config: AppConfig): Promise<EnvmanDatabase> {
     await addMysqlColumnIfMissing(db, "monitor_alert_settings", "tls_enabled", "TINYINT NOT NULL DEFAULT 1");
     await addMysqlColumnIfMissing(db, "monitor_alert_settings", "tls_warn_days", "INT NOT NULL DEFAULT 14");
     await addMysqlColumnIfMissing(db, "monitor_alert_settings", "tls_hostname_mismatch_enabled", "TINYINT NOT NULL DEFAULT 1");
+    await addMysqlColumnIfMissing(db, "monitor_alert_states", "last_recovered_alert_id", "VARCHAR(64) NULL");
+    await addMysqlColumnIfMissing(db, "monitor_alert_states", "last_recovered_at", "VARCHAR(32) NULL");
+    await addMysqlColumnIfMissing(db, "monitor_alerts", "severity", "VARCHAR(16) NOT NULL DEFAULT 'warning'");
+    await addMysqlColumnIfMissing(db, "monitor_alerts", "peak_severity", "VARCHAR(16) NOT NULL DEFAULT 'warning'");
+    await addMysqlColumnIfMissing(db, "monitor_alerts", "occurrence_count", "INT NOT NULL DEFAULT 1");
+    await addMysqlColumnIfMissing(db, "monitor_alerts", "last_seen_at", "VARCHAR(32) NOT NULL DEFAULT ''");
+    await addMysqlColumnIfMissing(db, "monitor_alert_user_states", "severity_notified", "VARCHAR(16) NULL");
     await addMysqlColumnIfMissing(db, "monitor_alert_user_states", "cleared_at", "VARCHAR(32) NULL");
+    await db.prepare("UPDATE monitor_alerts SET last_seen_at = triggered_at WHERE last_seen_at = ''").run();
     await db.prepare("UPDATE monitor_hosts SET latest_kubernetes_configs_json = '[]' WHERE latest_kubernetes_configs_json IS NULL").run();
     const monitorAgentIndex = await db.prepare("SHOW INDEX FROM `monitor_samples` WHERE Key_name = 'monitor_samples_agent_collected_idx'").get();
     if (!monitorAgentIndex) await db.exec("ALTER TABLE `monitor_samples` ADD KEY `monitor_samples_agent_collected_idx` (`agent_id`, `collected_at`)");
+    const monitorAlertHostHistoryIndex = await db.prepare("SHOW INDEX FROM `monitor_alerts` WHERE Key_name = 'monitor_alerts_host_history_idx'").get();
+    if (!monitorAlertHostHistoryIndex) await db.exec("ALTER TABLE `monitor_alerts` ADD KEY `monitor_alerts_host_history_idx` (`environment_id`, `target_type`, `target_id`, `triggered_at`)");
     await migrateMysqlKnowledgeSchema(db);
     await backfillInvitationAcceptances(db);
     await migrateSslAssets(db);
@@ -115,7 +125,16 @@ export async function openDatabase(config: AppConfig): Promise<EnvmanDatabase> {
   addColumnIfMissing(raw, "monitor_alert_settings", "tls_enabled", "INTEGER NOT NULL DEFAULT 1");
   addColumnIfMissing(raw, "monitor_alert_settings", "tls_warn_days", "INTEGER NOT NULL DEFAULT 14");
   addColumnIfMissing(raw, "monitor_alert_settings", "tls_hostname_mismatch_enabled", "INTEGER NOT NULL DEFAULT 1");
+  addColumnIfMissing(raw, "monitor_alert_states", "last_recovered_alert_id", "TEXT");
+  addColumnIfMissing(raw, "monitor_alert_states", "last_recovered_at", "TEXT");
+  addColumnIfMissing(raw, "monitor_alerts", "severity", "TEXT NOT NULL DEFAULT 'warning'");
+  addColumnIfMissing(raw, "monitor_alerts", "peak_severity", "TEXT NOT NULL DEFAULT 'warning'");
+  addColumnIfMissing(raw, "monitor_alerts", "occurrence_count", "INTEGER NOT NULL DEFAULT 1");
+  addColumnIfMissing(raw, "monitor_alerts", "last_seen_at", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(raw, "monitor_alert_user_states", "severity_notified", "TEXT");
   addColumnIfMissing(raw, "monitor_alert_user_states", "cleared_at", "TEXT");
+  raw.prepare("UPDATE monitor_alerts SET last_seen_at = triggered_at WHERE last_seen_at = ''").run();
+  raw.exec("CREATE INDEX IF NOT EXISTS monitor_alerts_host_history_idx ON monitor_alerts(environment_id, target_type, target_id, triggered_at DESC)");
   rebuildWorkspaceScopedUniqueTables(raw);
   rebuildRedisCompatibleConstraintTables(raw);
   raw.exec(`

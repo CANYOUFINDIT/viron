@@ -15,7 +15,15 @@ import {
   primeMonitorAlertEnvironment,
   resetMonitorAlertEnvironment,
 } from "../monitor-alerts.js";
-import type { MonitorAlertItem, MonitorAlertRuleType, MonitorAlertTargetType } from "../../shared/monitor-alerts.js";
+import {
+  MONITOR_ALERT_SEVERITIES,
+  monitorAlertSeverityRank,
+  type MonitorAlertItem,
+  type MonitorAlertNotificationPhase,
+  type MonitorAlertRuleType,
+  type MonitorAlertSeverity,
+  type MonitorAlertTargetType,
+} from "../../shared/monitor-alerts.js";
 import { parseBody } from "../validation.js";
 import { requireAdmin } from "./auth.js";
 
@@ -39,7 +47,7 @@ const settingsSchema = z.object({
   excludedDisks: z.array(z.string().min(1).max(1024)).max(512).transform((items) => [...new Set(items)]),
   section: z.enum(["monitor", "tls"]).optional(),
 });
-const notificationSchema = z.object({ phase: z.enum(["active", "recovered"]) });
+const notificationSchema = z.object({ phase: z.enum(["active", "escalated", "recovered"]) });
 
 function parseJson(value: unknown): Record<string, unknown> {
   try {
@@ -114,23 +122,11 @@ async function touchAlertUserState(
     clearedAt?: string | null;
   },
 ): Promise<void> {
-  const existing = await app.db.prepare("SELECT alert_id FROM monitor_alert_user_states WHERE alert_id = ? AND user_id = ?").get(alertId, userId);
-  if (!existing) {
-    await app.db.prepare(`
-      INSERT INTO monitor_alert_user_states (
-        alert_id, user_id, active_notified_at, recovery_notified_at, read_at, cleared_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      alertId,
-      userId,
-      patch.activeNotifiedAt ?? null,
-      patch.recoveryNotifiedAt ?? null,
-      patch.readAt ?? null,
-      patch.clearedAt ?? null,
-      now,
-    );
-    return;
-  }
+  await app.db.prepare(`
+    INSERT OR IGNORE INTO monitor_alert_user_states (
+      alert_id, user_id, active_notified_at, severity_notified, recovery_notified_at, read_at, cleared_at, updated_at
+    ) VALUES (?, ?, NULL, NULL, NULL, NULL, NULL, ?)
+  `).run(alertId, userId, now);
   const assignments = ["updated_at = ?"];
   const params: unknown[] = [now];
   if (patch.activeNotifiedAt !== undefined) {
@@ -151,6 +147,69 @@ async function touchAlertUserState(
   }
   params.push(alertId, userId);
   await app.db.prepare(`UPDATE monitor_alert_user_states SET ${assignments.join(", ")} WHERE alert_id = ? AND user_id = ?`).run(...params);
+}
+
+function alertSeverity(value: unknown): MonitorAlertSeverity {
+  return MONITOR_ALERT_SEVERITIES.includes(String(value) as MonitorAlertSeverity)
+    ? String(value) as MonitorAlertSeverity
+    : "warning";
+}
+
+async function claimAlertNotification(
+  app: FastifyInstance,
+  alertId: string,
+  userId: string,
+  phase: MonitorAlertNotificationPhase,
+  now: string,
+): Promise<boolean> {
+  const forUpdate = app.db.dialect === "mysql" ? " FOR UPDATE" : "";
+  return app.db.transaction(async () => {
+    const alert = await app.db.prepare(`
+      SELECT status, rule_type, details_json, peak_severity FROM monitor_alerts WHERE id = ?${forUpdate}
+    `).get(alertId) as { status: string; rule_type: string; details_json: string; peak_severity: string } | undefined;
+    if (!alert) return false;
+    await app.db.prepare(`
+      INSERT OR IGNORE INTO monitor_alert_user_states (
+        alert_id, user_id, active_notified_at, severity_notified, recovery_notified_at, read_at, cleared_at, updated_at
+      ) VALUES (?, ?, NULL, NULL, NULL, NULL, NULL, ?)
+    `).run(alertId, userId, now);
+    const state = await app.db.prepare(`
+      SELECT active_notified_at, severity_notified, recovery_notified_at
+      FROM monitor_alert_user_states WHERE alert_id = ? AND user_id = ?${forUpdate}
+    `).get(alertId, userId) as {
+      active_notified_at: string | null;
+      severity_notified: string | null;
+      recovery_notified_at: string | null;
+    } | undefined;
+    if (!state) return false;
+    const peakSeverity = alertSeverity(alert.peak_severity);
+    if (phase === "active") {
+      if (!['active', 'event'].includes(alert.status) || state.active_notified_at) return false;
+      await app.db.prepare(`
+        UPDATE monitor_alert_user_states SET active_notified_at = ?, severity_notified = ?, updated_at = ?
+        WHERE alert_id = ? AND user_id = ? AND active_notified_at IS NULL
+      `).run(now, peakSeverity, now, alertId, userId);
+      return true;
+    }
+    if (phase === "escalated") {
+      const notifiedSeverity = state.severity_notified ? alertSeverity(state.severity_notified) : peakSeverity;
+      if (alert.status !== "active" || !state.active_notified_at
+        || monitorAlertSeverityRank(peakSeverity) <= monitorAlertSeverityRank(notifiedSeverity)) return false;
+      await app.db.prepare(`
+        UPDATE monitor_alert_user_states SET severity_notified = ?, updated_at = ?
+        WHERE alert_id = ? AND user_id = ?
+      `).run(peakSeverity, now, alertId, userId);
+      return true;
+    }
+    const details = parseJson(alert.details_json);
+    const recoveryEligible = Boolean(state.active_notified_at) || (alert.rule_type === "disk_missing" && details.recovered === true);
+    if (alert.status !== "recovered" || !recoveryEligible || state.recovery_notified_at) return false;
+    await app.db.prepare(`
+      UPDATE monitor_alert_user_states SET recovery_notified_at = ?, updated_at = ?
+      WHERE alert_id = ? AND user_id = ? AND recovery_notified_at IS NULL
+    `).run(now, now, alertId, userId);
+    return true;
+  })();
 }
 
 async function bulkMarkAlertUserStates(
@@ -248,6 +307,9 @@ function mapAlert(row: Record<string, unknown>): MonitorAlertItem {
   const recoveryNotifiedAt = row.recovery_notified_at ? String(row.recovery_notified_at) : null;
   const status = String(row.status) as "active" | "recovered" | "event";
   const details = parseJson(row.details_json);
+  const severity = alertSeverity(row.severity);
+  const peakSeverity = alertSeverity(row.peak_severity);
+  const notifiedSeverity = row.severity_notified ? alertSeverity(row.severity_notified) : peakSeverity;
   return {
     id: String(row.id),
     workspaceType: String(row.workspace_type) as "personal" | "organization",
@@ -266,11 +328,17 @@ function mapAlert(row: Record<string, unknown>): MonitorAlertItem {
     connectionName: String(row.connection_name ?? ""),
     serviceName: String(row.service_name ?? ""),
     status,
+    severity,
+    peakSeverity,
+    occurrenceCount: Math.max(1, Number(row.occurrence_count ?? 1)),
     details,
     triggeredAt: String(row.triggered_at),
     recoveredAt: row.recovered_at ? String(row.recovered_at) : null,
+    lastSeenAt: String(row.last_seen_at || row.recovered_at || row.triggered_at),
     notificationPhase: (status === "active" || status === "event") && !activeNotifiedAt
       ? "active"
+      : status === "active" && activeNotifiedAt && monitorAlertSeverityRank(peakSeverity) > monitorAlertSeverityRank(notifiedSeverity)
+        ? "escalated"
       : status === "recovered" && (Boolean(activeNotifiedAt) || (row.rule_type === "disk_missing" && details.recovered === true)) && !recoveryNotifiedAt
         ? "recovered"
         : null,
@@ -403,7 +471,7 @@ export async function registerMonitorAlertRoutes(app: FastifyInstance): Promise<
     const rows = await app.db.prepare(`
       SELECT a.*, e.workspace_type, e.workspace_id,
         CASE WHEN e.workspace_type = 'personal' THEN '个人工作台' ELSE COALESCE(o.name, '') END AS workspace_name,
-        u.active_notified_at, u.recovery_notified_at, u.read_at
+        u.active_notified_at, u.severity_notified, u.recovery_notified_at, u.read_at
       FROM monitor_alerts a
       JOIN environments e ON e.id = a.environment_id
       LEFT JOIN organizations o ON o.id = e.workspace_id AND e.workspace_type = 'organization'
@@ -430,14 +498,8 @@ export async function registerMonitorAlertRoutes(app: FastifyInstance): Promise<
     if (!body) return;
     if (!await canAccessAlert(app, request, request.params.id)) return reply.code(404).send({ error: "MONITOR_ALERT_NOT_FOUND", message: "监控告警不存在" });
     const now = new Date().toISOString();
-    await touchAlertUserState(
-      app,
-      request.params.id,
-      request.admin!.id,
-      now,
-      body.phase === "active" ? { activeNotifiedAt: now } : { recoveryNotifiedAt: now },
-    );
-    return { ok: true };
+    const claimed = await claimAlertNotification(app, request.params.id, request.admin!.id, body.phase, now);
+    return { ok: true, claimed };
   });
 
   app.post<{ Params: { id: string } }>("/api/v1/monitor-alerts/:id/read", { preHandler: requireAdmin }, async (request, reply) => {

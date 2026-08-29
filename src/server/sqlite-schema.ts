@@ -649,6 +649,8 @@ CREATE TABLE IF NOT EXISTS monitor_alert_states (
   breach_count INTEGER NOT NULL DEFAULT 0,
   recovery_count INTEGER NOT NULL DEFAULT 0,
   active_alert_id TEXT,
+  last_recovered_alert_id TEXT,
+  last_recovered_at TEXT,
   last_value_json TEXT NOT NULL DEFAULT '{}',
   last_evaluated_at TEXT NOT NULL,
   created_at TEXT NOT NULL,
@@ -675,9 +677,13 @@ CREATE TABLE IF NOT EXISTS monitor_alerts (
   connection_name TEXT NOT NULL DEFAULT '',
   service_name TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL CHECK(status IN ('active','recovered','event')),
+  severity TEXT NOT NULL DEFAULT 'warning' CHECK(severity IN ('info','warning','major','critical')),
+  peak_severity TEXT NOT NULL DEFAULT 'warning' CHECK(peak_severity IN ('info','warning','major','critical')),
+  occurrence_count INTEGER NOT NULL DEFAULT 1,
   details_json TEXT NOT NULL DEFAULT '{}',
   triggered_at TEXT NOT NULL,
   recovered_at TEXT,
+  last_seen_at TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -685,10 +691,14 @@ CREATE TABLE IF NOT EXISTS monitor_alerts (
 CREATE INDEX IF NOT EXISTS monitor_alerts_environment_idx
   ON monitor_alerts(environment_id, status, triggered_at DESC);
 
+CREATE INDEX IF NOT EXISTS monitor_alerts_host_history_idx
+  ON monitor_alerts(environment_id, target_type, target_id, triggered_at DESC);
+
 CREATE TABLE IF NOT EXISTS monitor_alert_user_states (
   alert_id TEXT NOT NULL REFERENCES monitor_alerts(id) ON DELETE CASCADE,
   user_id TEXT NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
   active_notified_at TEXT,
+  severity_notified TEXT CHECK(severity_notified IS NULL OR severity_notified IN ('info','warning','major','critical')),
   recovery_notified_at TEXT,
   read_at TEXT,
   cleared_at TEXT,

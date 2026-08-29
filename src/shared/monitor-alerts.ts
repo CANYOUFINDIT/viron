@@ -13,6 +13,21 @@ export type MonitorAlertRuleType =
 
 export type MonitorAlertTargetType = "host" | "deployment" | "tls_endpoint";
 
+export const MONITOR_ALERT_SEVERITIES = ["info", "warning", "major", "critical"] as const;
+export type MonitorAlertSeverity = (typeof MONITOR_ALERT_SEVERITIES)[number];
+export type MonitorAlertNotificationPhase = "active" | "escalated" | "recovered";
+
+export const monitorAlertSeverityWeight: Record<MonitorAlertSeverity, number> = {
+  info: 0,
+  warning: 1,
+  major: 3,
+  critical: 8,
+};
+
+export function monitorAlertSeverityRank(severity: MonitorAlertSeverity): number {
+  return MONITOR_ALERT_SEVERITIES.indexOf(severity);
+}
+
 export interface MonitorAlertSettings {
   enabled: boolean;
   hostOfflineEnabled: boolean;
@@ -51,16 +66,70 @@ export interface MonitorAlertItem {
   connectionName: string;
   serviceName: string;
   status: "active" | "recovered" | "event";
+  severity: MonitorAlertSeverity;
+  peakSeverity: MonitorAlertSeverity;
+  occurrenceCount: number;
   details: Record<string, unknown>;
   triggeredAt: string;
   recoveredAt: string | null;
-  notificationPhase: "active" | "recovered" | null;
+  lastSeenAt: string;
+  notificationPhase: MonitorAlertNotificationPhase | null;
   read: boolean;
 }
 
 export interface MonitorAlertListResponse {
   items: MonitorAlertItem[];
   unread: number;
+}
+
+export interface MonitorHostEventCalendarDay {
+  date: string;
+  future: boolean;
+  coverageRatio: number;
+  newEventCount: number;
+  activeEventCount: number;
+  infoCount: number;
+  warningCount: number;
+  majorCount: number;
+  criticalCount: number;
+  affectedMinutes: number;
+  peakSeverity: MonitorAlertSeverity | null;
+  burdenScore: number;
+}
+
+export interface MonitorHostEventCalendarSummary {
+  healthyDays: number;
+  affectedDays: number;
+  noDataDays: number;
+  criticalEvents: number;
+  totalEvents: number;
+  affectedMinutes: number;
+  meanRecoveryMinutes: number | null;
+}
+
+export interface MonitorHostEventCalendarResponse {
+  month: string;
+  timezone: string;
+  from: string;
+  to: string;
+  generatedAt: string;
+  days: MonitorHostEventCalendarDay[];
+  summary: MonitorHostEventCalendarSummary;
+}
+
+export interface MonitorHostEventItem {
+  id: string;
+  ruleType: MonitorAlertRuleType;
+  ruleKey: string;
+  status: "active" | "recovered" | "event";
+  severity: MonitorAlertSeverity;
+  peakSeverity: MonitorAlertSeverity;
+  occurrenceCount: number;
+  targetName: string;
+  details: Record<string, unknown>;
+  triggeredAt: string;
+  recoveredAt: string | null;
+  lastSeenAt: string;
 }
 
 export interface DesktopMonitorAlertNotification {

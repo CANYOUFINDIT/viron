@@ -17,6 +17,7 @@ import {
   type DesktopMonitorAlertNotification,
   type MonitorAlertItem,
   type MonitorAlertListResponse,
+  type MonitorAlertNotificationPhase,
 } from "../../shared/monitor-alerts";
 
 defineProps<{ sidebarExpanded: boolean }>();
@@ -97,12 +98,12 @@ async function openAlert(alert: MonitorAlertNavigationTarget) {
   }
 }
 
-function showBrowserSystemNotification(alert: MonitorAlertItem, phase: "active" | "recovered", title: string, body: string) {
+function showBrowserSystemNotification(alert: MonitorAlertItem, phase: MonitorAlertNotificationPhase, title: string, body: string) {
   if (desktop || permission.value !== "granted" || typeof Notification === "undefined") return;
   const notification = new Notification(title, {
     body,
     tag: `viron-monitor:${alert.id}:${phase}`,
-    requireInteraction: phase === "active",
+    requireInteraction: phase !== "recovered",
   });
   notification.onclick = () => {
     window.focus();
@@ -111,7 +112,7 @@ function showBrowserSystemNotification(alert: MonitorAlertItem, phase: "active" 
   };
 }
 
-async function showSystemNotification(alert: MonitorAlertItem, phase: "active" | "recovered", title: string, body: string) {
+async function showSystemNotification(alert: MonitorAlertItem, phase: MonitorAlertNotificationPhase, title: string, body: string) {
   if (desktop) {
     await showDesktopMonitorAlertNotification({
       id: alert.id,
@@ -132,17 +133,26 @@ async function showSystemNotification(alert: MonitorAlertItem, phase: "active" |
   showBrowserSystemNotification(alert, phase, title, body);
 }
 
-async function presentAlert(alert: MonitorAlertItem, phase: "active" | "recovered") {
+async function presentAlert(alert: MonitorAlertItem, phase: MonitorAlertNotificationPhase) {
   const key = `${alert.id}:${phase}`;
   if (displaying.has(key)) return;
   displaying.add(key);
+  const claim = await api<{ ok: true; claimed: boolean }>(`/api/v1/monitor-alerts/${alert.id}/notified`, {
+    method: "POST",
+    body: JSON.stringify({ phase }),
+  }).catch(() => null);
+  if (!claim?.claimed) {
+    displaying.delete(key);
+    alert.notificationPhase = null;
+    return;
+  }
   const title = monitorAlertTitle(alert, phase);
   const body = monitorAlertBody(alert, phase);
   openToastCount.value += 1;
   ElNotification({
     title,
     message: body,
-    type: alert.status === "event" ? "warning" : phase === "active" ? "error" : "success",
+    type: alert.status === "event" ? "warning" : phase === "recovered" ? "success" : "error",
     duration: MONITOR_ALERT_TOAST_DURATION_MS,
     offset: 52,
     position: "top-right",
@@ -150,10 +160,6 @@ async function presentAlert(alert: MonitorAlertItem, phase: "active" | "recovere
     onClose: () => { openToastCount.value = Math.max(0, openToastCount.value - 1); },
   });
   await showSystemNotification(alert, phase, title, body);
-  await api(`/api/v1/monitor-alerts/${alert.id}/notified`, {
-    method: "POST",
-    body: JSON.stringify({ phase }),
-  }).catch(() => undefined);
   alert.notificationPhase = null;
 }
 
