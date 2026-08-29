@@ -26,6 +26,7 @@ import { api, prefetchApi } from "../api";
 import DesktopExecutionNotice from "../components/DesktopExecutionNotice.vue";
 import EnvironmentImmersiveNavigation from "../components/EnvironmentImmersiveNavigation.vue";
 import DesktopWebAccountBrowser from "../components/DesktopWebAccountBrowser.vue";
+import SslBindDialog from "../components/credentials/SslBindDialog.vue";
 import WebAccountBrowser from "../components/WebAccountBrowser.vue";
 import { copyTextToClipboard } from "../clipboard";
 import { desktopExecutionTargets, desktopState, isDesktopApp } from "../desktop";
@@ -136,7 +137,8 @@ const immersiveCredentialLoading = ref<Set<string>>(new Set());
 const revealed = ref<Record<string, string>>({});
 const activeTab = ref<WorkspaceTab>("web");
 const entryDialog = ref(false);
-const configuringEntrySsl = ref(false);
+const sslBindOpen = ref(false);
+const sslBindEntry = ref<{ id: string; name: string; url: string } | null>(null);
 const credentialDialog = ref(false);
 const environmentDialog = ref(false);
 const editingEntryId = ref("");
@@ -706,32 +708,20 @@ function exitEnvironmentImmersive() {
 }
 
 function openEntryCreate() {
-  configuringEntrySsl.value = false;
   editingEntryId.value = "";
   Object.assign(entryForm, { name: "", url: "", description: "", tags: "" });
   entryDialog.value = true;
 }
 
 function openEntryEdit(entry: WebEntry) {
-  configuringEntrySsl.value = false;
   editingEntryId.value = entry.id;
   Object.assign(entryForm, { name: entry.name, url: entry.url, description: entry.description, tags: entry.tags.join(", ") });
   entryDialog.value = true;
 }
 
 function openSslConfiguration(entry: WebEntry) {
-  openEntryEdit(entry);
-  configuringEntrySsl.value = true;
-  try {
-    const url = new URL(entryForm.url);
-    if (url.protocol === "http:") {
-      url.protocol = "https:";
-      if (url.port === "80") url.port = "";
-      entryForm.url = url.toString();
-    }
-  } catch {
-    // Keep the original value visible so the user can correct it in the form.
-  }
+  sslBindEntry.value = { id: entry.id, name: entry.name, url: entry.url };
+  sslBindOpen.value = true;
 }
 
 function openSslConfigurationForId(entryId: string) {
@@ -1175,9 +1165,18 @@ onBeforeUnmount(() => {
       </KeepAlive>
     </div>
 
-    <el-dialog v-model="entryDialog" align-center class="envman-dialog" :title="configuringEntrySsl ? $t('配置 Web 入口 SSL') : editingEntryId ? $t('编辑 Web 入口') : $t('添加 Web 入口')" width="600px">
+    <SslBindDialog
+      v-if="sslBindEntry"
+      v-model="sslBindOpen"
+      :environment-id="environmentId"
+      :entry-id="sslBindEntry.id"
+      :entry-name="sslBindEntry.name"
+      :entry-url="sslBindEntry.url"
+      @bound="loadEnvironment"
+    />
+
+    <el-dialog v-model="entryDialog" align-center class="envman-dialog" :title="editingEntryId ? $t('编辑 Web 入口') : $t('添加 Web 入口')" width="600px">
       <el-form label-position="top">
-        <el-alert v-if="configuringEntrySsl" class="ssl-config-alert" type="info" :closable="false" show-icon :title="$t('保存后将启用 HTTPS 并创建 SSL 证书探测端点')" :description="$t('系统会根据 HTTPS 地址自动识别域名和端口；若当前环境存在匹配的 SSH 主机，还会自动绑定并开始探测。')" />
         <el-form-item :label="$t('入口名称')" required><el-input v-model="entryForm.name" :placeholder="$t('例如：管理控制台')" /></el-form-item>
         <el-form-item :label="$t('页面地址')" required><el-input v-model="entryForm.url" placeholder="https://console.example.com" /></el-form-item>
         <el-form-item :label="$t('说明')"><el-input v-model="entryForm.description" type="textarea" :rows="3" /></el-form-item>
