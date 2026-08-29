@@ -35,7 +35,7 @@ function average(values: Array<number | null>): number | null {
 export async function loadMonitoringOverview(
   app: FastifyInstance,
   request: FastifyRequest,
-  query: { environmentId?: string; hostCursor?: string; hostLimit?: number; serviceLimit?: number },
+  query: { environmentId?: string; hostCursor?: string; hostOffset?: number; hostLimit?: number; serviceLimit?: number; hostsOnly?: "1" },
 ): Promise<Record<string, unknown>> {
   const [workspaceType, workspaceId] = workspaceParams(request);
   if (query.environmentId && !await canAccessEnvironment(app.db, request.admin!, query.environmentId)) {
@@ -44,7 +44,7 @@ export async function loadMonitoringOverview(
     (error as Error & { statusCode: number; code: string }).code = "ENVIRONMENT_NOT_FOUND";
     throw error;
   }
-  const cacheKey = `${workspaceType}:${workspaceId}:${request.admin!.id}:${query.environmentId ?? ""}:${query.hostCursor ?? ""}:${query.hostLimit ?? ""}:${query.serviceLimit ?? ""}`;
+  const cacheKey = `${workspaceType}:${workspaceId}:${request.admin!.id}:${query.environmentId ?? ""}:${query.hostCursor ?? ""}:${query.hostOffset ?? ""}:${query.hostLimit ?? ""}:${query.serviceLimit ?? ""}:${query.hostsOnly ?? ""}`;
   const cached = overviewCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.payload;
 
@@ -132,13 +132,42 @@ export async function loadMonitoringOverview(
 
   mappedHosts.sort(compareMonitoringHosts);
 
-  let hostStart = 0;
+  let hostStart = query.hostOffset ?? 0;
   if (query.hostCursor) {
     const index = mappedHosts.findIndex((host) => String(host.sshConnectionId) === query.hostCursor);
     hostStart = index >= 0 ? index + 1 : 0;
   }
   const hosts = mappedHosts.slice(hostStart, hostStart + hostLimit);
   const hostsTruncated = hostStart + hosts.length < mappedHosts.length;
+  const hostsOnly = query.hostsOnly === "1";
+
+  if (hostsOnly) {
+    const healthyHosts = mappedHosts.filter((host) => !host.missing && !host.offline && !host.stale);
+    const payload = {
+      generatedAt: new Date().toISOString(),
+      truncated: hostsTruncated,
+      nextHostCursor: hostsTruncated ? String(hosts[hosts.length - 1]?.sshConnectionId ?? "") : null,
+      nextHostOffset: hostsTruncated ? hostStart + hosts.length : null,
+      partialFailures,
+      summary: {
+        hostTotal: mappedHosts.length,
+        hostOnline: mappedHosts.filter((host) => host.status === "ready" && !host.stale && !host.offline && !host.missing).length,
+        hostOffline: mappedHosts.filter((host) => host.offline).length,
+        hostMissing: mappedHosts.filter((host) => host.missing).length,
+        hostStale: mappedHosts.filter((host) => host.stale).length,
+        serviceTotal: 0,
+        avgCpuPercent: average(healthyHosts.map((host) => host.cpuUsedPercent)),
+        avgMemoryPercent: average(healthyHosts.map((host) => host.memoryUsedPercent)),
+        diskAlerts: mappedHosts.filter((host) => !host.stale && !host.missing && !host.offline && (host.diskUsedPercent ?? 0) >= 90 && host.diskUsedPercent !== null).length,
+      },
+      hosts,
+      services: [],
+      serviceRanking: [],
+      problemNodes: [],
+    };
+    overviewCache.set(cacheKey, { expiresAt: Date.now() + MONITORING_OVERVIEW_CACHE_MS, payload });
+    return payload;
+  }
 
   const serviceRows = await app.db.prepare(`
     SELECT s.id, s.name, s.status, s.environment_id, e.name AS environment_name,
@@ -238,6 +267,7 @@ export async function loadMonitoringOverview(
     generatedAt: new Date().toISOString(),
     truncated: hostsTruncated || servicesTruncated,
     nextHostCursor: hostsTruncated ? String(hosts[hosts.length - 1]?.sshConnectionId ?? "") : null,
+    nextHostOffset: hostsTruncated ? hostStart + hosts.length : null,
     partialFailures,
     summary: {
       hostTotal: mappedHosts.length,
