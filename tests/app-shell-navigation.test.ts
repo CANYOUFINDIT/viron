@@ -10,6 +10,7 @@ describe("app shell navigation", () => {
   it("keeps knowledge above audit and the sidebar toggle above client downloads", () => {
     expect(shell).toContain('{ key: "monitoring"');
     expect(shell.indexOf('{ key: "ssh-keys"')).toBeLessThan(shell.indexOf('{ key: "monitoring"'));
+    expect(shell.indexOf('{ key: "redis"')).toBeLessThan(shell.indexOf('{ key: "monitoring"'));
     expect(shell.indexOf('{ key: "knowledge"')).toBeLessThan(shell.indexOf('{ key: "audit"'));
     expect(shell.indexOf('class="header-icon-action sidebar-toggle"')).toBeLessThan(shell.indexOf("route.name === 'client-downloads'"));
   });

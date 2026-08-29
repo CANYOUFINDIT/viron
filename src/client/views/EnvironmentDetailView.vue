@@ -712,7 +712,7 @@ async function saveEntry() {
   if (!entryForm.name.trim() || !entryForm.url.trim()) return ElMessage.warning(tr("请填写名称和页面地址"));
   saving.value = true;
   try {
-    await api(editingEntryId.value ? `/api/v1/web-entries/${editingEntryId.value}` : `/api/v1/environments/${environmentId}/web-entries`, {
+    const result = await api<{ tlsEndpointId?: string | null; tlsProbeReady?: boolean }>(editingEntryId.value ? `/api/v1/web-entries/${editingEntryId.value}` : `/api/v1/environments/${environmentId}/web-entries`, {
       method: editingEntryId.value ? "PUT" : "POST",
       body: JSON.stringify({
         name: entryForm.name,
@@ -725,6 +725,17 @@ async function saveEntry() {
     Object.assign(entryForm, { name: "", url: "", description: "", tags: "" });
     ElMessage.success(editingEntryId.value ? tr("Web 入口已更新") : tr("Web 入口已添加"));
     await loadEnvironment();
+    if (result.tlsEndpointId && result.tlsProbeReady) {
+      ElMessage.info(tr("已自动开始 SSL 证书探测"));
+      void api(`/api/v1/tls-endpoints/${result.tlsEndpointId}/probe`, { method: "POST" })
+        .then(async () => {
+          ElMessage.success(tr("SSL 证书探测已完成"));
+          await loadEnvironment();
+        })
+        .catch((error) => {
+          ElMessage.warning(error instanceof Error ? error.message : tr("SSL 证书自动探测失败，可从证书徽标重试"));
+        });
+    }
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : tr("添加失败"));
   } finally {
@@ -963,6 +974,7 @@ onBeforeUnmount(() => {
               'is-dragging': draggingEntryId === entry.id,
               'is-drop-before': entryDropTarget?.id === entry.id && !entryDropTarget.after,
               'is-drop-after': entryDropTarget?.id === entry.id && entryDropTarget.after,
+              'has-tls': Boolean(entry.tls),
             }"
             :data-tab-id="entry.id"
             :title="entry.name"
@@ -978,7 +990,7 @@ onBeforeUnmount(() => {
             <span class="resource-list__icon"><img v-if="entryFavicons[entry.id]" :src="entryFavicons[entry.id]" alt="" @error="discardEntryFavicon(entry.id)" /><Globe2 v-else :size="17" /></span>
             <strong>{{ entry.name }}</strong>
             <span v-if="entry.tls" class="web-entry-tls" @click.stop>
-              <TlsPopover :tls="entry.tls" :related-entries="relatedTlsEntries(entry)" @refreshed="loadEnvironment" />
+              <TlsPopover :tls="entry.tls" :entry-id="entry.id" :entry-name="entry.name" :related-entries="relatedTlsEntries(entry)" @refreshed="loadEnvironment" />
             </span>
             <em>{{ entry.credentialCount }}</em>
           </button>

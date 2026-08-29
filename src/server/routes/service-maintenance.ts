@@ -447,6 +447,18 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     },
   );
 
+  app.get<{ Params: { id: string } }>(
+    "/api/v1/tls-endpoints/:id",
+    { preHandler: requireAdmin },
+    async (request, reply) => {
+      const item = await getTlsEndpoint(app, request.params.id);
+      if (!item || !await canAccessEnvironment(app.db, request.admin!, item.environmentId)) {
+        return reply.code(404).send({ error: "TLS_ENDPOINT_NOT_FOUND", message: "证书端点不存在" });
+      }
+      return { item };
+    },
+  );
+
   app.put<{ Params: { id: string } }>(
     "/api/v1/tls-endpoints/:id",
     { preHandler: requireAdmin },

@@ -43,7 +43,7 @@ function deploymentLogId() {
       <code>{{ deploymentIdentity(deployment) }}</code>
     </div>
     <dl>
-      <div><dt>{{ $t('SSH 主机') }}</dt><dd>{{ deployment.sshConnectionName }}</dd></div>
+      <div><dt>{{ $t('SSH 主机') }}</dt><dd>{{ deployment.host ? `${deployment.sshConnectionName} · ${deployment.host}` : deployment.sshConnectionName }}</dd></div>
       <div><dt>{{ $t('服务状态') }}</dt><dd>{{ deployment.state || $t('尚未采集') }}</dd></div>
       <template v-if="deployment.provider === 'kubernetes'">
         <div><dt>{{ $t('期望副本') }}</dt><dd>{{ kubernetesMetric(deployment, 'desiredReplicas') }}</dd></div>

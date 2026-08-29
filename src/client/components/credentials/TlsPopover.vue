@@ -1,17 +1,26 @@
 <script setup lang="ts">
-import { RefreshCw, ShieldCheck } from "@lucide/vue";
+import { Link2, Pencil, RefreshCw, Server, ShieldCheck } from "@lucide/vue";
 import { ElMessage } from "element-plus";
-import { computed, ref } from "vue";
+import { computed, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 import { api } from "../../api";
 import { copyTextToClipboard } from "../../clipboard";
 import { translate as tr } from "../../i18n";
 import { session } from "../../session";
-import { formatFingerprint, type TlsWebEntryBadge } from "../../../shared/tls-certificates";
+import {
+  formatFingerprint,
+  type CertificateProbeResponse,
+  type SslCertificateAsset,
+  type TlsEndpoint,
+  type TlsWebEntryBadge,
+} from "../../../shared/tls-certificates";
 import TlsStatusBadge from "./TlsStatusBadge.vue";
+
+interface SshOption { id: string; name: string; host?: string; environmentIds: string[] }
 
 const props = defineProps<{
   tls: TlsWebEntryBadge;
+  entryId?: string;
   entryName?: string;
   relatedEntries?: Array<{ id: string; name: string; url: string }>;
 }>();
@@ -19,14 +28,71 @@ const emit = defineEmits<{ refreshed: [] }>();
 
 const router = useRouter();
 const probing = ref(false);
+const loadingDetail = ref(false);
+const savingBinding = ref(false);
+const bindingOpen = ref(false);
+const asset = ref<SslCertificateAsset | null>(null);
+const endpoint = ref<TlsEndpoint | null>(null);
+const sshConnections = ref<SshOption[]>([]);
+const bindForm = reactive({ sshConnectionId: "" });
 const canManage = computed(() => ["owner", "admin"].includes(session.workspace?.role ?? ""));
+const sshOptions = computed(() => sshConnections.value.filter((item) => !endpoint.value || item.environmentIds.includes(endpoint.value.environmentId)));
+const related = computed(() => {
+  if (asset.value) {
+    return asset.value.webEntries
+      .filter((item) => item.id !== props.entryId)
+      .map((item) => ({ id: item.id, name: `${item.environmentName} · ${item.name}`, url: item.url }));
+  }
+  return props.relatedEntries ?? [];
+});
+
+function formatDate(value: string | null | undefined) {
+  return value ? new Date(value).toLocaleString() : "—";
+}
+
+async function loadDetail() {
+  if (!props.tls.endpointId) return;
+  loadingDetail.value = true;
+  try {
+    const endpointResponse = await api<{ item: TlsEndpoint }>(`/api/v1/tls-endpoints/${props.tls.endpointId}`);
+    const certificateId = endpointResponse.item.certificateId;
+    const [certificateResponse, connectionsResponse] = await Promise.all([
+      canManage.value && certificateId
+        ? api<{ item: SslCertificateAsset }>(`/api/v1/certificates/${certificateId}`).catch(() => ({ item: null as unknown as SslCertificateAsset }))
+        : Promise.resolve({ item: null as unknown as SslCertificateAsset }),
+      canManage.value
+        ? api<{ items: SshOption[] }>("/api/v1/connections?type=ssh").catch(() => ({ items: [] as SshOption[] }))
+        : Promise.resolve({ items: [] as SshOption[] }),
+    ]);
+    endpoint.value = endpointResponse.item;
+    asset.value = certificateResponse.item || null;
+    sshConnections.value = connectionsResponse.items;
+    bindForm.sshConnectionId = endpoint.value.sshConnectionId ?? "";
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : tr("加载证书详情失败"));
+  } finally {
+    loadingDetail.value = false;
+  }
+}
 
 async function probe() {
   if (!props.tls.endpointId || !canManage.value) return;
+  if (!endpoint.value) await loadDetail();
+  if (!endpoint.value?.sshConnectionId) {
+    bindingOpen.value = true;
+    return ElMessage.warning(tr("请先选择用于探测的 SSH 主机"));
+  }
   probing.value = true;
   try {
-    await api(`/api/v1/tls-endpoints/${props.tls.endpointId}/probe`, { method: "POST" });
-    ElMessage.success(tr("证书探测已完成"));
+    if (endpoint.value.certificateId) {
+      const response = await api<CertificateProbeResponse>(`/api/v1/certificates/${endpoint.value.certificateId}/probe`, { method: "POST" });
+      if (response.failed) ElMessage.warning(tr("证书端点探测完成：成功 {{0}}，失败 {{1}}", [response.succeeded, response.failed]));
+      else ElMessage.success(tr("共享证书的全部端点已完成探测"));
+    } else {
+      await api(`/api/v1/tls-endpoints/${props.tls.endpointId}/probe`, { method: "POST" });
+      ElMessage.success(tr("证书探测已完成"));
+    }
+    await loadDetail();
     emit("refreshed");
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : tr("重新探测失败"));
@@ -35,9 +101,35 @@ async function probe() {
   }
 }
 
+async function saveBinding() {
+  if (!endpoint.value || !bindForm.sshConnectionId) return ElMessage.warning(tr("请选择 SSH 主机"));
+  savingBinding.value = true;
+  try {
+    await api(`/api/v1/tls-endpoints/${endpoint.value.id}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        host: endpoint.value.host,
+        port: endpoint.value.port,
+        sni: endpoint.value.sni,
+        sshConnectionId: bindForm.sshConnectionId,
+        observeEnabled: true,
+      }),
+    });
+    bindingOpen.value = false;
+    ElMessage.success(tr("探测主机已绑定，正在读取证书"));
+    await loadDetail();
+    await probe();
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : tr("绑定探测主机失败"));
+  } finally {
+    savingBinding.value = false;
+  }
+}
+
 async function copyFingerprint() {
-  if (!props.tls.fingerprintSha256) return;
-  await copyTextToClipboard(formatFingerprint(props.tls.fingerprintSha256));
+  const fingerprint = asset.value?.fingerprintSha256 || props.tls.fingerprintSha256;
+  if (!fingerprint) return;
+  await copyTextToClipboard(formatFingerprint(fingerprint));
   ElMessage.success(tr("指纹已复制"));
 }
 
@@ -48,49 +140,78 @@ function openCenter() {
 </script>
 
 <template>
-  <el-popover placement="bottom-end" :width="360" trigger="click" :show-arrow="true">
+  <el-popover placement="bottom-end" :width="400" trigger="click" :show-arrow="true" @show="loadDetail">
     <template #reference>
       <TlsStatusBadge :status="tls.status" :days-remaining="tls.daysRemaining" :stale="tls.stale" :probing="probing" />
     </template>
-    <div class="tls-popover">
+    <div class="tls-popover" v-loading="loadingDetail">
       <header>
-        <strong>{{ $t('SSL 证书详情') }}</strong>
+        <span class="tls-popover__mark"><ShieldCheck :size="17" /></span>
+        <div><strong>{{ asset?.leafCn || endpoint?.sni || endpoint?.host || entryName || $t('SSL 证书详情') }}</strong><small>{{ entryName }}</small></div>
+        <TlsStatusBadge :status="tls.status" :days-remaining="tls.daysRemaining" :stale="tls.stale" :probing="probing" />
       </header>
+
       <dl>
-        <div><dt>{{ $t('状态') }}</dt><dd>
-          <TlsStatusBadge :status="tls.status" :days-remaining="tls.daysRemaining" :stale="tls.stale" :probing="probing" />
-        </dd></div>
-        <div v-if="tls.fingerprintSha256"><dt>{{ $t('SHA-256 指纹') }}</dt><dd><button type="button" @click="copyFingerprint">{{ formatFingerprint(tls.fingerprintSha256) }}</button></dd></div>
-        <div v-if="tls.probedAt"><dt>{{ $t('上次探测') }}</dt><dd>{{ tls.probedAt }}</dd></div>
+        <div v-if="asset?.issuer"><dt>{{ $t('颁发者') }}</dt><dd>{{ asset.issuer }}</dd></div>
+        <div v-if="asset?.notAfter"><dt>{{ $t('有效期') }}</dt><dd>{{ formatDate(asset.notBefore) }} — {{ formatDate(asset.notAfter) }}</dd></div>
+        <div v-if="asset?.leafSans.length"><dt>SAN</dt><dd>{{ asset.leafSans.join(', ') }}</dd></div>
+        <div v-if="asset?.fingerprintSha256 || tls.fingerprintSha256"><dt>{{ $t('SHA-256 指纹') }}</dt><dd><button type="button" @click="copyFingerprint">{{ formatFingerprint(asset?.fingerprintSha256 || tls.fingerprintSha256 || '') }}</button></dd></div>
+        <div v-if="endpoint"><dt>{{ $t('探测端点') }}</dt><dd>{{ endpoint.host }}:{{ endpoint.port }}<template v-if="endpoint.sni"> · SNI {{ endpoint.sni }}</template></dd></div>
+        <div v-if="endpoint"><dt>{{ $t('探测主机') }}</dt><dd :class="{ 'is-error': !endpoint.sshConnectionId }">{{ endpoint.sshConnectionName || $t('尚未绑定 SSH 主机') }}</dd></div>
+        <div v-if="tls.probedAt"><dt>{{ $t('上次探测') }}</dt><dd>{{ formatDate(tls.probedAt) }}</dd></div>
         <div v-if="tls.stale"><dt>{{ $t('数据状态') }}</dt><dd>{{ $t('探测结果已陈旧') }}</dd></div>
         <div v-if="tls.probeError"><dt>{{ $t('探测错误') }}</dt><dd class="is-error">{{ tls.probeError }}</dd></div>
       </dl>
-      <section v-if="relatedEntries?.length">
-        <h4>{{ $t('本证书同时保护的其它入口') }}</h4>
-        <p v-for="entry in relatedEntries" :key="entry.id">{{ entry.name }} · {{ entry.url }}</p>
+
+      <section v-if="related.length" class="tls-related">
+        <h4><Link2 :size="13" />{{ $t('本证书同时保护的其它入口') }} <small>{{ related.length }}</small></h4>
+        <p v-for="entry in related" :key="entry.id"><strong>{{ entry.name }}</strong><span>{{ entry.url }}</span></p>
       </section>
+
+      <section v-if="bindingOpen && endpoint" class="tls-binding">
+        <label><Server :size="14" />{{ $t('选择探测 SSH 主机') }}</label>
+        <div>
+          <el-select v-model="bindForm.sshConnectionId" filterable :placeholder="$t('当前环境中的 SSH 主机')" style="width:100%">
+            <el-option v-for="item in sshOptions" :key="item.id" :label="item.host ? `${item.name} · ${item.host}` : item.name" :value="item.id" />
+          </el-select>
+          <el-button type="primary" :loading="savingBinding" @click="saveBinding">{{ $t('绑定并探测') }}</el-button>
+        </div>
+        <small v-if="!sshOptions.length">{{ $t('当前环境没有可用 SSH 连接，请先在连接资源池中添加。') }}</small>
+      </section>
+
       <footer>
-        <el-button :loading="probing" :disabled="!canManage || !tls.endpointId" :title="canManage ? undefined : $t('需要管理员权限')" @click="probe">
-          <RefreshCw :size="14" />{{ $t('立即重新探测') }}
+        <el-button v-if="canManage" :loading="probing" :disabled="!tls.endpointId" @click="probe">
+          <RefreshCw :size="14" />{{ asset ? $t('重新探测全部端点') : $t('立即重新探测') }}
         </el-button>
-        <el-button v-if="canManage" type="primary" plain @click="openCenter">
-          <ShieldCheck :size="14" />{{ $t('在凭据中心管理') }}
-        </el-button>
+        <el-button v-if="canManage && endpoint" @click="bindingOpen = !bindingOpen"><Pencil :size="14" />{{ $t('编辑/绑定') }}</el-button>
+        <el-button v-if="canManage" type="primary" plain @click="openCenter"><ShieldCheck :size="14" />{{ $t('在凭据中心管理') }}</el-button>
       </footer>
     </div>
   </el-popover>
 </template>
 
 <style scoped>
-.tls-popover { display: grid; gap: 10px; color: var(--ink-800); }
-.tls-popover header strong { font-size: 13px; }
-.tls-popover dl { margin: 0; display: grid; gap: 6px; }
-.tls-popover dl > div { display: grid; gap: 2px; }
+.tls-popover { display: grid; gap: 12px; color: var(--ink-800); }
+.tls-popover > header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 9px; padding-bottom: 10px; border-bottom: 1px solid var(--ink-100); }
+.tls-popover > header > div { min-width: 0; display: grid; gap: 2px; }
+.tls-popover > header strong { overflow: hidden; text-overflow: ellipsis; font-size: 13px; white-space: nowrap; }
+.tls-popover > header small { color: var(--ink-400); font-size: 10px; }
+.tls-popover__mark { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid var(--teal-200); border-radius: 8px; background: var(--teal-50); color: var(--teal-700); }
+.tls-popover dl { margin: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 9px 14px; }
+.tls-popover dl > div { min-width: 0; display: grid; gap: 3px; }
 .tls-popover dt { color: var(--ink-400); font-size: 10px; font-weight: 700; }
-.tls-popover dd { margin: 0; font-size: 12px; word-break: break-all; }
+.tls-popover dd { margin: 0; font-size: 11px; word-break: break-word; }
 .tls-popover dd button { padding: 0; border: 0; background: none; color: var(--teal-700); cursor: pointer; font: inherit; text-align: left; }
 .tls-popover .is-error { color: var(--red-600, #b7473f); }
-.tls-popover h4 { margin: 0 0 6px; font-size: 11px; }
-.tls-popover p { margin: 0; color: var(--ink-500); font-size: 11px; }
-.tls-popover footer { display: flex; flex-wrap: wrap; gap: 8px; }
+.tls-related { display: grid; gap: 6px; padding: 10px; border: 1px solid var(--ink-100); border-radius: 9px; background: var(--ink-50); }
+.tls-related h4 { margin: 0; display: flex; align-items: center; gap: 5px; font-size: 11px; }
+.tls-related h4 small { color: var(--ink-400); }
+.tls-related p { margin: 0; display: grid; gap: 1px; }
+.tls-related p strong { font-size: 11px; }
+.tls-related p span { overflow: hidden; color: var(--ink-400); font-family: var(--font-mono); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.tls-binding { display: grid; gap: 7px; padding: 10px; border: 1px solid var(--teal-200); border-radius: 9px; background: var(--teal-50); }
+.tls-binding label { display: flex; align-items: center; gap: 5px; color: var(--teal-700); font-size: 11px; font-weight: 800; }
+.tls-binding > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
+.tls-binding small { color: var(--ink-500); font-size: 10px; }
+.tls-popover footer { display: flex; flex-wrap: wrap; gap: 7px; padding-top: 2px; }
 </style>
