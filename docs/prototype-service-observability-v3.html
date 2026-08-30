@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Viron · 服务运行与可观测性 V3</title>
+  <title>Viron · 当前目录结构下的服务维护与监控大盘</title>
   <style>
     :root {
       --canvas: #e9e8e1;
@@ -167,7 +167,14 @@
       box-shadow: 0 0 0 3px rgba(53, 116, 87, 0.15);
     }
 
-    .rail-nav { padding: 8px 12px; }
+    .rail-nav {
+      min-height: 0;
+      flex: 1;
+      padding: 8px 12px;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: #41504a transparent;
+    }
 
     .rail-label {
       padding: 13px 10px 8px;
@@ -176,12 +183,12 @@
 
     .nav-button {
       width: 100%;
-      height: 42px;
+      height: 36px;
       display: flex;
       align-items: center;
       gap: 11px;
       padding: 0 11px;
-      margin: 3px 0;
+      margin: 2px 0;
       border: 0;
       border-left: 2px solid transparent;
       background: transparent;
@@ -219,10 +226,53 @@
 
     .rail-footer {
       margin-top: auto;
-      padding: 16px 18px 20px;
+      padding: 8px 12px 14px;
       border-top: 1px solid #34403b;
       color: #89958e;
     }
+
+    .rail-utility {
+      width: 100%;
+      height: 35px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 10px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: #9eaaa4;
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .rail-utility:hover,
+    .rail-utility.is-active { background: #25312d; color: #fff; }
+
+    .rail-utility .nav-count { margin-left: auto; color: var(--acid); font: 10px/1 var(--mono); }
+
+    .rail-user {
+      display: grid;
+      grid-template-columns: 28px 1fr;
+      gap: 9px;
+      align-items: center;
+      margin-top: 7px;
+      padding: 9px 8px 0;
+      border-top: 1px solid #34403b;
+    }
+
+    .rail-avatar {
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      border: 1px solid #65736c;
+      background: #2d3935;
+      color: #eef2ee;
+      font: 700 11px/1 var(--mono);
+    }
+
+    .rail-user strong { display: block; color: #dfe6e1; font-size: 10px; }
+    .rail-user span { display: block; color: #7f8d86; font: 9px/1.3 var(--mono); }
 
     .agent-health {
       display: grid;
@@ -329,6 +379,108 @@
     }
 
     .content { padding: 30px 32px 48px; }
+
+    .environment-context {
+      margin-bottom: 24px;
+      border: 1px solid var(--line-strong);
+      background: var(--paper-strong);
+    }
+
+    .environment-identity {
+      min-height: 78px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 12px 16px;
+    }
+
+    .environment-identity__main {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+    }
+
+    .environment-back {
+      width: 32px;
+      height: 32px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--line);
+      background: transparent;
+      cursor: pointer;
+      font: 700 15px/1 var(--mono);
+    }
+
+    .environment-avatar {
+      width: 44px;
+      height: 44px;
+      display: grid;
+      place-items: center;
+      border-radius: 9px 9px 9px 2px;
+      background: var(--cyan-soft);
+      color: #23666c;
+      font: 800 12px/1 var(--mono);
+    }
+
+    .environment-copy h2 {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      margin: 0;
+      font-size: 17px;
+    }
+
+    .environment-copy p { margin: 3px 0 0; color: var(--ink-faint); font-size: 10px; }
+
+    .environment-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--ink-faint);
+      font: 9px/1 var(--mono);
+    }
+
+    .environment-tabs {
+      min-height: 44px;
+      display: flex;
+      align-items: flex-end;
+      gap: 22px;
+      padding: 0 16px;
+      border-top: 1px solid var(--line);
+      overflow-x: auto;
+    }
+
+    .environment-tabs button {
+      height: 39px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 1px;
+      border: 0;
+      border-bottom: 2px solid transparent;
+      background: transparent;
+      color: var(--ink-faint);
+      cursor: pointer;
+      white-space: nowrap;
+      font-weight: 650;
+    }
+
+    .environment-tabs button.is-active {
+      border-bottom-color: var(--cyan);
+      color: #276f75;
+    }
+
+    .environment-tabs small {
+      padding: 1px 5px;
+      border: 1px solid var(--line);
+      background: #efeee8;
+      color: var(--ink-faint);
+      font: 9px/1.3 var(--mono);
+    }
+
+    .page-heading.is-nested h1 { font-size: clamp(25px, 2.6vw, 36px); }
 
     .page { display: none; }
 
@@ -1483,73 +1635,116 @@
     <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
     <symbol id="i-agent" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M8 9h8M8 13h4M17 13h.1"/></symbol>
     <symbol id="i-capacity" viewBox="0 0 24 24"><path d="M4 19V9M10 19V5M16 19v-7M22 19V3"/></symbol>
+    <symbol id="i-environment" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2M5 19l2-2M17 17l2 2"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m7 9 3 3-3 3M12 15h5"/></symbol>
+    <symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="12" r="4"/><path d="M12 12h9M17 12v3M20 12v2"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 5.5A3.5 3.5 0 0 1 7.5 2H12v18H7.5A3.5 3.5 0 0 0 4 23V5.5ZM20 5.5A3.5 3.5 0 0 0 16.5 2H12v18h4.5A3.5 3.5 0 0 1 20 23V5.5Z"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-4 2-6 6-6s6 2 6 6M16 5a3 3 0 0 1 0 6M17 14c2.7.3 4 2.2 4 5"/></symbol>
+    <symbol id="i-audit" viewBox="0 0 24 24"><path d="M7 3h10v4H7zM5 5H3v16h18V5h-2M8 12h8M8 16h5"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.5 1A7 7 0 0 0 14.8 6l-.3-2.7h-4L10.2 6a7 7 0 0 0-1.6 1.1l-2.5-1-2 3.4L6.1 11a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.5-1a7 7 0 0 0 1.6 1.1l.3 2.7h4l.3-2.7a7 7 0 0 0 1.6-1.1l2.5 1 2-3.4-2-1.5c.1-.3.1-.7.1-1Z"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></symbol>
   </svg>
 
   <div class="app-shell">
     <aside class="rail">
       <div class="brand">
         <div class="brand-mark">V</div>
-        <div class="brand-copy"><strong>VIRON</strong><span>Operations fabric</span></div>
+        <div class="brand-copy"><strong>VIRON</strong><span>环境运维平台</span></div>
       </div>
 
       <div class="rail-scope">
-        <div class="eyebrow">Current environment</div>
-        <strong><span class="live-dot"></span> production-cn</strong>
+        <div class="eyebrow">当前工作空间</div>
+        <strong><span class="live-dot"></span> futongyong 的个人空间</strong>
       </div>
 
       <nav class="rail-nav" aria-label="主导航">
-        <div class="rail-label">Operate</div>
-        <button class="nav-button is-active" data-page="services">
-          <svg class="icon"><use href="#i-service"/></svg>
-          <span>服务运行</span><span class="nav-count">12</span>
-        </button>
         <button class="nav-button" data-page="observability">
           <svg class="icon"><use href="#i-pulse"/></svg>
-          <span>可观测性</span><span class="nav-count">24</span>
+          <span>监控大盘</span>
         </button>
-        <button class="nav-button" data-page="alerts">
-          <svg class="icon"><use href="#i-alert"/></svg>
-          <span>告警中心</span><span class="nav-count">4</span>
+        <button class="nav-button is-active" data-page="services">
+          <svg class="icon"><use href="#i-environment"/></svg>
+          <span>环境总览</span>
         </button>
-
-        <div class="rail-label">Configure</div>
-        <button class="nav-button" data-toast="Web / TLS 仍保持独立模块">
-          <svg class="icon"><use href="#i-external"/></svg>
-          <span>Web / TLS</span>
+        <button class="nav-button" data-toast="原型聚焦服务维护与监控大盘">
+          <svg class="icon"><use href="#i-grid"/></svg>
+          <span>连接资源池</span>
         </button>
-        <button class="nav-button" data-toast="原型未展开设置页面">
-          <svg class="icon"><use href="#i-more"/></svg>
-          <span>环境设置</span>
+        <button class="nav-button" data-toast="原型未展开密钥与证书">
+          <svg class="icon"><use href="#i-key"/></svg>
+          <span>密钥与证书</span>
+        </button>
+        <button class="nav-button" data-toast="原型未展开 SSH 工作台">
+          <svg class="icon"><use href="#i-terminal"/></svg>
+          <span>SSH 工作台</span>
+        </button>
+        <button class="nav-button" data-toast="原型未展开数据库工作台">
+          <svg class="icon"><use href="#i-database"/></svg>
+          <span>数据库工作台</span>
+        </button>
+        <button class="nav-button" data-toast="原型未展开 Redis 工作台">
+          <svg class="icon"><use href="#i-capacity"/></svg>
+          <span>Redis 工作台</span>
+        </button>
+        <button class="nav-button" data-toast="原型未展开知识库">
+          <svg class="icon"><use href="#i-book"/></svg>
+          <span>知识库</span>
+        </button>
+        <button class="nav-button" data-toast="原型未展开操作审计">
+          <svg class="icon"><use href="#i-audit"/></svg>
+          <span>操作审计</span>
+        </button>
+        <button class="nav-button" data-toast="原型未展开组织与用户">
+          <svg class="icon"><use href="#i-users"/></svg>
+          <span>组织与用户</span>
         </button>
       </nav>
 
       <div class="rail-footer">
-        <div class="agent-health">
-          <div class="health-ring">83%</div>
-          <div><strong>采集覆盖率</strong><span>20 / 24 hosts online</span></div>
-        </div>
+        <button class="rail-utility" id="sidebar-alert-center"><svg class="icon"><use href="#i-alert"/></svg><span>监控告警</span><span class="nav-count">4</span></button>
+        <button class="rail-utility" data-toast="原型未展开沉浸模式"><svg class="icon"><use href="#i-grid"/></svg><span>沉浸模式</span></button>
+        <div class="rail-user"><div class="rail-avatar">F</div><div><strong>futongyong</strong><span>个人设置</span></div></div>
       </div>
     </aside>
 
     <main class="workspace">
       <header class="topbar">
-        <div class="breadcrumb"><span>VIRON</span><span>/</span><strong id="breadcrumb-current">服务运行</strong></div>
+        <div class="breadcrumb"><span>VIRON</span><span>/</span><strong id="breadcrumb-current">环境总览 / production-cn / 服务维护</strong></div>
         <div class="topbar-actions">
-          <div class="sync-state"><span class="live-dot"></span><span>数据更新于 12 秒前</span></div>
-          <select class="environment-select" aria-label="环境">
-            <option>production-cn</option>
-            <option>staging</option>
-            <option>development</option>
-          </select>
+          <div class="sync-state"><span class="live-dot"></span><span>工作空间连接正常</span></div>
           <button class="command-button" id="open-command"><svg class="icon"><use href="#i-search"/></svg>快速前往 <span class="keycap">⌘ K</span></button>
         </div>
       </header>
 
       <div class="content">
         <section class="page is-active" data-page-content="services">
-          <div class="page-heading">
+          <section class="environment-context" aria-label="环境详情导航">
+            <div class="environment-identity">
+              <div class="environment-identity__main">
+                <button class="environment-back" data-toast="返回环境目录" aria-label="返回环境总览">←</button>
+                <div class="environment-avatar">PR</div>
+                <div class="environment-copy">
+                  <h2>production-cn <span class="badge info">生产环境</span></h2>
+                  <p>核心业务生产环境 · 华东区域 · 未分组</p>
+                </div>
+              </div>
+              <div class="environment-actions"><span>更新于 2026/08/30 14:22</span><button class="btn btn-small" data-toast="已打开环境编辑">编辑环境</button></div>
+            </div>
+            <nav class="environment-tabs">
+              <button data-toast="原型未展开 Web 入口"><svg class="icon"><use href="#i-globe"/></svg>Web 入口 <small>6</small></button>
+              <button data-toast="原型未展开 SSH 终端"><svg class="icon"><use href="#i-terminal"/></svg>SSH 终端 <small>18</small></button>
+              <button data-toast="原型未展开日志"><svg class="icon"><use href="#i-list"/></svg>日志 <small>9</small></button>
+              <button data-toast="原型未展开数据库"><svg class="icon"><use href="#i-database"/></svg>数据库 <small>4</small></button>
+              <button data-toast="原型未展开 Redis"><svg class="icon"><use href="#i-capacity"/></svg>Redis <small>3</small></button>
+              <button data-toast="原型未展开知识库"><svg class="icon"><use href="#i-book"/></svg>知识库 <small>8</small></button>
+              <button class="is-active"><svg class="icon"><use href="#i-service"/></svg>服务维护 <small>服务 12 · 主机 24</small></button>
+            </nav>
+          </section>
+
+          <div class="page-heading is-nested">
             <div>
-              <div class="section-kicker">CONTROL PLANE / 01</div>
+              <div class="section-kicker">环境详情 / 服务维护 / 服务运行</div>
               <h1>服务运行</h1>
               <p>维护期望状态、部署实例和操作记录。这里只改变系统，不承载主机历史监控。</p>
             </div>
@@ -1669,11 +1864,12 @@
         <section class="page" data-page-content="observability">
           <div class="page-heading">
             <div>
-              <div class="section-kicker">OBSERVABILITY / 02</div>
-              <h1>可观测性</h1>
-              <p>解释系统当前发生了什么。主机、工作负载和采集接入各自回答不同的问题。</p>
+              <div class="section-kicker">全局入口 / 监控大盘</div>
+              <h1>监控大盘</h1>
+              <p>跨环境解释系统当前发生了什么；可用环境筛选器收窄范围，不进入环境详情。</p>
             </div>
             <div class="heading-actions">
+              <select class="environment-select" aria-label="监控环境范围"><option>production-cn</option><option>全部环境</option><option>staging</option><option>development</option></select>
               <button class="btn" data-toast="大屏是总览的展示模式，不是独立数据域"><svg class="icon"><use href="#i-grid"/></svg>大屏模式</button>
               <button class="btn" data-toast="已暂停自动刷新"><svg class="icon"><use href="#i-clock"/></svg>15 秒刷新</button>
               <button class="btn btn-primary" data-observe-target="enrollment"><svg class="icon"><use href="#i-agent"/></svg>接入主机</button>
@@ -1686,6 +1882,7 @@
             <button data-observe-view="workloads">工作负载</button>
             <button data-observe-view="enrollment">接入管理</button>
             <button data-observe-view="capacity">容量</button>
+            <button data-alert-view>告警 <span class="badge bad">4</span></button>
           </nav>
 
           <div class="observe-view is-active" data-observe-content="overview">
@@ -1837,12 +2034,21 @@
         <section class="page" data-page-content="alerts">
           <div class="page-heading">
             <div>
-              <div class="section-kicker">RESPONSE / 03</div>
-              <h1>告警中心</h1>
+              <div class="section-kicker">监控大盘 / 告警</div>
+              <h1>监控告警</h1>
               <p>从原始事件进入可处理的告警工作流。确认、静默、恢复各自有明确含义。</p>
             </div>
-            <div class="heading-actions"><button class="btn" data-toast="已打开维护窗口设置">维护窗口</button><button class="btn btn-primary" data-toast="已打开告警规则">规则与通知</button></div>
+            <div class="heading-actions"><select class="environment-select" aria-label="告警环境范围"><option>production-cn</option><option>全部环境</option></select><button class="btn" data-toast="已打开维护窗口设置">维护窗口</button><button class="btn btn-primary" data-toast="已打开告警规则">规则与通知</button></div>
           </div>
+
+          <nav class="subnav" aria-label="监控大盘导航">
+            <button data-observe-view="overview">总览</button>
+            <button data-observe-view="hosts">主机</button>
+            <button data-observe-view="workloads">工作负载</button>
+            <button data-observe-view="enrollment">接入管理</button>
+            <button data-observe-view="capacity">容量</button>
+            <button class="is-active" data-alert-view>告警 <span class="badge bad">4</span></button>
+          </nav>
 
           <div class="status-ledger">
             <div class="ledger-intro"><div class="eyebrow">Active response</div><strong>4 个活动告警，2 个未确认</strong><span>最近 24 小时自动恢复 7 个</span></div>
@@ -1885,7 +2091,7 @@
           <div class="candidate-row"><div><strong>legacy-exporter.service</strong><small>prod-app-03 · systemd</small></div><span class="badge warn">stopped</span><span class="mono">PID —</span><button class="btn btn-small">忽略</button></div>
           <div class="candidate-row"><div><strong>cron-cleanup</strong><small>prod-batch-01 · docker</small></div><span class="badge good">running</span><span class="mono">CPU 1%</span><button class="btn btn-small btn-primary" data-toast="已登记 cron-cleanup">登记</button></div>
         </div>
-        <div class="runbook-strip"><div class="runbook-icon"><svg class="icon"><use href="#i-agent"/></svg></div><div><strong>发现依赖主机采集</strong><span>没有安装 Agent 的主机不会出现在候选列表；请前往可观测性 → 接入管理。</span></div><button class="btn btn-small" id="drawer-enrollment">接入管理</button></div>
+        <div class="runbook-strip"><div class="runbook-icon"><svg class="icon"><use href="#i-agent"/></svg></div><div><strong>发现依赖主机采集</strong><span>没有安装 Agent 的主机不会出现在候选列表；请前往全局监控大盘 → 接入管理。</span></div><button class="btn btn-small" id="drawer-enrollment">接入管理</button></div>
       </div>
     </section>
   </div>
@@ -1894,10 +2100,10 @@
     <div class="command-dialog">
       <input class="command-search" id="command-search" placeholder="搜索页面、服务或主机…" />
       <div class="command-list">
-        <button class="command-item" data-command-page="services"><svg class="icon"><use href="#i-service"/></svg>服务运行<small>CONTROL PLANE</small></button>
-        <button class="command-item" data-command-page="observability" data-command-view="hosts"><svg class="icon"><use href="#i-pulse"/></svg>可观测性 / 主机<small>24 HOSTS</small></button>
-        <button class="command-item" data-command-page="observability" data-command-view="enrollment"><svg class="icon"><use href="#i-agent"/></svg>可观测性 / 接入管理<small>2 TODO</small></button>
-        <button class="command-item" data-command-page="alerts"><svg class="icon"><use href="#i-alert"/></svg>告警中心<small>4 ACTIVE</small></button>
+        <button class="command-item" data-command-page="services"><svg class="icon"><use href="#i-environment"/></svg>环境总览 / production-cn / 服务维护<small>环境详情</small></button>
+        <button class="command-item" data-command-page="observability" data-command-view="hosts"><svg class="icon"><use href="#i-pulse"/></svg>监控大盘 / 主机<small>24 HOSTS</small></button>
+        <button class="command-item" data-command-page="observability" data-command-view="enrollment"><svg class="icon"><use href="#i-agent"/></svg>监控大盘 / 接入管理<small>2 TODO</small></button>
+        <button class="command-item" data-command-page="alerts"><svg class="icon"><use href="#i-alert"/></svg>监控大盘 / 告警<small>4 ACTIVE</small></button>
       </div>
     </div>
   </div>
@@ -1905,7 +2111,11 @@
   <div class="toast" id="toast"><span class="live-dot"></span><span id="toast-text">操作已完成</span></div>
 
   <script>
-    const pageNames = { services: '服务运行', observability: '可观测性', alerts: '告警中心' };
+    const pagePaths = {
+      services: '环境总览 / production-cn / 服务维护',
+      observability: '监控大盘',
+      alerts: '监控大盘 / 告警'
+    };
     const services = {
       gateway: {
         title: 'API Gateway', id: 'svc_api_gateway · owner/platform · criticality/P1', health: '运行正常', badge: 'good',
@@ -1979,15 +2189,20 @@
     }
 
     function showPage(page) {
-      $$('.nav-button[data-page]').forEach(button => button.classList.toggle('is-active', button.dataset.page === page));
+      const navigationPage = page === 'alerts' ? 'observability' : page;
+      $$('.nav-button[data-page]').forEach(button => button.classList.toggle('is-active', button.dataset.page === navigationPage));
       $$('.page').forEach(section => section.classList.toggle('is-active', section.dataset.pageContent === page));
-      $('#breadcrumb-current').textContent = pageNames[page];
+      $$('[data-observe-view]').forEach(button => button.classList.remove('is-active'));
+      $$('[data-alert-view]').forEach(button => button.classList.toggle('is-active', page === 'alerts'));
+      $('#sidebar-alert-center').classList.toggle('is-active', page === 'alerts');
+      $('#breadcrumb-current').textContent = pagePaths[page];
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
     function showObserveView(view) {
       showPage('observability');
       $$('[data-observe-view]').forEach(button => button.classList.toggle('is-active', button.dataset.observeView === view));
+      $$('[data-alert-view]').forEach(button => button.classList.remove('is-active'));
       $$('[data-observe-content]').forEach(section => section.classList.toggle('is-active', section.dataset.observeContent === view));
     }
 
@@ -1995,6 +2210,8 @@
     $$('[data-page-target]').forEach(button => button.addEventListener('click', () => showPage(button.dataset.pageTarget)));
     $$('[data-observe-view]').forEach(button => button.addEventListener('click', () => showObserveView(button.dataset.observeView)));
     $$('[data-observe-target]').forEach(button => button.addEventListener('click', () => showObserveView(button.dataset.observeTarget)));
+    $$('[data-alert-view]').forEach(button => button.addEventListener('click', () => showPage('alerts')));
+    $('#sidebar-alert-center').addEventListener('click', () => showPage('alerts'));
     $$('[data-toast]').forEach(button => button.addEventListener('click', () => showToast(button.dataset.toast)));
 
     function renderService(key) {
