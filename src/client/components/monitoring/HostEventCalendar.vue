@@ -220,6 +220,7 @@ function severityLabel(value: MonitorAlertSeverity) {
 function dayTone(day: MonitorHostEventCalendarDay) {
   if (day.future) return "is-future";
   if (day.peakSeverity) return `is-${day.peakSeverity}`;
+  if (day.date === todayKey && day.coverageRatio < 0.8) return "is-detecting";
   if (day.coverageRatio < 0.8) return "is-no-data";
   return "is-healthy";
 }
@@ -236,20 +237,25 @@ function dayTitle(day: MonitorHostEventCalendarDay) {
     return tr("{0} · 未在当前时间范围 (近 {1} 个月) · 点击或向左拖动竖线展开", [day.date, rangeMonths.value]);
   }
   if (day.future) return day.date;
-  if (day.coverageRatio < 0.8 && !day.activeEventCount) {
-    return tr("{0} · 无数据 · 采集覆盖 {1}%", [day.date, Math.round(day.coverageRatio * 100)]);
+  if (day.peakSeverity) {
+    return tr("{0} · {1} · {2} 个事件 · 影响 {3} 分钟", [
+      day.date,
+      severityLabel(day.peakSeverity),
+      day.activeEventCount,
+      day.affectedMinutes,
+    ]);
   }
-  if (!day.activeEventCount) return tr("{0} · 健康 · 采集覆盖 {1}%", [day.date, Math.round(day.coverageRatio * 100)]);
-  return tr("{0} · {1} · {2} 个事件 · 影响 {3} 分钟", [
-    day.date,
-    severityLabel(day.peakSeverity ?? "warning"),
-    day.activeEventCount,
-    day.affectedMinutes,
-  ]);
+  if (day.date === todayKey && day.coverageRatio < 0.8) {
+    return tr("{0} · 检测中 · 采集覆盖率 {1}%", [day.date, Math.round(day.coverageRatio * 100)]);
+  }
+  if (day.coverageRatio < 0.8) {
+    return tr("{0} · 无采集数据", [day.date]);
+  }
+  return tr("{0} · 健康 · 采集覆盖 100%", [day.date]);
 }
 
 function isInteractiveDay(day: MonitorHostEventCalendarDay) {
-  return !day.future && (day.activeEventCount > 0 || day.coverageRatio < 0.8);
+  return !day.future && (day.activeEventCount > 0 || day.coverageRatio < 0.8 || day.date === todayKey);
 }
 
 // 零延迟即时悬浮提示（Instant Custom Tooltip）
@@ -307,9 +313,7 @@ async function loadCalendar() {
   const neededMonths = activeMonths.value;
   const cacheKey = monitorEventCalendarCacheKey(props.environmentId, props.hostId, timezone, neededMonths);
   const cachedCalendars = readMonitorUiCache<MonitorHostEventCalendarResponse[]>(cacheKey);
-  if (cachedCalendars) {
-    calendars.value = cachedCalendars;
-  }
+  calendars.value = cachedCalendars ?? [];
   calendarAbort?.abort();
   calendarAbort = new AbortController();
   const controller = calendarAbort;
@@ -324,8 +328,8 @@ async function loadCalendar() {
       );
     }));
     if (!controller.signal.aborted) {
-      // 合并新加载的月份到缓存中
-      const existingMap = new Map(calendars.value.map((c) => [c.month, c]));
+      // 严格基于当前 host 缓存与新结果建立 map，避免旧主机数据残留
+      const existingMap = new Map((cachedCalendars ?? []).map((c) => [c.month, c]));
       results.forEach((c) => existingMap.set(c.month, c));
       const combined = [...existingMap.values()];
       calendars.value = combined;
@@ -362,6 +366,9 @@ async function openDay(day: MonitorHostEventCalendarDay) {
   }
 }
 
+watch(() => [props.environmentId, props.hostId], () => {
+  calendars.value = [];
+});
 watch(() => [props.environmentId, props.hostId, anchorMonth.value, rangeMonths.value], loadCalendar, { immediate: true });
 onBeforeUnmount(() => {
   calendarAbort?.abort();
@@ -528,7 +535,19 @@ onBeforeUnmount(() => {
           <span class="tooltip-dot" :class="isDayActive(hoveredDay.day) ? dayTone(hoveredDay.day) : 'is-inactive'"></span>
           <strong class="tooltip-date">{{ hoveredDay.day.date }}</strong>
           <span class="tooltip-badge" :class="isDayActive(hoveredDay.day) ? dayTone(hoveredDay.day) : 'is-inactive'">
-            {{ !isDayActive(hoveredDay.day) ? $t('未选范围') : hoveredDay.day.future ? $t('未来') : hoveredDay.day.peakSeverity ? severityLabel(hoveredDay.day.peakSeverity) : hoveredDay.day.coverageRatio < 0.8 ? $t('无数据') : $t('健康') }}
+            {{
+              !isDayActive(hoveredDay.day)
+                ? $t('未选范围')
+                : hoveredDay.day.future
+                  ? $t('未来')
+                  : hoveredDay.day.peakSeverity
+                    ? severityLabel(hoveredDay.day.peakSeverity)
+                    : hoveredDay.day.date === todayKey && hoveredDay.day.coverageRatio < 0.8
+                      ? $t('检测中')
+                      : hoveredDay.day.coverageRatio < 0.8
+                        ? $t('无数据')
+                        : $t('健康')
+            }}
           </span>
         </div>
 
@@ -549,9 +568,15 @@ onBeforeUnmount(() => {
               {{ $t('点击查看事件详情') }} ↗
             </div>
           </template>
+          <template v-else-if="hoveredDay.day.date === todayKey && hoveredDay.day.coverageRatio < 0.8">
+            <div class="tooltip-stat is-detecting-stat">
+              <span class="detecting-pulse-dot"></span>
+              {{ $t('运行检测中 · 采集覆盖率 {0}%', [Math.round(hoveredDay.day.coverageRatio * 100)]) }}
+            </div>
+          </template>
           <template v-else-if="hoveredDay.day.coverageRatio < 0.8">
-            <div class="tooltip-stat">
-              {{ $t('采集覆盖率') }}: <strong>{{ Math.round(hoveredDay.day.coverageRatio * 100) }}%</strong>
+            <div class="tooltip-stat is-no-data-stat">
+              {{ $t('该日期暂无监控采集数据') }}
             </div>
           </template>
           <template v-else>
@@ -873,6 +898,7 @@ onBeforeUnmount(() => {
 .tooltip-dot.is-critical { background: #ef4444; box-shadow: 0 0 6px #ef4444; }
 .tooltip-dot.is-no-data { background: #64748b; }
 .tooltip-dot.is-inactive { background: #94a3b8; }
+.tooltip-dot.is-detecting { background: #2dd4bf; box-shadow: 0 0 6px #2dd4bf; }
 
 .tooltip-date {
   font-family: var(--font-mono);
@@ -897,11 +923,40 @@ onBeforeUnmount(() => {
 .tooltip-badge.is-critical { background: rgba(239, 68, 68, 0.3); color: #f87171; }
 .tooltip-badge.is-no-data { background: rgba(148, 163, 184, 0.2); color: #cbd5e1; }
 .tooltip-badge.is-inactive { background: rgba(148, 163, 184, 0.18); color: #94a3b8; }
+.tooltip-badge.is-detecting { background: rgba(20, 184, 166, 0.25); color: #2dd4bf; }
 
 .tooltip-body {
   font-size: 11px;
   line-height: 1.4;
   color: #cbd5e1;
+}
+
+.is-no-data-stat {
+  color: #94a3b8;
+  font-size: 10.5px;
+}
+
+.is-detecting-stat {
+  color: #2dd4bf;
+  font-size: 10.5px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.detecting-pulse-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #2dd4bf;
+  box-shadow: 0 0 6px #2dd4bf;
+  display: inline-block;
+  animation: pulse-dot 1.5s infinite ease-in-out;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 0.6; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1.15); }
 }
 
 .tooltip-stat {
@@ -1163,6 +1218,19 @@ onBeforeUnmount(() => {
 .event-calendar__cell.is-no-data {
   background: color-mix(in srgb, var(--ink-100) 45%, var(--surface));
   border-color: color-mix(in srgb, var(--ink-200) 35%, transparent);
+}
+
+/* 当日采集中/检测中状态：柔和青绿呼吸微光 */
+.event-calendar__cell.is-detecting {
+  background: color-mix(in srgb, var(--teal-500) 25%, var(--surface));
+  border-color: var(--teal-500);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--teal-500) 40%, transparent);
+  animation: cell-detecting-pulse 2.2s infinite ease-in-out;
+}
+
+@keyframes cell-detecting-pulse {
+  0%, 100% { opacity: 0.82; }
+  50% { opacity: 1; filter: brightness(1.15); box-shadow: 0 0 6px color-mix(in srgb, var(--teal-500) 60%, transparent); }
 }
 
 /* 各级别健康度色彩系统 */
