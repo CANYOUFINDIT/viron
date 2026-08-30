@@ -92,8 +92,8 @@ const emptySummary: MonitorPerformanceSummary = {
   cpu: { ...emptyMetric }, memory: { ...emptyMetric }, loadPerCpu: { ...emptyMetric },
   diskThroughput: { ...emptyMetric }, networkThroughput: { ...emptyMetric }, pressure: { ...emptyMetric },
 };
-const processColors = ["#168c78", "#3b76bb", "#d9822b", "#845ec2", "#c75468"];
-const otherProcessColor = "#7d8c93";
+const processColors = ["#14b8a6", "#3b82f6", "#f59e0b", "#8b5cf6", "#ec4899"];
+const otherProcessColor = "#64748b";
 
 const props = withDefaults(defineProps<{
   environmentId: string;
@@ -298,46 +298,46 @@ const cpuComposition = computed(() => processComposition("cpu"));
 const memoryComposition = computed(() => processComposition("memory"));
 const ioComposition = computed(() => processComposition("io"));
 const cpuModeSeries = computed(() => [
-  series("user", tr("用户态"), "var(--color-info)", (point) => advancedMetric(point, (host) => host.cpuUserPercent)),
-  series("system", tr("内核态"), "var(--color-accent)", (point) => advancedMetric(point, (host) => host.cpuSystemPercent)),
-  series("iowait", "I/O Wait", "var(--color-warning)", (point) => advancedMetric(point, (host) => host.cpuIoWaitPercent)),
-  series("steal", "Steal", "var(--color-danger)", (point) => advancedMetric(point, (host) => host.cpuStealPercent)),
+  series("user", tr("用户态"), "#14b8a6", (point) => advancedMetric(point, (host) => host.cpuUserPercent)),
+  series("system", tr("内核态"), "#3b82f6", (point) => advancedMetric(point, (host) => host.cpuSystemPercent)),
+  series("iowait", "I/O Wait", "#f59e0b", (point) => advancedMetric(point, (host) => host.cpuIoWaitPercent)),
+  series("steal", "Steal", "#ef4444", (point) => advancedMetric(point, (host) => host.cpuStealPercent)),
 ]);
-const memoryPercentSeries = computed(() => [series("memory", tr("内存利用率"), "var(--color-accent)", (point) => point.host.memoryUsedPercent)]);
+const memoryPercentSeries = computed(() => [series("memory", tr("内存利用率"), "#8b5cf6", (point) => point.host.memoryUsedPercent)]);
 const loadSeries = computed(() => [
-  series("load1", "Load 1", "var(--color-info)", (point) => point.host.load1),
-  series("load5", "Load 5", "var(--color-warning)", (point) => point.host.load5),
-  series("load15", "Load 15", "var(--color-accent)", (point) => point.host.load15),
+  series("load1", "Load 1", "#14b8a6", (point) => point.host.load1),
+  series("load5", "Load 5", "#f59e0b", (point) => point.host.load5),
+  series("load15", "Load 15", "#8b5cf6", (point) => point.host.load15),
 ]);
-const swapPercentSeries = computed(() => [series("swap", tr("Swap 使用率"), "var(--color-warning)", (point) => advancedMetric(point, (host) => host.swapUsedPercent))]);
+const swapPercentSeries = computed(() => [series("swap", tr("Swap 使用率"), "#f59e0b", (point) => advancedMetric(point, (host) => host.swapUsedPercent))]);
 const swapRateSeries = computed(() => [
-  series("swap-in", tr("换入"), "var(--color-info)", (point) => advancedMetric(point, (host) => host.swapInBytesPerSecond)),
-  series("swap-out", tr("换出"), "var(--color-danger)", (point) => advancedMetric(point, (host) => host.swapOutBytesPerSecond)),
+  series("swap-in", tr("换入"), "#3b82f6", (point) => advancedMetric(point, (host) => host.swapInBytesPerSecond)),
+  series("swap-out", tr("换出"), "#ef4444", (point) => advancedMetric(point, (host) => host.swapOutBytesPerSecond)),
 ]);
 const diskIOPS = computed(() => [
-  series("read", tr("读取"), "var(--color-info)", (point) => advancedMetric(point, (host) => host.diskReadOpsPerSecond)),
-  series("write", tr("写入"), "var(--color-warning)", (point) => advancedMetric(point, (host) => host.diskWriteOpsPerSecond)),
+  series("read", tr("读取"), "#3b82f6", (point) => advancedMetric(point, (host) => host.diskReadOpsPerSecond)),
+  series("write", tr("写入"), "#f59e0b", (point) => advancedMetric(point, (host) => host.diskWriteOpsPerSecond)),
 ]);
 const networkSeries = computed(() => [
-  series("receive", tr("接收"), "var(--color-info)", (point) => advancedMetric(point, (host) => host.networkReceiveBytesPerSecond)),
-  series("transmit", tr("发送"), "var(--color-accent)", (point) => advancedMetric(point, (host) => host.networkTransmitBytesPerSecond)),
+  series("receive", tr("接收"), "#14b8a6", (point) => advancedMetric(point, (host) => host.networkReceiveBytesPerSecond)),
+  series("transmit", tr("发送"), "#3b82f6", (point) => advancedMetric(point, (host) => host.networkTransmitBytesPerSecond)),
 ]);
 const networkErrorSeries = computed(() => [
-  series("errors", tr("错误"), "var(--color-danger)", (point) => advancedMetric(point, (host) => Number(host.networkReceiveErrorsPerSecond ?? 0) + Number(host.networkTransmitErrorsPerSecond ?? 0))),
-  series("drops", tr("丢包"), "var(--color-warning)", (point) => advancedMetric(point, (host) => Number(host.networkReceiveDropsPerSecond ?? 0) + Number(host.networkTransmitDropsPerSecond ?? 0))),
+  series("errors", tr("错误"), "#ef4444", (point) => advancedMetric(point, (host) => Number(host.networkReceiveErrorsPerSecond ?? 0) + Number(host.networkTransmitErrorsPerSecond ?? 0))),
+  series("drops", tr("丢包"), "#f59e0b", (point) => advancedMetric(point, (host) => Number(host.networkReceiveDropsPerSecond ?? 0) + Number(host.networkTransmitDropsPerSecond ?? 0))),
 ]);
 const pressureSeries = computed(() => [
-  series("cpu", "CPU PSI", "var(--color-info)", (point) => advancedMetric(point, (host) => host.cpuPressure.someAvg10)),
-  series("memory", tr("内存 PSI"), "var(--color-accent)", (point) => advancedMetric(point, (host) => host.memoryPressure.someAvg10)),
-  series("io", "I/O PSI", "var(--color-warning)", (point) => advancedMetric(point, (host) => host.ioPressure.someAvg10)),
+  series("cpu", "CPU PSI", "#14b8a6", (point) => advancedMetric(point, (host) => host.cpuPressure.someAvg10)),
+  series("memory", tr("内存 PSI"), "#8b5cf6", (point) => advancedMetric(point, (host) => host.memoryPressure.someAvg10)),
+  series("io", "I/O PSI", "#f59e0b", (point) => advancedMetric(point, (host) => host.ioPressure.someAvg10)),
 ]);
-const diskPercentSeries = computed(() => [series("disk-used", tr("已用空间"), "var(--color-warning)", (point) => diskAt(point)?.usedPercent)]);
+const diskPercentSeries = computed(() => [series("disk-used", tr("已用空间"), "#3b82f6", (point) => diskAt(point)?.usedPercent)]);
 const diskCapacitySeries = computed(() => [
-  series("used", tr("已用"), "var(--color-warning)", (point) => diskAt(point)?.usedBytes),
-  series("free", tr("可用"), "var(--color-accent)", (point) => diskAt(point)?.freeBytes),
-  series("total", tr("总量"), "var(--color-muted)", (point) => diskAt(point)?.totalBytes),
+  series("used", tr("已用"), "#3b82f6", (point) => diskAt(point)?.usedBytes),
+  series("free", tr("可用"), "#10b981", (point) => diskAt(point)?.freeBytes),
+  series("total", tr("总量"), "var(--ink-400)", (point) => diskAt(point)?.totalBytes),
 ]);
-const uptimeSeries = computed(() => [series("uptime", tr("运行时间"), "var(--color-info)", (point) => point.host.uptimeSeconds)]);
+const uptimeSeries = computed(() => [series("uptime", tr("运行时间"), "#14b8a6", (point) => point.host.uptimeSeconds)]);
 const temperatureSeries = computed(() => {
   const sensors = new Map<string, string>();
   for (const point of points.value) for (const temperature of point.host.temperatures) {
@@ -771,12 +771,24 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
             </button>
           </div>
           <dl class="monitor-history__stats">
-            <div class="stat-cell"><dt>{{ $t('当前') }}</dt><dd>{{ summaryValue(focusedSummary.value.latest, focusedSummary.format) }}</dd></div>
-            <div class="stat-cell"><dt>{{ $t('平均') }}</dt><dd>{{ summaryValue(focusedSummary.value.average, focusedSummary.format) }}</dd></div>
-            <div class="stat-cell"><dt>P95</dt><dd>{{ summaryValue(focusedSummary.value.p95, focusedSummary.format) }}</dd></div>
-            <div class="stat-cell"><dt>{{ $t('峰值') }}</dt><dd>{{ summaryValue(focusedSummary.value.maximum, focusedSummary.format) }}</dd></div>
-            <div v-if="meaningfulChange(focusedSummary.value.changePercent)" class="stat-cell">
-              <dt>{{ $t('变化') }}</dt>
+            <div class="stat-cell is-current">
+              <dt>{{ $t('当前') }}</dt>
+              <dd>{{ summaryValue(focusedSummary.value.latest, focusedSummary.format) }}</dd>
+            </div>
+            <div class="stat-cell">
+              <dt>{{ $t('平均') }}</dt>
+              <dd>{{ summaryValue(focusedSummary.value.average, focusedSummary.format) }}</dd>
+            </div>
+            <div class="stat-cell">
+              <dt>P95</dt>
+              <dd>{{ summaryValue(focusedSummary.value.p95, focusedSummary.format) }}</dd>
+            </div>
+            <div class="stat-cell">
+              <dt>{{ $t('峰值') }}</dt>
+              <dd>{{ summaryValue(focusedSummary.value.maximum, focusedSummary.format) }}</dd>
+            </div>
+            <div v-if="meaningfulChange(focusedSummary.value.changePercent)" class="stat-cell is-change">
+              <dt>{{ $t('波动') }}</dt>
               <dd :class="(focusedSummary.value.changePercent || 0) > 0 ? 'is-up' : 'is-down'">
                 {{ meaningfulChange(focusedSummary.value.changePercent) }}
               </dd>
@@ -1177,37 +1189,56 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 10px;
-  padding: 8px 12px;
+  padding: 6px 10px;
   border: 1px solid var(--ink-100);
   border-radius: var(--radius-card, 8px);
-  background: color-mix(in srgb, var(--ink-50) 45%, var(--surface));
+  background: color-mix(in srgb, var(--ink-50) 40%, var(--surface));
 }
 
 .monitor-history__stats {
   margin: 0;
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
 .stat-cell {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 6px;
+  padding: 3px 8px;
+  border-radius: 5px;
+  background: var(--surface);
+  border: 1px solid var(--ink-100);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+}
+
+.stat-cell.is-current {
+  border-color: color-mix(in srgb, var(--teal-500) 35%, transparent);
+  background: color-mix(in srgb, var(--teal-50) 50%, var(--surface));
+}
+
+.stat-cell.is-current dt {
+  color: var(--teal-700);
+}
+
+.stat-cell.is-current dd {
+  color: var(--teal-900, var(--ink-950));
 }
 
 .stat-cell dt {
-  font-size: 11px;
+  font-size: 10.5px;
+  font-weight: 600;
   color: var(--ink-400);
 }
 
 .stat-cell dd {
   margin: 0;
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 700;
-  color: var(--ink-950);
+  color: var(--ink-900);
 }
 
 .stat-cell .is-up { color: var(--amber-600); }
