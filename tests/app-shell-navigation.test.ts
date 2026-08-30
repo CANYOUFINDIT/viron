@@ -29,21 +29,24 @@ describe("app shell navigation", () => {
     expect(shell).toContain(`watch(
   activeEnvironmentId,
   (environmentId) => {
-    if (environmentId !== null) sidebarExpanded.value = false;
+    if (environmentId !== null) unpinSidebar();
   },
   { immediate: true },
 );`);
   });
 
-  it("expands the collapsed sidebar after hovering for 1.5 seconds", () => {
-    expect(shell).toContain("const SIDEBAR_HOVER_EXPAND_MS = 1500;");
+  it("expands the collapsed sidebar on hover and collapses it on leave", () => {
+    expect(shell).toContain("const sidebarPinned = ref(!window.matchMedia(\"(max-width: 900px)\").matches);");
+    expect(shell).toContain("const sidebarHoverOpen = ref(false);");
+    expect(shell).toContain("const sidebarExpanded = computed(() => sidebarPinned.value || sidebarHoverOpen.value);");
     expect(shell).toContain("function onSidebarPointerEnter()");
-    expect(shell).toContain("function onSidebarPointerLeave()");
-    expect(shell).toContain("function scheduleHoverExpand()");
+    expect(shell).toContain("function onSidebarPointerLeave(event: PointerEvent)");
+    expect(shell).toContain("sidebarHoverOpen.value = true;");
+    expect(shell).toContain("sidebarHoverOpen.value = false;");
     expect(shell).toContain("@pointerenter=\"onSidebarPointerEnter\"");
     expect(shell).toContain("@pointerleave=\"onSidebarPointerLeave\"");
+    expect(shell).not.toContain("SIDEBAR_HOVER_EXPAND_MS");
     expect(shell).not.toContain("function onWorkspaceSwitcherClick");
-    expect(shell).not.toContain("openWorkspaceMenuAfterExpand");
     expect(shell).toContain('placement="right-start"');
     expect(shell).toContain(':popper-options="workspaceSwitcherPopperOptions"');
     expect(shell).toContain('{ name: "flip", enabled: false }');
