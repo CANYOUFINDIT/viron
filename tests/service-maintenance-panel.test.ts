@@ -282,7 +282,7 @@ describe("service maintenance panel split", () => {
           "el-radio-button": true,
           "el-progress": true,
           AnimatedCounter: true,
-          HostEventCalendar: true,
+          HostEventCalendar: { template: `<div class="host-event-heatmap-stub">host-event-heatmap</div>` },
           HostMonitorDashboard: { template: `<div class="host-monitor-stub">host-charts</div>` },
           ServiceDiscoveryPanel: { template: `<div class="discovery-stub">discovery-list</div>` },
         },
@@ -292,6 +292,7 @@ describe("service maintenance panel split", () => {
     expect(wrapper.text()).toMatch(/监控|Monitoring/);
     expect(wrapper.text()).toMatch(/服务发现|Service discovery/);
     expect(wrapper.find(".host-metric-grid").exists()).toBe(true);
+    expect(wrapper.find(".host-event-heatmap-stub").exists()).toBe(true);
     expect(wrapper.find(".host-monitor-stub").exists()).toBe(true);
     expect(wrapper.text()).toContain("12.5%");
     const discoveryTab = wrapper.findAll("[role='tab']").find((button) => /服务发现|Service discovery/.test(button.text()));
