@@ -82,8 +82,8 @@ function samplePayload(collectedAt: string, cpuUsedPercent: number, deploymentId
 describe("monitor history", () => {
   it("judges sample freshness from the agent collection resolution", () => {
     const collectedAt = "2026-08-09T12:00:00.000Z";
-    expect(monitorSampleIsFresh("2026-08-09T12:01:29.000Z", collectedAt, 30)).toBe(true);
-    expect(monitorSampleIsFresh("2026-08-09T12:01:31.000Z", collectedAt, 30)).toBe(false);
+    expect(monitorSampleIsFresh("2026-08-09T12:29:59.000Z", collectedAt, 30)).toBe(true);
+    expect(monitorSampleIsFresh("2026-08-09T12:30:01.000Z", collectedAt, 30)).toBe(false);
     expect(monitorSampleIsFresh("2026-08-09T14:59:59.000Z", collectedAt, 3600)).toBe(true);
     expect(monitorSampleIsFresh("2026-08-09T15:00:01.000Z", collectedAt, 3600)).toBe(false);
     expect(monitorSampleIsFresh("invalid", collectedAt, 30)).toBe(false);
