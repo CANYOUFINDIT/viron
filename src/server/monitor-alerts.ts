@@ -317,12 +317,16 @@ function hostObservations(
     });
   }
   const excluded = new Set(settings.excludedDisks);
-  if (settings.diskMissingEnabled) {
+  const excludedPaths = new Set(settings.excludedDisks.flatMap((key) => {
+    const disk = diskRuleKeyDetails(key);
+    return disk?.path ? [disk.path] : [];
+  }));
+  if (settings.diskMissingEnabled && diskCollectionComplete) {
     observations.push({
       ...target,
       ruleType: "disk_missing",
       ruleKey: diskBaselineRuleKey,
-      breached: diskCollectionComplete ? false : null,
+      breached: false,
       details: {
         baseline: true,
         diskCollectionStatus: host.diskCollectionStatus ?? "legacy_complete",
@@ -333,7 +337,7 @@ function hostObservations(
   if (!diskCollectionComplete) return observations;
   for (const disk of stableMonitorDisks(host.disks)) {
     const key = monitorDiskKey(disk);
-    if (excluded.has(key)) continue;
+    if (excluded.has(key) || excludedPaths.has(disk.path.trim())) continue;
     if (settings.diskUsageEnabled) {
       observations.push({
         ...target,
@@ -352,10 +356,11 @@ function hostObservations(
 
 function sampleHasCompleteDiskCollection(sample: MonitorAlertSample): boolean {
   if (sample.host.diskCollectionStatus) return sample.host.diskCollectionStatus === "complete";
-  return !(sample.errors ?? []).some((error) => {
+  const hasCollectorError = (sample.errors ?? []).some((error) => {
     const normalized = error.trim().toLowerCase();
     return normalized.startsWith("disk:") || normalized.includes("monitor collector");
   });
+  return !hasCollectorError && sample.host.disks.length > 0;
 }
 
 function deploymentObservations(
@@ -390,12 +395,30 @@ async function applyObservations(
   environment: MonitorAlertEnvironment,
   observations: MonitorAlertObservation[],
   evaluatedAt: string,
+  validDiskTargetIds: ReadonlySet<string>,
 ): Promise<void> {
   const stateRows = await app.db.prepare("SELECT * FROM monitor_alert_states WHERE environment_id = ?").all(environment.id) as MonitorAlertStateRow[];
   const states = new Map(stateRows.map((state) => [stateKey(state.target_type, state.target_id, state.rule_type, state.rule_key_hash), state]));
-  const validDiskTargetIds = new Set(observations
-    .filter((item) => item.ruleType === "disk_missing" && item.ruleKey === diskBaselineRuleKey && item.breached !== null)
-    .map((item) => item.targetId));
+  const targetPathKey = (targetId: string, path: string) => `${targetId}\0${path}`;
+  const stateByRuleAndPath = new Map<string, MonitorAlertStateRow>();
+  for (const state of stateRows) {
+    if (!["disk_missing", "disk_usage"].includes(state.rule_type) || state.rule_key === diskBaselineRuleKey) continue;
+    const disk = stateDiskDetails(state);
+    if (!disk?.path || !monitorDiskIsEligible(disk)) continue;
+    const key = `${state.rule_type}\0${targetPathKey(state.target_id, disk.path)}`;
+    const current = stateByRuleAndPath.get(key);
+    if (!current || Boolean(state.active_alert_id) || Date.parse(state.last_evaluated_at) > Date.parse(current.last_evaluated_at)) {
+      stateByRuleAndPath.set(key, state);
+    }
+  }
+  for (const observation of observations) {
+    if (!["disk_missing", "disk_usage"].includes(observation.ruleType) || observation.ruleKey === diskBaselineRuleKey) continue;
+    const exactKey = stateKey(observation.targetType, observation.targetId, observation.ruleType, ruleKeyHash(observation.ruleKey));
+    if (states.has(exactKey)) continue;
+    const path = String(observation.details.path ?? "");
+    const pathState = stateByRuleAndPath.get(`${observation.ruleType}\0${targetPathKey(observation.targetId, path)}`);
+    if (pathState) observation.ruleKey = pathState.rule_key;
+  }
   const diskObservations = observations.filter((item) => item.ruleType === "disk_missing" && item.ruleKey !== diskBaselineRuleKey);
   const currentDiskStateKeys = new Set(diskObservations.map((item) => stateKey(
     item.targetType,
@@ -403,13 +426,16 @@ async function applyObservations(
     "disk_missing",
     ruleKeyHash(item.ruleKey),
   )));
-  const targetPathKey = (targetId: string, path: string) => `${targetId}\0${path}`;
   const currentDiskPaths = new Set(diskObservations.map((item) => targetPathKey(item.targetId, String(item.details.path ?? ""))));
   const excludedDisks = new Set(environment.settings.excludedDisks);
+  const excludedDiskPaths = new Set(environment.settings.excludedDisks.flatMap((key) => {
+    const disk = diskRuleKeyDetails(key);
+    return disk?.path ? [disk.path] : [];
+  }));
   const diskStateSuppressed = (state: MonitorAlertStateRow): boolean => {
     if (excludedDisks.has(state.rule_key)) return true;
     const disk = stateDiskDetails(state);
-    return Boolean(disk && !monitorDiskIsEligible(disk));
+    return Boolean(disk && (excludedDiskPaths.has(disk.path) || !monitorDiskIsEligible(disk)));
   };
   const knownDiskPaths = new Set(stateRows.flatMap((state) => {
     if (state.rule_type !== "disk_missing" || state.rule_key === diskBaselineRuleKey || diskStateSuppressed(state)) return [];
@@ -735,7 +761,7 @@ export async function evaluateMonitorHostAvailability(
         sampleResolutionSeconds: input.sampleResolutionSeconds ?? null,
       },
     };
-    await applyObservations(app, environment, [observation], input.checkedAt);
+    await applyObservations(app, environment, [observation], input.checkedAt, new Set());
   }
 }
 
@@ -753,11 +779,18 @@ export async function evaluateMonitorAlertSamples(
   for (const environment of environments) {
     const deployments = await environmentDeployments(app, environment.id, input.agentId);
     for (const sample of input.samples) {
+      const diskCollectionComplete = sampleHasCompleteDiskCollection(sample);
       const observations = [
-        ...hostObservations(environment, input.agentId, sample.host, sampleHasCompleteDiskCollection(sample)),
+        ...hostObservations(environment, input.agentId, sample.host, diskCollectionComplete),
         ...deploymentObservations(environment, deployments, sample.candidates),
       ];
-      await applyObservations(app, environment, observations, sample.collectedAt);
+      await applyObservations(
+        app,
+        environment,
+        observations,
+        sample.collectedAt,
+        diskCollectionComplete ? new Set([input.agentId]) : new Set(),
+      );
     }
   }
 }
@@ -903,7 +936,7 @@ export async function evaluateTlsEndpointAlerts(app: FastifyInstance, environmen
     connectionName: "",
     settings,
   };
-  await applyObservations(app, environment, observations, now);
+  await applyObservations(app, environment, observations, now, new Set());
 }
 
 const TLS_ALERT_RULE_SQL = "('tls_expiring', 'tls_expired', 'tls_hostname_mismatch')";

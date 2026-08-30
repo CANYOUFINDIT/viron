@@ -565,51 +565,35 @@ function presence(host: MonitoringHostCard) {
 .host-fleet__grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
-  gap: 12px;
+  gap: 10px;
 }
 
 .host-card {
   min-width: 0;
   padding: 12px 14px;
   border: 1px solid var(--ink-100);
-  border-radius: 12px;
+  border-radius: var(--radius-card, 8px);
   background: var(--surface);
   color: inherit;
   text-align: start;
   cursor: pointer;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   box-shadow: var(--shadow-sm);
-  transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+  transition: border-color var(--dur-short, .2s) var(--ease-out, ease), background-color var(--dur-short, .2s) var(--ease-out, ease), box-shadow var(--dur-short, .2s) var(--ease-out, ease);
   position: relative;
   overflow: hidden;
 }
 
-.host-card::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 3px;
-  height: 100%;
-  background: transparent;
-  transition: background .18s ease;
-}
-
 .host-card:hover {
-  transform: translateY(-2px);
   border-color: var(--teal-300);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, .05);
 }
 
 .host-card.is-active {
   border-color: var(--teal-500);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--teal-500) 25%, transparent), 0 4px 16px rgba(33, 151, 128, 0.08);
-}
-
-.host-card.is-active::before {
-  background: var(--teal-500);
+  background: color-mix(in srgb, var(--teal-50) 45%, var(--surface));
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--teal-500) 12%, transparent);
 }
 
 /* 卡片头部 */
@@ -628,18 +612,19 @@ function presence(host: MonitoringHostCard) {
 }
 
 .host-icon {
-  width: 28px;
-  height: 28px;
-  border-radius: 7px;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
   background: var(--ink-50);
-  color: var(--ink-600);
+  color: var(--ink-500);
   display: grid;
   place-items: center;
   flex-shrink: 0;
+  transition: background-color var(--dur-short, .2s) ease, color var(--dur-short, .2s) ease;
 }
 
 .host-card.is-active .host-icon {
-  background: var(--teal-50);
+  background: var(--teal-100);
   color: var(--teal-700);
 }
 
@@ -652,7 +637,7 @@ function presence(host: MonitoringHostCard) {
 
 .host-title-group strong {
   font-size: 13px;
-  font-weight: 750;
+  font-weight: 700;
   color: var(--ink-950);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -673,23 +658,24 @@ function presence(host: MonitoringHostCard) {
   align-items: center;
   gap: 3px;
   padding: 1px 6px;
-  border-radius: 5px;
+  border-radius: 4px;
   font-size: 10px;
-  font-weight: 700;
+  font-weight: 600;
+  line-height: 1.4;
   flex-shrink: 0;
 }
 
 .presence-badge.is-online { background: var(--teal-50); color: var(--teal-700); }
-.presence-badge.is-stale { background: var(--amber-100); color: #b45309; }
+.presence-badge.is-stale { background: var(--amber-100); color: var(--amber-700); }
 .presence-badge.is-offline { background: var(--red-100); color: var(--red-600); }
-.presence-badge.is-missing { background: var(--ink-100); color: var(--ink-500); }
+.presence-badge.is-missing { background: var(--ink-50); color: var(--ink-500); }
 .presence-badge.is-unknown { background: var(--ink-50); color: var(--ink-400); }
 
 /* 指标槽条 */
 .host-card__metrics {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 6px;
 }
 
 .metric-row {
@@ -708,7 +694,7 @@ function presence(host: MonitoringHostCard) {
 .metric-label {
   color: var(--ink-400);
   font-size: 10px;
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .metric-value {
@@ -717,28 +703,28 @@ function presence(host: MonitoringHostCard) {
   font-weight: 700;
 }
 
-.metric-value.is-healthy { color: var(--ink-800); }
-.metric-value.is-warning { color: #d97706; }
-.metric-value.is-danger { color: #dc2626; }
+.metric-value.is-healthy { color: var(--ink-900); }
+.metric-value.is-warning { color: var(--amber-600); }
+.metric-value.is-danger { color: var(--red-600); }
 .metric-value.is-muted { color: var(--ink-400); }
 
 .mini-progress-track {
-  height: 4px;
-  border-radius: 2px;
+  height: 3px;
+  border-radius: 1.5px;
   background: var(--ink-100);
   overflow: hidden;
 }
 
 .mini-progress-fill {
   height: 100%;
-  border-radius: 2px;
+  border-radius: 1.5px;
   transition: width .25s ease;
 }
 
-.mini-progress-fill.is-healthy { background: #10b981; }
-.mini-progress-fill.is-warning { background: #f59e0b; }
-.mini-progress-fill.is-danger { background: #ef4444; }
-.mini-progress-fill.is-muted { background: var(--ink-200); }
+.mini-progress-fill.is-healthy { background: var(--teal-500); }
+.mini-progress-fill.is-warning { background: var(--amber-600); }
+.mini-progress-fill.is-danger { background: var(--red-600); }
+.mini-progress-fill.is-muted { background: var(--ink-300); }
 
 /* 辅助微参数 */
 .host-card__sub-stats {
@@ -746,8 +732,8 @@ function presence(host: MonitoringHostCard) {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding-top: 3px;
-  border-top: 1px dashed var(--ink-100);
+  padding-top: 5px;
+  border-top: 1px solid var(--ink-100);
 }
 
 .sub-stat-chip {
@@ -759,9 +745,9 @@ function presence(host: MonitoringHostCard) {
   color: var(--ink-500);
 }
 
-.text-blue { color: #2563eb; }
+.text-blue { color: #3b76bb; }
 .text-teal { color: var(--teal-600); }
-.text-amber { color: #d97706; }
+.text-amber { color: var(--amber-600); }
 
 /* 卡片底部 */
 .host-card__foot {
@@ -777,15 +763,15 @@ function presence(host: MonitoringHostCard) {
 }
 
 .stale-badge {
-  color: #b45309;
-  font-weight: 700;
+  color: var(--amber-600);
+  font-weight: 600;
 }
 
 /* 全空态 */
 .host-fleet__no-monitored {
   padding: 36px 20px;
   border: 1px dashed var(--ink-200);
-  border-radius: 14px;
+  border-radius: var(--radius-panel, 8px);
   background: var(--surface);
   display: flex;
   justify-content: center;
@@ -804,7 +790,7 @@ function presence(host: MonitoringHostCard) {
 .no-monitored-text h3 {
   margin: 0;
   font-size: 15px;
-  font-weight: 800;
+  font-weight: 700;
   color: var(--ink-900);
 }
 
@@ -819,69 +805,70 @@ function presence(host: MonitoringHostCard) {
 .host-fleet__detail-card {
   min-width: 0;
   border: 1px solid var(--ink-100);
-  border-radius: 14px;
+  border-radius: var(--radius-panel, 8px);
   background: var(--surface);
   box-shadow: var(--shadow-sm);
   overflow: hidden;
 }
 
 .detail-header {
-  padding: 14px 18px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--ink-100);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
-  background: color-mix(in srgb, var(--ink-50) 40%, var(--surface));
+  background: color-mix(in srgb, var(--ink-50) 35%, var(--surface));
 }
 
 .detail-header__main {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .detail-icon {
-  width: 38px;
-  height: 38px;
-  border-radius: 10px;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
   background: var(--teal-50);
   color: var(--teal-700);
   display: grid;
   place-items: center;
+  flex-shrink: 0;
 }
 
 .detail-info {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
 }
 
 .detail-title-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .detail-title-row h3 {
   margin: 0;
-  font-size: 15px;
-  font-weight: 800;
+  font-size: 14px;
+  font-weight: 700;
   color: var(--ink-950);
 }
 
 .presence-pill {
-  padding: 2px 8px;
-  border-radius: 6px;
-  font-size: 11px;
-  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
 }
 
 .presence-pill.is-online { background: var(--teal-50); color: var(--teal-700); }
-.presence-pill.is-stale { background: var(--amber-100); color: var(--amber-600); }
+.presence-pill.is-stale { background: var(--amber-100); color: var(--amber-700); }
 .presence-pill.is-offline { background: var(--red-100); color: var(--red-600); }
-.presence-pill.is-missing { background: var(--ink-100); color: var(--ink-500); }
+.presence-pill.is-missing { background: var(--ink-50); color: var(--ink-500); }
 
 .detail-meta {
   margin: 0;
@@ -903,9 +890,9 @@ function presence(host: MonitoringHostCard) {
 }
 
 .host-fleet__hint {
-  padding: 40px;
+  padding: 36px;
   border: 1px dashed var(--ink-200);
-  border-radius: 12px;
+  border-radius: var(--radius-panel, 8px);
   display: flex;
   align-items: center;
   justify-content: center;

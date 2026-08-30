@@ -412,7 +412,7 @@ describe("monitor alerts", () => {
     }
   });
 
-  it("establishes an empty disk baseline, then detects additions and disappearance when disk monitoring is the only enabled host rule", async () => {
+  it("ignores failed empty snapshots, then establishes a valid baseline and detects a missing data disk", async () => {
     const directory = mkdtempSync(join(tmpdir(), "viron-monitor-alert-all-disks-test-"));
     directories.push(directory);
     const config = testConfig(directory);
@@ -475,24 +475,28 @@ describe("monitor alerts", () => {
         samples: [value],
       });
       const at = (seconds: number) => new Date(Date.parse(now) + seconds * 1000).toISOString();
-      await evaluate(withoutDisks(sample(at(30), { cpu: 20, dataDisk: false, deploymentStatus: "running" })));
+      await evaluate({
+        ...withoutDisks(sample(at(30), { cpu: 20, dataDisk: false, deploymentStatus: "running" })),
+        errors: ["running monitor collector: signal: killed"],
+      });
       await evaluate(sample(at(60), { cpu: 20, dataDisk: true, deploymentStatus: "running" }));
       await evaluate(sample(at(90), { cpu: 20, dataDisk: true, deploymentStatus: "running" }));
 
       let listed = await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies });
       const added = listed.json().items.filter((item: { ruleType: string }) => item.ruleType === "disk_added");
-      expect(added).toHaveLength(2);
+      expect(added).toHaveLength(0);
 
-      await evaluate(withoutDisks(sample(at(120), { cpu: 20, dataDisk: false, deploymentStatus: "running" })));
-      await evaluate(withoutDisks(sample(at(150), { cpu: 20, dataDisk: false, deploymentStatus: "running" })));
+      await evaluate(sample(at(120), { cpu: 20, dataDisk: false, deploymentStatus: "running" }));
+      await evaluate(sample(at(150), { cpu: 20, dataDisk: false, deploymentStatus: "running" }));
 
       listed = await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies });
       const missing = listed.json().items.filter((item: { ruleType: string }) => item.ruleType === "disk_missing");
-      expect(missing).toHaveLength(2);
-      expect(missing).toEqual(expect.arrayContaining([
-        expect.objectContaining({ status: "active", details: { device: "/dev/sda1", path: "/", missing: true } }),
-        expect.objectContaining({ status: "active", details: { device: "/dev/sdb1", path: "/data", missing: true } }),
-      ]));
+      expect(missing).toEqual([
+        expect.objectContaining({
+          status: "active",
+          details: expect.objectContaining({ device: "/dev/sdb1", path: "/data", missing: true }),
+        }),
+      ]);
     } finally {
       await app.close();
     }
