@@ -910,16 +910,13 @@
       min-height: 48px;
       display: flex;
       align-items: center;
-      justify-content: space-between;
+      justify-content: flex-end;
       gap: 14px;
       padding: 8px 15px;
       border-top: 1px solid var(--line);
     }
 
-    .calendar-totals,
     .heat-legend { display: flex; align-items: center; gap: 12px; }
-    .calendar-totals span { color: var(--ink-soft); font-size: 10px; }
-    .calendar-totals strong { font: 750 12px/1 var(--mono); color: var(--ink); }
     .heat-legend { color: var(--ink-faint); font: 9px/1 var(--mono); }
     .heat-legend i { width: 10px; height: 10px; display: inline-block; }
     .heat-legend .healthy { background: #bed5c4; }
@@ -2545,28 +2542,26 @@
               <div class="environment-actions"><span>更新于 2026/08/30 14:22</span><button class="btn btn-small" data-toast="已打开环境编辑">编辑环境</button></div>
             </div>
             <nav class="environment-tabs">
-              <button data-toast="原型未展开 Web 入口"><svg class="icon"><use href="#i-globe"/></svg>Web 入口 <small>6</small></button>
-              <button data-toast="原型未展开 SSH 终端"><svg class="icon"><use href="#i-terminal"/></svg>SSH 终端 <small>18</small></button>
-              <button data-toast="原型未展开日志"><svg class="icon"><use href="#i-list"/></svg>日志 <small>9</small></button>
-              <button data-toast="原型未展开数据库"><svg class="icon"><use href="#i-database"/></svg>数据库 <small>4</small></button>
-              <button data-toast="原型未展开 Redis"><svg class="icon"><use href="#i-capacity"/></svg>Redis <small>3</small></button>
-              <button data-toast="原型未展开知识库"><svg class="icon"><use href="#i-book"/></svg>知识库 <small>8</small></button>
-              <button class="is-active"><svg class="icon"><use href="#i-service"/></svg>服务维护 <small id="environment-maintenance-count">服务 12 · 主机 24</small></button>
+              <button data-toast="Web 入口"><svg class="icon"><use href="#i-globe"/></svg>Web 入口</button>
+              <button data-toast="SSH 终端"><svg class="icon"><use href="#i-terminal"/></svg>SSH 终端</button>
+              <button data-toast="日志"><svg class="icon"><use href="#i-list"/></svg>日志</button>
+              <button data-toast="数据库"><svg class="icon"><use href="#i-database"/></svg>数据库</button>
+              <button data-toast="Redis"><svg class="icon"><use href="#i-capacity"/></svg>Redis</button>
+              <button data-toast="知识库"><svg class="icon"><use href="#i-book"/></svg>知识库</button>
+              <button class="is-active"><svg class="icon"><use href="#i-service"/></svg>服务维护</button>
             </nav>
           </section>
 
           <nav class="maintenance-nav" aria-label="服务维护内部导航">
-            <button class="is-active" data-maintenance-view="hosts"><svg class="icon"><use href="#i-agent"/></svg>主机接入与服务发现 <span class="badge warn">4 待处理</span></button>
-            <button data-maintenance-view="services"><svg class="icon"><use href="#i-service"/></svg>服务运行维护 <span class="badge">12 服务</span></button>
-            <span class="maintenance-nav__path">SSH HOST → PROBE → TELEMETRY → DISCOVERY → CATALOG → OPERATE</span>
+            <button class="is-active" data-maintenance-view="hosts"><svg class="icon"><use href="#i-agent"/></svg>主机接入与服务发现</button>
+            <button data-maintenance-view="services"><svg class="icon"><use href="#i-service"/></svg>服务运行维护</button>
           </nav>
 
           <div class="maintenance-view is-active" data-maintenance-content="hosts">
             <div class="page-heading is-nested">
               <div>
-                <div class="section-kicker">环境详情 / 服务维护 / 主机接入与发现</div>
-                <h1>从主机到服务的完整链路</h1>
-                <p>以 SSH 主机为起点，连续完成探针安装、监控采集、服务发现、建档和运行维护。</p>
+                <div class="section-kicker">环境详情 / 服务维护</div>
+                <h1>主机接入与服务发现</h1>
               </div>
               <div class="heading-actions">
                 <button class="btn" data-toast="已开始探测 24 台 SSH 主机"><svg class="icon"><use href="#i-scan"/></svg>重新探测</button>
@@ -2574,24 +2569,9 @@
               </div>
             </div>
 
-            <section class="lifecycle-board">
-              <div class="lifecycle-board__head">
-                <div><strong>环境接入链路</strong><span>每台主机独立推进，不要求整个环境同时完成</span></div>
-                <div class="inline-actions"><span class="badge good">18 台已贯通</span><span class="badge warn">4 台待处理</span><span class="badge">2 台未接入</span></div>
-              </div>
-              <div class="lifecycle-flow">
-                <div class="lifecycle-stage"><span class="stage-index">01</span><strong>SSH 主机</strong><b>24</b><small>连接可用 24</small></div>
-                <div class="lifecycle-stage"><span class="stage-index">02</span><strong>探针安装</strong><b>22</b><small>viron-monitor</small></div>
-                <div class="lifecycle-stage"><span class="stage-index">03</span><strong>监控采集</strong><b>20</b><small>实时 · 2 陈旧</small></div>
-                <div class="lifecycle-stage"><span class="stage-index">04</span><strong>服务发现</strong><b>34</b><small>6 个新候选</small></div>
-                <div class="lifecycle-stage"><span class="stage-index">05</span><strong>服务建档</strong><b id="lifecycle-service-count">12</b><small id="lifecycle-deployment-note">28 个部署实例</small></div>
-                <div class="lifecycle-stage"><span class="stage-index">06</span><strong>运行维护</strong><b id="lifecycle-running-count">26/28</b><small>实例正在运行</small></div>
-              </div>
-            </section>
-
             <div class="host-chain-layout">
               <aside class="host-directory">
-                <div class="panel-header"><div><div class="panel-title">环境主机</div><div class="panel-subtitle">24 SSH hosts · 按链路阻塞优先</div></div><span class="badge">24</span></div>
+                <div class="panel-header"><div><div class="panel-title">环境主机</div></div></div>
                 <div class="host-directory__tools"><input class="search-input" id="chain-host-search" placeholder="主机名或 IP" /><select class="filter-select"><option>全部</option><option>待处理</option><option>未安装</option><option>数据陈旧</option></select></div>
                 <div class="chain-host-list">
                   <button class="chain-host-row is-active" data-chain-host="app03"><i></i><span><strong>prod-app-03</strong><small>10.20.2.23 · agent v0.5.0</small></span><em>已贯通<br>2 服务</em></button>
@@ -2618,7 +2598,7 @@
                 </div>
 
                 <div class="host-workbench__body">
-                  <div class="section-row"><h3>最新主机监控摘要</h3><span class="panel-subtitle" id="host-sample-time">采集于 12 秒前 · 点击“完整主机监控”查看趋势</span></div>
+                  <div class="section-row"><h3>最新主机监控摘要</h3><span class="panel-subtitle" id="host-sample-time">采集于 12 秒前</span></div>
                   <div class="monitor-strip">
                     <div class="monitor-metric"><div class="micro-label">CPU</div><strong id="host-metric-cpu">52%</strong><small>8 cores · load 3.2</small></div>
                     <div class="monitor-metric"><div class="micro-label">内存</div><strong id="host-metric-memory">67%</strong><small>10.7 / 16 GB</small></div>
@@ -2629,7 +2609,7 @@
 
                   <div class="discovery-section">
                     <section class="inline-panel">
-                      <div class="panel-header"><div><div class="panel-title">服务发现候选</div><div class="panel-subtitle" id="candidate-summary">3 个候选 · systemd 1 · docker 2</div></div><button class="btn btn-small" id="scan-selected-host"><svg class="icon"><use href="#i-scan"/></svg>重新扫描</button></div>
+                      <div class="panel-header"><div><div class="panel-title">服务发现候选</div><div class="panel-subtitle" id="candidate-summary">3 个候选</div></div><button class="btn btn-small" id="scan-selected-host"><svg class="icon"><use href="#i-scan"/></svg>重新扫描</button></div>
                       <div id="host-candidate-list">
                         <div class="host-candidate-row"><div><strong>gateway</strong><small>docker · gateway-cn-03</small></div><span class="badge good">running</span><span class="mono">CPU 42%</span><button class="btn btn-small" disabled>已纳管</button></div>
                         <div class="host-candidate-row"><div><strong>payment-reconcile.service</strong><small>systemd · PID 4821</small></div><span class="badge good">running</span><span class="mono">CPU 8%</span><button class="btn btn-small btn-primary" id="open-create-service">创建服务</button></div>
@@ -2638,7 +2618,7 @@
                     </section>
 
                     <aside class="inline-panel">
-                      <div class="panel-header"><div><div class="panel-title">已纳管服务</div><div class="panel-subtitle" id="managed-summary">2 services on this host</div></div></div>
+                      <div class="panel-header"><div><div class="panel-title">已纳管服务</div><div class="panel-subtitle" id="managed-summary">2 个服务</div></div></div>
                       <div class="managed-services" id="managed-services">
                         <div class="managed-service"><i></i><span><strong>API Gateway</strong><small>gateway-cn-03 · running</small></span><button class="btn btn-small btn-quiet" data-service-maintenance="gateway">维护 →</button></div>
                         <div class="managed-service"><i></i><span><strong>Inventory Sync</strong><small>inventory-sync · running</small></span><button class="btn btn-small btn-quiet" data-service-maintenance="order">维护 →</button></div>
@@ -2647,7 +2627,7 @@
                   </div>
 
                   <section class="service-create-panel" id="service-create-panel">
-                    <div class="section-row"><div><strong>从发现候选创建服务与部署</strong><div class="panel-subtitle">候选、主机和 Provider 信息会自动带入，确认业务名称即可建档。</div></div><button class="icon-button" id="close-create-service"><svg class="icon"><use href="#i-close"/></svg></button></div>
+                    <div class="section-row"><div><strong>从发现候选创建服务与部署</strong></div><button class="icon-button" id="close-create-service"><svg class="icon"><use href="#i-close"/></svg></button></div>
                     <div class="create-grid">
                       <div class="create-field"><label>服务名称</label><input id="new-service-name" value="Payment Reconcile" /></div>
                       <div class="create-field"><label>Provider</label><select><option>systemd</option></select></div>
@@ -2663,9 +2643,9 @@
           <div class="maintenance-view" data-maintenance-content="services">
           <div class="page-heading is-nested">
             <div>
-              <div class="section-kicker">环境详情 / 服务维护 / 服务运行</div>
+              <div class="section-kicker">环境详情 / 服务维护</div>
               <h1>服务运行</h1>
-              <p>维护期望状态、部署实例和操作记录。这里只改变系统，不承载主机历史监控。</p>
+              <p>维护期望状态、部署实例与操作记录。</p>
             </div>
             <div class="heading-actions">
               <button class="btn" data-toast="已打开服务登记流程"><svg class="icon"><use href="#i-plus"/></svg>登记服务</button>
@@ -2673,38 +2653,10 @@
             </div>
           </div>
 
-          <div class="status-ledger">
-            <div class="ledger-intro">
-              <div class="eyebrow">Environment pulse</div>
-              <strong>运行稳定，2 个节点待处理</strong>
-              <span>控制面状态 · 不等同于监控健康度</span>
-            </div>
-            <div class="ledger-cell">
-              <div class="micro-label">服务</div>
-              <div class="ledger-value"><span id="service-ledger-count">12</span> <small>catalogued</small></div>
-              <span class="ledger-note">11 个已启用</span>
-            </div>
-            <div class="ledger-cell">
-              <div class="micro-label">部署实例</div>
-              <div class="ledger-value"><span id="deployment-ledger-count">28</span> <small>desired</small></div>
-              <span class="ledger-note"><span class="text-good">26 运行</span> · 2 异常</span>
-            </div>
-            <div class="ledger-cell">
-              <div class="micro-label">待发现</div>
-              <div class="ledger-value text-cyan">6 <small>candidates</small></div>
-              <span class="ledger-note">3 台主机有变更</span>
-            </div>
-            <div class="ledger-cell">
-              <div class="micro-label">最近操作</div>
-              <div class="ledger-value text-good">98% <small>success</small></div>
-              <span class="ledger-note">过去 24 小时 · 43 次</span>
-            </div>
-          </div>
-
           <div class="service-layout">
             <aside class="service-index">
               <div class="panel-header">
-                <div><div class="panel-title">服务目录</div><div class="panel-subtitle" id="service-directory-count">12 services / 28 deployments</div></div>
+                <div><div class="panel-title">服务目录</div></div>
                 <button class="icon-button" data-toast="服务筛选已重置" aria-label="更多"><svg class="icon"><use href="#i-more"/></svg></button>
               </div>
               <div class="index-tools">
@@ -2746,10 +2698,10 @@
               </div>
 
               <div class="state-ribbon">
-                <div class="state-unit"><div class="micro-label">期望状态</div><strong id="desired-state">ENABLED · 3</strong><span>配置事实</span></div>
-                <div class="state-unit"><div class="micro-label">运行状态</div><strong class="text-good" id="runtime-state">3 RUNNING</strong><span>最近一次观测</span></div>
-                <div class="state-unit"><div class="micro-label">数据新鲜度</div><strong class="text-good" id="fresh-state">LIVE · 12s</strong><span>采集事实</span></div>
-                <div class="state-unit"><div class="micro-label">事件状态</div><strong id="incident-state">NO ACTIVE ALERT</strong><span>告警事实</span></div>
+                <div class="state-unit"><div class="micro-label">期望状态</div><strong id="desired-state">ENABLED · 3</strong></div>
+                <div class="state-unit"><div class="micro-label">运行状态</div><strong class="text-good" id="runtime-state">3 RUNNING</strong></div>
+                <div class="state-unit"><div class="micro-label">数据新鲜度</div><strong class="text-good" id="fresh-state">LIVE · 12s</strong></div>
+                <div class="state-unit"><div class="micro-label">事件状态</div><strong id="incident-state">NO ACTIVE ALERT</strong></div>
               </div>
 
               <div class="detail-body">
@@ -2786,7 +2738,7 @@
             <div>
               <div class="section-kicker">MONITORING / PLATFORM</div>
               <h1>监控大盘</h1>
-              <p>在同一页面判断全平台告警及其服务影响，再进入主机节点定位资源瓶颈和处置入口。</p>
+              <p>全平台告警事件、服务影响与主机节点状态。</p>
               <span class="monitoring-heading-note"><span class="live-dot"></span>平台时区 Asia/Shanghai · 最近同步 14:22:18</span>
             </div>
             <div class="heading-actions">
@@ -2797,8 +2749,8 @@
           </div>
 
           <nav class="subnav" aria-label="监控大盘导航">
-            <button class="is-active" data-observe-view="overview">告警与服务 <span class="badge bad">4</span></button>
-            <button data-observe-view="hosts">主机节点 <span class="badge warn">4 紧张</span></button>
+            <button class="is-active" data-observe-view="overview">告警与服务</button>
+            <button data-observe-view="hosts">主机节点</button>
           </nav>
 
           <div class="observe-view is-active" data-observe-content="overview">
@@ -2806,7 +2758,7 @@
               <div class="platform-event-calendar__head">
                 <div class="calendar-title">
                   <div class="calendar-title__icon"><svg class="icon"><use href="#i-grid"/></svg></div>
-                  <div><strong>全平台告警事件热力矩阵</strong><span>每格代表一天 · 颜色表示该日最高告警级别 · 点击日期筛选下方事件</span></div>
+                  <div><strong>全平台告警事件热力矩阵</strong><span>按日展示告警严重程度分布</span></div>
                 </div>
                 <div class="range-pills" aria-label="热力矩阵时间范围">
                   <button data-heat-range="30">1M</button><button data-heat-range="90">3M</button><button data-heat-range="180">6M</button><button class="is-active" data-heat-range="365">12M</button>
@@ -2820,7 +2772,6 @@
                 </div>
               </div>
               <div class="platform-event-calendar__foot">
-                <div class="calendar-totals"><span><strong id="heat-total-events">—</strong> 告警事件</span><span><strong id="heat-affected-days">—</strong> 个受影响日</span><span><strong id="heat-critical-days">—</strong> 个严重日</span></div>
                 <div class="heat-legend"><span>低</span><i class="healthy"></i><i class="warning"></i><i class="major"></i><i class="critical"></i><span>高</span></div>
               </div>
             </section>
@@ -2845,18 +2796,10 @@
 
             <section class="monitor-service-section">
               <div class="monitor-service-section__head">
-                <div><div class="micro-label">SERVICE IMPACT</div><h3>受告警影响的服务与运行状态</h3><p>告警与服务放在同一个判断页面中，先看平台事件，再确认影响了哪些服务和部署。</p></div>
-                <span class="badge">12 SERVICES</span>
-              </div>
-              <div class="service-state-strip">
-              <div><span class="micro-label">活动告警</span><strong class="text-bad">4</strong><small>2 个未确认</small></div>
-              <div><span class="micro-label">异常服务</span><strong class="text-warn">2</strong><small>需要定位影响部署</small></div>
-              <div><span class="micro-label">已停止部署</span><strong class="text-bad">1</strong><small>Billing Scheduler</small></div>
-              <div><span class="micro-label">数据陈旧</span><strong class="text-warn">1</strong><small>源主机 8 分钟未上报</small></div>
+                <div><div class="micro-label">SERVICE IMPACT</div><h3>受告警影响的服务与运行状态</h3></div>
               </div>
               <div class="view-toolbar">
                 <div class="inline-actions"><input class="search-input" id="service-monitor-search" placeholder="按服务名、负责人或环境搜索" /><select class="filter-select"><option>全部环境</option><option>production-cn</option><option>staging</option></select><select class="filter-select"><option>按告警优先</option><option>按运行状态</option><option>按名称</option></select></div>
-                <span class="panel-subtitle">仅展示当前状态、活动告警与部署事实</span>
               </div>
               <div class="service-observe-table" id="service-monitor-table">
                 <div class="service-observe-row service-observe-head"><span>服务 / 环境</span><span>部署</span><span>运行状态</span><span>活动告警</span><span>24H 重启</span><span>当前资源</span><span>操作</span></div>
@@ -2872,14 +2815,10 @@
 
           <div class="observe-view host-monitor-workspace" id="host-monitor-workspace" data-observe-content="hosts">
             <div class="host-list-page" id="host-list-page">
-              <div class="host-compact-head"><div><strong>节点优先级队列</strong><small>点击节点切换右侧监控详情</small></div><input class="search-input" id="compact-host-search" placeholder="筛选节点…" /></div>
-              <div class="host-rank-explainer">
-                <div><strong>资源紧张度调度队列</strong><span>卡片不是按名称排列：先比较最接近阈值的资源，再叠加活动告警、容量耗尽时间和数据新鲜度。</span></div>
-                <div class="host-rank-formula">PRESSURE = MAX(CPU/85, MEM/85, DISK/90) × 55<br>+ RESOURCE BREADTH × 20 + ALERT + CAPACITY + FRESHNESS</div>
-              </div>
+              <div class="host-compact-head"><div><strong>节点优先级队列</strong></div><input class="search-input" id="compact-host-search" placeholder="筛选节点…" /></div>
               <div class="view-toolbar">
                 <div class="inline-actions"><input class="search-input" id="priority-host-search" placeholder="按主机名、IP 或标签搜索" /><select class="filter-select" id="priority-host-state-filter"><option value="all">全部状态</option><option value="critical">资源紧张</option><option value="warning">需要关注</option><option value="unmanaged">未安装探针</option></select><select class="filter-select"><option>全部标签</option><option>database</option><option>edge</option><option>application</option></select></div>
-                <span class="panel-subtitle"><strong id="priority-host-count">0</strong> 个节点 · 紧张节点优先</span>
+                <span class="panel-subtitle"><strong id="priority-host-count">0</strong> 个节点</span>
               </div>
               <div class="bulk-probe-bar">
                 <label class="bulk-selection"><input type="checkbox" id="select-all-hosts" /><span>选择当前列表</span><strong id="selected-host-count">0 已选</strong></label>
@@ -2905,7 +2844,7 @@
               </div>
               <div class="host-detail-grid">
                 <section class="resource-trend-panel">
-                  <div class="panel-header"><div><div class="panel-title">容量与资源走势</div><div class="panel-subtitle">主机维度 · 最近 30 天 · CPU / 内存 / 磁盘</div></div><select class="filter-select"><option>近 30 天</option><option>近 7 天</option><option>近 90 天</option></select></div>
+                  <div class="panel-header"><div><div class="panel-title">容量与资源走势</div><div class="panel-subtitle">最近 30 天</div></div><select class="filter-select"><option>近 30 天</option><option>近 7 天</option><option>近 90 天</option></select></div>
                   <div class="trend-chart">
                     <svg viewBox="0 0 720 180" role="img" aria-label="主机容量和资源走势折线图">
                       <g stroke="#39453f" stroke-width="1"><line x1="0" y1="22" x2="720" y2="22"/><line x1="0" y1="68" x2="720" y2="68"/><line x1="0" y1="114" x2="720" y2="114"/><line x1="0" y1="160" x2="720" y2="160"/></g>
@@ -2922,7 +2861,7 @@
                 </aside>
               </div>
               <section class="host-disk-table">
-                <div class="panel-header"><div><div class="panel-title">挂载点与采集状态</div><div class="panel-subtitle">容量、inode 和最近采集时间均属于主机监控信息</div></div><button class="btn btn-small" data-toast="已触发当前节点立即采集">立即采集</button></div>
+                <div class="panel-header"><div><div class="panel-title">挂载点与采集状态</div></div><button class="btn btn-small" data-toast="已触发当前节点立即采集">立即采集</button></div>
                 <table class="table"><thead><tr><th>挂载点</th><th>文件系统</th><th>已用 / 总量</th><th>使用率</th><th>INODE</th><th>变化</th><th>采集时间</th></tr></thead><tbody id="detail-disk-body"></tbody></table>
               </section>
             </div>
@@ -3278,7 +3217,7 @@
       app03: {
         title: 'prod-app-03', meta: '10.20.2.23 · Linux amd64 · connection/ssh-prod-app-03', ssh: ['SSH 可用', 'good'], data: ['数据实时', 'good'], action: ['扫描服务', 'scan'],
         stages: ['done','done','done','done','done','current'], stageText: ['凭据可用','v0.5.0 运行中','12 秒前','3 个候选','2 个已纳管','可执行操作'],
-        sample: '采集于 12 秒前 · 点击“完整主机监控”查看趋势', metrics: ['52%','67%','45%','54°C','v0.5.0'], agentNote: 'systemd · running',
+        sample: '采集于 12 秒前', metrics: ['52%','67%','45%','54°C','v0.5.0'], agentNote: 'systemd · running',
         candidates: [
           { name: 'gateway', meta: 'docker · gateway-cn-03', status: 'running', badge: 'good', resource: 'CPU 42%', action: 'managed' },
           { name: 'payment-reconcile.service', meta: 'systemd · PID 4821', status: 'running', badge: 'good', resource: 'CPU 8%', action: 'create' },
@@ -3292,7 +3231,7 @@
       worker04: {
         title: 'prod-worker-04', meta: '10.20.3.34 · Linux amd64 · connection/ssh-prod-worker-04', ssh: ['SSH 可用', 'good'], data: ['数据实时', 'good'], action: ['扫描服务', 'scan'],
         stages: ['done','done','done','done','current','blocked'], stageText: ['凭据可用','v0.5.0 运行中','22 秒前','2 个候选','1 个待建档','等待建档'],
-        sample: '采集于 22 秒前 · Billing Scheduler 存在活动告警', metrics: ['19%','41%','34%','49°C','v0.5.0'], agentNote: 'systemd · running',
+        sample: '采集于 22 秒前', metrics: ['19%','41%','34%','49°C','v0.5.0'], agentNote: 'systemd · running',
         candidates: [
           { name: 'billing.service', meta: 'systemd · inactive', status: 'stopped', badge: 'bad', resource: 'CPU 0%', action: 'managed' },
           { name: 'payment-notify.service', meta: 'systemd · PID 9127', status: 'running', badge: 'good', resource: 'CPU 4%', action: 'create' }
@@ -3302,19 +3241,19 @@
       batch01: {
         title: 'prod-batch-01', meta: '10.20.7.71 · Linux amd64 · connection/ssh-prod-batch-01', ssh: ['SSH 可用', 'good'], data: ['尚未采集', 'warn'], action: ['安装监控探针', 'install'],
         stages: ['done','current','blocked','blocked','blocked','blocked'], stageText: ['凭据可用','等待安装','依赖探针','依赖监控数据','尚无服务','尚不可维护'],
-        sample: '尚无监控样本 · 安装 viron-monitor 后自动开始首次采集', metrics: ['—','—','—','—','未安装'], agentNote: 'SSH 预检已通过',
+        sample: '尚无监控样本', metrics: ['—','—','—','—','未安装'], agentNote: 'SSH 预检已通过',
         candidates: [], managed: []
       },
       app07: {
         title: 'prod-app-07', meta: '10.20.2.27 · Linux arm64 · connection/ssh-prod-app-07', ssh: ['SSH 可用', 'good'], data: ['数据陈旧', 'warn'], action: ['立即采集', 'refresh'],
         stages: ['done','done','warning','blocked','blocked','blocked'], stageText: ['凭据可用','v0.4.1 运行中','最后采集 8m','等待新鲜数据','保持现状','保持现状'],
-        sample: '最后采集于 8 分钟前 · 陈旧数据不用于新的服务发现', metrics: ['38%','57%','41%','51°C','v0.4.1'], agentNote: '可升级 · last seen 8m',
+        sample: '最后采集于 8 分钟前', metrics: ['38%','57%','41%','51°C','v0.4.1'], agentNote: '可升级 · last seen 8m',
         candidates: [], managed: [{ name: 'Order Worker', meta: 'order-worker-03 · 状态未知', key: 'order' }]
       },
       db02: {
         title: 'prod-db-02', meta: '10.20.4.42 · Linux amd64 · connection/ssh-prod-db-02', ssh: ['SSH 可用', 'good'], data: ['数据实时', 'good'], action: ['扫描服务', 'scan'],
         stages: ['done','done','done','done','done','current'], stageText: ['凭据可用','v0.5.0 运行中','17 秒前','2 个候选','2 个已纳管','1 个主机告警'],
-        sample: '采集于 17 秒前 · /data 磁盘使用率已触发 Critical 告警', metrics: ['35%','72%','89%','57°C','v0.5.0'], agentNote: 'systemd · running',
+        sample: '采集于 17 秒前', metrics: ['35%','72%','89%','57°C','v0.5.0'], agentNote: 'systemd · running',
         candidates: [{ name: 'mysqld.service', meta: 'systemd · PID 1632', status: 'running', badge: 'good', resource: 'MEM 4.8G', action: 'managed' }],
         managed: [{ name: 'MySQL Primary', meta: 'mysql-replica · running', key: 'mysql' }, { name: 'Database Exporter', meta: 'mysqld-exporter · running', key: 'mysql' }]
       }
@@ -3470,9 +3409,6 @@
       const monthContainer = $('#matrix-months');
       monthContainer.style.gridTemplateColumns = `32px repeat(${Math.max(months.length, 1)}, 1fr)`;
       monthContainer.innerHTML = months.map(month => `<span>${month}</span>`).join('');
-      $('#heat-total-events').textContent = totalEvents;
-      $('#heat-affected-days').textContent = affectedDays;
-      $('#heat-critical-days').textContent = criticalDays;
       $$('[data-heat-date]', grid).forEach(cell => cell.addEventListener('click', () => {
         selectedHeatDate = cell.dataset.heatDate;
         renderHeatmap();
@@ -3738,12 +3674,12 @@
       });
       $('#host-agent-note').textContent = host.agentNote;
       $('#candidate-summary').textContent = host.candidates.length
-        ? `${host.candidates.length} 个候选 · 来自最新监控快照`
+        ? `${host.candidates.length} 个候选`
         : host.action[1] === 'install' ? '需要先安装监控探针' : '等待新鲜监控数据';
       $('#host-candidate-list').innerHTML = host.candidates.length
         ? host.candidates.map(candidate => `<div class="host-candidate-row"><div><strong>${candidate.name}</strong><small>${candidate.meta}</small></div><span class="badge ${candidate.badge}">${candidate.status}</span><span class="mono">${candidate.resource}</span>${candidateAction(candidate)}</div>`).join('')
         : `<div style="padding:22px 14px;color:var(--ink-faint);text-align:center"><svg class="icon" style="margin-bottom:7px"><use href="#i-scan"/></svg><br>${host.action[1] === 'install' ? '探针安装完成并取得首个样本后，才能发现主机上的服务。' : '数据陈旧时不会生成新的服务候选，请先恢复采集。'}</div>`;
-      $('#managed-summary').textContent = `${host.managed.length} services on this host`;
+      $('#managed-summary').textContent = `${host.managed.length} 个服务`;
       $('#managed-services').innerHTML = host.managed.length
         ? host.managed.map(service => `<div class="managed-service"><i></i><span><strong>${service.name}</strong><small>${service.meta}</small></span><button class="btn btn-small btn-quiet" data-service-maintenance="${service.key}">维护 →</button></div>`).join('')
         : '<div style="padding:24px 8px;color:var(--ink-faint);text-align:center">该主机还没有已纳管服务</div>';
@@ -3867,14 +3803,6 @@
       host.stages = ['done','done','done','done','done','current'];
       host.stageText[4] = `${host.managed.length} 个已纳管`;
       host.stageText[5] = '可执行操作';
-      $('[data-maintenance-view="services"] .badge').textContent = '13 服务';
-      $('#environment-maintenance-count').textContent = '服务 13 · 主机 24';
-      $('#lifecycle-service-count').textContent = '13';
-      $('#lifecycle-deployment-note').textContent = '29 个部署实例';
-      $('#lifecycle-running-count').textContent = '27/29';
-      $('#service-ledger-count').textContent = '13';
-      $('#deployment-ledger-count').textContent = '29';
-      $('#service-directory-count').textContent = '13 services / 29 deployments';
       $('#service-create-panel').classList.remove('is-open');
       showMaintenanceView('services');
       renderService('discovered');
