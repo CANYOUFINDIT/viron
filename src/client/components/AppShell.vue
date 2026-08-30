@@ -22,7 +22,7 @@ import {
   Users,
 } from "@lucide/vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { computed, onBeforeUnmount, onMounted, provide, readonly, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, readonly, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { isDesktopApp } from "../desktop";
 import { initializeAppShortcuts, onAppShortcut, shortcutActionFromKeyboardEvent } from "../keyboard-shortcuts";
@@ -46,11 +46,12 @@ const router = useRouter();
 const desktop = isDesktopApp();
 const macosDesktop = desktop && /Macintosh|Mac OS X/.test(navigator.userAgent);
 const immersive = ref(sessionStorage.getItem("envman-immersive-mode") === "1");
-const sidebarExpanded = ref(!window.matchMedia("(max-width: 900px)").matches);
+const sidebarPinned = ref(!window.matchMedia("(max-width: 900px)").matches);
+const sidebarHoverOpen = ref(false);
+const sidebarExpanded = computed(() => sidebarPinned.value || sidebarHoverOpen.value);
 const workspaceSwitching = ref(false);
 const rememberedEnvironmentId = ref<string | null>(null);
 const workspaceSwitcherDropdown = ref<{ handleOpen: () => void; handleClose: () => void } | null>(null);
-const SIDEBAR_HOVER_EXPAND_MS = 1500;
 const workspaceSwitcherPopperOptions = {
   strategy: "fixed" as const,
   modifiers: [
@@ -58,7 +59,7 @@ const workspaceSwitcherPopperOptions = {
     { name: "preventOverflow", options: { altAxis: false, boundary: "viewport" } },
   ],
 };
-let sidebarHoverExpandTimer: number | undefined;
+let workspaceMenuHoverTarget: Element | null = null;
 let connectionPollTimer: number | undefined;
 let connectionLimitDialogOpen = false;
 let removeShortcutListener: (() => void) | undefined;
@@ -107,7 +108,7 @@ watch(
 watch(
   activeEnvironmentId,
   (environmentId) => {
-    if (environmentId !== null) sidebarExpanded.value = false;
+    if (environmentId !== null) unpinSidebar();
   },
   { immediate: true },
 );
@@ -133,7 +134,7 @@ async function activateMenuItem(routeName: string) {
     const target = environmentOverviewNavigationTarget(activeRouteName.value, rememberedEnvironmentId.value);
     if (route.name !== target.name || Object.keys(route.query).length) await router.push(target);
   } else if (route.name !== routeName || Object.keys(route.query).length) await router.push({ name: routeName });
-  if (window.matchMedia("(max-width: 900px)").matches) sidebarExpanded.value = false;
+  if (window.matchMedia("(max-width: 900px)").matches) unpinSidebar();
 }
 
 async function activateWorkspace(command: string) {
@@ -154,7 +155,7 @@ async function activateWorkspace(command: string) {
 
 async function openProfile() {
   await router.push({ name: "settings", query: { section: "profile" } });
-  if (window.matchMedia("(max-width: 900px)").matches) sidebarExpanded.value = false;
+  if (window.matchMedia("(max-width: 900px)").matches) unpinSidebar();
 }
 
 function setImmersive(value: boolean) {
@@ -171,47 +172,71 @@ function setImmersive(value: boolean) {
 
 provide(immersiveModeKey, { active: readonly(immersive), setActive: setImmersive });
 
-function toggleSidebar() {
-  cancelHoverExpand();
-  sidebarExpanded.value = !sidebarExpanded.value;
+function pinSidebar() {
+  sidebarPinned.value = true;
+  sidebarHoverOpen.value = false;
 }
 
-function expandSidebar() {
-  cancelHoverExpand();
-  sidebarExpanded.value = true;
+function unpinSidebar() {
+  sidebarPinned.value = false;
+  sidebarHoverOpen.value = false;
+}
+
+function toggleSidebar() {
+  if (sidebarPinned.value || sidebarHoverOpen.value) unpinSidebar();
+  else pinSidebar();
 }
 
 function canHoverExpandSidebar() {
   return !window.matchMedia("(max-width: 900px)").matches && !window.matchMedia("(hover: none)").matches;
 }
 
-function cancelHoverExpand() {
-  if (sidebarHoverExpandTimer === undefined) return;
-  window.clearTimeout(sidebarHoverExpandTimer);
-  sidebarHoverExpandTimer = undefined;
-}
-
-function scheduleHoverExpand() {
-  cancelHoverExpand();
-  if (sidebarExpanded.value || !canHoverExpandSidebar()) return;
-  sidebarHoverExpandTimer = window.setTimeout(() => {
-    sidebarHoverExpandTimer = undefined;
-    if (!sidebarExpanded.value && canHoverExpandSidebar()) expandSidebar();
-  }, SIDEBAR_HOVER_EXPAND_MS);
+function isHoverFlyoutTarget(target: EventTarget | null) {
+  return target instanceof Element && Boolean(target.closest(".app-sidebar, .workspace-switcher-popper"));
 }
 
 function onSidebarPointerEnter() {
-  scheduleHoverExpand();
+  if (!canHoverExpandSidebar() || sidebarPinned.value) return;
+  sidebarHoverOpen.value = true;
 }
 
-function onSidebarPointerLeave() {
-  cancelHoverExpand();
+function onSidebarPointerLeave(event: PointerEvent) {
+  if (sidebarPinned.value || isHoverFlyoutTarget(event.relatedTarget)) return;
+  sidebarHoverOpen.value = false;
+}
+
+function onWorkspaceMenuPointerEnter() {
+  if (!canHoverExpandSidebar() || sidebarPinned.value) return;
+  sidebarHoverOpen.value = true;
+}
+
+function onWorkspaceMenuPointerLeave(event: PointerEvent) {
+  if (sidebarPinned.value || isHoverFlyoutTarget(event.relatedTarget)) return;
+  sidebarHoverOpen.value = false;
+}
+
+function unbindWorkspaceMenuHover() {
+  workspaceMenuHoverTarget?.removeEventListener("pointerenter", onWorkspaceMenuPointerEnter);
+  workspaceMenuHoverTarget?.removeEventListener("pointerleave", onWorkspaceMenuPointerLeave);
+  workspaceMenuHoverTarget = null;
+}
+
+function onWorkspaceMenuVisibleChange(visible: boolean) {
+  unbindWorkspaceMenuHover();
+  if (!visible) return;
+  void nextTick(() => {
+    const popper = document.querySelector(".workspace-switcher-popper");
+    if (!(popper instanceof Element)) return;
+    workspaceMenuHoverTarget = popper;
+    popper.addEventListener("pointerenter", onWorkspaceMenuPointerEnter);
+    popper.addEventListener("pointerleave", onWorkspaceMenuPointerLeave);
+  });
 }
 
 function handleGlobalKeydown(event: KeyboardEvent) {
   if (event.key === "Escape") {
     if (immersive.value) setImmersive(false);
-    else if (sidebarExpanded.value && window.matchMedia("(max-width: 900px)").matches) sidebarExpanded.value = false;
+    else if (sidebarExpanded.value && window.matchMedia("(max-width: 900px)").matches) unpinSidebar();
     return;
   }
   if (!desktop && shortcutActionFromKeyboardEvent(event) === "app.settings") {
@@ -226,7 +251,7 @@ async function refreshActiveConnections() {
 
 async function openActiveConnections() {
   if (route.name !== "active-connections") await router.push({ name: "active-connections" });
-  if (window.matchMedia("(max-width: 900px)").matches) sidebarExpanded.value = false;
+  if (window.matchMedia("(max-width: 900px)").matches) unpinSidebar();
 }
 
 function handleConnectionLimit(event: Event) {
@@ -241,10 +266,7 @@ function handleConnectionLimit(event: Event) {
 }
 
 watch(sidebarExpanded, (expanded) => {
-  if (expanded) {
-    cancelHoverExpand();
-    return;
-  }
+  if (expanded) return;
   workspaceSwitcherDropdown.value?.handleClose();
 });
 
@@ -274,7 +296,7 @@ onMounted(() => {
   window.addEventListener("viron:connection-limit", handleConnectionLimit);
 });
 onBeforeUnmount(() => {
-  cancelHoverExpand();
+  unbindWorkspaceMenuHover();
   removeShortcutListener?.();
   removeHistoryNavigation?.();
   removeVisitHistory?.();
@@ -306,6 +328,7 @@ onBeforeUnmount(() => {
             :popper-options="workspaceSwitcherPopperOptions"
             popper-class="workspace-switcher-popper"
             :disabled="workspaceSwitching"
+            @visible-change="onWorkspaceMenuVisibleChange"
             @command="activateWorkspace"
           >
             <button
@@ -436,7 +459,7 @@ onBeforeUnmount(() => {
       </div>
     </aside>
 
-    <button v-if="sidebarExpanded" class="sidebar-scrim" type="button" :aria-label="$t('关闭左侧菜单')" @click="sidebarExpanded = false"></button>
+    <button v-if="sidebarExpanded" class="sidebar-scrim" type="button" :aria-label="$t('关闭左侧菜单')" @click="unpinSidebar"></button>
 
     <section class="app-surface">
       <header v-if="desktop" class="desktop-window-header" :aria-label="$t('窗口标题栏')"></header>

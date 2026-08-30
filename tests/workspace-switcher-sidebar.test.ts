@@ -119,40 +119,34 @@ async function mountShell(handleOpen: ReturnType<typeof vi.fn>, handleClose: Ret
 
 describe("collapsed sidebar hover expand", () => {
   afterEach(() => {
-    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
-  it("expands the collapsed sidebar after hovering for 1.5 seconds", async () => {
+  it("expands the collapsed sidebar on pointer enter and collapses it on leave", async () => {
     mockMatchMedia();
-    vi.useFakeTimers();
     const wrapper = await mountShell(vi.fn(), vi.fn());
 
     await wrapper.get(".sidebar-toggle").trigger("click");
     expect(wrapper.get(".app-frame").classes()).not.toContain("is-sidebar-expanded");
 
     await wrapper.get(".app-sidebar").trigger("pointerenter");
-    await vi.advanceTimersByTimeAsync(1499);
-    expect(wrapper.get(".app-frame").classes()).not.toContain("is-sidebar-expanded");
-
-    await vi.advanceTimersByTimeAsync(1);
     await flushPromises();
     expect(wrapper.get(".app-frame").classes()).toContain("is-sidebar-expanded");
+
+    await wrapper.get(".app-sidebar").trigger("pointerleave");
+    await flushPromises();
+    expect(wrapper.get(".app-frame").classes()).not.toContain("is-sidebar-expanded");
     wrapper.unmount();
   });
 
-  it("does not expand if the pointer leaves before 1.5 seconds", async () => {
+  it("does not collapse a pinned sidebar when the pointer leaves", async () => {
     mockMatchMedia();
-    vi.useFakeTimers();
     const wrapper = await mountShell(vi.fn(), vi.fn());
 
-    await wrapper.get(".sidebar-toggle").trigger("click");
-    await wrapper.get(".app-sidebar").trigger("pointerenter");
-    await vi.advanceTimersByTimeAsync(1000);
+    expect(wrapper.get(".app-frame").classes()).toContain("is-sidebar-expanded");
     await wrapper.get(".app-sidebar").trigger("pointerleave");
-    await vi.advanceTimersByTimeAsync(1000);
     await flushPromises();
-    expect(wrapper.get(".app-frame").classes()).not.toContain("is-sidebar-expanded");
+    expect(wrapper.get(".app-frame").classes()).toContain("is-sidebar-expanded");
     wrapper.unmount();
   });
 
@@ -174,12 +168,10 @@ describe("collapsed sidebar hover expand", () => {
 
   it("does not hover-expand on narrow viewports", async () => {
     mockMatchMedia({ narrow: true });
-    vi.useFakeTimers();
     const wrapper = await mountShell(vi.fn(), vi.fn());
 
     expect(wrapper.get(".app-frame").classes()).not.toContain("is-sidebar-expanded");
     await wrapper.get(".app-sidebar").trigger("pointerenter");
-    await vi.advanceTimersByTimeAsync(1600);
     await flushPromises();
     expect(wrapper.get(".app-frame").classes()).not.toContain("is-sidebar-expanded");
     wrapper.unmount();
