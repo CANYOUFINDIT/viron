@@ -416,12 +416,16 @@ async function loadPlatformAlertRows(
   app: FastifyInstance,
   query: PlatformMonitorAlertQuery,
 ): Promise<PlatformStoredEventRow[]> {
-  const clauses = ["e.workspace_type = ?", "e.workspace_id = ?", "a.triggered_at < ?", "(CASE WHEN a.status = 'active' THEN ? WHEN a.recovered_at IS NOT NULL THEN a.recovered_at ELSE a.triggered_at END) >= ?"];
+  const clauses = [
+    "e.workspace_type = ?",
+    "e.workspace_id = ?",
+    "a.triggered_at <= ?",
+    "COALESCE(NULLIF(a.last_seen_at, ''), a.recovered_at, a.triggered_at) >= ?",
+  ];
   const parameters: unknown[] = [
     query.workspaceType,
     query.workspaceId,
     new Date(query.to).toISOString(),
-    new Date().toISOString(),
     new Date(query.from).toISOString(),
   ];
   if (query.environmentId) {
@@ -489,8 +493,7 @@ export async function loadPlatformEventCalendar(
   const from = days[0]!.start;
   const to = days.at(-1)!.end;
   const events = await loadPlatformAlertRows(app, { ...query, from, to, limit: 2_000 });
-  const coverage = days.map((day) => ({ start: day.start, end: Math.min(day.end, generatedAt) }));
-  const aggregates = days.map((day) => dayAggregate(day, events, coverage, generatedAt));
+  const aggregates = days.map((day) => dayAggregate(day, events, [], generatedAt));
   const triggeredInMonth = events.filter((event) => {
     const triggeredAt = Date.parse(event.triggered_at);
     return triggeredAt >= from && triggeredAt < to;

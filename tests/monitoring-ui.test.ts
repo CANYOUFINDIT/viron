@@ -37,8 +37,10 @@ describe("monitoring dashboard wiring", () => {
   });
 
   it("shows a GitHub-style host event heatmap in monitoring and service maintenance", () => {
-    expect(alertService).toContain("/api/v1/monitoring/event-calendar");
-    expect(alertService).toContain("heat-grid");
+    expect(alertService).toContain("mode=\"platform\"");
+    expect(alertService).toContain("HostEventCalendar");
+    expect(alertService).toContain(":overlay-alerts=\"alerts\"");
+    expect(hostEventCalendar).toContain("overlayAlertDays");
     expect(hostFleet).toContain("priority-host-grid");
     expect(maintenanceDiscovery).toContain("<HostEventCalendar");
     expect(maintenanceDiscovery).toContain(':host-id="selectedHost.sshConnectionId"');
