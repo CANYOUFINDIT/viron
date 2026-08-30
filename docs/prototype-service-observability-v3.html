@@ -1,0 +1,2085 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Viron · 服务运行与可观测性 V3</title>
+  <style>
+    :root {
+      --canvas: #e9e8e1;
+      --paper: #f7f6f0;
+      --paper-strong: #fffef9;
+      --ink: #18201e;
+      --ink-soft: #4e5955;
+      --ink-faint: #7b8680;
+      --rail: #17201e;
+      --rail-soft: #222d2a;
+      --line: #cdd0c8;
+      --line-strong: #9ba39b;
+      --acid: #c9dd57;
+      --acid-soft: #edf3c9;
+      --cyan: #3d8f95;
+      --cyan-soft: #dcebed;
+      --good: #357457;
+      --good-soft: #dce9df;
+      --warn: #b57521;
+      --warn-soft: #f1e4cd;
+      --bad: #b74739;
+      --bad-soft: #f0dcd7;
+      --quiet: #7f8882;
+      --radius: 5px;
+      --shadow: 0 18px 50px rgba(25, 32, 30, 0.12);
+      --sans: "Avenir Next", "DIN Alternate", "PingFang SC", "Microsoft YaHei", sans-serif;
+      --mono: "SFMono-Regular", "Roboto Mono", "Cascadia Code", monospace;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { background: var(--canvas); }
+
+    body {
+      margin: 0;
+      min-width: 1120px;
+      min-height: 100vh;
+      background:
+        linear-gradient(rgba(24, 32, 30, 0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(24, 32, 30, 0.025) 1px, transparent 1px),
+        var(--canvas);
+      background-size: 22px 22px;
+      color: var(--ink);
+      font-family: var(--sans);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    button,
+    input,
+    select { font: inherit; }
+
+    button { color: inherit; }
+
+    button:focus-visible,
+    input:focus-visible,
+    select:focus-visible {
+      outline: 2px solid var(--cyan);
+      outline-offset: 2px;
+    }
+
+    svg.icon {
+      width: 16px;
+      height: 16px;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      fill: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      flex: 0 0 auto;
+    }
+
+    .app-shell {
+      display: grid;
+      grid-template-columns: 232px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    .rail {
+      position: fixed;
+      inset: 0 auto 0 0;
+      width: 232px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      background: var(--rail);
+      color: #e9eee9;
+      border-right: 1px solid #303a36;
+      z-index: 20;
+    }
+
+    .brand {
+      height: 76px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 20px;
+      border-bottom: 1px solid #34403b;
+    }
+
+    .brand-mark {
+      width: 32px;
+      height: 32px;
+      display: grid;
+      place-items: center;
+      position: relative;
+      border: 1px solid #dbe7a5;
+      background: var(--acid);
+      color: var(--rail);
+      font: 800 15px/1 var(--mono);
+      box-shadow: 4px 4px 0 rgba(201, 221, 87, 0.15);
+    }
+
+    .brand-copy strong {
+      display: block;
+      font-size: 14px;
+      letter-spacing: 0.16em;
+    }
+
+    .brand-copy span {
+      color: #95a09a;
+      font: 9px/1.3 var(--mono);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .rail-scope {
+      margin: 18px 14px 12px;
+      padding: 12px;
+      border: 1px solid #3a4641;
+      background: #1d2724;
+    }
+
+    .eyebrow,
+    .rail-label,
+    .section-kicker,
+    .table-head,
+    .micro-label {
+      font: 650 10px/1.2 var(--mono);
+      letter-spacing: 0.11em;
+      text-transform: uppercase;
+    }
+
+    .rail-scope .eyebrow { color: #84928b; }
+
+    .rail-scope strong {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 7px;
+      font-size: 13px;
+    }
+
+    .live-dot,
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--good);
+      display: inline-block;
+      box-shadow: 0 0 0 3px rgba(53, 116, 87, 0.15);
+    }
+
+    .rail-nav { padding: 8px 12px; }
+
+    .rail-label {
+      padding: 13px 10px 8px;
+      color: #738079;
+    }
+
+    .nav-button {
+      width: 100%;
+      height: 42px;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      padding: 0 11px;
+      margin: 3px 0;
+      border: 0;
+      border-left: 2px solid transparent;
+      background: transparent;
+      color: #aeb8b2;
+      cursor: pointer;
+      text-align: left;
+      transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+    }
+
+    .nav-button:hover {
+      background: #24302c;
+      color: #fff;
+    }
+
+    .nav-button.is-active {
+      background: #2b3733;
+      border-left-color: var(--acid);
+      color: #fff;
+    }
+
+    .nav-button .nav-count {
+      margin-left: auto;
+      min-width: 22px;
+      padding: 2px 6px;
+      border: 1px solid #4a5651;
+      color: #b9c2bd;
+      font: 10px/1.2 var(--mono);
+      text-align: center;
+    }
+
+    .nav-button.is-active .nav-count {
+      border-color: #8d9b58;
+      color: var(--acid);
+    }
+
+    .rail-footer {
+      margin-top: auto;
+      padding: 16px 18px 20px;
+      border-top: 1px solid #34403b;
+      color: #89958e;
+    }
+
+    .agent-health {
+      display: grid;
+      grid-template-columns: 38px 1fr;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .health-ring {
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      border: 3px solid #4c5b54;
+      border-top-color: var(--acid);
+      border-right-color: var(--acid);
+      border-radius: 50%;
+      font: 700 9px/1 var(--mono);
+      color: #eef4d0;
+    }
+
+    .agent-health strong { display: block; color: #dbe2dd; font-size: 11px; }
+    .agent-health span { font: 9px/1.4 var(--mono); }
+
+    .workspace {
+      grid-column: 2;
+      min-width: 0;
+    }
+
+    .topbar {
+      height: 58px;
+      position: sticky;
+      top: 0;
+      z-index: 15;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 0 26px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(247, 246, 240, 0.94);
+      backdrop-filter: blur(14px);
+    }
+
+    .breadcrumb {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--ink-faint);
+      font: 11px/1 var(--mono);
+    }
+
+    .breadcrumb strong { color: var(--ink); font-weight: 700; }
+
+    .topbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .sync-state {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding-right: 14px;
+      border-right: 1px solid var(--line);
+      color: var(--ink-soft);
+      font: 10px/1 var(--mono);
+    }
+
+    .sync-state .live-dot {
+      animation: breathe 2.2s ease-in-out infinite;
+    }
+
+    @keyframes breathe {
+      50% { box-shadow: 0 0 0 6px rgba(53, 116, 87, 0.06); }
+    }
+
+    .environment-select,
+    .command-button {
+      height: 32px;
+      border: 1px solid var(--line);
+      background: var(--paper-strong);
+      color: var(--ink);
+      border-radius: var(--radius);
+    }
+
+    .environment-select { padding: 0 30px 0 10px; }
+
+    .command-button {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 9px;
+      cursor: pointer;
+      color: var(--ink-soft);
+    }
+
+    .keycap {
+      padding: 2px 5px;
+      border: 1px solid var(--line);
+      background: var(--canvas);
+      font: 9px/1 var(--mono);
+    }
+
+    .content { padding: 30px 32px 48px; }
+
+    .page { display: none; }
+
+    .page.is-active {
+      display: block;
+      animation: page-enter 220ms ease-out both;
+    }
+
+    @keyframes page-enter {
+      from { opacity: 0; transform: translateY(5px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .page-heading {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 22px;
+    }
+
+    .section-kicker { color: var(--cyan); }
+
+    .page-heading h1 {
+      margin: 7px 0 5px;
+      font-size: clamp(28px, 3vw, 42px);
+      line-height: 1.05;
+      letter-spacing: -0.045em;
+      font-weight: 650;
+    }
+
+    .page-heading p {
+      max-width: 620px;
+      margin: 0;
+      color: var(--ink-soft);
+      font-size: 13px;
+    }
+
+    .heading-actions,
+    .inline-actions,
+    .button-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .btn {
+      height: 34px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      padding: 0 12px;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+      background: var(--paper-strong);
+      color: var(--ink);
+      cursor: pointer;
+      font-weight: 600;
+      transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
+    }
+
+    .btn:hover {
+      transform: translateY(-1px);
+      border-color: var(--ink-soft);
+    }
+
+    .btn-primary {
+      background: var(--ink);
+      color: #f7f7f0;
+      border-color: var(--ink);
+    }
+
+    .btn-primary:hover { background: #2a3632; }
+
+    .btn-acid {
+      background: var(--acid);
+      border-color: #a8bb3f;
+    }
+
+    .btn-danger {
+      color: var(--bad);
+      border-color: #d8a39b;
+      background: #fff9f6;
+    }
+
+    .btn-quiet {
+      background: transparent;
+      border-color: transparent;
+      color: var(--ink-soft);
+    }
+
+    .btn-small { height: 28px; padding: 0 9px; font-size: 11px; }
+
+    .status-ledger {
+      display: grid;
+      grid-template-columns: 1.2fr repeat(4, minmax(130px, 1fr));
+      margin-bottom: 18px;
+      border: 1px solid var(--line-strong);
+      background: var(--paper-strong);
+    }
+
+    .ledger-intro {
+      min-height: 94px;
+      padding: 17px 20px;
+      border-right: 1px solid var(--line);
+      background: var(--ink);
+      color: #f4f4ed;
+    }
+
+    .ledger-intro .eyebrow { color: #9daaa3; }
+
+    .ledger-intro strong {
+      display: block;
+      margin-top: 8px;
+      font-size: 17px;
+      font-weight: 600;
+    }
+
+    .ledger-intro span {
+      color: #b6c0ba;
+      font-size: 11px;
+    }
+
+    .ledger-cell {
+      min-height: 94px;
+      padding: 16px 17px;
+      border-right: 1px solid var(--line);
+    }
+
+    .ledger-cell:last-child { border-right: 0; }
+
+    .micro-label { color: var(--ink-faint); }
+
+    .ledger-value {
+      display: flex;
+      align-items: baseline;
+      gap: 7px;
+      margin-top: 9px;
+      font: 700 22px/1 var(--mono);
+      letter-spacing: -0.04em;
+    }
+
+    .ledger-value small {
+      color: var(--ink-faint);
+      font: 10px/1 var(--mono);
+      letter-spacing: 0;
+    }
+
+    .ledger-note {
+      display: block;
+      margin-top: 7px;
+      color: var(--ink-soft);
+      font-size: 10px;
+    }
+
+    .text-good { color: var(--good); }
+    .text-warn { color: var(--warn); }
+    .text-bad { color: var(--bad); }
+    .text-cyan { color: var(--cyan); }
+
+    .panel {
+      border: 1px solid var(--line);
+      background: var(--paper);
+    }
+
+    .panel-header {
+      min-height: 50px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 254, 249, 0.7);
+    }
+
+    .panel-title {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-weight: 700;
+    }
+
+    .panel-subtitle {
+      margin-top: 2px;
+      color: var(--ink-faint);
+      font: 10px/1.3 var(--mono);
+    }
+
+    .service-layout {
+      display: grid;
+      grid-template-columns: 310px minmax(0, 1fr);
+      min-height: 590px;
+      border: 1px solid var(--line-strong);
+      background: var(--paper);
+    }
+
+    .service-index {
+      border-right: 1px solid var(--line-strong);
+      background: #eeede7;
+    }
+
+    .index-tools {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .search-input,
+    .filter-select {
+      height: 32px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper-strong);
+      color: var(--ink);
+    }
+
+    .search-input {
+      width: 100%;
+      padding: 0 10px;
+    }
+
+    .filter-select { padding: 0 24px 0 8px; }
+
+    .service-list { padding: 6px; }
+
+    .service-row {
+      width: 100%;
+      display: grid;
+      grid-template-columns: 8px 1fr auto;
+      gap: 10px;
+      align-items: center;
+      min-height: 62px;
+      padding: 9px 10px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--ink);
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .service-row:hover { background: rgba(255, 254, 249, 0.65); }
+
+    .service-row.is-active {
+      border-color: var(--line-strong);
+      background: var(--paper-strong);
+      box-shadow: 3px 3px 0 rgba(24, 32, 30, 0.06);
+    }
+
+    .service-row .status-dot.bad { background: var(--bad); box-shadow: 0 0 0 3px var(--bad-soft); }
+    .service-row .status-dot.warn { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
+
+    .service-name { display: block; font-weight: 700; }
+
+    .service-meta {
+      display: block;
+      margin-top: 3px;
+      color: var(--ink-faint);
+      font: 10px/1.3 var(--mono);
+    }
+
+    .service-score {
+      font: 700 13px/1 var(--mono);
+      color: var(--ink-soft);
+    }
+
+    .service-detail { min-width: 0; }
+
+    .detail-hero {
+      min-height: 106px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--line);
+      background: var(--paper-strong);
+    }
+
+    .detail-title-line {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .detail-title-line h2 {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1.2;
+      letter-spacing: -0.025em;
+    }
+
+    .service-id {
+      margin-top: 7px;
+      color: var(--ink-faint);
+      font: 10px/1.3 var(--mono);
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      min-height: 22px;
+      padding: 2px 7px;
+      border: 1px solid var(--line);
+      background: var(--paper-strong);
+      font: 650 10px/1 var(--mono);
+      white-space: nowrap;
+    }
+
+    .badge.good { color: var(--good); border-color: #a7c2b0; background: var(--good-soft); }
+    .badge.warn { color: #815417; border-color: #d6b77f; background: var(--warn-soft); }
+    .badge.bad { color: var(--bad); border-color: #d8a39b; background: var(--bad-soft); }
+    .badge.info { color: #276f75; border-color: #99c0c4; background: var(--cyan-soft); }
+    .badge.dark { color: #e9eee9; border-color: var(--ink); background: var(--ink); }
+
+    .state-ribbon {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .state-unit {
+      padding: 13px 16px;
+      border-right: 1px solid var(--line);
+    }
+
+    .state-unit:last-child { border-right: 0; }
+
+    .state-unit strong {
+      display: block;
+      margin-top: 6px;
+      font: 700 12px/1.2 var(--mono);
+    }
+
+    .state-unit span {
+      display: block;
+      margin-top: 4px;
+      color: var(--ink-faint);
+      font-size: 10px;
+    }
+
+    .detail-body { padding: 16px 18px 22px; }
+
+    .section-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 10px;
+    }
+
+    .section-row h3 {
+      margin: 0;
+      font-size: 13px;
+      letter-spacing: -0.01em;
+    }
+
+    .table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--paper-strong);
+    }
+
+    .table th {
+      height: 34px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      background: #ebeae4;
+      color: var(--ink-faint);
+      font: 650 9px/1 var(--mono);
+      letter-spacing: 0.08em;
+      text-align: left;
+      text-transform: uppercase;
+    }
+
+    .table td {
+      height: 45px;
+      padding: 7px 10px;
+      border: 1px solid var(--line);
+      color: var(--ink-soft);
+      vertical-align: middle;
+    }
+
+    .table tbody tr:hover { background: #f1f1eb; }
+    .table strong { color: var(--ink); }
+    .mono { font-family: var(--mono); font-size: 10px; }
+
+    .freshness {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--good);
+      font: 10px/1 var(--mono);
+    }
+
+    .freshness.stale { color: var(--warn); }
+
+    .runbook-strip {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 14px;
+      align-items: center;
+      margin-top: 14px;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      background: #efeee8;
+    }
+
+    .runbook-icon {
+      width: 32px;
+      height: 32px;
+      display: grid;
+      place-items: center;
+      background: var(--ink);
+      color: var(--acid);
+    }
+
+    .runbook-strip strong { display: block; font-size: 12px; }
+    .runbook-strip span { color: var(--ink-faint); font-size: 10px; }
+
+    .subnav {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      margin-bottom: 18px;
+      border-bottom: 1px solid var(--line-strong);
+    }
+
+    .subnav button {
+      height: 39px;
+      padding: 0 15px;
+      border: 0;
+      border-bottom: 2px solid transparent;
+      background: transparent;
+      color: var(--ink-faint);
+      cursor: pointer;
+      font-weight: 600;
+    }
+
+    .subnav button:hover { color: var(--ink); }
+
+    .subnav button.is-active {
+      border-bottom-color: var(--ink);
+      color: var(--ink);
+    }
+
+    .observe-view { display: none; }
+    .observe-view.is-active { display: block; animation: page-enter 180ms ease-out both; }
+
+    .observe-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.55fr) minmax(300px, 0.75fr);
+      gap: 16px;
+    }
+
+    .telemetry-map {
+      min-height: 332px;
+      position: relative;
+      overflow: hidden;
+      padding: 20px;
+      background: var(--ink);
+      color: #ecf1ed;
+    }
+
+    .telemetry-map::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(255,255,255,.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.04) 1px, transparent 1px);
+      background-size: 32px 32px;
+    }
+
+    .map-head,
+    .attention-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: relative;
+      z-index: 1;
+    }
+
+    .map-head .micro-label { color: #91a098; }
+
+    .map-scale {
+      color: #8d9a93;
+      font: 9px/1 var(--mono);
+    }
+
+    .signal-rows {
+      display: grid;
+      gap: 18px;
+      margin-top: 35px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .signal-row {
+      display: grid;
+      grid-template-columns: 125px minmax(0, 1fr) 46px;
+      gap: 14px;
+      align-items: center;
+    }
+
+    .signal-row label { color: #c7d0ca; font-size: 11px; }
+
+    .signal-track {
+      height: 10px;
+      position: relative;
+      background: #34403b;
+      overflow: hidden;
+    }
+
+    .signal-fill {
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: var(--value);
+      background: var(--acid);
+      transform-origin: left;
+      animation: grow 700ms cubic-bezier(.2,.75,.25,1) both;
+    }
+
+    .signal-fill.warn { background: #e4ad52; }
+    .signal-fill.bad { background: #d96a58; }
+    .signal-fill.cyan { background: #67adb2; }
+
+    @keyframes grow { from { transform: scaleX(0); } }
+
+    .signal-row output {
+      text-align: right;
+      font: 700 11px/1 var(--mono);
+      color: #e8eee9;
+    }
+
+    .map-foot {
+      display: flex;
+      gap: 18px;
+      position: absolute;
+      inset: auto 20px 18px;
+      z-index: 1;
+      padding-top: 12px;
+      border-top: 1px solid #3c4943;
+      color: #91a098;
+      font: 9px/1 var(--mono);
+    }
+
+    .map-foot b { color: #dce5df; }
+
+    .attention-panel { background: var(--paper-strong); }
+
+    .attention-head {
+      height: 54px;
+      padding: 0 16px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .attention-list { padding: 7px; }
+
+    .attention-item {
+      display: grid;
+      grid-template-columns: 3px 1fr auto;
+      gap: 11px;
+      padding: 12px 9px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .attention-item:last-child { border-bottom: 0; }
+
+    .severity-bar { background: var(--warn); }
+    .severity-bar.bad { background: var(--bad); }
+    .severity-bar.info { background: var(--cyan); }
+
+    .attention-item strong { display: block; font-size: 11px; }
+    .attention-item span { display: block; margin-top: 3px; color: var(--ink-faint); font-size: 10px; }
+    .attention-time { font: 9px/1 var(--mono); color: var(--ink-faint); }
+
+    .lower-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-top: 16px;
+    }
+
+    .capacity-list,
+    .change-list { padding: 12px 14px 15px; }
+
+    .capacity-row {
+      display: grid;
+      grid-template-columns: 120px 1fr 42px;
+      gap: 10px;
+      align-items: center;
+      margin: 12px 0;
+    }
+
+    .capacity-row label { font-size: 11px; }
+
+    .mini-track { height: 6px; background: #dcddd6; }
+    .mini-track span { display: block; width: var(--value); height: 100%; background: var(--cyan); }
+    .capacity-row output { font: 10px/1 var(--mono); text-align: right; }
+
+    .change-item {
+      display: grid;
+      grid-template-columns: 74px 1fr auto;
+      gap: 12px;
+      align-items: center;
+      min-height: 45px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .change-item:last-child { border-bottom: 0; }
+    .change-item time { color: var(--ink-faint); font: 9px/1 var(--mono); }
+    .change-item strong { display: block; font-size: 11px; }
+    .change-item span { color: var(--ink-faint); font-size: 10px; }
+
+    .view-toolbar {
+      min-height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 12px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      background: var(--paper);
+    }
+
+    .view-toolbar .search-input { width: 230px; }
+
+    .segmented {
+      display: inline-flex;
+      padding: 2px;
+      border: 1px solid var(--line);
+      background: #e2e2db;
+    }
+
+    .segmented button {
+      height: 27px;
+      padding: 0 9px;
+      border: 0;
+      background: transparent;
+      color: var(--ink-faint);
+      cursor: pointer;
+    }
+
+    .segmented button.is-active {
+      background: var(--paper-strong);
+      color: var(--ink);
+      box-shadow: 1px 1px 0 rgba(24,32,30,.12);
+    }
+
+    .host-summary {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      margin-bottom: 12px;
+      border: 1px solid var(--line);
+      background: var(--paper-strong);
+    }
+
+    .host-summary > div {
+      padding: 12px 14px;
+      border-right: 1px solid var(--line);
+    }
+
+    .host-summary > div:last-child { border-right: 0; }
+    .host-summary strong { display: block; margin-top: 6px; font: 700 18px/1 var(--mono); }
+
+    .host-heatmap {
+      display: grid;
+      grid-template-columns: repeat(8, minmax(82px, 1fr));
+      gap: 7px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      background: #dedfd8;
+    }
+
+    .host-tile {
+      min-height: 76px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 8px;
+      border: 1px solid #b7beb6;
+      background: var(--paper-strong);
+      cursor: pointer;
+      text-align: left;
+      transition: transform 100ms ease, box-shadow 100ms ease;
+    }
+
+    .host-tile:hover {
+      transform: translateY(-2px);
+      box-shadow: 3px 3px 0 rgba(24,32,30,.11);
+    }
+
+    .host-tile.warn { border-top: 4px solid var(--warn); }
+    .host-tile.bad { border-top: 4px solid var(--bad); }
+    .host-tile.good { border-top: 4px solid var(--good); }
+    .host-tile.stale { border-top: 4px solid var(--quiet); }
+
+    .host-tile strong { font: 650 10px/1.2 var(--mono); }
+
+    .host-metrics {
+      display: flex;
+      justify-content: space-between;
+      gap: 4px;
+      color: var(--ink-soft);
+      font: 9px/1 var(--mono);
+    }
+
+    .host-table { display: none; }
+    .hosts-container.is-table .host-heatmap { display: none; }
+    .hosts-container.is-table .host-table { display: table; }
+
+    .workload-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(310px, .65fr);
+      gap: 16px;
+    }
+
+    .workload-list { padding: 7px; }
+
+    .workload-row {
+      display: grid;
+      grid-template-columns: minmax(170px, 1fr) 115px 90px 90px 80px;
+      gap: 12px;
+      align-items: center;
+      min-height: 54px;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .workload-row:last-child { border-bottom: 0; }
+    .workload-row strong { display: block; }
+    .workload-row small { color: var(--ink-faint); font: 9px/1.3 var(--mono); }
+
+    .sparkline {
+      height: 28px;
+      display: flex;
+      align-items: flex-end;
+      gap: 2px;
+    }
+
+    .sparkline i {
+      width: 4px;
+      height: var(--h);
+      display: block;
+      background: var(--cyan);
+      opacity: .8;
+    }
+
+    .metric-value { font: 700 12px/1 var(--mono); }
+
+    .definition-panel { padding: 15px; }
+
+    .definition-block {
+      padding: 14px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .definition-block:last-child { border-bottom: 0; }
+    .definition-block strong { display: block; margin: 6px 0 4px; }
+    .definition-block p { margin: 0; color: var(--ink-soft); font-size: 11px; }
+
+    .enrollment-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+    }
+
+    .enrollment-column {
+      min-height: 360px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      background: #e3e2dc;
+    }
+
+    .column-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 4px 3px 12px;
+      font-weight: 700;
+    }
+
+    .agent-card {
+      margin-bottom: 8px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      background: var(--paper-strong);
+    }
+
+    .agent-card-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .agent-card strong { font: 650 11px/1.2 var(--mono); }
+    .agent-card p { margin: 8px 0 10px; color: var(--ink-faint); font-size: 10px; }
+
+    .agent-meta {
+      display: flex;
+      justify-content: space-between;
+      padding-top: 9px;
+      border-top: 1px solid var(--line);
+      color: var(--ink-faint);
+      font: 9px/1 var(--mono);
+    }
+
+    .capacity-board {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .capacity-table-wrap { padding: 8px; }
+
+    .forecast {
+      position: relative;
+      min-height: 260px;
+      padding: 20px;
+      overflow: hidden;
+      background: var(--ink);
+      color: #edf1ed;
+    }
+
+    .forecast-grid {
+      height: 150px;
+      margin-top: 25px;
+      position: relative;
+      border-left: 1px solid #46534d;
+      border-bottom: 1px solid #46534d;
+      background: repeating-linear-gradient(to top, transparent 0 36px, #313d38 37px);
+    }
+
+    .forecast-line {
+      position: absolute;
+      inset: 15px 0 auto;
+      height: 100px;
+    }
+
+    .forecast-line svg { width: 100%; height: 100%; overflow: visible; }
+
+    .forecast-note {
+      position: absolute;
+      right: 18px;
+      top: 72px;
+      padding: 6px 8px;
+      border: 1px solid #6c786f;
+      background: #25302c;
+      color: #dbe6df;
+      font: 9px/1.4 var(--mono);
+    }
+
+    .alert-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.3fr) minmax(340px, .7fr);
+      min-height: 590px;
+      border: 1px solid var(--line-strong);
+      background: var(--paper);
+    }
+
+    .alert-inbox { border-right: 1px solid var(--line-strong); }
+
+    .alert-tabs {
+      display: flex;
+      gap: 14px;
+      padding: 0 14px;
+      border-bottom: 1px solid var(--line);
+      background: #ebeae4;
+    }
+
+    .alert-tabs button {
+      height: 39px;
+      border: 0;
+      border-bottom: 2px solid transparent;
+      background: transparent;
+      color: var(--ink-faint);
+      cursor: pointer;
+      font-weight: 600;
+    }
+
+    .alert-tabs button.is-active { border-bottom-color: var(--bad); color: var(--ink); }
+
+    .alert-row {
+      width: 100%;
+      display: grid;
+      grid-template-columns: 76px minmax(180px, 1.4fr) minmax(150px, 1fr) 80px 70px;
+      gap: 12px;
+      align-items: center;
+      min-height: 66px;
+      padding: 9px 13px;
+      border: 0;
+      border-bottom: 1px solid var(--line);
+      background: transparent;
+      color: var(--ink);
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .alert-row:hover { background: #f1f0ea; }
+    .alert-row.is-active { background: var(--paper-strong); box-shadow: inset 3px 0 0 var(--bad); }
+    .alert-row strong { display: block; font-size: 11px; }
+    .alert-row small { display: block; margin-top: 4px; color: var(--ink-faint); font: 9px/1.2 var(--mono); }
+
+    .alert-detail { background: var(--paper-strong); }
+
+    .alert-detail-hero {
+      padding: 20px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .alert-detail-hero h2 {
+      margin: 12px 0 7px;
+      font-size: 20px;
+      line-height: 1.25;
+    }
+
+    .alert-detail-hero p { margin: 0; color: var(--ink-soft); }
+
+    .alert-facts {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .alert-fact {
+      padding: 13px 16px;
+      border-right: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .alert-fact:nth-child(2n) { border-right: 0; }
+    .alert-fact:nth-last-child(-n+2) { border-bottom: 0; }
+    .alert-fact strong { display: block; margin-top: 5px; font: 700 11px/1.2 var(--mono); }
+
+    .event-timeline { padding: 17px 20px; }
+
+    .timeline-item {
+      position: relative;
+      padding: 0 0 18px 23px;
+      border-left: 1px solid var(--line-strong);
+    }
+
+    .timeline-item:last-child { padding-bottom: 0; border-left-color: transparent; }
+
+    .timeline-item::before {
+      content: "";
+      position: absolute;
+      left: -4px;
+      top: 1px;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--ink-faint);
+    }
+
+    .timeline-item.is-new::before { background: var(--bad); }
+    .timeline-item time { display: block; color: var(--ink-faint); font: 9px/1 var(--mono); }
+    .timeline-item strong { display: block; margin-top: 6px; font-size: 11px; }
+    .timeline-item p { margin: 3px 0 0; color: var(--ink-soft); font-size: 10px; }
+
+    .drawer-backdrop,
+    .command-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      visibility: hidden;
+      opacity: 0;
+      background: rgba(17, 24, 22, 0.45);
+      transition: opacity 160ms ease, visibility 160ms ease;
+    }
+
+    .drawer-backdrop.is-open,
+    .command-backdrop.is-open { visibility: visible; opacity: 1; }
+
+    .drawer {
+      position: absolute;
+      inset: 0 0 0 auto;
+      width: min(640px, 92vw);
+      display: flex;
+      flex-direction: column;
+      background: var(--paper);
+      border-left: 1px solid var(--ink);
+      box-shadow: var(--shadow);
+      transform: translateX(100%);
+      transition: transform 220ms cubic-bezier(.2,.75,.25,1);
+    }
+
+    .drawer-backdrop.is-open .drawer { transform: translateX(0); }
+
+    .drawer-header {
+      min-height: 74px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--line-strong);
+      background: var(--paper-strong);
+    }
+
+    .drawer-header h2 { margin: 3px 0 0; font-size: 18px; }
+
+    .icon-button {
+      width: 32px;
+      height: 32px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--line);
+      background: transparent;
+      cursor: pointer;
+    }
+
+    .drawer-body { padding: 17px; overflow: auto; }
+
+    .discovery-scope {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 15px;
+    }
+
+    .scope-card {
+      padding: 13px;
+      border: 1px solid var(--line);
+      background: var(--paper-strong);
+    }
+
+    .scope-card strong { display: block; margin-top: 5px; }
+
+    .candidate-row {
+      display: grid;
+      grid-template-columns: 1fr 90px 80px auto;
+      gap: 12px;
+      align-items: center;
+      min-height: 57px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-bottom: 0;
+      background: var(--paper-strong);
+    }
+
+    .candidate-row:last-child { border-bottom: 1px solid var(--line); }
+    .candidate-row strong { display: block; }
+    .candidate-row small { color: var(--ink-faint); font: 9px/1 var(--mono); }
+
+    .command-dialog {
+      width: min(600px, calc(100vw - 40px));
+      margin: 10vh auto 0;
+      border: 1px solid var(--line-strong);
+      background: var(--paper-strong);
+      box-shadow: var(--shadow);
+      transform: translateY(-10px);
+      transition: transform 160ms ease;
+    }
+
+    .command-backdrop.is-open .command-dialog { transform: translateY(0); }
+
+    .command-search {
+      width: 100%;
+      height: 56px;
+      padding: 0 18px;
+      border: 0;
+      border-bottom: 1px solid var(--line);
+      background: transparent;
+      font-size: 15px;
+    }
+
+    .command-list { padding: 7px; }
+
+    .command-item {
+      width: 100%;
+      height: 42px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 10px;
+      border: 0;
+      background: transparent;
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .command-item:hover { background: #ecebe5; }
+
+    .command-item small {
+      margin-left: auto;
+      color: var(--ink-faint);
+      font: 9px/1 var(--mono);
+    }
+
+    .toast {
+      position: fixed;
+      right: 24px;
+      bottom: 24px;
+      z-index: 80;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 280px;
+      padding: 12px 14px;
+      border: 1px solid #43504a;
+      background: var(--ink);
+      color: #eef2ee;
+      box-shadow: var(--shadow);
+      opacity: 0;
+      transform: translateY(12px);
+      pointer-events: none;
+      transition: opacity 160ms ease, transform 160ms ease;
+    }
+
+    .toast.is-visible { opacity: 1; transform: translateY(0); }
+
+    @media (max-width: 1280px) {
+      .status-ledger { grid-template-columns: 1.15fr repeat(4, 1fr); }
+      .ledger-cell { padding-inline: 12px; }
+      .host-heatmap { grid-template-columns: repeat(6, minmax(82px, 1fr)); }
+      .content { padding-inline: 24px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-service" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="7" cy="7" r="1"/><circle cx="7" cy="12" r="1"/><circle cx="7" cy="17" r="1"/></symbol>
+    <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l2-7 4 14 2-7h6"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2.8 19h18.4L12 3Z"/><path d="M12 9v4M12 16.5v.1"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-scan" viewBox="0 0 24 24"><path d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+    <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 5h5v5M19 5l-8 8"/><path d="M17 13v6H5V7h6"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6"/><rect x="14" y="4" width="6" height="6"/><rect x="4" y="14" width="6" height="6"/><rect x="14" y="14" width="6" height="6"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-agent" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M8 9h8M8 13h4M17 13h.1"/></symbol>
+    <symbol id="i-capacity" viewBox="0 0 24 24"><path d="M4 19V9M10 19V5M16 19v-7M22 19V3"/></symbol>
+  </svg>
+
+  <div class="app-shell">
+    <aside class="rail">
+      <div class="brand">
+        <div class="brand-mark">V</div>
+        <div class="brand-copy"><strong>VIRON</strong><span>Operations fabric</span></div>
+      </div>
+
+      <div class="rail-scope">
+        <div class="eyebrow">Current environment</div>
+        <strong><span class="live-dot"></span> production-cn</strong>
+      </div>
+
+      <nav class="rail-nav" aria-label="主导航">
+        <div class="rail-label">Operate</div>
+        <button class="nav-button is-active" data-page="services">
+          <svg class="icon"><use href="#i-service"/></svg>
+          <span>服务运行</span><span class="nav-count">12</span>
+        </button>
+        <button class="nav-button" data-page="observability">
+          <svg class="icon"><use href="#i-pulse"/></svg>
+          <span>可观测性</span><span class="nav-count">24</span>
+        </button>
+        <button class="nav-button" data-page="alerts">
+          <svg class="icon"><use href="#i-alert"/></svg>
+          <span>告警中心</span><span class="nav-count">4</span>
+        </button>
+
+        <div class="rail-label">Configure</div>
+        <button class="nav-button" data-toast="Web / TLS 仍保持独立模块">
+          <svg class="icon"><use href="#i-external"/></svg>
+          <span>Web / TLS</span>
+        </button>
+        <button class="nav-button" data-toast="原型未展开设置页面">
+          <svg class="icon"><use href="#i-more"/></svg>
+          <span>环境设置</span>
+        </button>
+      </nav>
+
+      <div class="rail-footer">
+        <div class="agent-health">
+          <div class="health-ring">83%</div>
+          <div><strong>采集覆盖率</strong><span>20 / 24 hosts online</span></div>
+        </div>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <div class="breadcrumb"><span>VIRON</span><span>/</span><strong id="breadcrumb-current">服务运行</strong></div>
+        <div class="topbar-actions">
+          <div class="sync-state"><span class="live-dot"></span><span>数据更新于 12 秒前</span></div>
+          <select class="environment-select" aria-label="环境">
+            <option>production-cn</option>
+            <option>staging</option>
+            <option>development</option>
+          </select>
+          <button class="command-button" id="open-command"><svg class="icon"><use href="#i-search"/></svg>快速前往 <span class="keycap">⌘ K</span></button>
+        </div>
+      </header>
+
+      <div class="content">
+        <section class="page is-active" data-page-content="services">
+          <div class="page-heading">
+            <div>
+              <div class="section-kicker">CONTROL PLANE / 01</div>
+              <h1>服务运行</h1>
+              <p>维护期望状态、部署实例和操作记录。这里只改变系统，不承载主机历史监控。</p>
+            </div>
+            <div class="heading-actions">
+              <button class="btn" data-toast="已打开服务登记流程"><svg class="icon"><use href="#i-plus"/></svg>登记服务</button>
+              <button class="btn btn-acid" id="open-discovery"><svg class="icon"><use href="#i-scan"/></svg>发现部署</button>
+            </div>
+          </div>
+
+          <div class="status-ledger">
+            <div class="ledger-intro">
+              <div class="eyebrow">Environment pulse</div>
+              <strong>运行稳定，2 个节点待处理</strong>
+              <span>控制面状态 · 不等同于监控健康度</span>
+            </div>
+            <div class="ledger-cell">
+              <div class="micro-label">服务</div>
+              <div class="ledger-value">12 <small>catalogued</small></div>
+              <span class="ledger-note">11 个已启用</span>
+            </div>
+            <div class="ledger-cell">
+              <div class="micro-label">部署实例</div>
+              <div class="ledger-value">28 <small>desired</small></div>
+              <span class="ledger-note"><span class="text-good">26 运行</span> · 2 异常</span>
+            </div>
+            <div class="ledger-cell">
+              <div class="micro-label">待发现</div>
+              <div class="ledger-value text-cyan">6 <small>candidates</small></div>
+              <span class="ledger-note">3 台主机有变更</span>
+            </div>
+            <div class="ledger-cell">
+              <div class="micro-label">最近操作</div>
+              <div class="ledger-value text-good">98% <small>success</small></div>
+              <span class="ledger-note">过去 24 小时 · 43 次</span>
+            </div>
+          </div>
+
+          <div class="service-layout">
+            <aside class="service-index">
+              <div class="panel-header">
+                <div><div class="panel-title">服务目录</div><div class="panel-subtitle">12 services / 28 deployments</div></div>
+                <button class="icon-button" data-toast="服务筛选已重置" aria-label="更多"><svg class="icon"><use href="#i-more"/></svg></button>
+              </div>
+              <div class="index-tools">
+                <input class="search-input" id="service-search" placeholder="搜索服务" />
+                <select class="filter-select" aria-label="服务状态"><option>全部</option><option>异常</option><option>运行中</option></select>
+              </div>
+              <div class="service-list" id="service-list">
+                <button class="service-row is-active" data-service="gateway">
+                  <span class="status-dot"></span><span><span class="service-name">API Gateway</span><span class="service-meta">systemd · 3 deployments</span></span><span class="service-score">3/3</span>
+                </button>
+                <button class="service-row" data-service="order">
+                  <span class="status-dot warn"></span><span><span class="service-name">Order Worker</span><span class="service-meta">docker · 4 deployments</span></span><span class="service-score text-warn">3/4</span>
+                </button>
+                <button class="service-row" data-service="mysql">
+                  <span class="status-dot"></span><span><span class="service-name">MySQL Primary</span><span class="service-meta">systemd · 2 deployments</span></span><span class="service-score">2/2</span>
+                </button>
+                <button class="service-row" data-service="redis">
+                  <span class="status-dot"></span><span><span class="service-name">Redis Cache</span><span class="service-meta">docker · 3 deployments</span></span><span class="service-score">3/3</span>
+                </button>
+                <button class="service-row" data-service="billing">
+                  <span class="status-dot bad"></span><span><span class="service-name">Billing Scheduler</span><span class="service-meta">systemd · 2 deployments</span></span><span class="service-score text-bad">1/2</span>
+                </button>
+                <button class="service-row" data-service="web">
+                  <span class="status-dot"></span><span><span class="service-name">Public Web</span><span class="service-meta">kubernetes · 6 deployments</span></span><span class="service-score">6/6</span>
+                </button>
+              </div>
+            </aside>
+
+            <section class="service-detail">
+              <div class="detail-hero">
+                <div>
+                  <div class="detail-title-line"><h2 id="service-title">API Gateway</h2><span class="badge good" id="service-health">运行正常</span></div>
+                  <div class="service-id" id="service-id">svc_api_gateway · owner/platform · criticality/P1</div>
+                </div>
+                <div class="inline-actions">
+                  <button class="btn btn-small" id="open-observe-service"><svg class="icon"><use href="#i-pulse"/></svg>在可观测性中查看</button>
+                  <button class="btn btn-small"><svg class="icon"><use href="#i-more"/></svg></button>
+                </div>
+              </div>
+
+              <div class="state-ribbon">
+                <div class="state-unit"><div class="micro-label">期望状态</div><strong id="desired-state">ENABLED · 3</strong><span>配置事实</span></div>
+                <div class="state-unit"><div class="micro-label">运行状态</div><strong class="text-good" id="runtime-state">3 RUNNING</strong><span>最近一次观测</span></div>
+                <div class="state-unit"><div class="micro-label">数据新鲜度</div><strong class="text-good" id="fresh-state">LIVE · 12s</strong><span>采集事实</span></div>
+                <div class="state-unit"><div class="micro-label">事件状态</div><strong id="incident-state">NO ACTIVE ALERT</strong><span>告警事实</span></div>
+              </div>
+
+              <div class="detail-body">
+                <div class="section-row">
+                  <h3>部署实例</h3>
+                  <div class="button-group">
+                    <button class="btn btn-small" data-toast="已打开批量操作选择器">批量操作</button>
+                    <button class="btn btn-small btn-primary" id="restart-service"><svg class="icon"><use href="#i-play"/></svg>滚动重启</button>
+                  </div>
+                </div>
+
+                <table class="table">
+                  <thead><tr><th>实例</th><th>目标主机</th><th>运行状态</th><th>数据状态</th><th>最近变更</th><th></th></tr></thead>
+                  <tbody id="deployment-body">
+                    <tr><td><strong>gateway-cn-01</strong><br><span class="mono">systemd/nginx.service</span></td><td><strong>prod-edge-01</strong><br><span class="mono">10.20.1.11</span></td><td><span class="badge good">running</span></td><td><span class="freshness"><span class="status-dot"></span>12s</span></td><td class="mono">3d ago · deploy</td><td><button class="btn btn-small btn-quiet">日志</button></td></tr>
+                    <tr><td><strong>gateway-cn-02</strong><br><span class="mono">systemd/nginx.service</span></td><td><strong>prod-edge-02</strong><br><span class="mono">10.20.1.12</span></td><td><span class="badge good">running</span></td><td><span class="freshness"><span class="status-dot"></span>18s</span></td><td class="mono">3d ago · deploy</td><td><button class="btn btn-small btn-quiet">SSH</button></td></tr>
+                    <tr><td><strong>gateway-cn-03</strong><br><span class="mono">docker/gateway</span></td><td><strong>prod-app-03</strong><br><span class="mono">10.20.2.23</span></td><td><span class="badge good">running</span></td><td><span class="freshness"><span class="status-dot"></span>26s</span></td><td class="mono">8h ago · config</td><td><button class="btn btn-small btn-quiet">详情</button></td></tr>
+                  </tbody>
+                </table>
+
+                <div class="runbook-strip">
+                  <div class="runbook-icon"><svg class="icon"><use href="#i-play"/></svg></div>
+                  <div><strong>Runbook · gateway-safe-restart</strong><span>并发 1 · 超时 8m · 失败自动停止 · 上次成功于昨天 20:41</span></div>
+                  <button class="btn btn-small" data-toast="已打开 Runbook 执行记录">查看记录</button>
+                </div>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section class="page" data-page-content="observability">
+          <div class="page-heading">
+            <div>
+              <div class="section-kicker">OBSERVABILITY / 02</div>
+              <h1>可观测性</h1>
+              <p>解释系统当前发生了什么。主机、工作负载和采集接入各自回答不同的问题。</p>
+            </div>
+            <div class="heading-actions">
+              <button class="btn" data-toast="大屏是总览的展示模式，不是独立数据域"><svg class="icon"><use href="#i-grid"/></svg>大屏模式</button>
+              <button class="btn" data-toast="已暂停自动刷新"><svg class="icon"><use href="#i-clock"/></svg>15 秒刷新</button>
+              <button class="btn btn-primary" data-observe-target="enrollment"><svg class="icon"><use href="#i-agent"/></svg>接入主机</button>
+            </div>
+          </div>
+
+          <nav class="subnav" aria-label="可观测性导航">
+            <button class="is-active" data-observe-view="overview">总览</button>
+            <button data-observe-view="hosts">主机</button>
+            <button data-observe-view="workloads">工作负载</button>
+            <button data-observe-view="enrollment">接入管理</button>
+            <button data-observe-view="capacity">容量</button>
+          </nav>
+
+          <div class="observe-view is-active" data-observe-content="overview">
+            <div class="status-ledger">
+              <div class="ledger-intro">
+                <div class="eyebrow">Observed reality</div>
+                <strong>20 台在线，2 个高优问题</strong>
+                <span>最近完整采集：30 秒前</span>
+              </div>
+              <div class="ledger-cell"><div class="micro-label">采集覆盖</div><div class="ledger-value">20/24</div><span class="ledger-note">2 未接入 · 2 离线</span></div>
+              <div class="ledger-cell"><div class="micro-label">数据新鲜</div><div class="ledger-value text-good">91%</div><span class="ledger-note">22 个目标 &lt; 90 秒</span></div>
+              <div class="ledger-cell"><div class="micro-label">工作负载</div><div class="ledger-value">26/28</div><span class="ledger-note">1 停止 · 1 状态未知</span></div>
+              <div class="ledger-cell"><div class="micro-label">活动告警</div><div class="ledger-value text-bad">4</div><span class="ledger-note">2 未确认 · 1 已静默</span></div>
+            </div>
+
+            <div class="observe-grid">
+              <section class="telemetry-map">
+                <div class="map-head"><div><div class="micro-label">Fleet signal distribution</div><strong>资源与可用性分布</strong></div><span class="map-scale">P50 / P95 / MAX</span></div>
+                <div class="signal-rows">
+                  <div class="signal-row"><label>主机在线率</label><div class="signal-track"><span class="signal-fill" style="--value:83%"></span></div><output>83%</output></div>
+                  <div class="signal-row"><label>CPU P95</label><div class="signal-track"><span class="signal-fill warn" style="--value:72%"></span></div><output>72%</output></div>
+                  <div class="signal-row"><label>内存 P95</label><div class="signal-track"><span class="signal-fill cyan" style="--value:64%"></span></div><output>64%</output></div>
+                  <div class="signal-row"><label>磁盘 MAX</label><div class="signal-track"><span class="signal-fill bad" style="--value:89%"></span></div><output>89%</output></div>
+                  <div class="signal-row"><label>工作负载运行率</label><div class="signal-track"><span class="signal-fill" style="--value:93%"></span></div><output>93%</output></div>
+                </div>
+                <div class="map-foot"><span><b>20</b> monitored</span><span><b>2</b> stale</span><span><b>2</b> offline</span><span><b>6</b> need agent update</span></div>
+              </section>
+
+              <section class="panel attention-panel">
+                <div class="attention-head"><div><div class="micro-label">Needs attention</div><strong>需要处理</strong></div><button class="btn btn-small btn-quiet" id="open-alert-center">全部告警</button></div>
+                <div class="attention-list">
+                  <div class="attention-item"><span class="severity-bar bad"></span><div><strong>prod-db-02 磁盘空间不足</strong><span>/data 已使用 89%，预计 4 天后耗尽</span></div><time class="attention-time">18m</time></div>
+                  <div class="attention-item"><span class="severity-bar bad"></span><div><strong>Billing Scheduler 已停止</strong><span>期望运行，systemd 状态 inactive</span></div><time class="attention-time">26m</time></div>
+                  <div class="attention-item"><span class="severity-bar"></span><div><strong>prod-app-07 数据陈旧</strong><span>最后采集于 8 分钟前</span></div><time class="attention-time">8m</time></div>
+                  <div class="attention-item"><span class="severity-bar info"></span><div><strong>6 个 Agent 可升级</strong><span>v0.4.1 → v0.5.0</span></div><time class="attention-time">2d</time></div>
+                </div>
+              </section>
+            </div>
+
+            <div class="lower-grid">
+              <section class="panel">
+                <div class="panel-header"><div><div class="panel-title">容量热点</div><div class="panel-subtitle">按使用率，而非绝对值排序</div></div><button class="btn btn-small btn-quiet" data-observe-target="capacity">查看容量</button></div>
+                <div class="capacity-list">
+                  <div class="capacity-row"><label>prod-db-02 /data</label><div class="mini-track"><span style="--value:89%"></span></div><output>89%</output></div>
+                  <div class="capacity-row"><label>prod-app-04 memory</label><div class="mini-track"><span style="--value:81%"></span></div><output>81%</output></div>
+                  <div class="capacity-row"><label>prod-edge-02 CPU</label><div class="mini-track"><span style="--value:76%"></span></div><output>76%</output></div>
+                  <div class="capacity-row"><label>prod-db-01 /backup</label><div class="mini-track"><span style="--value:73%"></span></div><output>73%</output></div>
+                </div>
+              </section>
+              <section class="panel">
+                <div class="panel-header"><div><div class="panel-title">最近状态变化</div><div class="panel-subtitle">运行事实流 · 非操作日志</div></div><button class="btn btn-small btn-quiet">筛选</button></div>
+                <div class="change-list">
+                  <div class="change-item"><time>14:22:18</time><div><strong>Billing Scheduler → stopped</strong><span>prod-worker-04 · systemd</span></div><span class="badge bad">alert</span></div>
+                  <div class="change-item"><time>14:16:02</time><div><strong>prod-app-07 → stale</strong><span>agent last_seen 超过阈值</span></div><span class="badge warn">stale</span></div>
+                  <div class="change-item"><time>13:58:41</time><div><strong>Order Worker → running</strong><span>prod-worker-02 · docker</span></div><span class="badge good">recovered</span></div>
+                </div>
+              </section>
+            </div>
+          </div>
+
+          <div class="observe-view" data-observe-content="hosts">
+            <div class="host-summary">
+              <div><div class="micro-label">在线</div><strong class="text-good">20</strong></div>
+              <div><div class="micro-label">数据陈旧</div><strong class="text-warn">2</strong></div>
+              <div><div class="micro-label">离线</div><strong class="text-bad">2</strong></div>
+              <div><div class="micro-label">未接入</div><strong>2</strong></div>
+              <div><div class="micro-label">需要升级</div><strong class="text-cyan">6</strong></div>
+            </div>
+            <div class="view-toolbar">
+              <div class="inline-actions"><input class="search-input" id="host-search" placeholder="按主机名或 IP 搜索" /><select class="filter-select"><option>所有状态</option><option>异常</option><option>离线</option></select><select class="filter-select"><option>所有标签</option><option>database</option><option>edge</option></select></div>
+              <div class="segmented" id="host-mode"><button class="is-active" data-mode="grid"><svg class="icon"><use href="#i-grid"/></svg></button><button data-mode="table"><svg class="icon"><use href="#i-list"/></svg></button></div>
+            </div>
+            <div class="hosts-container" id="hosts-container">
+              <div class="host-heatmap" id="host-heatmap">
+                <button class="host-tile good" data-host="prod-edge-01 10.20.1.11"><strong>prod-edge-01</strong><span class="host-metrics"><span>C 42</span><span>M 51</span><span>D 39</span></span></button>
+                <button class="host-tile good" data-host="prod-edge-02 10.20.1.12"><strong>prod-edge-02</strong><span class="host-metrics"><span>C 76</span><span>M 48</span><span>D 42</span></span></button>
+                <button class="host-tile good" data-host="prod-app-01 10.20.2.21"><strong>prod-app-01</strong><span class="host-metrics"><span>C 31</span><span>M 63</span><span>D 36</span></span></button>
+                <button class="host-tile good" data-host="prod-app-02 10.20.2.22"><strong>prod-app-02</strong><span class="host-metrics"><span>C 45</span><span>M 59</span><span>D 41</span></span></button>
+                <button class="host-tile good" data-host="prod-app-03 10.20.2.23"><strong>prod-app-03</strong><span class="host-metrics"><span>C 52</span><span>M 67</span><span>D 45</span></span></button>
+                <button class="host-tile warn" data-host="prod-app-04 10.20.2.24"><strong>prod-app-04</strong><span class="host-metrics"><span>C 62</span><span>M 81</span><span>D 49</span></span></button>
+                <button class="host-tile good" data-host="prod-app-05 10.20.2.25"><strong>prod-app-05</strong><span class="host-metrics"><span>C 38</span><span>M 57</span><span>D 41</span></span></button>
+                <button class="host-tile stale" data-host="prod-app-07 10.20.2.27"><strong>prod-app-07</strong><span class="host-metrics"><span>STALE</span><span>8m</span></span></button>
+                <button class="host-tile good" data-host="prod-worker-01 10.20.3.31"><strong>prod-worker-01</strong><span class="host-metrics"><span>C 33</span><span>M 44</span><span>D 28</span></span></button>
+                <button class="host-tile good" data-host="prod-worker-02 10.20.3.32"><strong>prod-worker-02</strong><span class="host-metrics"><span>C 48</span><span>M 52</span><span>D 32</span></span></button>
+                <button class="host-tile warn" data-host="prod-worker-04 10.20.3.34"><strong>prod-worker-04</strong><span class="host-metrics"><span>C 19</span><span>M 41</span><span>D 34</span></span></button>
+                <button class="host-tile good" data-host="prod-db-01 10.20.4.41"><strong>prod-db-01</strong><span class="host-metrics"><span>C 27</span><span>M 68</span><span>D 73</span></span></button>
+                <button class="host-tile bad" data-host="prod-db-02 10.20.4.42"><strong>prod-db-02</strong><span class="host-metrics"><span>C 35</span><span>M 72</span><span>D 89</span></span></button>
+                <button class="host-tile good" data-host="prod-cache-01 10.20.5.51"><strong>prod-cache-01</strong><span class="host-metrics"><span>C 22</span><span>M 62</span><span>D 18</span></span></button>
+                <button class="host-tile good" data-host="prod-cache-02 10.20.5.52"><strong>prod-cache-02</strong><span class="host-metrics"><span>C 24</span><span>M 64</span><span>D 19</span></span></button>
+                <button class="host-tile stale" data-host="prod-log-01 10.20.6.61"><strong>prod-log-01</strong><span class="host-metrics"><span>STALE</span><span>3m</span></span></button>
+              </div>
+              <table class="table host-table"><thead><tr><th>主机</th><th>IP</th><th>数据状态</th><th>CPU</th><th>内存</th><th>磁盘 MAX</th><th>Agent</th></tr></thead><tbody><tr><td><strong>prod-db-02</strong></td><td class="mono">10.20.4.42</td><td><span class="badge good">live</span></td><td>35%</td><td>72%</td><td class="text-bad"><strong>89%</strong></td><td class="mono">v0.5.0</td></tr><tr><td><strong>prod-app-04</strong></td><td class="mono">10.20.2.24</td><td><span class="badge good">live</span></td><td>62%</td><td class="text-warn"><strong>81%</strong></td><td>49%</td><td class="mono">v0.5.0</td></tr><tr><td><strong>prod-app-07</strong></td><td class="mono">10.20.2.27</td><td><span class="badge warn">stale · 8m</span></td><td>—</td><td>—</td><td>—</td><td class="mono">v0.4.1</td></tr></tbody></table>
+            </div>
+          </div>
+
+          <div class="observe-view" data-observe-content="workloads">
+            <div class="status-ledger">
+              <div class="ledger-intro"><div class="eyebrow">Workload reality</div><strong>26 / 28 部署正在运行</strong><span>资源来自部署进程 · 不是应用 APM</span></div>
+              <div class="ledger-cell"><div class="micro-label">运行</div><div class="ledger-value text-good">26</div><span class="ledger-note">92.8% of desired</span></div>
+              <div class="ledger-cell"><div class="micro-label">已停止</div><div class="ledger-value text-bad">1</div><span class="ledger-note">Billing Scheduler</span></div>
+              <div class="ledger-cell"><div class="micro-label">未知</div><div class="ledger-value text-warn">1</div><span class="ledger-note">源主机数据陈旧</span></div>
+              <div class="ledger-cell"><div class="micro-label">24h 重启</div><div class="ledger-value">7</div><span class="ledger-note">集中于 Order Worker</span></div>
+            </div>
+            <div class="workload-layout">
+              <section class="panel">
+                <div class="panel-header"><div><div class="panel-title">服务运行态</div><div class="panel-subtitle">部署健康、资源与重启次数</div></div><select class="filter-select"><option>按异常优先</option><option>按 CPU</option><option>按内存</option></select></div>
+                <div class="workload-list">
+                  <div class="workload-row"><div><strong>Billing Scheduler</strong><small>1 / 2 running · systemd</small></div><span class="badge bad">degraded</span><span class="metric-value">CPU 9%</span><span class="metric-value">MEM 420M</span><span class="text-bad mono">1 stopped</span></div>
+                  <div class="workload-row"><div><strong>Order Worker</strong><small>3 / 4 observed · docker</small></div><span class="badge warn">unknown</span><span class="metric-value">CPU 68%</span><span class="metric-value">MEM 1.8G</span><span class="text-warn mono">5 restarts</span></div>
+                  <div class="workload-row"><div><strong>API Gateway</strong><small>3 / 3 running · mixed</small></div><span class="badge good">healthy</span><span class="metric-value">CPU 42%</span><span class="metric-value">MEM 780M</span><div class="sparkline"><i style="--h:20%"></i><i style="--h:45%"></i><i style="--h:38%"></i><i style="--h:62%"></i><i style="--h:50%"></i><i style="--h:70%"></i><i style="--h:48%"></i></div></div>
+                  <div class="workload-row"><div><strong>Public Web</strong><small>6 / 6 running · kubernetes</small></div><span class="badge good">healthy</span><span class="metric-value">CPU 38%</span><span class="metric-value">MEM 2.1G</span><span class="mono">0 restarts</span></div>
+                  <div class="workload-row"><div><strong>MySQL Primary</strong><small>2 / 2 running · systemd</small></div><span class="badge good">healthy</span><span class="metric-value">CPU 31%</span><span class="metric-value">MEM 4.8G</span><span class="mono">0 restarts</span></div>
+                  <div class="workload-row"><div><strong>Redis Cache</strong><small>3 / 3 running · docker</small></div><span class="badge good">healthy</span><span class="metric-value">CPU 23%</span><span class="metric-value">MEM 3.2G</span><span class="mono">1 restart</span></div>
+                </div>
+              </section>
+              <aside class="panel definition-panel">
+                <div class="micro-label">Metric contract</div>
+                <div class="definition-block"><strong>CPU 与内存表示什么？</strong><p>来自服务部署进程的基础资源采样，按部署展示并提供服务总量，不包装成业务吞吐或延迟。</p></div>
+                <div class="definition-block"><strong>为什么不叫 APM？</strong><p>当前尚未采集请求量、错误率、P95 延迟和 Trace。接入 OTLP 后再启用 APM 导航。</p></div>
+                <div class="definition-block"><strong>前往操作</strong><p>这里用于解释状态。启动、停止、重启等动作统一返回“服务运行”执行。</p><button class="btn btn-small" data-page-target="services" style="margin-top:10px">前往服务运行</button></div>
+              </aside>
+            </div>
+          </div>
+
+          <div class="observe-view" data-observe-content="enrollment">
+            <div class="status-ledger">
+              <div class="ledger-intro"><div class="eyebrow">Collection plane</div><strong>主机接入与 Agent 生命周期</strong><span>它是采集组件，不是业务服务</span></div>
+              <div class="ledger-cell"><div class="micro-label">已接入</div><div class="ledger-value text-good">22</div><span class="ledger-note">20 在线 · 2 离线</span></div>
+              <div class="ledger-cell"><div class="micro-label">待接入</div><div class="ledger-value">2</div><span class="ledger-note">凭据已可用</span></div>
+              <div class="ledger-cell"><div class="micro-label">待升级</div><div class="ledger-value text-cyan">6</div><span class="ledger-note">目标版本 v0.5.0</span></div>
+              <div class="ledger-cell"><div class="micro-label">失败任务</div><div class="ledger-value text-bad">1</div><span class="ledger-note">SSH 权限不足</span></div>
+            </div>
+            <div class="view-toolbar"><div><strong>Agent 接入队列</strong><span class="panel-subtitle">安装、升级和连接问题在一个地方闭环</span></div><div class="inline-actions"><button class="btn" data-toast="正在重新探测 2 台主机">重新探测</button><button class="btn btn-primary" data-toast="已创建批量安装任务">批量安装</button></div></div>
+            <div class="enrollment-grid">
+              <section class="enrollment-column"><div class="column-title"><span>待接入</span><span class="badge">2</span></div><article class="agent-card"><div class="agent-card-head"><strong>prod-batch-01</strong><span class="badge info">ready</span></div><p>10.20.7.71 · SSH 凭据可用 · Linux amd64</p><button class="btn btn-small btn-primary" data-toast="已开始安装 prod-batch-01">安装 Agent</button><div class="agent-meta"><span>last probe 1m</span><span>port 22</span></div></article><article class="agent-card"><div class="agent-card-head"><strong>prod-batch-02</strong><span class="badge bad">blocked</span></div><p>10.20.7.72 · sudo 权限不足，需要更新凭据</p><button class="btn btn-small">修复凭据</button><div class="agent-meta"><span>last probe 4m</span><span>AUTH_FAILED</span></div></article></section>
+              <section class="enrollment-column"><div class="column-title"><span>待升级</span><span class="badge info">6</span></div><article class="agent-card"><div class="agent-card-head"><strong>prod-app-07</strong><span class="badge warn">stale</span></div><p>v0.4.1 → v0.5.0 · 数据同时陈旧，建议先检查连接</p><button class="btn btn-small">查看连接</button><div class="agent-meta"><span>last seen 8m</span><span>linux arm64</span></div></article><article class="agent-card"><div class="agent-card-head"><strong>prod-log-01</strong><span class="badge info">upgrade</span></div><p>v0.4.1 → v0.5.0 · 兼容直接滚动升级</p><button class="btn btn-small btn-primary" data-toast="已创建 Agent 升级任务">升级</button><div class="agent-meta"><span>last seen 3m</span><span>linux amd64</span></div></article></section>
+              <section class="enrollment-column"><div class="column-title"><span>最近完成</span><span class="badge good">12</span></div><article class="agent-card"><div class="agent-card-head"><strong>prod-edge-02</strong><span class="badge good">online</span></div><p>Agent v0.5.0 安装成功，首批数据已写入</p><button class="btn btn-small" data-observe-target="hosts">查看主机</button><div class="agent-meta"><span>completed 18m</span><span>32s duration</span></div></article><article class="agent-card"><div class="agent-card-head"><strong>prod-db-02</strong><span class="badge good">online</span></div><p>Agent v0.5.0 升级成功，配置与规则已同步</p><button class="btn btn-small" data-observe-target="hosts">查看主机</button><div class="agent-meta"><span>completed 2h</span><span>21s duration</span></div></article></section>
+            </div>
+          </div>
+
+          <div class="observe-view" data-observe-content="capacity">
+            <div class="capacity-board">
+              <section class="panel"><div class="panel-header"><div><div class="panel-title">容量 Top N</div><div class="panel-subtitle">统一按占用率比较，保留绝对值</div></div><select class="filter-select"><option>磁盘</option><option>内存</option><option>CPU</option></select></div><div class="capacity-table-wrap"><table class="table"><thead><tr><th>资源</th><th>使用率</th><th>已用 / 总量</th><th>趋势</th></tr></thead><tbody><tr><td><strong>prod-db-02 /data</strong></td><td class="text-bad"><strong>89%</strong></td><td class="mono">1.78T / 2.00T</td><td class="text-bad">+3.2% / 7d</td></tr><tr><td><strong>prod-db-01 /backup</strong></td><td class="text-warn"><strong>73%</strong></td><td class="mono">5.84T / 8.00T</td><td>+1.1% / 7d</td></tr><tr><td><strong>prod-log-01 /var</strong></td><td><strong>68%</strong></td><td class="mono">348G / 512G</td><td>+0.8% / 7d</td></tr></tbody></table></div></section>
+              <section class="forecast"><div class="micro-label" style="color:#91a098">Capacity forecast / prod-db-02</div><strong>磁盘耗尽预测</strong><div class="forecast-grid"><div class="forecast-line"><svg viewBox="0 0 500 100" preserveAspectRatio="none"><polyline points="0,90 80,81 160,68 240,58 320,42 400,24 500,4" fill="none" stroke="#c9dd57" stroke-width="3" vector-effect="non-scaling-stroke"/><line x1="0" y1="8" x2="500" y2="8" stroke="#d96a58" stroke-dasharray="5 5" vector-effect="non-scaling-stroke"/></svg></div></div><div class="forecast-note">预计 4 天后超过 95%<br>建议扩容 ≥ 480 GB</div></section>
+            </div>
+          </div>
+        </section>
+
+        <section class="page" data-page-content="alerts">
+          <div class="page-heading">
+            <div>
+              <div class="section-kicker">RESPONSE / 03</div>
+              <h1>告警中心</h1>
+              <p>从原始事件进入可处理的告警工作流。确认、静默、恢复各自有明确含义。</p>
+            </div>
+            <div class="heading-actions"><button class="btn" data-toast="已打开维护窗口设置">维护窗口</button><button class="btn btn-primary" data-toast="已打开告警规则">规则与通知</button></div>
+          </div>
+
+          <div class="status-ledger">
+            <div class="ledger-intro"><div class="eyebrow">Active response</div><strong>4 个活动告警，2 个未确认</strong><span>最近 24 小时自动恢复 7 个</span></div>
+            <div class="ledger-cell"><div class="micro-label">严重</div><div class="ledger-value text-bad">2</div><span class="ledger-note">均未确认</span></div>
+            <div class="ledger-cell"><div class="micro-label">主要</div><div class="ledger-value text-warn">1</div><span class="ledger-note">已确认</span></div>
+            <div class="ledger-cell"><div class="micro-label">已静默</div><div class="ledger-value">1</div><span class="ledger-note">维护窗口内</span></div>
+            <div class="ledger-cell"><div class="micro-label">噪声抑制</div><div class="ledger-value text-good">18</div><span class="ledger-note">聚合重复事件</span></div>
+          </div>
+
+          <div class="alert-layout">
+            <section class="alert-inbox">
+              <div class="alert-tabs"><button class="is-active">活动 4</button><button>已恢复 7</button><button>已静默 1</button><button>所有事件</button></div>
+              <div id="alert-list">
+                <button class="alert-row is-active" data-alert="disk"><span class="badge bad">CRITICAL</span><span><strong>磁盘空间不足</strong><small>prod-db-02 /data</small></span><span><strong>89% 已使用</strong><small>阈值 85% · 6 次重复</small></span><span class="badge bad">未确认</span><time class="mono">18m</time></button>
+                <button class="alert-row" data-alert="billing"><span class="badge bad">CRITICAL</span><span><strong>期望服务已停止</strong><small>Billing Scheduler</small></span><span><strong>1 / 2 running</strong><small>prod-worker-04</small></span><span class="badge bad">未确认</span><time class="mono">26m</time></button>
+                <button class="alert-row" data-alert="stale"><span class="badge warn">MAJOR</span><span><strong>采集数据陈旧</strong><small>prod-app-07</small></span><span><strong>last seen 8m</strong><small>阈值 5m</small></span><span class="badge good">已确认</span><time class="mono">8m</time></button>
+                <button class="alert-row" data-alert="tls"><span class="badge info">WARNING</span><span><strong>TLS 证书即将过期</strong><small>api.example.com</small></span><span><strong>剩余 12 天</strong><small>阈值 14 天</small></span><span class="badge">已静默</span><time class="mono">2h</time></button>
+              </div>
+            </section>
+            <aside class="alert-detail">
+              <div class="alert-detail-hero"><span class="badge bad" id="alert-severity">CRITICAL · 未确认</span><h2 id="alert-title">prod-db-02 磁盘空间不足</h2><p id="alert-description">/data 已使用 89%，按照最近 7 天增长趋势预计 4 天后超过 95%。</p><div class="inline-actions" style="margin-top:15px"><button class="btn btn-primary" id="ack-alert"><svg class="icon"><use href="#i-check"/></svg>确认告警</button><button class="btn" id="silence-alert"><svg class="icon"><use href="#i-clock"/></svg>静默</button><button class="btn btn-quiet"><svg class="icon"><use href="#i-more"/></svg></button></div></div>
+              <div class="alert-facts"><div class="alert-fact"><div class="micro-label">首次发生</div><strong id="alert-first">今天 14:04:21</strong></div><div class="alert-fact"><div class="micro-label">最近发生</div><strong id="alert-last">今天 14:22:02</strong></div><div class="alert-fact"><div class="micro-label">重复次数</div><strong id="alert-count">6 events merged</strong></div><div class="alert-fact"><div class="micro-label">责任范围</div><strong id="alert-owner">database / platform</strong></div></div>
+              <div class="event-timeline"><div class="section-row"><h3>事件时间线</h3><span class="badge">raw events</span></div><div id="alert-timeline"><div class="timeline-item is-new"><time>14:22:02 · value 89%</time><strong>条件持续满足</strong><p>连续 6 次观测超过 85%，峰值严重度保持 Critical。</p></div><div class="timeline-item"><time>14:12:17 · value 87%</time><strong>告警升级为 Critical</strong><p>超过第二级阈值 87%，通知升级策略已触发。</p></div><div class="timeline-item"><time>14:04:21 · value 85%</time><strong>告警打开</strong><p>规则 disk_usage_high 首次满足。</p></div></div></div>
+            </aside>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <div class="drawer-backdrop" id="discovery-drawer" role="dialog" aria-modal="true" aria-label="发现部署">
+    <section class="drawer">
+      <header class="drawer-header"><div><div class="section-kicker">DEPLOYMENT DISCOVERY</div><h2>发现未登记的部署实例</h2></div><button class="icon-button" id="close-discovery" aria-label="关闭"><svg class="icon"><use href="#i-close"/></svg></button></header>
+      <div class="drawer-body">
+        <div class="discovery-scope"><div class="scope-card"><div class="micro-label">扫描范围</div><strong>production-cn · 24 台主机</strong></div><div class="scope-card"><div class="micro-label">发现结果</div><strong>6 个候选 · 3 台主机</strong></div></div>
+        <div class="section-row"><h3>候选部署</h3><div class="inline-actions"><select class="filter-select"><option>所有 Provider</option><option>systemd</option><option>docker</option><option>kubernetes</option></select><button class="btn btn-small" data-toast="扫描任务已启动">重新扫描</button></div></div>
+        <div class="candidate-list">
+          <div class="candidate-row"><div><strong>payment-reconcile.service</strong><small>prod-worker-04 · systemd</small></div><span class="badge good">running</span><span class="mono">PID 4821</span><button class="btn btn-small btn-primary" data-toast="已登记 payment-reconcile">登记</button></div>
+          <div class="candidate-row"><div><strong>inventory-sync</strong><small>prod-worker-02 · docker</small></div><span class="badge good">running</span><span class="mono">CPU 12%</span><button class="btn btn-small btn-primary" data-toast="已登记 inventory-sync">登记</button></div>
+          <div class="candidate-row"><div><strong>legacy-exporter.service</strong><small>prod-app-03 · systemd</small></div><span class="badge warn">stopped</span><span class="mono">PID —</span><button class="btn btn-small">忽略</button></div>
+          <div class="candidate-row"><div><strong>cron-cleanup</strong><small>prod-batch-01 · docker</small></div><span class="badge good">running</span><span class="mono">CPU 1%</span><button class="btn btn-small btn-primary" data-toast="已登记 cron-cleanup">登记</button></div>
+        </div>
+        <div class="runbook-strip"><div class="runbook-icon"><svg class="icon"><use href="#i-agent"/></svg></div><div><strong>发现依赖主机采集</strong><span>没有安装 Agent 的主机不会出现在候选列表；请前往可观测性 → 接入管理。</span></div><button class="btn btn-small" id="drawer-enrollment">接入管理</button></div>
+      </div>
+    </section>
+  </div>
+
+  <div class="command-backdrop" id="command-dialog" role="dialog" aria-modal="true" aria-label="快速前往">
+    <div class="command-dialog">
+      <input class="command-search" id="command-search" placeholder="搜索页面、服务或主机…" />
+      <div class="command-list">
+        <button class="command-item" data-command-page="services"><svg class="icon"><use href="#i-service"/></svg>服务运行<small>CONTROL PLANE</small></button>
+        <button class="command-item" data-command-page="observability" data-command-view="hosts"><svg class="icon"><use href="#i-pulse"/></svg>可观测性 / 主机<small>24 HOSTS</small></button>
+        <button class="command-item" data-command-page="observability" data-command-view="enrollment"><svg class="icon"><use href="#i-agent"/></svg>可观测性 / 接入管理<small>2 TODO</small></button>
+        <button class="command-item" data-command-page="alerts"><svg class="icon"><use href="#i-alert"/></svg>告警中心<small>4 ACTIVE</small></button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"><span class="live-dot"></span><span id="toast-text">操作已完成</span></div>
+
+  <script>
+    const pageNames = { services: '服务运行', observability: '可观测性', alerts: '告警中心' };
+    const services = {
+      gateway: {
+        title: 'API Gateway', id: 'svc_api_gateway · owner/platform · criticality/P1', health: '运行正常', badge: 'good',
+        desired: 'ENABLED · 3', runtime: '3 RUNNING', runtimeClass: 'text-good', freshness: 'LIVE · 12s', incident: 'NO ACTIVE ALERT',
+        rows: [
+          ['gateway-cn-01','systemd/nginx.service','prod-edge-01','10.20.1.11','running','good','12s','3d ago · deploy','日志'],
+          ['gateway-cn-02','systemd/nginx.service','prod-edge-02','10.20.1.12','running','good','18s','3d ago · deploy','SSH'],
+          ['gateway-cn-03','docker/gateway','prod-app-03','10.20.2.23','running','good','26s','8h ago · config','详情']
+        ]
+      },
+      order: {
+        title: 'Order Worker', id: 'svc_order_worker · owner/commerce · criticality/P1', health: '部分异常', badge: 'warn',
+        desired: 'ENABLED · 4', runtime: '3 RUNNING · 1 UNKNOWN', runtimeClass: 'text-warn', freshness: 'STALE · 8m', incident: '1 ACTIVE ALERT',
+        rows: [
+          ['order-worker-01','docker/order-worker','prod-worker-01','10.20.3.31','running','good','21s','2d ago · deploy','日志'],
+          ['order-worker-02','docker/order-worker','prod-worker-02','10.20.3.32','running','good','16s','4h ago · restart','日志'],
+          ['order-worker-03','docker/order-worker','prod-app-07','10.20.2.27','unknown','warn','8m','unknown','详情']
+        ]
+      },
+      mysql: {
+        title: 'MySQL Primary', id: 'svc_mysql_primary · owner/data · criticality/P0', health: '运行正常', badge: 'good',
+        desired: 'ENABLED · 2', runtime: '2 RUNNING', runtimeClass: 'text-good', freshness: 'LIVE · 15s', incident: '1 RESOURCE ALERT',
+        rows: [
+          ['mysql-primary','systemd/mysqld.service','prod-db-01','10.20.4.41','running','good','14s','6d ago · config','SSH'],
+          ['mysql-replica','systemd/mysqld.service','prod-db-02','10.20.4.42','running','good','17s','6d ago · config','SSH']
+        ]
+      },
+      redis: {
+        title: 'Redis Cache', id: 'svc_redis_cache · owner/platform · criticality/P1', health: '运行正常', badge: 'good',
+        desired: 'ENABLED · 3', runtime: '3 RUNNING', runtimeClass: 'text-good', freshness: 'LIVE · 20s', incident: 'NO ACTIVE ALERT',
+        rows: [
+          ['redis-01','docker/redis','prod-cache-01','10.20.5.51','running','good','19s','4d ago · deploy','日志'],
+          ['redis-02','docker/redis','prod-cache-02','10.20.5.52','running','good','20s','4d ago · deploy','日志'],
+          ['redis-sentinel','docker/sentinel','prod-cache-02','10.20.5.52','running','good','20s','4d ago · deploy','详情']
+        ]
+      },
+      billing: {
+        title: 'Billing Scheduler', id: 'svc_billing_scheduler · owner/finance · criticality/P0', health: '需要处理', badge: 'bad',
+        desired: 'ENABLED · 2', runtime: '1 RUNNING · 1 STOPPED', runtimeClass: 'text-bad', freshness: 'LIVE · 22s', incident: '1 CRITICAL ALERT',
+        rows: [
+          ['billing-main','systemd/billing.service','prod-worker-03','10.20.3.33','running','good','18s','1d ago · deploy','日志'],
+          ['billing-fallback','systemd/billing.service','prod-worker-04','10.20.3.34','stopped','bad','22s','26m ago · stopped','修复']
+        ]
+      },
+      web: {
+        title: 'Public Web', id: 'svc_public_web · owner/growth · criticality/P1', health: '运行正常', badge: 'good',
+        desired: 'ENABLED · 6', runtime: '6 RUNNING', runtimeClass: 'text-good', freshness: 'LIVE · 18s', incident: 'NO ACTIVE ALERT',
+        rows: [
+          ['web-deployment','k8s/deployment/public-web','k8s-prod-01','cluster/prod','running','good','18s','5h ago · rollout','详情'],
+          ['web-ingress','k8s/ingress/public-web','k8s-prod-01','cluster/prod','running','good','18s','5h ago · config','日志']
+        ]
+      }
+    };
+
+    const alerts = {
+      disk: { severity: 'CRITICAL · 未确认', badge: 'bad', title: 'prod-db-02 磁盘空间不足', description: '/data 已使用 89%，按照最近 7 天增长趋势预计 4 天后超过 95%。', first: '今天 14:04:21', last: '今天 14:22:02', count: '6 events merged', owner: 'database / platform' },
+      billing: { severity: 'CRITICAL · 未确认', badge: 'bad', title: 'Billing Scheduler 期望服务已停止', description: 'prod-worker-04 上的 billing.service 为 inactive，但服务期望状态仍为 enabled。', first: '今天 13:56:04', last: '今天 14:20:31', count: '4 events merged', owner: 'finance / application' },
+      stale: { severity: 'MAJOR · 已确认', badge: 'warn', title: 'prod-app-07 采集数据陈旧', description: '最后一次成功采集发生在 8 分钟前，已超过环境阈值 5 分钟。', first: '今天 14:14:01', last: '今天 14:22:18', count: '2 events merged', owner: 'platform / collection' },
+      tls: { severity: 'WARNING · 已静默', badge: 'info', title: 'api.example.com TLS 证书即将过期', description: '证书将在 12 天后过期，当前处于发布维护窗口静默状态。', first: '今天 12:21:09', last: '今天 14:21:09', count: '1 event', owner: 'edge / security' }
+    };
+
+    const $ = (selector, root = document) => root.querySelector(selector);
+    const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+    let toastTimer;
+
+    function showToast(message) {
+      $('#toast-text').textContent = message;
+      $('#toast').classList.add('is-visible');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => $('#toast').classList.remove('is-visible'), 2200);
+    }
+
+    function showPage(page) {
+      $$('.nav-button[data-page]').forEach(button => button.classList.toggle('is-active', button.dataset.page === page));
+      $$('.page').forEach(section => section.classList.toggle('is-active', section.dataset.pageContent === page));
+      $('#breadcrumb-current').textContent = pageNames[page];
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function showObserveView(view) {
+      showPage('observability');
+      $$('[data-observe-view]').forEach(button => button.classList.toggle('is-active', button.dataset.observeView === view));
+      $$('[data-observe-content]').forEach(section => section.classList.toggle('is-active', section.dataset.observeContent === view));
+    }
+
+    $$('.nav-button[data-page]').forEach(button => button.addEventListener('click', () => showPage(button.dataset.page)));
+    $$('[data-page-target]').forEach(button => button.addEventListener('click', () => showPage(button.dataset.pageTarget)));
+    $$('[data-observe-view]').forEach(button => button.addEventListener('click', () => showObserveView(button.dataset.observeView)));
+    $$('[data-observe-target]').forEach(button => button.addEventListener('click', () => showObserveView(button.dataset.observeTarget)));
+    $$('[data-toast]').forEach(button => button.addEventListener('click', () => showToast(button.dataset.toast)));
+
+    function renderService(key) {
+      const service = services[key];
+      if (!service) return;
+      $$('.service-row').forEach(row => row.classList.toggle('is-active', row.dataset.service === key));
+      $('#service-title').textContent = service.title;
+      $('#service-id').textContent = service.id;
+      $('#service-health').textContent = service.health;
+      $('#service-health').className = `badge ${service.badge}`;
+      $('#desired-state').textContent = service.desired;
+      $('#runtime-state').textContent = service.runtime;
+      $('#runtime-state').className = service.runtimeClass;
+      $('#fresh-state').textContent = service.freshness;
+      $('#fresh-state').className = service.freshness.includes('STALE') ? 'text-warn' : 'text-good';
+      $('#incident-state').textContent = service.incident;
+      $('#incident-state').className = service.incident.includes('NO ACTIVE') ? '' : service.badge === 'bad' ? 'text-bad' : 'text-warn';
+      $('#deployment-body').innerHTML = service.rows.map(row => `
+        <tr>
+          <td><strong>${row[0]}</strong><br><span class="mono">${row[1]}</span></td>
+          <td><strong>${row[2]}</strong><br><span class="mono">${row[3]}</span></td>
+          <td><span class="badge ${row[5]}">${row[4]}</span></td>
+          <td><span class="freshness ${row[5] === 'warn' ? 'stale' : ''}"><span class="status-dot"></span>${row[6]}</span></td>
+          <td class="mono">${row[7]}</td>
+          <td><button class="btn btn-small btn-quiet">${row[8]}</button></td>
+        </tr>`).join('');
+    }
+
+    $$('.service-row').forEach(row => row.addEventListener('click', () => renderService(row.dataset.service)));
+    $('#service-search').addEventListener('input', event => {
+      const query = event.target.value.trim().toLowerCase();
+      $$('.service-row').forEach(row => { row.hidden = !row.textContent.toLowerCase().includes(query); });
+    });
+
+    $('#restart-service').addEventListener('click', () => showToast(`已创建 ${$('#service-title').textContent} 滚动重启任务`));
+    $('#open-observe-service').addEventListener('click', () => { showObserveView('workloads'); showToast(`已定位 ${$('#service-title').textContent} 的运行态`); });
+    $('#open-alert-center').addEventListener('click', () => showPage('alerts'));
+
+    $('#open-discovery').addEventListener('click', () => $('#discovery-drawer').classList.add('is-open'));
+    $('#close-discovery').addEventListener('click', () => $('#discovery-drawer').classList.remove('is-open'));
+    $('#discovery-drawer').addEventListener('click', event => { if (event.target === event.currentTarget) event.currentTarget.classList.remove('is-open'); });
+    $('#drawer-enrollment').addEventListener('click', () => { $('#discovery-drawer').classList.remove('is-open'); showObserveView('enrollment'); });
+
+    $$('#host-mode button').forEach(button => button.addEventListener('click', () => {
+      $$('#host-mode button').forEach(item => item.classList.toggle('is-active', item === button));
+      $('#hosts-container').classList.toggle('is-table', button.dataset.mode === 'table');
+    }));
+
+    $('#host-search').addEventListener('input', event => {
+      const query = event.target.value.trim().toLowerCase();
+      $$('.host-tile').forEach(tile => { tile.hidden = !tile.dataset.host.toLowerCase().includes(query); });
+    });
+    $$('.host-tile').forEach(tile => tile.addEventListener('click', () => showToast(`${$('strong', tile).textContent}：主机详情应在此处打开，不跳入服务运行`)));
+
+    function renderAlert(key) {
+      const alert = alerts[key];
+      if (!alert) return;
+      $$('.alert-row').forEach(row => row.classList.toggle('is-active', row.dataset.alert === key));
+      $('#alert-severity').textContent = alert.severity;
+      $('#alert-severity').className = `badge ${alert.badge}`;
+      $('#alert-title').textContent = alert.title;
+      $('#alert-description').textContent = alert.description;
+      $('#alert-first').textContent = alert.first;
+      $('#alert-last').textContent = alert.last;
+      $('#alert-count').textContent = alert.count;
+      $('#alert-owner').textContent = alert.owner;
+      $('#ack-alert').disabled = alert.severity.includes('已确认');
+      $('#ack-alert').textContent = alert.severity.includes('已确认') ? '已确认' : '确认告警';
+    }
+
+    $$('.alert-row').forEach(row => row.addEventListener('click', () => renderAlert(row.dataset.alert)));
+    $('#ack-alert').addEventListener('click', event => { event.currentTarget.disabled = true; event.currentTarget.textContent = '已确认'; $('#alert-severity').textContent = $('#alert-severity').textContent.replace('未确认', '已确认'); showToast('告警已确认，原始事件仍会继续聚合'); });
+    $('#silence-alert').addEventListener('click', () => showToast('已打开静默时长与范围设置'));
+
+    const commandDialog = $('#command-dialog');
+    function openCommand() { commandDialog.classList.add('is-open'); setTimeout(() => $('#command-search').focus(), 80); }
+    function closeCommand() { commandDialog.classList.remove('is-open'); $('#command-search').value = ''; $$('.command-item').forEach(item => { item.hidden = false; }); }
+    $('#open-command').addEventListener('click', openCommand);
+    commandDialog.addEventListener('click', event => { if (event.target === event.currentTarget) closeCommand(); });
+    $('#command-search').addEventListener('input', event => { const query = event.target.value.toLowerCase(); $$('.command-item').forEach(item => { item.hidden = !item.textContent.toLowerCase().includes(query); }); });
+    $$('.command-item').forEach(item => item.addEventListener('click', () => { item.dataset.commandView ? showObserveView(item.dataset.commandView) : showPage(item.dataset.commandPage); closeCommand(); }));
+    document.addEventListener('keydown', event => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); openCommand(); }
+      if (event.key === 'Escape') { closeCommand(); $('#discovery-drawer').classList.remove('is-open'); }
+    });
+  </script>
+</body>
+</html>
