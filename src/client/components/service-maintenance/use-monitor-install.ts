@@ -184,6 +184,17 @@ export function useMonitorInstall(ctx: MaintenanceContext, props: Readonly<Maint
       }
   }
 
+  function dangerConfirmOptions(confirmButtonText: string) {
+      return {
+          confirmButtonText,
+          cancelButtonText: tr("取消"),
+          type: "warning" as const,
+          closeOnClickModal: false,
+          closeOnPressEscape: true,
+          distinguishCancelAndClose: true,
+      };
+  }
+
   async function installMonitorOnHost(host: MonitorHost, intent: "auto" | "reinstall" = "auto") {
       const next = new Set(installingHosts.value);
       next.add(host.sshConnectionId);
@@ -213,26 +224,15 @@ export function useMonitorInstall(ctx: MaintenanceContext, props: Readonly<Maint
               const reinstalling = intent === "reinstall";
               const upgrading = !reinstalling && preflight.pathState === "upgrade";
               const privilege = preflight.privilege === "root" ? "root" : tr("免密 sudo");
-              const confirmBody = reinstalling
-                  ? tr("目标主机：{{0}}\n安装目录：{{1}}\n安装版本：{{2}} · {{3}}\n执行权限：{{4}}\n\n确认后将重新上传当前版本安装包、覆盖 systemd 单元并重启 viron-monitor。中心已入库的监控数据不会删除。", [
+              if (!reinstalling) {
+                  await ElMessageBox.confirm(tr("目标主机：{{0}}\n安装目录：{{1}}\n安装版本：{{2}} · {{3}}\n执行权限：{{4}}\n\n确认后将上传安装包、写入 systemd 单元并启动监控服务。", [
                       `${host.connectionName} (${host.host})`,
                       preflight.installPath,
                       preflight.packageVersion,
                       preflight.architecture ?? preflight.machineArchitecture,
                       privilege,
-                  ])
-                  : tr("目标主机：{{0}}\n安装目录：{{1}}\n安装版本：{{2}} · {{3}}\n执行权限：{{4}}\n\n确认后将上传安装包、写入 systemd 单元并启动监控服务。", [
-                      `${host.connectionName} (${host.host})`,
-                      preflight.installPath,
-                      preflight.packageVersion,
-                      preflight.architecture ?? preflight.machineArchitecture,
-                      privilege,
-                  ]);
-              await ElMessageBox.confirm(confirmBody, reinstalling ? tr("确认重装监控服务") : upgrading ? tr("确认更新监控服务") : tr("确认安装监控服务"), {
-                  confirmButtonText: reinstalling ? tr("重装并重启") : upgrading ? tr("更新并重启") : tr("安装并启动"),
-                  cancelButtonText: tr("取消"),
-                  type: "warning",
-              });
+                  ]), upgrading ? tr("确认更新监控服务") : tr("确认安装监控服务"), dangerConfirmOptions(upgrading ? tr("更新并重启") : tr("安装并启动")));
+              }
               const started = await api<{
                   item: MonitorInstallTask;
               }>(`/api/v1/environments/${props.environmentId}/monitor-hosts/${host.sshConnectionId}/install-tasks`, { method: "POST", body: JSON.stringify({ installPath: preflight.installPath }) });
@@ -259,13 +259,19 @@ export function useMonitorInstall(ctx: MaintenanceContext, props: Readonly<Maint
       }
   }
 
-  function reinstallMonitorOnHost(host: MonitorHost) {
+  async function reinstallMonitorOnHost(host: MonitorHost) {
+      try {
+          await ElMessageBox.confirm(tr("确定重装目标主机“{{0}}”上的 viron-monitor 吗？将重新上传安装包、覆盖 systemd 单元并重启。中心已入库的监控数据不会删除。", [host.connectionName || host.host]), tr("确认重装监控服务"), dangerConfirmOptions(tr("重装并重启")));
+      }
+      catch {
+          return;
+      }
       return installMonitorOnHost(host, "reinstall");
   }
 
   async function restartMonitorOnHost(host: MonitorHost) {
       try {
-          await ElMessageBox.confirm(tr("确定重启目标主机上的 viron-monitor 服务吗？正在进行的采集会被中断，随后可再次扫描并拉取。"), tr("确认重启监控服务"), { confirmButtonText: tr("重启"), cancelButtonText: tr("取消"), type: "warning" });
+          await ElMessageBox.confirm(tr("确定重启目标主机“{{0}}”上的 viron-monitor 服务吗？正在进行的采集会被中断，随后可再次扫描并拉取。", [host.connectionName || host.host]), tr("确认重启监控服务"), dangerConfirmOptions(tr("重启")));
       }
       catch {
           return;
@@ -296,7 +302,7 @@ export function useMonitorInstall(ctx: MaintenanceContext, props: Readonly<Maint
 
   async function clearMonitorData(host: MonitorHost) {
       try {
-          await ElMessageBox.confirm(tr("仅清理目标 SSH 主机上的 viron-monitor 本地缓冲，Viron 服务端已经入库的监控数据不会删除。确定继续吗？"), tr("清理节点监控数据"), { confirmButtonText: tr("清理本地缓冲"), cancelButtonText: tr("取消"), type: "warning" });
+          await ElMessageBox.confirm(tr("仅清理目标主机“{{0}}”上 viron-monitor 的本地缓冲，Viron 服务端已经入库的监控数据不会删除。确定继续吗？", [host.connectionName || host.host]), tr("清理节点监控数据"), dangerConfirmOptions(tr("清理本地缓冲")));
       }
       catch {
           return;
