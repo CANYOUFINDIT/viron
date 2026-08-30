@@ -35,24 +35,19 @@ describe("app shell navigation", () => {
 );`);
   });
 
-  it("expands the shared sidebar before opening the workspace switcher", () => {
-    expect(shell).toContain(`function expandSidebar() {
-  sidebarExpanded.value = true;
-}`);
-    expect(shell).toContain("function onWorkspaceSwitcherClick(event: MouseEvent)");
-    expect(shell).toContain("function openWorkspaceMenuAfterExpand()");
-    expect(shell).toContain("const wait = waitForSidebarExpand();");
-    expect(shell).toContain("expandSidebar();");
-    expect(shell).toContain("workspaceSwitcherDropdown.value?.handleOpen()");
-    expect(shell).toContain("if (workspaceMenuPending.value) return;");
-    expect(shell).toContain("event.stopImmediatePropagation()");
-    expect(shell).toContain('@click="onWorkspaceSwitcherClick"');
-    expect(shell).toContain('@keydown="onWorkspaceSwitcherKeydown"');
-    expect(shell).toContain('trigger="click"');
+  it("expands the collapsed sidebar after hovering for 1.5 seconds", () => {
+    expect(shell).toContain("const SIDEBAR_HOVER_EXPAND_MS = 1500;");
+    expect(shell).toContain("function onSidebarPointerEnter()");
+    expect(shell).toContain("function onSidebarPointerLeave()");
+    expect(shell).toContain("function scheduleHoverExpand()");
+    expect(shell).toContain("@pointerenter=\"onSidebarPointerEnter\"");
+    expect(shell).toContain("@pointerleave=\"onSidebarPointerLeave\"");
+    expect(shell).not.toContain("function onWorkspaceSwitcherClick");
+    expect(shell).not.toContain("openWorkspaceMenuAfterExpand");
     expect(shell).toContain('placement="right-start"');
     expect(shell).toContain(':popper-options="workspaceSwitcherPopperOptions"');
     expect(shell).toContain('{ name: "flip", enabled: false }');
-    expect(shell).toContain(':disabled="workspaceSwitching || !sidebarExpanded"');
+    expect(shell).toContain(':disabled="workspaceSwitching"');
   });
 
   it("uses the environment overview return context for the shared overview entry", () => {

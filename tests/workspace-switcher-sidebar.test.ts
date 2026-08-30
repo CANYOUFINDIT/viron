@@ -59,9 +59,16 @@ vi.mock("../src/client/session", () => ({
 import { i18nPlugin } from "../src/client/i18n";
 import AppShell from "../src/client/components/AppShell.vue";
 
-function mockMatchMedia(reducedMotion: boolean) {
+function mockMatchMedia({
+  reducedMotion = false,
+  narrow = false,
+  hoverNone = false,
+}: { reducedMotion?: boolean; narrow?: boolean; hoverNone?: boolean } = {}) {
   window.matchMedia = vi.fn((query: string) => ({
-    matches: query.includes("prefers-reduced-motion") ? reducedMotion : false,
+    matches: query.includes("prefers-reduced-motion") ? reducedMotion
+      : query.includes("max-width: 900px") ? narrow
+        : query.includes("(hover: none)") ? hoverNone
+          : false,
     media: query,
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
@@ -110,66 +117,71 @@ async function mountShell(handleOpen: ReturnType<typeof vi.fn>, handleClose: Ret
   });
 }
 
-describe("workspace switcher sidebar sequence", () => {
+describe("collapsed sidebar hover expand", () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
-  it("expands the collapsed sidebar before opening the workspace list", async () => {
-    mockMatchMedia(false);
-    const handleOpen = vi.fn();
-    const handleClose = vi.fn();
-    const wrapper = await mountShell(handleOpen, handleClose);
+  it("expands the collapsed sidebar after hovering for 1.5 seconds", async () => {
+    mockMatchMedia();
+    vi.useFakeTimers();
+    const wrapper = await mountShell(vi.fn(), vi.fn());
 
-    expect(wrapper.get(".app-frame").classes()).toContain("is-sidebar-expanded");
     await wrapper.get(".sidebar-toggle").trigger("click");
     expect(wrapper.get(".app-frame").classes()).not.toContain("is-sidebar-expanded");
 
-    await wrapper.get(".workspace-switcher__trigger").trigger("click");
+    await wrapper.get(".app-sidebar").trigger("pointerenter");
+    await vi.advanceTimersByTimeAsync(1499);
+    expect(wrapper.get(".app-frame").classes()).not.toContain("is-sidebar-expanded");
+
+    await vi.advanceTimersByTimeAsync(1);
+    await flushPromises();
     expect(wrapper.get(".app-frame").classes()).toContain("is-sidebar-expanded");
+    wrapper.unmount();
+  });
+
+  it("does not expand if the pointer leaves before 1.5 seconds", async () => {
+    mockMatchMedia();
+    vi.useFakeTimers();
+    const wrapper = await mountShell(vi.fn(), vi.fn());
+
+    await wrapper.get(".sidebar-toggle").trigger("click");
+    await wrapper.get(".app-sidebar").trigger("pointerenter");
+    await vi.advanceTimersByTimeAsync(1000);
+    await wrapper.get(".app-sidebar").trigger("pointerleave");
+    await vi.advanceTimersByTimeAsync(1000);
+    await flushPromises();
+    expect(wrapper.get(".app-frame").classes()).not.toContain("is-sidebar-expanded");
+    wrapper.unmount();
+  });
+
+  it("does not expand the sidebar when clicking the workspace switcher", async () => {
+    mockMatchMedia();
+    const wrapper = await mountShell(vi.fn(), vi.fn());
+
+    await wrapper.get(".sidebar-toggle").trigger("click");
+    expect(wrapper.get(".app-frame").classes()).not.toContain("is-sidebar-expanded");
+    await wrapper.get(".workspace-switcher__trigger").trigger("click");
+    await flushPromises();
+    expect(wrapper.get(".app-frame").classes()).not.toContain("is-sidebar-expanded");
     expect(wrapper.getComponent({ name: "ElDropdown" }).props("placement")).toBe("right-start");
     expect(wrapper.getComponent({ name: "ElDropdown" }).props("popperOptions").modifiers).toEqual(
       expect.arrayContaining([{ name: "flip", enabled: false }]),
     );
-    expect(handleOpen).not.toHaveBeenCalled();
-
-    wrapper.get(".app-sidebar__panel").element.dispatchEvent(new Event("transitionend"));
-    await flushPromises();
-    expect(handleOpen).not.toHaveBeenCalled();
-
-    const clipPathEnd = new Event("transitionend");
-    Object.defineProperty(clipPathEnd, "propertyName", { value: "clip-path" });
-    wrapper.get(".app-sidebar__panel").element.dispatchEvent(clipPathEnd);
-    await flushPromises();
-    expect(handleOpen).toHaveBeenCalledTimes(1);
     wrapper.unmount();
   });
 
-  it("does not programmatically open the list when the sidebar is already expanded", async () => {
-    mockMatchMedia(false);
-    const handleOpen = vi.fn();
-    const handleClose = vi.fn();
-    const wrapper = await mountShell(handleOpen, handleClose);
+  it("does not hover-expand on narrow viewports", async () => {
+    mockMatchMedia({ narrow: true });
+    vi.useFakeTimers();
+    const wrapper = await mountShell(vi.fn(), vi.fn());
 
-    expect(wrapper.get(".app-frame").classes()).toContain("is-sidebar-expanded");
-    await wrapper.get(".workspace-switcher__trigger").trigger("click");
-    await flushPromises();
-    expect(handleOpen).not.toHaveBeenCalled();
-    wrapper.unmount();
-  });
-
-  it("opens the workspace list after expanding when motion is reduced", async () => {
-    mockMatchMedia(true);
-    const handleOpen = vi.fn();
-    const handleClose = vi.fn();
-    const wrapper = await mountShell(handleOpen, handleClose);
-
-    await wrapper.get(".sidebar-toggle").trigger("click");
     expect(wrapper.get(".app-frame").classes()).not.toContain("is-sidebar-expanded");
-    await wrapper.get(".workspace-switcher__trigger").trigger("click");
-    expect(wrapper.get(".app-frame").classes()).toContain("is-sidebar-expanded");
+    await wrapper.get(".app-sidebar").trigger("pointerenter");
+    await vi.advanceTimersByTimeAsync(1600);
     await flushPromises();
-    expect(handleOpen).toHaveBeenCalledTimes(1);
+    expect(wrapper.get(".app-frame").classes()).not.toContain("is-sidebar-expanded");
     wrapper.unmount();
   });
 });

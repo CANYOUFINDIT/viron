@@ -22,7 +22,7 @@ import {
   Users,
 } from "@lucide/vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { computed, nextTick, onBeforeUnmount, onMounted, provide, readonly, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, provide, readonly, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { isDesktopApp } from "../desktop";
 import { initializeAppShortcuts, onAppShortcut, shortcutActionFromKeyboardEvent } from "../keyboard-shortcuts";
@@ -49,9 +49,8 @@ const immersive = ref(sessionStorage.getItem("envman-immersive-mode") === "1");
 const sidebarExpanded = ref(!window.matchMedia("(max-width: 900px)").matches);
 const workspaceSwitching = ref(false);
 const rememberedEnvironmentId = ref<string | null>(null);
-const sidebarPanel = ref<HTMLElement | null>(null);
 const workspaceSwitcherDropdown = ref<{ handleOpen: () => void; handleClose: () => void } | null>(null);
-const WORKSPACE_MENU_TRIGGER_KEYS = new Set(["Enter", "NumpadEnter", "Space", "ArrowDown"]);
+const SIDEBAR_HOVER_EXPAND_MS = 1500;
 const workspaceSwitcherPopperOptions = {
   strategy: "fixed" as const,
   modifiers: [
@@ -59,8 +58,7 @@ const workspaceSwitcherPopperOptions = {
     { name: "preventOverflow", options: { altAxis: false, boundary: "viewport" } },
   ],
 };
-let workspaceMenuToken = 0;
-const workspaceMenuPending = ref(false);
+let sidebarHoverExpandTimer: number | undefined;
 let connectionPollTimer: number | undefined;
 let connectionLimitDialogOpen = false;
 let removeShortcutListener: (() => void) | undefined;
@@ -174,73 +172,40 @@ function setImmersive(value: boolean) {
 provide(immersiveModeKey, { active: readonly(immersive), setActive: setImmersive });
 
 function toggleSidebar() {
+  cancelHoverExpand();
   sidebarExpanded.value = !sidebarExpanded.value;
 }
 
 function expandSidebar() {
+  cancelHoverExpand();
   sidebarExpanded.value = true;
 }
 
-function cancelPendingWorkspaceMenu() {
-  workspaceMenuToken += 1;
-  workspaceMenuPending.value = false;
+function canHoverExpandSidebar() {
+  return !window.matchMedia("(max-width: 900px)").matches && !window.matchMedia("(hover: none)").matches;
 }
 
-function waitForSidebarExpand() {
-  const panel = sidebarPanel.value;
-  if (!panel) return Promise.resolve();
-  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return Promise.resolve();
-  return new Promise<void>((resolve) => {
-    let finished = false;
-    const finish = () => {
-      if (finished) return;
-      finished = true;
-      panel.removeEventListener("transitionend", onTransitionEnd);
-      window.clearTimeout(fallback);
-      resolve();
-    };
-    const onTransitionEnd = (event: TransitionEvent) => {
-      if (event.target !== panel || event.propertyName !== "clip-path") return;
-      finish();
-    };
-    panel.addEventListener("transitionend", onTransitionEnd);
-    const fallback = window.setTimeout(finish, 800);
-  });
+function cancelHoverExpand() {
+  if (sidebarHoverExpandTimer === undefined) return;
+  window.clearTimeout(sidebarHoverExpandTimer);
+  sidebarHoverExpandTimer = undefined;
 }
 
-async function openWorkspaceMenuAfterExpand() {
-  const token = ++workspaceMenuToken;
-  workspaceMenuPending.value = true;
-  const wait = waitForSidebarExpand();
-  expandSidebar();
-  try {
-    await wait;
-    await nextTick();
-    if (token !== workspaceMenuToken || !sidebarExpanded.value || workspaceSwitching.value) return;
-    workspaceSwitcherDropdown.value?.handleOpen();
-  } finally {
-    if (token === workspaceMenuToken) workspaceMenuPending.value = false;
-  }
+function scheduleHoverExpand() {
+  cancelHoverExpand();
+  if (sidebarExpanded.value || !canHoverExpandSidebar()) return;
+  sidebarHoverExpandTimer = window.setTimeout(() => {
+    sidebarHoverExpandTimer = undefined;
+    if (!sidebarExpanded.value && canHoverExpandSidebar()) expandSidebar();
+  }, SIDEBAR_HOVER_EXPAND_MS);
 }
 
-function shouldDeferWorkspaceMenu() {
-  return workspaceMenuPending.value || !sidebarExpanded.value;
+function onSidebarPointerEnter() {
+  scheduleHoverExpand();
 }
 
-function onWorkspaceSwitcherClick(event: MouseEvent) {
-  if (!shouldDeferWorkspaceMenu()) return;
-  event.preventDefault();
-  event.stopImmediatePropagation();
-  if (workspaceMenuPending.value) return;
-  void openWorkspaceMenuAfterExpand();
-}
-
-function onWorkspaceSwitcherKeydown(event: KeyboardEvent) {
-  if (!WORKSPACE_MENU_TRIGGER_KEYS.has(event.code) || !shouldDeferWorkspaceMenu()) return;
-  event.preventDefault();
-  event.stopImmediatePropagation();
-  if (workspaceMenuPending.value) return;
-  void openWorkspaceMenuAfterExpand();
+function onSidebarPointerLeave() {
+  cancelHoverExpand();
 }
 
 function handleGlobalKeydown(event: KeyboardEvent) {
@@ -276,8 +241,10 @@ function handleConnectionLimit(event: Event) {
 }
 
 watch(sidebarExpanded, (expanded) => {
-  if (expanded) return;
-  cancelPendingWorkspaceMenu();
+  if (expanded) {
+    cancelHoverExpand();
+    return;
+  }
   workspaceSwitcherDropdown.value?.handleClose();
 });
 
@@ -307,7 +274,7 @@ onMounted(() => {
   window.addEventListener("viron:connection-limit", handleConnectionLimit);
 });
 onBeforeUnmount(() => {
-  cancelPendingWorkspaceMenu();
+  cancelHoverExpand();
   removeShortcutListener?.();
   removeHistoryNavigation?.();
   removeVisitHistory?.();
@@ -319,13 +286,13 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="app-frame" :class="{ 'is-immersive': immersive, 'is-sidebar-expanded': sidebarExpanded, 'is-desktop': desktop, 'is-macos-desktop': macosDesktop }">
-    <aside class="app-sidebar" :aria-label="$t('应用导航')">
+    <aside class="app-sidebar" :aria-label="$t('应用导航')" @pointerenter="onSidebarPointerEnter" @pointerleave="onSidebarPointerLeave">
       <div class="sidebar-prelayers" aria-hidden="true">
         <span class="sidebar-prelayer sidebar-prelayer--back"></span>
         <span class="sidebar-prelayer sidebar-prelayer--front"></span>
       </div>
 
-      <div ref="sidebarPanel" class="app-sidebar__panel">
+      <div class="app-sidebar__panel">
         <button class="brand-lockup" type="button" :aria-label="$t('打开环境总览')" :title="$t('Viron 环境运维平台')" @click="activateMenuItem('overview')">
           <span class="brand-mark"><img :src="vironLogoUrl" alt="" /></span>
           <span class="brand-copy sidebar-label"><strong>Viron</strong><small>{{ $t('环境运维平台') }}</small></span>
@@ -338,7 +305,7 @@ onBeforeUnmount(() => {
             placement="right-start"
             :popper-options="workspaceSwitcherPopperOptions"
             popper-class="workspace-switcher-popper"
-            :disabled="workspaceSwitching || !sidebarExpanded"
+            :disabled="workspaceSwitching"
             @command="activateWorkspace"
           >
             <button
@@ -347,8 +314,6 @@ onBeforeUnmount(() => {
               :class="{ 'is-switching': workspaceSwitching }"
               :aria-label="$t('切换工作空间，当前为{0}', [session.workspace ? workspaceLabel(session.workspace) : $t('未选择')])"
               :title="sidebarExpanded ? undefined : session.workspace ? workspaceLabel(session.workspace) : $t('切换工作空间')"
-              @click="onWorkspaceSwitcherClick"
-              @keydown="onWorkspaceSwitcherKeydown"
             >
               <span class="workspace-switcher__icon">
                 <UserRound v-if="session.workspace?.type === 'personal'" :size="16" />
