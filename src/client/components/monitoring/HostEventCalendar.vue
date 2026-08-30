@@ -397,47 +397,45 @@ onBeforeUnmount(() => {
 <style scoped>
 .event-calendar {
   position: relative;
-  margin-top: 16px;
+  margin-top: 14px;
   border: 1px solid var(--ink-100);
-  border-radius: 12px;
+  border-radius: var(--radius-panel, 8px);
   background: var(--surface);
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.03), 0 6px 16px -2px rgba(15, 23, 42, 0.04);
+  box-shadow: var(--shadow-sm);
   overflow: hidden;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition: border-color var(--dur-short, .2s) var(--ease-out, ease);
 }
 
 .event-calendar:hover {
-  border-color: color-mix(in srgb, var(--ink-200) 80%, transparent);
+  border-color: var(--color-rule-strong, var(--ink-200));
 }
 
 .event-calendar__header {
-  min-height: 58px;
-  padding: 12px 18px;
+  min-height: 48px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--ink-100);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--surface) 96%, var(--ink-50)) 0%, var(--surface) 100%);
+  gap: 12px;
+  background: color-mix(in srgb, var(--ink-50) 30%, var(--surface));
 }
 
 .event-calendar__identity {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
 }
 
 .event-calendar__icon {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
   display: grid;
   place-items: center;
-  background: linear-gradient(135deg, var(--teal-50) 0%, color-mix(in srgb, var(--teal-100) 60%, var(--surface)) 100%);
+  background: var(--teal-50);
   color: var(--teal-600);
-  border: 1px solid color-mix(in srgb, var(--teal-200) 40%, transparent);
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.6);
   flex-shrink: 0;
 }
 
@@ -795,21 +793,21 @@ onBeforeUnmount(() => {
 
 /* 底部统计栏与图例 */
 .event-calendar__footer {
-  min-height: 42px;
-  padding: 8px 18px;
+  min-height: 38px;
+  padding: 6px 14px;
   border-top: 1px solid var(--ink-100);
-  background: color-mix(in srgb, var(--ink-50) 50%, var(--surface));
+  background: color-mix(in srgb, var(--ink-50) 30%, var(--surface));
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
   flex-wrap: wrap;
 }
 
 .event-calendar__totals {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
@@ -817,12 +815,12 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 8px;
-  border-radius: 6px;
+  padding: 2px 7px;
+  border-radius: 4px;
   background: var(--surface);
   border: 1px solid var(--ink-100);
   color: var(--ink-600);
-  font-size: 11px;
+  font-size: 10.5px;
   line-height: 1.2;
 }
 
@@ -830,7 +828,7 @@ onBeforeUnmount(() => {
   color: var(--ink-900);
   font-family: var(--font-mono);
   font-weight: 700;
-  font-size: 11.5px;
+  font-size: 11px;
 }
 
 .totals-pill.is-affected {

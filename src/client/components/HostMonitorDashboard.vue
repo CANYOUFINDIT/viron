@@ -92,8 +92,8 @@ const emptySummary: MonitorPerformanceSummary = {
   cpu: { ...emptyMetric }, memory: { ...emptyMetric }, loadPerCpu: { ...emptyMetric },
   diskThroughput: { ...emptyMetric }, networkThroughput: { ...emptyMetric }, pressure: { ...emptyMetric },
 };
-const processColors = ["#397ea8", "#d28a3a", "#6c8e58", "#9a66a8", "#c15f67"];
-const otherProcessColor = "#8a9699";
+const processColors = ["#168c78", "#3b76bb", "#d9822b", "#845ec2", "#c75468"];
+const otherProcessColor = "#7d8c93";
 
 const props = withDefaults(defineProps<{
   environmentId: string;
@@ -873,7 +873,7 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
   margin-top: 14px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
 }
 
 /* 工具栏 */
@@ -882,14 +882,14 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
 }
 
 .monitor-history__focus {
   padding: 2px;
   border: 1px solid var(--ink-100);
-  border-radius: 8px;
+  border-radius: var(--radius-control, 7px);
   display: flex;
   flex-wrap: wrap;
   gap: 2px;
@@ -900,11 +900,11 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
   height: 26px;
   padding: 0 8px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: 5px;
   background: transparent;
   color: var(--ink-600);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 650;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -919,15 +919,16 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
 .monitor-history__focus button.is-active {
   background: var(--surface);
   color: var(--teal-700);
-  border-color: var(--teal-200);
+  border-color: color-mix(in srgb, var(--teal-500) 25%, transparent);
   box-shadow: 0 1px 3px rgba(0, 0, 0, .05);
+  font-weight: 700;
 }
 
 .focus-pill-preview {
   font-family: var(--font-mono);
   font-size: 10px;
   padding: 1px 4px;
-  border-radius: 4px;
+  border-radius: 3px;
   background: var(--ink-100);
   color: var(--ink-600);
 }
@@ -947,7 +948,7 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
 .monitor-history__views {
   padding: 2px;
   border: 1px solid var(--ink-100);
-  border-radius: 7px;
+  border-radius: var(--radius-control, 7px);
   display: flex;
   gap: 2px;
   background: var(--ink-50);
@@ -956,13 +957,13 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
 .monitor-history__ranges button,
 .monitor-history__views button {
   height: 24px;
-  padding: 0 7px;
+  padding: 0 8px;
   border: 0;
   border-radius: 5px;
   background: transparent;
   color: var(--ink-500);
   font-size: 11px;
-  font-weight: 650;
+  font-weight: 600;
   cursor: pointer;
   transition: all .15s ease;
 }
@@ -976,6 +977,7 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
 .monitor-history__views button.is-active {
   background: var(--surface);
   color: var(--teal-700);
+  font-weight: 700;
   box-shadow: 0 1px 3px rgba(0, 0, 0, .05);
 }
 
@@ -983,7 +985,7 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
   width: 28px;
   height: 28px;
   border: 1px solid var(--ink-100);
-  border-radius: 7px;
+  border-radius: var(--radius-control, 7px);
   display: grid;
   place-items: center;
   background: var(--surface);
@@ -1007,7 +1009,7 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
   min-height: 80px;
   padding: 20px;
   border: 1px dashed var(--ink-200);
-  border-radius: 10px;
+  border-radius: var(--radius-panel, 8px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1038,36 +1040,36 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
 }
 
 .time-span-badge {
-  padding: 3px 8px;
-  border-radius: 6px;
+  padding: 2px 7px;
+  border-radius: 4px;
   background: var(--ink-50);
   color: var(--ink-600);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 10.5px;
 }
 
 .monitor-history__load-status {
-  padding: 2px 8px;
-  border-radius: 6px;
+  padding: 2px 7px;
+  border-radius: 4px;
   background: var(--teal-50);
   color: var(--teal-700);
-  font-size: 11px;
+  font-size: 10.5px;
   display: inline-flex;
   align-items: center;
   gap: 4px;
 }
 
 .gap-warning {
-  color: #d97706;
+  color: var(--amber-600);
   font-size: 11px;
 }
 
 /* 诊断信息面板 */
 .monitor-diagnostics {
-  padding: 14px;
+  padding: 12px 14px;
   border: 1px solid color-mix(in srgb, var(--amber-100) 80%, var(--ink-100));
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--amber-100) 25%, var(--surface));
+  border-radius: var(--radius-panel, 8px);
+  background: color-mix(in srgb, var(--amber-100) 20%, var(--surface));
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -1084,7 +1086,7 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
   display: flex;
   align-items: center;
   gap: 6px;
-  color: #d97706;
+  color: var(--amber-600);
 }
 
 .diagnostics-title strong {
@@ -1099,7 +1101,7 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
 
 .diagnostics-grid article {
   padding: 10px 12px;
-  border-radius: 8px;
+  border-radius: 6px;
   background: var(--surface);
   border: 1px solid var(--ink-100);
   display: flex;
@@ -1109,7 +1111,7 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
 
 .diagnostics-grid article.is-critical {
   border-color: color-mix(in srgb, var(--red-100) 80%, transparent);
-  background: color-mix(in srgb, var(--red-100) 20%, var(--surface));
+  background: color-mix(in srgb, var(--red-100) 15%, var(--surface));
 }
 
 .diagnostics-grid article header {
@@ -1123,11 +1125,11 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
   padding: 1px 5px;
   border-radius: 4px;
   font-size: 10px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .finding-severity.is-critical { background: var(--red-100); color: var(--red-600); }
-.finding-severity.is-warning { background: var(--amber-100); color: var(--amber-600); }
+.finding-severity.is-warning { background: var(--amber-100); color: var(--amber-700); }
 
 .diagnostics-grid article p {
   margin: 0;
@@ -1161,7 +1163,7 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
 .monitor-history__secondary,
 .monitor-chart-grid {
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .monitor-history__secondary,
@@ -1176,8 +1178,9 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
   flex-wrap: wrap;
   gap: 10px;
   padding: 8px 12px;
-  border-radius: 8px;
-  background: var(--ink-50);
+  border: 1px solid var(--ink-100);
+  border-radius: var(--radius-card, 8px);
+  background: color-mix(in srgb, var(--ink-50) 45%, var(--surface));
 }
 
 .monitor-history__stats {
@@ -1203,11 +1206,11 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
   margin: 0;
   font-family: var(--font-mono);
   font-size: 13px;
-  font-weight: 750;
+  font-weight: 700;
   color: var(--ink-950);
 }
 
-.stat-cell .is-up { color: #d97706; }
+.stat-cell .is-up { color: var(--amber-600); }
 .stat-cell .is-down { color: var(--teal-700); }
 
 .monitor-history__summary {
@@ -1232,7 +1235,7 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
 .summary-card-item {
   padding: 10px 12px;
   border: 1px solid var(--ink-100);
-  border-radius: 8px;
+  border-radius: var(--radius-card, 8px);
   background: var(--surface);
   display: flex;
   flex-direction: column;
@@ -1247,6 +1250,7 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
 .summary-card-val {
   font-family: var(--font-mono);
   font-size: 14px;
+  font-weight: 700;
   color: var(--ink-900);
 }
 
@@ -1257,14 +1261,14 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
 
 .monitor-history__more {
   width: fit-content;
-  height: 32px;
-  padding: 0 14px;
+  height: 30px;
+  padding: 0 12px;
   border: 1px solid var(--ink-100);
-  border-radius: 8px;
+  border-radius: var(--radius-control, 7px);
   background: var(--surface);
   color: var(--ink-700);
-  font-size: 12px;
-  font-weight: 700;
+  font-size: 11px;
+  font-weight: 650;
   cursor: pointer;
   transition: all .15s ease;
 }

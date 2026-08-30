@@ -292,8 +292,8 @@ function clearHover() {
 <template>
   <article class="monitor-chart-card" :class="[`is-${size}`, thresholdTone ? `is-${thresholdTone}` : '']">
     <header>
-      <component :is="icon" :size="16" class="monitor-chart-card__glyph" />
-      <div><strong>{{ title }}</strong><small v-if="subtitle">{{ subtitle }}</small></div>
+      <component :is="icon" :size="15" class="monitor-chart-card__glyph" />
+      <div class="monitor-chart-card__title-group"><strong>{{ title }}</strong><small v-if="subtitle">{{ subtitle }}</small></div>
       <div class="monitor-chart-card__legend" :aria-label="tr('图例')">
         <span v-for="item in series" :key="item.key"><i :style="{ background: item.color }"></i>{{ item.label }}</span>
       </div>
@@ -309,29 +309,20 @@ function clearHover() {
       >
         <defs>
           <linearGradient :id="gradientId" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" :stop-color="series[0]?.color" stop-opacity=".2" />
-            <stop offset="1" :stop-color="series[0]?.color" stop-opacity="0" />
+            <stop offset="0%" :stop-color="series[0]?.color" stop-opacity=".18" />
+            <stop offset="100%" :stop-color="series[0]?.color" stop-opacity="0.01" />
           </linearGradient>
         </defs>
         <g class="chart-grid">
           <template v-for="(tick, index) in yTicks" :key="index">
             <line :x1="plot.left" :x2="plot.left + plotWidth" :y1="plot.top + plotHeight * index / 4" :y2="plot.top + plotHeight * index / 4" />
-            <text :x="plot.left - 9" :y="plot.top + plotHeight * index / 4 + 4" text-anchor="end">{{ formatValue(tick) }}</text>
+            <text :x="plot.left - 9" :y="plot.top + plotHeight * index / 4 + 3.5" text-anchor="end">{{ formatValue(tick) }}</text>
           </template>
           <template v-for="index in xTickIndexes" :key="`x-${index}`">
             <line :x1="xFor(index)" :x2="xFor(index)" :y1="plot.top" :y2="plot.top + plotHeight" class="is-vertical" />
             <text :x="xFor(index)" :y="chartHeight - 11" :text-anchor="index === 0 ? 'start' : index === points.length - 1 ? 'end' : 'middle'">{{ formatTime(points[index]!.at) }}</text>
           </template>
         </g>
-        <rect
-          v-if="thresholdBand && thresholdTone !== 'ok'"
-          class="chart-threshold-band"
-          :class="`is-${thresholdTone}`"
-          :x="plot.left"
-          :y="plot.top"
-          :width="plotWidth"
-          :height="thresholdBand.height"
-        />
         <g v-if="annotations.length" class="chart-annotations">
           <rect
             v-for="annotation in annotations"
@@ -362,7 +353,7 @@ function clearHover() {
             :key="entry.item.key"
             :cx="xFor(hoveredIndex)"
             :cy="hoverY(entry.seriesIndex, hoveredIndex)"
-            r="4"
+            r="3.5"
             :fill="entry.item.color"
           />
         </g>
@@ -381,85 +372,219 @@ function clearHover() {
 <style scoped>
 .monitor-chart-card {
   min-width: 0;
-  border: 1px solid var(--color-rule);
-  border-radius: var(--radius-panel);
+  border: 1px solid var(--ink-100);
+  border-radius: var(--radius-card, 8px);
   overflow: hidden;
-  background: var(--color-paper);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--dur-short, .2s) var(--ease-out, ease);
 }
-.monitor-chart-card.is-warn { background: color-mix(in srgb, var(--color-warning-soft) 42%, var(--color-paper)); }
-.monitor-chart-card.is-critical { background: color-mix(in srgb, var(--color-danger-soft) 46%, var(--color-paper)); }
+
+.monitor-chart-card:hover {
+  border-color: var(--color-rule-strong, var(--ink-200));
+}
+
 .monitor-chart-card > header {
-  min-height: 2.75rem;
-  padding: var(--space-xs) var(--space-sm);
-  border-block-end: 1px solid var(--color-rule);
+  min-height: 2.5rem;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--ink-100);
   display: grid;
-  grid-template-columns: auto minmax(7rem, 1fr) auto;
+  grid-template-columns: auto minmax(6rem, 1fr) auto;
   align-items: center;
-  gap: var(--space-xs);
+  gap: 8px;
+  background: color-mix(in srgb, var(--ink-50) 30%, var(--surface));
 }
-.monitor-chart-card__glyph { color: var(--color-ink-soft); }
-.monitor-chart-card header > div:nth-child(2) { min-width: 0; display: grid; gap: 1px; }
-.monitor-chart-card header strong { font-size: var(--text-sm); font-weight: 700; }
-.monitor-chart-card header small { overflow: hidden; color: var(--color-muted); font-size: var(--text-2xs); text-overflow: ellipsis; white-space: nowrap; }
-.monitor-chart-card__legend { display: flex !important; justify-content: flex-end; flex-wrap: wrap; gap: 4px var(--space-sm) !important; }
-.monitor-chart-card__legend span { display: inline-flex; align-items: center; gap: 5px; color: var(--color-muted); font-size: var(--text-2xs); white-space: nowrap; }
+
+.monitor-chart-card__glyph {
+  color: var(--teal-600);
+  flex-shrink: 0;
+}
+
+.monitor-chart-card__title-group {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.monitor-chart-card header strong {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink-900);
+}
+
+.monitor-chart-card header small {
+  overflow: hidden;
+  color: var(--ink-400);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monitor-chart-card__legend {
+  display: flex !important;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 3px 10px !important;
+}
+
+.monitor-chart-card__legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ink-500);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
 .monitor-chart-card__legend i,
-.monitor-chart-tooltip i { width: 6px; height: 6px; border-radius: 50%; }
-.monitor-chart-card__plot { position: relative; min-height: 15rem; padding: var(--space-xs) var(--space-sm) var(--space-sm); }
-.monitor-chart-card.is-hero .monitor-chart-card__plot { min-height: 20.5rem; }
-.monitor-chart-card.is-compact .monitor-chart-card__plot { min-height: 10.5rem; }
-.monitor-chart-card__plot > svg { display: block; width: 100%; height: 15rem; overflow: visible; touch-action: pan-y; }
-.monitor-chart-card.is-hero .monitor-chart-card__plot > svg { height: 20.5rem; }
-.monitor-chart-card.is-compact .monitor-chart-card__plot > svg { height: 10.5rem; }
-.chart-threshold-band { pointer-events: none; }
-.chart-threshold-band.is-warn { fill: color-mix(in srgb, var(--color-warning) 10%, transparent); }
-.chart-threshold-band.is-critical { fill: color-mix(in srgb, var(--color-danger) 12%, transparent); }
-.chart-threshold line { stroke: var(--color-warning); stroke-width: 1.2; stroke-dasharray: 4 4; vector-effect: non-scaling-stroke; }
-.chart-threshold text { fill: var(--color-warning); font-family: var(--font-mono); font-size: 9px; }
-.chart-grid line { stroke: var(--color-rule); stroke-width: 1; vector-effect: non-scaling-stroke; }
-.chart-grid line.is-vertical { stroke-dasharray: 2 5; opacity: .55; }
-.chart-grid text { fill: var(--color-muted); font-family: var(--font-mono); font-size: 9px; }
+.monitor-chart-tooltip i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.monitor-chart-card__plot {
+  position: relative;
+  min-height: 14rem;
+  padding: 8px 12px 10px;
+}
+
+.monitor-chart-card.is-hero .monitor-chart-card__plot { min-height: 19rem; }
+.monitor-chart-card.is-compact .monitor-chart-card__plot { min-height: 10rem; }
+
+.monitor-chart-card__plot > svg {
+  display: block;
+  width: 100%;
+  height: 14rem;
+  overflow: visible;
+  touch-action: pan-y;
+}
+
+.monitor-chart-card.is-hero .monitor-chart-card__plot > svg { height: 19rem; }
+.monitor-chart-card.is-compact .monitor-chart-card__plot > svg { height: 10rem; }
+
+.chart-threshold line {
+  stroke: var(--amber-600);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+  opacity: .85;
+}
+
+.chart-threshold text {
+  fill: var(--amber-600);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+}
+
+.chart-grid line {
+  stroke: color-mix(in srgb, var(--ink-100) 85%, transparent);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.chart-grid line.is-vertical {
+  stroke-dasharray: 2 4;
+  opacity: .4;
+}
+
+.chart-grid text {
+  fill: var(--ink-400);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+}
+
 .chart-area { pointer-events: none; }
-.chart-stack-area { opacity: .72; pointer-events: none; }
-.chart-total-line { fill: none; stroke: var(--color-ink); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; pointer-events: none; }
-.chart-line { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; pointer-events: none; }
-.chart-annotations rect { opacity: .1; pointer-events: none; }
-.chart-annotations rect.is-warning { fill: var(--color-warning); }
-.chart-annotations rect.is-critical { fill: var(--color-danger); opacity: .14; }
-.chart-hover line { stroke: color-mix(in srgb, var(--color-ink) 38%, transparent); stroke-width: 1; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
-.chart-hover circle { stroke: var(--color-paper); stroke-width: 2; vector-effect: non-scaling-stroke; }
-.monitor-chart-tooltip {
-  position: absolute;
-  z-index: 2;
-  inset-block-start: var(--space-md);
-  inset-inline-start: var(--space-xl);
-  min-width: 10.5rem;
-  padding: var(--space-sm);
-  border: 1px solid var(--color-rule-strong);
-  border-radius: var(--radius-control);
-  display: grid;
-  gap: 5px;
-  background: color-mix(in srgb, var(--color-ink) 94%, transparent);
-  color: var(--color-sidebar-ink);
-  box-shadow: var(--shadow-dialog);
+.chart-stack-area {
+  opacity: .82;
   pointer-events: none;
 }
-.monitor-chart-tooltip.is-left { inset-inline: auto var(--space-md); }
-.monitor-chart-tooltip time { color: color-mix(in srgb, var(--color-sidebar-ink) 68%, transparent); font-family: var(--font-mono); font-size: 9px; }
-.monitor-chart-tooltip span { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 6px; font-size: var(--text-2xs); }
-.monitor-chart-tooltip i.is-total { border: 1px solid color-mix(in srgb, var(--color-sidebar-ink) 70%, transparent); background: transparent; }
-.monitor-chart-tooltip strong { font-family: var(--font-mono); font-size: var(--text-xs); }
-.monitor-chart-tooltip small { padding-block-start: 4px; border-block-start: 1px solid rgba(255, 255, 255, .12); color: var(--color-warning); font-size: 9px; }
-.monitor-chart-card__empty { min-height: 15rem; display: grid; place-items: center; color: var(--color-muted); font-size: var(--text-xs); }
-.monitor-chart-card.is-hero .monitor-chart-card__empty { min-height: 20.5rem; }
-.monitor-chart-card.is-compact .monitor-chart-card__empty { min-height: 10.5rem; }
+
+.chart-total-line {
+  fill: none;
+  stroke: var(--ink-950);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.chart-line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.chart-annotations rect {
+  opacity: .12;
+  pointer-events: none;
+}
+
+.chart-annotations rect.is-warning { fill: var(--amber-600); }
+.chart-annotations rect.is-critical { fill: var(--red-600); opacity: .16; }
+
+.chart-hover line {
+  stroke: color-mix(in srgb, var(--ink-500) 60%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.chart-hover circle {
+  stroke: var(--surface);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.monitor-chart-tooltip {
+  position: absolute;
+  z-index: 10;
+  inset-block-start: 10px;
+  inset-inline-start: 56px;
+  min-width: 10rem;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-control, 7px);
+  display: grid;
+  gap: 4px;
+  background: rgba(15, 23, 27, 0.94);
+  backdrop-filter: blur(8px);
+  color: #f1f5f9;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  pointer-events: none;
+}
+
+.monitor-chart-tooltip.is-left { inset-inline: auto 12px; }
+.monitor-chart-tooltip time { color: #94a3b8; font-family: var(--font-mono); font-size: 9.5px; }
+.monitor-chart-tooltip span { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 6px; font-size: 11px; }
+.monitor-chart-tooltip i.is-total { border: 1px solid rgba(255, 255, 255, 0.7); background: transparent; }
+.monitor-chart-tooltip strong { font-family: var(--font-mono); font-size: 11px; font-weight: 700; color: #ffffff; }
+.monitor-chart-tooltip small { padding-block-start: 3px; border-block-start: 1px solid rgba(255, 255, 255, .1); color: #fbbf24; font-size: 9.5px; }
+
+.monitor-chart-card__empty {
+  min-height: 14rem;
+  display: grid;
+  place-items: center;
+  color: var(--ink-400);
+  font-size: 12px;
+}
+
+.monitor-chart-card.is-hero .monitor-chart-card__empty { min-height: 19rem; }
+.monitor-chart-card.is-compact .monitor-chart-card__empty { min-height: 10rem; }
 
 @media (max-width: 720px) {
   .monitor-chart-card > header { grid-template-columns: auto minmax(0, 1fr); }
   .monitor-chart-card__legend { grid-column: 1 / -1; justify-content: flex-start; }
   .monitor-chart-card__plot > svg,
-  .monitor-chart-card.is-hero .monitor-chart-card__plot > svg { height: 13rem; }
+  .monitor-chart-card.is-hero .monitor-chart-card__plot > svg { height: 12rem; }
   .monitor-chart-card__plot,
-  .monitor-chart-card.is-hero .monitor-chart-card__plot { min-height: 13rem; padding-inline: var(--space-2xs); }
+  .monitor-chart-card.is-hero .monitor-chart-card__plot { min-height: 12rem; padding-inline: 6px; }
 }
 </style>
