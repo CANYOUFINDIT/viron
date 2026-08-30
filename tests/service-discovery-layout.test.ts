@@ -10,6 +10,7 @@ const maintenancePanel = [
   readFileSync(new URL("../src/client/components/service-maintenance/MaintenanceDeploymentCard.vue", import.meta.url), "utf8"),
   readFileSync(new URL("../src/client/components/service-maintenance/MaintenanceDiscoveryDrawer.vue", import.meta.url), "utf8"),
   readFileSync(new URL("../src/client/components/service-maintenance/MaintenanceBatchProgress.vue", import.meta.url), "utf8"),
+  readFileSync(new URL("../src/client/components/service-maintenance/use-monitor-install.ts", import.meta.url), "utf8"),
 ].join("\n");
 
 function styleRule(source: string, selector: string): string {
@@ -80,6 +81,11 @@ describe("service discovery layout", () => {
     expect(maintenancePanel).toContain("$t('一键升级')");
     expect(maintenancePanel).toContain("restartMonitorOnHost");
     expect(maintenancePanel).toContain("reinstallMonitorOnHost");
+    expect(maintenancePanel).toContain('@command="onMonitorHostCommand"');
+    expect(maintenancePanel).toContain('command="restart"');
+    expect(maintenancePanel).toContain('command="reinstall"');
+    expect(maintenancePanel).toContain('command="clear"');
+    expect(maintenancePanel).toContain("closeOnClickModal: false");
     expect(maintenancePanel).toContain("$t('扫描发现')");
     expect(maintenancePanel).toContain("$t('配置按钮')");
     expect(maintenancePanel).toContain("$t('直连 SSH')");
