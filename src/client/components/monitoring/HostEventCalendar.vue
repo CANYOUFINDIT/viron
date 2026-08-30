@@ -155,6 +155,37 @@ function isInteractiveDay(day: MonitorHostEventCalendarDay) {
   return !day.future && (day.activeEventCount > 0 || day.coverageRatio < 0.8);
 }
 
+// 零延迟即时悬浮提示（Instant Custom Tooltip）
+interface HoveredDayInfo {
+  day: MonitorHostEventCalendarDay;
+  x: number;
+  y: number;
+  placement: "top" | "bottom";
+}
+const hoveredDay = ref<HoveredDayInfo | null>(null);
+
+function handleCellMouseEnter(day: MonitorHostEventCalendarDay, event: MouseEvent | FocusEvent) {
+  const target = event.currentTarget as HTMLElement | null;
+  if (!target) return;
+  const rect = target.getBoundingClientRect();
+  const calendarEl = target.closest(".event-calendar") as HTMLElement | null;
+  const containerRect = calendarEl ? calendarEl.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth };
+
+  const topOffset = rect.top - containerRect.top;
+  const placement = topOffset < 78 ? "bottom" : "top";
+
+  hoveredDay.value = {
+    day,
+    x: rect.left - containerRect.left + rect.width / 2,
+    y: placement === "top" ? topOffset - 6 : topOffset + rect.height + 6,
+    placement,
+  };
+}
+
+function handleCellMouseLeave() {
+  hoveredDay.value = null;
+}
+
 function formatDuration(minutes: number) {
   if (minutes < 60) return tr("{0} 分钟", [Math.round(minutes)]);
   const hours = Math.floor(minutes / 60);
@@ -233,16 +264,15 @@ onBeforeUnmount(() => {
     <header class="event-calendar__header">
       <div class="event-calendar__identity">
         <span class="event-calendar__icon"><CalendarDays :size="18" /></span>
-        <div>
+        <div class="event-calendar__title-wrap">
           <h4>{{ $t('主机事件热力图') }}</h4>
-          <p>{{ $t('每天一个方格，颜色表示最高严重级别，深浅表示事件负载') }}</p>
+          <p>{{ $t('每天一个方格，颜色表示严重级别，深浅表示事件负载') }}</p>
         </div>
       </div>
 
-      <!-- 交互式时间轴拉拽与范围控制器 -->
-      <div class="event-calendar__controls-wrap">
-        <div class="timeline-bar">
-          <span class="timeline-bar__label">{{ $t('时间跨度') }}</span>
+      <!-- 单行一体化控制栏 -->
+      <div class="event-calendar__unified-toolbar">
+        <div class="toolbar-section toolbar-range">
           <div class="timeline-presets">
             <button
               type="button"
@@ -250,7 +280,7 @@ onBeforeUnmount(() => {
               :class="{ 'is-active': rangeMonths === 3 }"
               @click="setPresetMonths(3)"
             >
-              3 {{ $t('个月') }}
+              3M
             </button>
             <button
               type="button"
@@ -258,7 +288,7 @@ onBeforeUnmount(() => {
               :class="{ 'is-active': rangeMonths === 6 }"
               @click="setPresetMonths(6)"
             >
-              6 {{ $t('个月') }}
+              6M
             </button>
             <button
               type="button"
@@ -266,11 +296,10 @@ onBeforeUnmount(() => {
               :class="{ 'is-active': rangeMonths === 12 }"
               @click="setPresetMonths(12)"
             >
-              1 {{ $t('年') }}
+              1Y
             </button>
           </div>
 
-          <!-- 时间轴滑块 -->
           <div class="timeline-slider-holder" :title="$t('拉拽调整时间轴跨度（1 ~ 12 个月）')">
             <input
               type="range"
@@ -284,17 +313,19 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div class="event-calendar__range-control">
-          <button type="button" :aria-label="$t('上一区间')" @click="shiftRange(-1)"><ChevronLeft :size="15" /></button>
-          <strong>{{ rangeLabel }}</strong>
-          <button type="button" :aria-label="$t('下一区间')" :disabled="!canShiftForward" @click="shiftRange(1)"><ChevronRight :size="15" /></button>
-          <button type="button" :aria-label="$t('刷新事件热力图')" :disabled="loading" @click="loadCalendar"><RefreshCw :size="14" :class="{ 'is-spinning': loading }" /></button>
+        <span class="toolbar-divider" aria-hidden="true"></span>
+
+        <div class="toolbar-section toolbar-nav">
+          <button type="button" :aria-label="$t('上一区间')" @click="shiftRange(-1)"><ChevronLeft :size="14" /></button>
+          <strong class="toolbar-range-label">{{ rangeLabel }}</strong>
+          <button type="button" :aria-label="$t('下一区间')" :disabled="!canShiftForward" @click="shiftRange(1)"><ChevronRight :size="14" /></button>
+          <button type="button" class="btn-refresh" :aria-label="$t('刷新事件热力图')" :disabled="loading" @click="loadCalendar"><RefreshCw :size="13" :class="{ 'is-spinning': loading }" /></button>
         </div>
       </div>
     </header>
 
     <p v-if="error" class="event-calendar__error">{{ error }}</p>
-    <div class="event-calendar__graph-scroll" :class="{ 'is-loading': loading }">
+    <div class="event-calendar__graph-scroll" :class="{ 'is-loading': loading }" @scroll="handleCellMouseLeave">
       <div v-if="heatmapWeeks.length" class="event-calendar__graph" :style="{ '--week-count': heatmapWeeks.length }">
         <div class="event-calendar__months" aria-hidden="true">
           <span
@@ -318,10 +349,13 @@ onBeforeUnmount(() => {
                   type="button"
                   class="event-calendar__cell"
                   :class="[dayTone(day), dayIntensity(day), { 'is-interactive': isInteractiveDay(day), 'is-today': day.date === todayKey }]"
-                  :title="dayTitle(day)"
                   :aria-label="dayTitle(day)"
                   :aria-disabled="!isInteractiveDay(day)"
                   :tabindex="isInteractiveDay(day) ? 0 : -1"
+                  @mouseenter="handleCellMouseEnter(day, $event)"
+                  @mouseleave="handleCellMouseLeave"
+                  @focus="handleCellMouseEnter(day, $event)"
+                  @blur="handleCellMouseLeave"
                   @click="openDay(day)"
                 ></button>
               </template>
@@ -333,6 +367,50 @@ onBeforeUnmount(() => {
         <i v-for="index in 84" :key="index"></i>
       </div>
     </div>
+
+    <!-- 零延迟即时悬浮提示卡片 (Instant Custom Popover) -->
+    <transition name="popover-fade">
+      <div
+        v-if="hoveredDay"
+        class="event-calendar__instant-tooltip"
+        :class="`placement-${hoveredDay.placement}`"
+        :style="{ left: `${hoveredDay.x}px`, top: `${hoveredDay.y}px` }"
+      >
+        <div class="tooltip-header">
+          <span class="tooltip-dot" :class="dayTone(hoveredDay.day)"></span>
+          <strong class="tooltip-date">{{ hoveredDay.day.date }}</strong>
+          <span class="tooltip-badge" :class="dayTone(hoveredDay.day)">
+            {{ hoveredDay.day.future ? $t('未来') : hoveredDay.day.peakSeverity ? severityLabel(hoveredDay.day.peakSeverity) : hoveredDay.day.coverageRatio < 0.8 ? $t('无数据') : $t('健康') }}
+          </span>
+        </div>
+
+        <div class="tooltip-body">
+          <template v-if="hoveredDay.day.future">
+            <span class="tooltip-text is-dim">{{ $t('暂无数据') }}</span>
+          </template>
+          <template v-else-if="hoveredDay.day.activeEventCount">
+            <div class="tooltip-stat">
+              <span class="stat-highlight">{{ hoveredDay.day.activeEventCount }}</span> {{ $t('个事件') }}
+              <span class="stat-sep">·</span>
+              {{ $t('影响') }} <strong>{{ formatDuration(hoveredDay.day.affectedMinutes) }}</strong>
+            </div>
+            <div class="tooltip-hint" v-if="isInteractiveDay(hoveredDay.day)">
+              {{ $t('点击查看事件详情') }} ↗
+            </div>
+          </template>
+          <template v-else-if="hoveredDay.day.coverageRatio < 0.8">
+            <div class="tooltip-stat">
+              {{ $t('采集覆盖率') }}: <strong>{{ Math.round(hoveredDay.day.coverageRatio * 100) }}%</strong>
+            </div>
+          </template>
+          <template v-else>
+            <div class="tooltip-stat is-healthy">
+              <CheckCircle2 :size="12" /> {{ $t('运行正常 · 覆盖 100%') }}
+            </div>
+          </template>
+        </div>
+      </div>
+    </transition>
 
 
     <footer class="event-calendar__footer">
@@ -454,30 +532,35 @@ onBeforeUnmount(() => {
   line-height: 1.35;
 }
 
-.event-calendar__controls-wrap {
+.event-calendar__title-wrap {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  justify-content: center;
 }
 
-/* 交互式时间轴控制器 */
-.timeline-bar {
+/* 单行一体化控制栏 */
+.event-calendar__unified-toolbar {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 3px 8px;
+  background: color-mix(in srgb, var(--ink-50) 40%, var(--surface));
   border: 1px solid var(--ink-100);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--ink-50) 40%, var(--surface));
+  padding: 3px 6px;
   box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.02);
 }
 
-.timeline-bar__label {
-  font-size: 10.5px;
-  color: var(--ink-400);
-  font-weight: 500;
-  white-space: nowrap;
+.toolbar-section {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toolbar-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--ink-150, color-mix(in srgb, var(--ink-200) 60%, transparent));
+  margin: 0 2px;
 }
 
 .timeline-presets {
@@ -486,15 +569,16 @@ onBeforeUnmount(() => {
 }
 
 .preset-chip {
-  padding: 2px 7px;
+  padding: 2px 6px;
   border: 0;
-  border-radius: 5px;
+  border-radius: 4px;
   background: transparent;
   color: var(--ink-600);
   font-size: 10.5px;
-  font-weight: 500;
+  font-weight: 600;
+  font-family: var(--font-mono);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.12s ease;
   white-space: nowrap;
 }
 
@@ -506,49 +590,42 @@ onBeforeUnmount(() => {
 .preset-chip.is-active {
   background: var(--teal-600);
   color: #ffffff;
-  font-weight: 700;
-  box-shadow: 0 1px 3px rgba(20, 184, 166, 0.25);
+  box-shadow: 0 1px 2px rgba(20, 184, 166, 0.25);
 }
 
 .timeline-slider-holder {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 4px;
+  gap: 5px;
+  padding: 0 2px;
 }
 
 .timeline-slider {
   -webkit-appearance: none;
   appearance: none;
-  width: 72px;
+  width: 60px;
   height: 4px;
   border-radius: 2px;
   background: var(--ink-200);
   outline: none;
   cursor: pointer;
-  transition: background 0.15s ease;
-}
-
-.timeline-slider:hover {
-  background: var(--teal-200);
 }
 
 .timeline-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 13px;
-  height: 13px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
   background: var(--teal-600);
   border: 2px solid var(--surface);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
   cursor: pointer;
-  transition: transform 0.15s ease;
+  transition: transform 0.1s ease;
 }
 
 .timeline-slider::-webkit-slider-thumb:hover {
-  transform: scale(1.25);
-  background: var(--teal-500);
+  transform: scale(1.2);
 }
 
 .timeline-slider__val {
@@ -556,53 +633,164 @@ onBeforeUnmount(() => {
   font-size: 10px;
   font-weight: 700;
   color: var(--teal-700);
-  min-width: 24px;
-  text-align: center;
+  min-width: 20px;
 }
 
-.event-calendar__range-control {
-  padding: 3px 5px;
-  border: 1px solid var(--ink-100);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--ink-50) 40%, var(--surface));
+.toolbar-nav {
   display: flex;
   align-items: center;
-  gap: 3px;
-  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.02);
+  gap: 2px;
 }
 
-.event-calendar__range-control button {
-  width: 26px;
-  height: 26px;
+.toolbar-nav button {
+  width: 22px;
+  height: 22px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 5px;
   background: transparent;
   color: var(--ink-500);
   display: grid;
   place-items: center;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.12s ease;
 }
 
-.event-calendar__range-control button:hover:not(:disabled) {
+.toolbar-nav button:hover:not(:disabled) {
   background: var(--surface);
   color: var(--teal-700);
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
 }
 
-.event-calendar__range-control button:disabled {
+.toolbar-nav button:disabled {
   opacity: 0.3;
   cursor: not-allowed;
 }
 
-.event-calendar__range-control strong {
-  min-width: 160px;
+.toolbar-range-label {
+  min-width: 140px;
   color: var(--ink-800);
   text-align: center;
   font-size: 11px;
   font-weight: 600;
   font-family: var(--font-mono);
   user-select: none;
+  padding: 0 4px;
+}
+
+/* 零延迟即时悬浮提示卡片 Instant Popover Tooltip */
+.event-calendar__instant-tooltip {
+  position: absolute;
+  z-index: 50;
+  pointer-events: none;
+  min-width: 170px;
+  max-width: 280px;
+  padding: 8px 11px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.94);
+  color: #f8fafc;
+  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(8px);
+  font-family: var(--font-body);
+}
+
+.event-calendar__instant-tooltip.placement-top {
+  transform: translate(-50%, -100%);
+}
+
+.event-calendar__instant-tooltip.placement-bottom {
+  transform: translate(-50%, 0);
+}
+
+.tooltip-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.tooltip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.tooltip-dot.is-healthy { background: #10b981; box-shadow: 0 0 6px #10b981; }
+.tooltip-dot.is-info { background: #38bdf8; box-shadow: 0 0 6px #38bdf8; }
+.tooltip-dot.is-warning { background: #f59e0b; box-shadow: 0 0 6px #f59e0b; }
+.tooltip-dot.is-major { background: #f97316; box-shadow: 0 0 6px #f97316; }
+.tooltip-dot.is-critical { background: #ef4444; box-shadow: 0 0 6px #ef4444; }
+.tooltip-dot.is-no-data { background: #64748b; }
+
+.tooltip-date {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.tooltip-badge {
+  margin-left: auto;
+  font-size: 9.5px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 4px;
+  line-height: 1.2;
+}
+
+.tooltip-badge.is-healthy { background: rgba(16, 185, 129, 0.2); color: #34d399; }
+.tooltip-badge.is-info { background: rgba(56, 189, 248, 0.2); color: #7dd3fc; }
+.tooltip-badge.is-warning { background: rgba(245, 158, 11, 0.25); color: #fbbf24; }
+.tooltip-badge.is-major { background: rgba(249, 115, 22, 0.25); color: #fb923c; }
+.tooltip-badge.is-critical { background: rgba(239, 68, 68, 0.3); color: #f87171; }
+.tooltip-badge.is-no-data { background: rgba(148, 163, 184, 0.2); color: #cbd5e1; }
+
+.tooltip-body {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #cbd5e1;
+}
+
+.tooltip-stat {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tooltip-stat.is-healthy {
+  color: #34d399;
+  font-size: 10.5px;
+}
+
+.stat-highlight {
+  color: #f87171;
+  font-weight: 700;
+  font-family: var(--font-mono);
+}
+
+.stat-sep {
+  opacity: 0.4;
+}
+
+.tooltip-hint {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.12);
+  color: #94a3b8;
+  font-size: 9.5px;
+  text-align: right;
+}
+
+/* Popover 极速淡入淡出动画 */
+.popover-fade-enter-active,
+.popover-fade-leave-active {
+  transition: opacity 0.08s ease, transform 0.08s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.popover-fade-enter-from,
+.popover-fade-leave-to {
+  opacity: 0;
+  transform: translate(-50%, -95%) scale(0.96);
 }
 
 .event-calendar__error {
