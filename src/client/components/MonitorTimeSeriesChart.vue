@@ -234,28 +234,81 @@ function xFor(index: number): number {
 }
 
 function yFor(value: number): number {
-  return plot.value.top + (domain.value.max - value) / (domain.value.max - domain.value.min) * plotHeight.value;
+  const boundedVal = Math.max(domain.value.min, Math.min(domain.value.max, value));
+  return plot.value.top + (domain.value.max - boundedVal) / (domain.value.max - domain.value.min) * plotHeight.value;
 }
 
 function smoothPath(pts: Pt[]): string {
-  if (pts.length === 0) return "";
-  if (pts.length === 1) return `M${pts[0]!.x.toFixed(2)},${pts[0]!.y.toFixed(2)}`;
-  if (pts.length === 2) {
+  const n = pts.length;
+  if (n === 0) return "";
+  if (n === 1) return `M${pts[0]!.x.toFixed(2)},${pts[0]!.y.toFixed(2)}`;
+  if (n === 2) {
     return `M${pts[0]!.x.toFixed(2)},${pts[0]!.y.toFixed(2)}L${pts[1]!.x.toFixed(2)},${pts[1]!.y.toFixed(2)}`;
   }
-  let path = `M${pts[0]!.x.toFixed(2)},${pts[0]!.y.toFixed(2)}`;
-  const n = pts.length;
-  const tension = 0.16;
+
+  const baseline = plot.value.top + plotHeight.value;
+  const topLimit = plot.value.top;
+
+  // 1. Calculate secants (slopes between adjacent points)
+  const dx: number[] = [];
+  const dy: number[] = [];
+  const slopes: number[] = [];
   for (let i = 0; i < n - 1; i++) {
-    const p0 = pts[Math.max(0, i - 1)]!;
+    const deltaX = pts[i + 1]!.x - pts[i]!.x;
+    const deltaY = pts[i + 1]!.y - pts[i]!.y;
+    dx.push(deltaX);
+    dy.push(deltaY);
+    slopes.push(deltaX !== 0 ? deltaY / deltaX : 0);
+  }
+
+  // 2. Calculate initial tangents at each point
+  const tangents: number[] = [slopes[0]!];
+  for (let i = 1; i < n - 1; i++) {
+    const s0 = slopes[i - 1]!;
+    const s1 = slopes[i]!;
+    if (s0 * s1 <= 0) {
+      // Local extremum (peak or valley/zero) - flat tangent
+      tangents.push(0);
+    } else {
+      // Monotone cubic tangent (harmonic mean)
+      tangents.push((2 * s0 * s1) / (s0 + s1));
+    }
+  }
+  tangents.push(slopes[n - 2]!);
+
+  // 3. Fritsch-Carlson adjustment for strict monotonicity
+  for (let i = 0; i < n - 1; i++) {
+    const slope = slopes[i]!;
+    if (slope === 0) {
+      tangents[i] = 0;
+      tangents[i + 1] = 0;
+    } else {
+      const alpha = tangents[i]! / slope;
+      const beta = tangents[i + 1]! / slope;
+      const dist = alpha * alpha + beta * beta;
+      if (dist > 9) {
+        const tau = 3 / Math.sqrt(dist);
+        tangents[i] = tau * alpha * slope;
+        tangents[i + 1] = tau * beta * slope;
+      }
+    }
+  }
+
+  // 4. Build SVG cubic Bezier path with control points clamped strictly within [topLimit, baseline]
+  let path = `M${pts[0]!.x.toFixed(2)},${pts[0]!.y.toFixed(2)}`;
+  for (let i = 0; i < n - 1; i++) {
     const p1 = pts[i]!;
     const p2 = pts[i + 1]!;
-    const p3 = pts[Math.min(n - 1, i + 2)]!;
+    const segDx = dx[i]!;
 
-    const cp1x = p1.x + (p2.x - p0.x) * tension;
-    const cp1y = p1.y + (p2.y - p0.y) * tension;
-    const cp2x = p2.x - (p3.x - p1.x) * tension;
-    const cp2y = p2.y - (p3.y - p1.y) * tension;
+    const cp1x = p1.x + segDx / 3;
+    let cp1y = p1.y + (tangents[i]! * segDx) / 3;
+    const cp2x = p2.x - segDx / 3;
+    let cp2y = p2.y - (tangents[i + 1]! * segDx) / 3;
+
+    // Strict baseline clamp: in SVG, larger Y is lower. Baseline is the maximum Y (0.00% level)
+    cp1y = Math.min(baseline, Math.max(topLimit, cp1y));
+    cp2y = Math.min(baseline, Math.max(topLimit, cp2y));
 
     path += ` C ${cp1x.toFixed(2)},${cp1y.toFixed(2)} ${cp2x.toFixed(2)},${cp2y.toFixed(2)} ${p2.x.toFixed(2)},${p2.y.toFixed(2)}`;
   }
@@ -529,6 +582,9 @@ function clearHover() {
         @wheel="handleWheel"
       >
         <defs>
+          <clipPath :id="`${gradientId}-clip`">
+            <rect :x="plot.left" :y="plot.top - 2" :width="plotWidth" :height="plotHeight + 2" />
+          </clipPath>
           <linearGradient :id="gradientId" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" :stop-color="series[0]?.color || '#14b8a6'" stop-opacity=".28" />
             <stop offset="55%" :stop-color="series[0]?.color || '#14b8a6'" stop-opacity=".08" />
@@ -583,25 +639,27 @@ function clearHover() {
             {{ formatValue(Number(threshold)) }} 警戒
           </text>
         </g>
-        <template v-if="stacked">
-          <path v-for="(item, index) in series" :key="item.key" :d="stackedAreaPath(index)" :fill="item.color" class="chart-stack-area" />
-          <path :d="totalLinePath()" class="chart-total-line" />
-        </template>
-        <template v-else>
-          <path v-if="series.length === 1" :d="areaPath(series[0]!)" :fill="`url(#${gradientId})`" class="chart-area" />
-          <path
-            v-for="item in series"
-            :key="item.key"
-            :d="linePath(item)"
-            :stroke="item.color"
-            class="chart-line"
-            :class="{
-              'is-dimmed': hoveredLegendKey && hoveredLegendKey !== item.key,
-              'is-focused': hoveredLegendKey === item.key,
-            }"
-            :filter="series.length === 1 ? `url(#${gradientId}-glow)` : undefined"
-          />
-        </template>
+        <g :clip-path="`url(#${gradientId}-clip)`">
+          <template v-if="stacked">
+            <path v-for="(item, index) in series" :key="item.key" :d="stackedAreaPath(index)" :fill="item.color" class="chart-stack-area" />
+            <path :d="totalLinePath()" class="chart-total-line" />
+          </template>
+          <template v-else>
+            <path v-if="series.length === 1" :d="areaPath(series[0]!)" :fill="`url(#${gradientId})`" class="chart-area" />
+            <path
+              v-for="item in series"
+              :key="item.key"
+              :d="linePath(item)"
+              :stroke="item.color"
+              class="chart-line"
+              :class="{
+                'is-dimmed': hoveredLegendKey && hoveredLegendKey !== item.key,
+                'is-focused': hoveredLegendKey === item.key,
+              }"
+              :filter="series.length === 1 ? `url(#${gradientId}-glow)` : undefined"
+            />
+          </template>
+        </g>
         <g v-if="hoveredIndex !== null && hoveredX !== null" class="chart-hover">
           <line :x1="hoveredX" :x2="hoveredX" :y1="plot.top" :y2="plot.top + plotHeight" />
           <circle
