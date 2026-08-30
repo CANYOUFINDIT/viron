@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildApp } from "../src/server/app.js";
 import { ensureAdmin, openDatabase } from "../src/server/database.js";
-import { capSeriesPoints, compareMonitoringHosts, monitoringSeverityRank } from "../src/shared/monitoring.js";
+import { capSeriesPoints, compareMonitoringHosts, isMonitorStale, monitoringSeverityRank } from "../src/shared/monitoring.js";
 import { clearMonitoringOverviewCache } from "../src/server/monitoring-overview.js";
 import { monitoringTestConfig, runMonitoringContractSuite } from "./helpers/monitoring-harness.js";
 
@@ -56,6 +56,35 @@ describe("monitoring severity ranking", () => {
     const ranked = [...hosts].sort(compareMonitoringHosts).map((host) => host.connectionName);
     expect(ranked).toEqual(["offline", "hot-disk", "stale", "healthy"]);
     expect(monitoringSeverityRank(hosts[3]!)).toBeLessThan(monitoringSeverityRank(hosts[0]!));
+  });
+});
+
+describe("isMonitorStale helper", () => {
+  it("treats samples as fresh within 30 minutes for default 30s resolution", () => {
+    const now = Date.parse("2026-08-30T16:30:00.000Z");
+    const oneMinAgo = "2026-08-30T16:29:00.000Z";
+    const twentyNineMinAgo = "2026-08-30T16:01:00.000Z";
+    const thirtyOneMinAgo = "2026-08-30T15:59:00.000Z";
+
+    expect(isMonitorStale(oneMinAgo, 30, now)).toBe(false);
+    expect(isMonitorStale(twentyNineMinAgo, 30, now)).toBe(false);
+    expect(isMonitorStale(thirtyOneMinAgo, 30, now)).toBe(true);
+  });
+
+  it("scales stale threshold when cycle time exceeds 30 minutes", () => {
+    const now = Date.parse("2026-08-30T16:30:00.000Z");
+    const ninetyMinAgo = "2026-08-30T15:00:00.000Z";
+    const twoHoursOneMinAgo = "2026-08-30T14:29:00.000Z";
+
+    // 1 hour resolution -> 2 cycles = 2 hours (> 30 min)
+    expect(isMonitorStale(ninetyMinAgo, 3600, now)).toBe(false);
+    expect(isMonitorStale(twoHoursOneMinAgo, 3600, now)).toBe(true);
+  });
+
+  it("handles empty or invalid timestamp inputs safely", () => {
+    expect(isMonitorStale(null)).toBe(false);
+    expect(isMonitorStale(undefined)).toBe(false);
+    expect(isMonitorStale("invalid-date")).toBe(false);
   });
 });
 

@@ -97,7 +97,7 @@ export async function runMonitoringContractSuite(config: AppConfig, db: EnvmanDa
     const second = await app.inject({ method: "POST", url: "/api/v1/ssh-connections", cookies, payload: sshPayload("host-b") });
     const now = new Date();
     const freshAt = now.toISOString();
-    const staleAt = new Date(now.getTime() - 10 * 60 * 1000).toISOString();
+    const staleAt = new Date(now.getTime() - 45 * 60 * 1000).toISOString();
     await insertHost(db, first.json().id, "ready", freshAt, freshAt);
     await insertHost(db, second.json().id, "missing", null, freshAt);
 

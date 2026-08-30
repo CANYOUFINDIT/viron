@@ -209,7 +209,7 @@ export function monitorSampleIsFresh(checkedAt: string, collectedAt: string | nu
   const collectedAtMillis = Date.parse(collectedAt ?? "");
   if (!Number.isFinite(checkedAtMillis) || !Number.isFinite(collectedAtMillis)) return false;
   const normalizedResolution = Number.isFinite(resolutionSeconds) && resolutionSeconds > 0 ? resolutionSeconds : 30;
-  return checkedAtMillis - collectedAtMillis <= Math.max(60, normalizedResolution * 3) * 1000;
+  return checkedAtMillis - collectedAtMillis <= Math.max(30 * 60, normalizedResolution * 3) * 1000;
 }
 
 export async function serializeMonitorAgentWork<T>(

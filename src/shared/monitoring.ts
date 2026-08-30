@@ -13,6 +13,7 @@ export const MONITORING_MAX_SERVICE_DEPLOYMENTS = 50;
 export const MONITORING_TOP_PROCESSES = 5;
 export const MONITORING_STALE_CYCLES = 2;
 export const MONITORING_DEFAULT_RESOLUTION_SECONDS = 30;
+export const MONITORING_MIN_STALE_SECONDS = 30 * 60;
 export const MONITORING_OVERVIEW_CACHE_MS = 5_000;
 
 export const rangeMilliseconds: Record<MonitoringRange, number> = {
@@ -71,7 +72,7 @@ export function isMonitorStale(lastCollectedAt: string | null | undefined, resol
   const collected = Date.parse(lastCollectedAt);
   if (!Number.isFinite(collected)) return false;
   const cycleMs = Math.max(1, resolutionSeconds) * 1000;
-  return now - collected > MONITORING_STALE_CYCLES * cycleMs;
+  return now - collected > Math.max(MONITORING_MIN_STALE_SECONDS * 1000, MONITORING_STALE_CYCLES * cycleMs);
 }
 
 export function timeBucketMs(range: MonitoringRange): number {
