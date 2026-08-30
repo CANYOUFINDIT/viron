@@ -627,6 +627,7 @@ CREATE TABLE IF NOT EXISTS monitor_alert_settings (
   tls_warn_days INTEGER NOT NULL DEFAULT 14,
   tls_hostname_mismatch_enabled INTEGER NOT NULL DEFAULT 1,
   excluded_disks_json TEXT NOT NULL DEFAULT '[]',
+  monitored_disk_types_json TEXT NOT NULL DEFAULT '["host_local"]',
   updated_by_user_id TEXT REFERENCES admin_users(id) ON DELETE SET NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL

@@ -20,6 +20,7 @@ const {
   restartingHosts,
   selectedUnmanagedCount,
   selectedWorstDisk,
+  selectedDiskCount,
   discoveryManagedKeys,
   discoveryTargetServiceId,
   hostWorkspaceTab,
@@ -96,7 +97,7 @@ function onMonitorHostCommand(command: string | number | object) {
       <div v-if="selectedHost.snapshot" class="host-metric-grid" role="group" :aria-label="$t('当前快照')">
         <button type="button" :class="['is-' + metricTone(selectedHost.snapshot.cpuUsedPercent, cpuVisualThreshold), { 'is-active': hostFocusMetric === 'cpu' }]" @click="hostFocusMetric = 'cpu'"><span>CPU</span><strong>{{ formatPercent(selectedHost.snapshot.cpuUsedPercent) }}</strong><small>{{ selectedHost.snapshot.cpuCount || '—' }} {{ $t('核') }} · {{ selectedHost.snapshot.load1.toFixed(2) }}</small><i :style="{ width: Math.min(100, selectedHost.snapshot.cpuUsedPercent || 0) + '%' }"></i></button>
         <button type="button" :class="['is-' + metricTone(selectedHost.snapshot.memoryUsedPercent, memoryVisualThreshold), { 'is-active': hostFocusMetric === 'memory' }]" @click="hostFocusMetric = 'memory'"><span>{{ $t('内存') }}</span><strong>{{ formatPercent(selectedHost.snapshot.memoryUsedPercent) }}</strong><small>{{ formatBytes(selectedHost.snapshot.memoryUsedBytes) }} / {{ formatBytes(selectedHost.snapshot.memoryTotalBytes) }}</small><i :style="{ width: Math.min(100, selectedHost.snapshot.memoryUsedPercent || 0) + '%' }"></i></button>
-        <button type="button" :class="['is-' + metricTone(selectedWorstDisk?.usedPercent, diskVisualThreshold), { 'is-active': hostFocusMetric === 'disk' }]" @click="hostFocusMetric = 'disk'"><span>{{ $t('磁盘') }}</span><strong>{{ formatPercent(selectedWorstDisk?.usedPercent) }}</strong><small>{{ selectedWorstDisk?.path || '—' }} · {{ selectedHost.snapshot.disks.length }} {{ $t('挂载点') }}</small><i :style="{ width: Math.min(100, selectedWorstDisk?.usedPercent || 0) + '%' }"></i></button>
+        <button type="button" :class="['is-' + metricTone(selectedWorstDisk?.usedPercent, diskVisualThreshold), { 'is-active': hostFocusMetric === 'disk' }]" @click="hostFocusMetric = 'disk'"><span>{{ $t('磁盘') }}</span><strong>{{ formatPercent(selectedWorstDisk?.usedPercent) }}</strong><small>{{ selectedWorstDisk?.path || '—' }} · {{ selectedDiskCount }} {{ $t('挂载点') }}</small><i :style="{ width: Math.min(100, selectedWorstDisk?.usedPercent || 0) + '%' }"></i></button>
         <button v-if="selectedHost.snapshot.temperatures.length" type="button" :class="{ 'is-active': hostFocusMetric === 'temperature' }" @click="hostFocusMetric = 'temperature'"><span>{{ $t('温度') }}</span><strong>{{ peakTemperatureC(selectedHost.snapshot.temperatures) }}°C</strong><small>{{ selectedHost.snapshot.temperatures[0]?.chip }}</small></button>
         <div class="host-metric-uptime"><span>{{ $t('运行时间') }}</span><strong>{{ formatDuration(selectedHost.snapshot.uptimeSeconds) }}</strong></div>
       </div>
@@ -114,6 +115,8 @@ function onMonitorHostCommand(command: string | number | object) {
         :cpu-threshold="cpuVisualThreshold"
         :memory-threshold="memoryVisualThreshold"
         :disk-threshold="diskVisualThreshold"
+        :monitored-disk-types="payload.alertSettings.monitoredDiskTypes"
+        :excluded-disks="payload.alertSettings.excludedDisks"
       />
       <div v-else class="host-observatory__empty" :class="`is-${selectedHost.monitorStatus}`">
         <Power :size="24" /><div><strong>{{ selectedHost.monitorStatus === 'missing' ? $t('尚未安装 viron-monitor') : $t('尚未取得监控数据') }}</strong><p>{{ selectedHost.lastError || $t('点击“一键安装监控服务”，Viron 会预检权限和目录后通过现有 SSH 链路自动安装。') }}</p></div>

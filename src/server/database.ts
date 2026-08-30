@@ -59,6 +59,8 @@ export async function openDatabase(config: AppConfig): Promise<EnvmanDatabase> {
     await addMysqlColumnIfMissing(db, "monitor_alert_settings", "tls_enabled", "TINYINT NOT NULL DEFAULT 1");
     await addMysqlColumnIfMissing(db, "monitor_alert_settings", "tls_warn_days", "INT NOT NULL DEFAULT 14");
     await addMysqlColumnIfMissing(db, "monitor_alert_settings", "tls_hostname_mismatch_enabled", "TINYINT NOT NULL DEFAULT 1");
+    await addMysqlColumnIfMissing(db, "monitor_alert_settings", "monitored_disk_types_json", "LONGTEXT NULL");
+    await db.prepare("UPDATE monitor_alert_settings SET monitored_disk_types_json = ? WHERE monitored_disk_types_json IS NULL OR monitored_disk_types_json = ''").run('["host_local"]');
     await addMysqlColumnIfMissing(db, "monitor_alert_states", "last_recovered_alert_id", "VARCHAR(64) NULL");
     await addMysqlColumnIfMissing(db, "monitor_alert_states", "last_recovered_at", "VARCHAR(32) NULL");
     await addMysqlColumnIfMissing(db, "monitor_alerts", "severity", "VARCHAR(16) NOT NULL DEFAULT 'warning'");
@@ -125,6 +127,7 @@ export async function openDatabase(config: AppConfig): Promise<EnvmanDatabase> {
   addColumnIfMissing(raw, "monitor_alert_settings", "tls_enabled", "INTEGER NOT NULL DEFAULT 1");
   addColumnIfMissing(raw, "monitor_alert_settings", "tls_warn_days", "INTEGER NOT NULL DEFAULT 14");
   addColumnIfMissing(raw, "monitor_alert_settings", "tls_hostname_mismatch_enabled", "INTEGER NOT NULL DEFAULT 1");
+  addColumnIfMissing(raw, "monitor_alert_settings", "monitored_disk_types_json", "TEXT NOT NULL DEFAULT '[\"host_local\"]'");
   addColumnIfMissing(raw, "monitor_alert_states", "last_recovered_alert_id", "TEXT");
   addColumnIfMissing(raw, "monitor_alert_states", "last_recovered_at", "TEXT");
   addColumnIfMissing(raw, "monitor_alerts", "severity", "TEXT NOT NULL DEFAULT 'warning'");

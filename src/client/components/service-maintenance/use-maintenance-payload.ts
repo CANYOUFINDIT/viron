@@ -7,7 +7,7 @@ import { createLatestDataLoader } from "../../latest-data-loader";
 import { candidateKey, providerLabel, type CandidateStatus, type MonitorCandidate, type Provider } from "../../service-candidate-tree";
 import { normalizeMaintenanceScriptActions } from "../../service-maintenance-payload";
 import { reorderIds, sameOrder } from "../../../shared/tab-order";
-import { defaultMonitorAlertSettings, monitorDiskKey, type MonitorAlertSettings, } from "../../../shared/monitor-alerts";
+import { defaultMonitorAlertSettings, defaultMonitoredDiskTypes, visibleMonitorDisks, type MonitorAlertSettings, } from "../../../shared/monitor-alerts";
 
 import type { MaintenanceWorkspace, HostWorkspaceTab, HostFocusMetric, MaintenanceDirectory, DirectoryMoveDirection, ScriptActionIcon, DirectoryDropTarget, ScriptAction, ScriptActionExecutionResult, ScriptActionExecution, HostSnapshot, KubernetesConfigDiscovery, MonitorHost, MonitorInstallPreflight, MonitorInstallTaskStatus, MonitorInstallTaskPhase, MonitorInstallTask, Deployment, ServiceItem, EnvironmentLog, MaintenancePayload, MaintenanceDeploymentResponse, MaintenanceServiceResponse, MaintenancePayloadResponse, MaintenanceCounts, MaintenancePanelProps, MaintenancePanelEmit } from "./types";
 import { deferMaintenancePart, type MaintenanceContext } from "./context";
@@ -26,7 +26,7 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
       canConfigure: false,
       canOperate: false,
       scriptActionsSupported: false,
-      alertSettings: { ...defaultMonitorAlertSettings, excludedDisks: [] },
+      alertSettings: { ...defaultMonitorAlertSettings, excludedDisks: [], monitoredDiskTypes: [...defaultMonitoredDiskTypes] },
       services: [],
       logs: [],
       hosts: [],
@@ -124,6 +124,7 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
   const selectedUnmanagedCount = computed(() => selectedHost.value ? hostUnmanagedCount(selectedHost.value) : 0);
 
   const selectedWorstDisk = computed(() => selectedHost.value ? worstDisk(selectedHost.value) : null);
+  const selectedDiskCount = computed(() => selectedHost.value ? visibleMonitorDisks(selectedHost.value.snapshot?.disks ?? [], payload.value.alertSettings).length : 0);
 
   const selectableKubernetesConfigs = computed(() => (selectedHost.value?.kubernetesConfigs ?? []).filter((item) => item.context && !["invalid", "unreadable"].includes(item.status)));
 
@@ -423,7 +424,7 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
   }
 
   function worstDisk(host: MonitorHost) {
-      const disks = host.snapshot?.disks ?? [];
+      const disks = visibleMonitorDisks(host.snapshot?.disks ?? [], payload.value.alertSettings);
       if (!disks.length)
           return null;
       return disks.reduce((worst, disk) => disk.usedPercent > (worst?.usedPercent ?? -1) ? disk : worst);
@@ -789,6 +790,7 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
     attentionItems,
     selectedUnmanagedCount,
     selectedWorstDisk,
+    selectedDiskCount,
     selectableKubernetesConfigs,
     discoveryManagedKeys,
     load,

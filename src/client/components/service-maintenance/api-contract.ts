@@ -3,7 +3,7 @@ import type { Component, ComputedRef, Ref } from "vue";
 import type { MessageHandler } from "element-plus";
 
 import type { CandidateStatus, MonitorCandidate, Provider } from "../../service-candidate-tree";
-import type { MonitorAlertSettings } from "../../../shared/monitor-alerts";
+import type { MonitorAlertSettings, MonitorDiskType } from "../../../shared/monitor-alerts";
 import type { DirectoryDropTarget, DirectoryMoveDirection, EnvironmentLog, HostFocusMetric, HostSnapshot, HostWorkspaceTab, KubernetesConfigDiscovery, MaintenanceCounts, MaintenanceDeploymentResponse, MaintenanceDirectory, MaintenancePayload, MaintenancePayloadResponse, MaintenanceServiceResponse, MaintenanceWorkspace, MonitorHost, MonitorInstallPreflight, MonitorInstallTask, MonitorInstallTaskPhase, MonitorInstallTaskStatus, ScriptAction, ScriptActionExecution, ScriptActionExecutionResult, ScriptActionIcon, ServiceItem, Deployment } from "./types";
 
 export interface MaintenanceApi {
@@ -48,6 +48,7 @@ export interface MaintenanceApi {
   "attentionItems": ComputedRef<{ key: string; value: number; label: string; }[]>;
   "selectedUnmanagedCount": ComputedRef<number>;
   "selectedWorstDisk": ComputedRef<{ path: string; device?: string; filesystem?: string; totalBytes: number; freeBytes: number; usedBytes: number; usedPercent: number; } | null>;
+  "selectedDiskCount": ComputedRef<number>;
   "selectableKubernetesConfigs": ComputedRef<{ sourceId: string; path?: string | undefined; context?: string | undefined; cluster?: string | undefined; namespace?: string | undefined; currentContext: boolean; selected: boolean; status: "discovered" | "connected" | "error" | "unreadable" | "invalid"; candidateCount: number; error?: string | undefined; }[]>;
   "discoveryManagedKeys": ComputedRef<string[]>;
   "load": (silent?: boolean | undefined) => Promise<void>;
@@ -176,6 +177,7 @@ export interface MaintenanceApi {
   "memoryVisualThreshold": ComputedRef<number>;
   "diskVisualThreshold": ComputedRef<number>;
   "monitorDiskOptions": ComputedRef<{ key: string; label: string; }[]>;
+  "monitorDiskTypeOptions": Array<{ value: MonitorDiskType; label: string; description: string }>;
   "openAlertSettings": () => void;
   "saveAlertSettings": () => Promise<void>;
 }

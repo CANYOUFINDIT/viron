@@ -11,6 +11,13 @@ const (
 	diskCollectionFailed   = "failed"
 )
 
+var virtualDiskFilesystems = map[string]struct{}{
+	"autofs": {}, "cgroup": {}, "cgroup2": {}, "configfs": {}, "debugfs": {},
+	"devfs": {}, "devtmpfs": {}, "fuse.lxcfs": {}, "fuse.portal": {}, "fusectl": {},
+	"hugetlbfs": {}, "mqueue": {}, "nsfs": {}, "overlay": {}, "proc": {}, "pstore": {},
+	"securityfs": {}, "squashfs": {}, "sysfs": {}, "tmpfs": {}, "tracefs": {},
+}
+
 var ignoredDiskFilesystems = map[string]struct{}{
 	"9p": {}, "autofs": {}, "ceph": {}, "cgroup": {}, "cgroup2": {}, "cifs": {},
 	"configfs": {}, "debugfs": {}, "devfs": {}, "devtmpfs": {}, "fuse.lxcfs": {},
@@ -35,6 +42,18 @@ var ignoredDiskMountRoots = []string{
 	"/var/lib/kubelet/plugins_registry",
 	"/var/lib/kubelet/pods",
 	"/var/lib/rancher/k3s/agent/containerd",
+}
+
+func monitorDiskCollectable(path, filesystem, _ string) bool {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return false
+	}
+	filesystem = strings.ToLower(strings.TrimSpace(filesystem))
+	if _, ignored := virtualDiskFilesystems[filesystem]; ignored {
+		return false
+	}
+	return true
 }
 
 func monitorDiskEligible(path, filesystem, device string) bool {
@@ -99,7 +118,7 @@ func preferredDisk(left, right DiskSnapshot) DiskSnapshot {
 func stableMonitorDisks(disks []DiskSnapshot) []DiskSnapshot {
 	byDevice := make(map[string]DiskSnapshot, len(disks))
 	for _, candidate := range disks {
-		if !monitorDiskEligible(candidate.Path, candidate.Filesystem, candidate.Device) {
+		if !monitorDiskCollectable(candidate.Path, candidate.Filesystem, candidate.Device) {
 			continue
 		}
 		key := normalizedDiskDevice(candidate.Device, candidate.Filesystem, candidate.Path)

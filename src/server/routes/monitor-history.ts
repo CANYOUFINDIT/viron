@@ -7,7 +7,9 @@ import {
   type MonitorProcessSnapshot,
 } from "../../shared/monitor-performance.js";
 import { canAccessConnection, canAccessEnvironment } from "../access-control.js";
+import { visibleMonitorDisks } from "../../shared/monitor-alerts.js";
 import { MONITORING_MAX_POINTS, MONITORING_TOP_PROCESSES, capSeriesPoints } from "../../shared/monitoring.js";
+import { monitorAlertSettingsForEnvironment } from "../monitor-alerts.js";
 import { requireAdmin } from "./auth.js";
 
 const historyQuerySchema = z.object({
@@ -437,11 +439,15 @@ export async function registerMonitorHistoryRoutes(app: FastifyInstance): Promis
         items.push(metric);
         deploymentMetricsBySample.set(key, items);
       }
+      const diskSettings = await monitorAlertSettingsForEnvironment(app, environmentId);
       const parsed = rows.map((row) => parseSample(
         row,
         targets,
         storedDeploymentMetrics === undefined ? undefined : deploymentMetricsBySample.get(`${row.agent_id}:${row.sequence_end}`) ?? [],
-      )).filter((point) => point !== null);
+      )).filter((point) => point !== null).map((point) => ({
+        ...point,
+        host: { ...point.host, disks: visibleMonitorDisks(point.host.disks, diskSettings) },
+      }));
       const marked = markDiscontinuities(parsed, gaps);
       const points = capSeriesPoints(marked, MONITORING_MAX_POINTS, (point) => point.breakBefore);
       const diagnostics = buildMonitorDiagnostics(points);

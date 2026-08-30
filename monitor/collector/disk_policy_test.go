@@ -39,3 +39,18 @@ func TestStableMonitorDisksDeduplicatesBindMountsByDevice(t *testing.T) {
 		t.Fatalf("unexpected stable disks: %#v", disks)
 	}
 }
+
+func TestStableMonitorDisksKeepsNfsAndPodMountsForServerFiltering(t *testing.T) {
+	disks := stableMonitorDisks([]DiskSnapshot{
+		{Path: "/", Device: "sda1", Filesystem: "ext4"},
+		{Path: "/var/lib/kubelet/pods/uid/volumes/kubernetes.io~nfs/vol", Device: "192.168.5.195:/opt/onepro/hehao/vllm", Filesystem: "nfs"},
+		{Path: "/var/lib/kubelet/pods/uid/volumes/kubernetes.io~csi/pvc/mount", Device: "sde1", Filesystem: "ext4"},
+		{Path: "/proc", Device: "proc", Filesystem: "proc"},
+	})
+	if len(disks) != 3 {
+		t.Fatalf("expected host disk plus NFS/CSI pod mounts in the snapshot, got %#v", disks)
+	}
+	if monitorDiskEligible("/var/lib/kubelet/pods/uid/volumes/kubernetes.io~nfs/vol", "nfs", "192.168.5.195:/opt/onepro/hehao/vllm") {
+		t.Fatal("collection completeness should still ignore kubelet NFS mounts")
+	}
+}

@@ -28,6 +28,16 @@ export function monitorAlertSeverityRank(severity: MonitorAlertSeverity): number
   return MONITOR_ALERT_SEVERITIES.indexOf(severity);
 }
 
+export const MONITOR_DISK_TYPES = ["host_local", "nfs", "csi_network", "container_pod"] as const;
+export type MonitorDiskType = (typeof MONITOR_DISK_TYPES)[number];
+export const defaultMonitoredDiskTypes: MonitorDiskType[] = ["host_local"];
+export const MONITOR_DISK_TYPE_OPTIONS: Array<{ value: MonitorDiskType; label: string; description: string }> = [
+  { value: "host_local", label: "主机本地磁盘", description: "节点自身的本地块设备和文件系统，例如 / 与 /data" },
+  { value: "nfs", label: "NFS", description: "宿主机上的 NFS 网络文件系统挂载" },
+  { value: "csi_network", label: "CSI 或其他网络卷", description: "CIFS、Ceph、Gluster 等宿主机网络卷" },
+  { value: "container_pod", label: "容器与 Pod 挂载", description: "kubelet、containerd、Docker 等运行时下的 Pod 与容器卷，包括其中的 NFS 与 CSI" },
+];
+
 export interface MonitorAlertSettings {
   enabled: boolean;
   hostOfflineEnabled: boolean;
@@ -45,6 +55,7 @@ export interface MonitorAlertSettings {
   tlsWarnDays: number;
   tlsHostnameMismatchEnabled: boolean;
   excludedDisks: string[];
+  monitoredDiskTypes: MonitorDiskType[];
   consecutiveSamples: 2;
 }
 
@@ -164,6 +175,7 @@ export const defaultMonitorAlertSettings: MonitorAlertSettings = {
   tlsWarnDays: 14,
   tlsHostnameMismatchEnabled: true,
   excludedDisks: [],
+  monitoredDiskTypes: [...defaultMonitoredDiskTypes],
   consecutiveSamples: 2,
 };
 
@@ -183,13 +195,39 @@ export function monitorDiskKey(disk: { path: string; device?: string }): string 
   return JSON.stringify([disk.device?.trim() ?? "", disk.path.trim()]);
 }
 
-const ignoredMonitorDiskFilesystems = new Set([
-  "9p", "autofs", "ceph", "cgroup", "cgroup2", "cifs", "configfs", "debugfs", "devfs", "devtmpfs",
-  "fuse.lxcfs", "fuse.portal", "fusectl", "glusterfs", "hugetlbfs", "mqueue", "nfs", "nfs4", "nsfs",
-  "overlay", "proc", "pstore", "securityfs", "smb3", "squashfs", "sysfs", "tmpfs", "tracefs",
+export function monitorDiskIdentity(key: string): { device: string; path: string } | null {
+  try {
+    const parsed = JSON.parse(key);
+    if (Array.isArray(parsed) && parsed.length === 2) {
+      return { device: String(parsed[0] ?? ""), path: String(parsed[1] ?? "") };
+    }
+  } catch {
+    // Preserve opaque historical disk identities.
+  }
+  return null;
+}
+
+export function parseMonitoredDiskTypes(value: unknown): MonitorDiskType[] {
+  if (!Array.isArray(value)) return [...defaultMonitoredDiskTypes];
+  const allowed = new Set<string>(MONITOR_DISK_TYPES);
+  const unique: MonitorDiskType[] = [];
+  for (const item of value) {
+    if (typeof item !== "string" || !allowed.has(item) || unique.includes(item as MonitorDiskType)) continue;
+    unique.push(item as MonitorDiskType);
+  }
+  return unique;
+}
+
+const virtualMonitorDiskFilesystems = new Set([
+  "autofs", "cgroup", "cgroup2", "configfs", "debugfs", "devfs", "devtmpfs",
+  "fuse.lxcfs", "fuse.portal", "fusectl", "hugetlbfs", "mqueue", "nsfs",
+  "overlay", "proc", "pstore", "securityfs", "squashfs", "sysfs", "tmpfs", "tracefs",
 ]);
 
-const ignoredMonitorDiskMountRoots = [
+const nfsMonitorDiskFilesystems = new Set(["nfs", "nfs4"]);
+const networkMonitorDiskFilesystems = new Set(["9p", "ceph", "cifs", "glusterfs", "smb3"]);
+
+const containerPodMonitorDiskMountRoots = [
   "/run/containerd",
   "/run/credentials",
   "/run/docker",
@@ -207,13 +245,32 @@ const ignoredMonitorDiskMountRoots = [
   "/var/lib/rancher/k3s/agent/containerd",
 ];
 
-export function monitorDiskIsEligible(disk: { path: string; device?: string; filesystem?: string }): boolean {
+function pathUnderMonitorDiskRoot(path: string, roots: readonly string[]): boolean {
+  return roots.some((root) => path === root || path.startsWith(`${root}/`));
+}
+
+export function monitorDiskType(disk: { path: string; device?: string; filesystem?: string }): MonitorDiskType | null {
   const path = disk.path.trim();
-  if (!path) return false;
+  if (!path) return null;
+  const filesystem = disk.filesystem?.trim().toLowerCase() ?? "";
+  if (virtualMonitorDiskFilesystems.has(filesystem)) return null;
   const device = disk.device?.trim() ?? "";
-  if (device.startsWith("//") || device.includes(":/")) return false;
-  if (ignoredMonitorDiskFilesystems.has(disk.filesystem?.trim().toLowerCase() ?? "")) return false;
-  return !ignoredMonitorDiskMountRoots.some((root) => path === root || path.startsWith(`${root}/`));
+  if (pathUnderMonitorDiskRoot(path, containerPodMonitorDiskMountRoots)) return "container_pod";
+  if (nfsMonitorDiskFilesystems.has(filesystem) || device.includes(":/")) return "nfs";
+  if (
+    networkMonitorDiskFilesystems.has(filesystem)
+    || device.startsWith("//")
+    || (filesystem.startsWith("fuse.") && filesystem !== "fuse.lxcfs" && filesystem !== "fuse.portal")
+  ) return "csi_network";
+  return "host_local";
+}
+
+export function monitorDiskIsEligible(
+  disk: { path: string; device?: string; filesystem?: string },
+  types: readonly MonitorDiskType[] = defaultMonitoredDiskTypes,
+): boolean {
+  const type = monitorDiskType(disk);
+  return type !== null && types.includes(type);
 }
 
 function preferredMonitorDisk<T extends { path: string }>(left: T, right: T): T {
@@ -225,14 +282,32 @@ function preferredMonitorDisk<T extends { path: string }>(left: T, right: T): T 
   return left.path <= right.path ? left : right;
 }
 
-export function stableMonitorDisks<T extends { path: string; device?: string; filesystem?: string }>(disks: T[]): T[] {
+export function stableMonitorDisks<T extends { path: string; device?: string; filesystem?: string }>(
+  disks: T[],
+  types: readonly MonitorDiskType[] = defaultMonitoredDiskTypes,
+): T[] {
   const byDevice = new Map<string, T>();
   for (const disk of disks) {
-    if (!monitorDiskIsEligible(disk)) continue;
+    if (!monitorDiskIsEligible(disk, types)) continue;
     const normalizedDevice = disk.device?.trim().replace(/^\/dev\//, "") || "";
     const key = normalizedDevice || `path:${disk.path.trim()}`;
     const current = byDevice.get(key);
     byDevice.set(key, current ? preferredMonitorDisk(current, disk) : disk);
   }
   return [...byDevice.values()].sort((left, right) => left.path.localeCompare(right.path) || String(left.device ?? "").localeCompare(String(right.device ?? "")));
+}
+
+export function visibleMonitorDisks<T extends { path: string; device?: string; filesystem?: string }>(
+  disks: T[] | undefined,
+  settings: Pick<MonitorAlertSettings, "monitoredDiskTypes" | "excludedDisks"> = defaultMonitorAlertSettings,
+): T[] {
+  const excluded = new Set(settings.excludedDisks);
+  const excludedPaths = new Set(settings.excludedDisks.flatMap((key) => {
+    const disk = monitorDiskIdentity(key);
+    return disk?.path ? [disk.path] : [];
+  }));
+  return stableMonitorDisks(disks ?? [], settings.monitoredDiskTypes).filter((disk) => {
+    const key = monitorDiskKey(disk);
+    return !excluded.has(key) && !excludedPaths.has(disk.path.trim());
+  });
 }
