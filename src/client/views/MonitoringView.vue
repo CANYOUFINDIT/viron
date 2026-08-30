@@ -3,7 +3,7 @@ import { Radio, RefreshCw, Server, ShieldAlert } from "@lucide/vue";
 import { ElMessage } from "element-plus";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import type { MonitorAlertItem, MonitorPlatformEventItem } from "../../shared/monitor-alerts";
+import type { MonitorAlertItem } from "../../shared/monitor-alerts";
 import {
   MONITORING_HOST_PAGE_CONCURRENCY,
   MONITORING_HOST_PAGE_SIZE,
@@ -195,7 +195,8 @@ async function loadAlerts() {
   try {
     const params = new URLSearchParams();
     if (environmentId.value) params.set("environmentId", environmentId.value);
-    const response = await api<{ items: MonitorAlertItem[] }>(`/api/v1/monitor-alerts${params.size ? `?${params}` : ""}`, { signal: alertsAbort.signal });
+    params.set("limit", "500");
+    const response = await api<{ items: MonitorAlertItem[] }>(`/api/v1/monitor-alerts?${params.toString()}`, { signal: alertsAbort.signal });
     alerts.value = response.items;
   } catch (caught) {
     if ((caught as { name?: string }).name === "AbortError") return;
@@ -267,7 +268,7 @@ function openService(service: MonitoringServiceCard) {
   });
 }
 
-function openEvent(event: MonitorPlatformEventItem) {
+function openEvent(event: MonitorAlertItem) {
   if (event.targetType === "tls_endpoint") {
     void router.push({ name: "ssh-keys", query: { tab: "ssl" } });
     return;

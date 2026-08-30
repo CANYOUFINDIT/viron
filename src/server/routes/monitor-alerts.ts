@@ -472,7 +472,10 @@ export async function registerMonitorAlertRoutes(app: FastifyInstance): Promise<
   );
 
   app.get("/api/v1/monitor-alerts", { preHandler: requireAdmin }, async (request, reply) => {
-    const query = z.object({ environmentId: z.string().uuid().optional() }).safeParse(request.query);
+    const query = z.object({
+      environmentId: z.string().uuid().optional(),
+      limit: z.coerce.number().int().min(1).max(2_000).optional(),
+    }).safeParse(request.query);
     if (!query.success) return reply.code(400).send({ error: "INVALID_QUERY", message: "告警筛选参数无效" });
     if (query.data.environmentId && !await canAccessEnvironment(app.db, request.admin!, query.data.environmentId)) {
       return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
@@ -480,6 +483,7 @@ export async function registerMonitorAlertRoutes(app: FastifyInstance): Promise<
     const scope = alertScopeWhere(await alertWorkspaceScopes(app, request));
     const environmentClause = query.data.environmentId ? " AND a.environment_id = ?" : "";
     const parameters = [request.admin!.id, ...scope.parameters, ...(query.data.environmentId ? [query.data.environmentId] : [])];
+    const limit = query.data.limit ?? 100;
     const rows = await app.db.prepare(`
       SELECT a.*, e.workspace_type, e.workspace_id,
         CASE WHEN e.workspace_type = 'personal' THEN '个人工作台' ELSE COALESCE(o.name, '') END AS workspace_name,
@@ -490,8 +494,8 @@ export async function registerMonitorAlertRoutes(app: FastifyInstance): Promise<
       LEFT JOIN monitor_alert_user_states u ON u.alert_id = a.id AND u.user_id = ?
       WHERE ${scope.sql}
         AND u.cleared_at IS NULL${environmentClause}
-      ORDER BY CASE WHEN a.status = 'active' THEN 0 WHEN a.status = 'event' THEN 1 ELSE 2 END, a.triggered_at DESC
-      LIMIT 100
+      ORDER BY CASE WHEN a.status = 'active' THEN 0 WHEN a.status = 'event' THEN 1 ELSE 2 END, a.last_seen_at DESC, a.triggered_at DESC
+      LIMIT ${limit}
     `).all(...parameters) as Record<string, unknown>[];
     const unreadRow = await app.db.prepare(`
       SELECT COUNT(*) AS count

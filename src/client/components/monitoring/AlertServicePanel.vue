@@ -1,17 +1,10 @@
 <script setup lang="ts">
-import { CalendarDays } from "@lucide/vue";
-import { computed, onBeforeUnmount, ref, watch } from "vue";
-import type {
-  MonitorAlertItem,
-  MonitorAlertSeverity,
-  MonitorHostEventCalendarDay,
-  MonitorHostEventCalendarResponse,
-  MonitorPlatformEventItem,
-} from "../../../shared/monitor-alerts";
-import { api } from "../../api";
+import { computed, ref, watch } from "vue";
+import type { MonitorAlertItem, MonitorAlertSeverity } from "../../../shared/monitor-alerts";
 import { currentLocale, translate as tr } from "../../i18n";
 import { monitorAlertRuleLabel } from "../../monitor-alert-copy";
-import { platformEventCalendarCacheKey, readMonitorUiCache, writeMonitorUiCache } from "../../monitor-ui-cache";
+import { monitorAlertLocalDateKey, monitorAlertLocalDateKeys } from "../../monitor-host-event-display";
+import HostEventCalendar from "./HostEventCalendar.vue";
 import type { MonitoringServiceCard } from "./ServiceApmPanel.vue";
 
 const props = defineProps<{
@@ -22,205 +15,45 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  "open-event": [event: MonitorPlatformEventItem];
+  "open-event": [event: MonitorAlertItem];
   "open-service": [service: MonitoringServiceCard];
 }>();
 
-const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-const heatRangeDays = ref(365);
 const eventRangeDays = ref(1);
 const selectedHeatDate = ref("");
 const eventEnvironmentId = ref("");
 const eventSeverity = ref<"all" | MonitorAlertSeverity>("all");
 const eventStatus = ref<"all" | "active" | "recovered" | "event">("all");
 const serviceQuery = ref("");
-const calendars = ref<MonitorHostEventCalendarResponse[]>([]);
-const calendarLoading = ref(false);
-const events = ref<MonitorPlatformEventItem[]>([]);
-const eventsLoading = ref(false);
-const eventsError = ref("");
-let calendarAbort: AbortController | null = null;
-let eventsAbort: AbortController | null = null;
-
-function pad(value: number) {
-  return String(value).padStart(2, "0");
-}
-
-function localDateKey(date: Date) {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
+const todayKey = monitorAlertLocalDateKey(new Date().toISOString());
 
 function addDays(key: string, delta: number) {
   const [year, month, day] = key.split("-").map(Number) as [number, number, number];
-  return localDateKey(new Date(year, month - 1, day + delta));
+  return monitorAlertLocalDateKey(new Date(year, month - 1, day + delta).toISOString());
 }
 
-const todayKey = localDateKey(new Date());
-
-function offsetMonth(monthKey: string, delta: number) {
-  const [year, month] = monthKey.split("-").map(Number) as [number, number];
-  const next = new Date(year, month - 1 + delta, 1);
-  return `${next.getFullYear()}-${pad(next.getMonth() + 1)}`;
-}
-
-const neededMonths = computed(() => {
-  const start = addDays(todayKey, -(heatRangeDays.value - 1));
-  const months: string[] = [];
-  let cursor = start.slice(0, 7);
-  const end = todayKey.slice(0, 7);
-  while (cursor <= end) {
-    months.push(cursor);
-    cursor = offsetMonth(cursor, 1);
-  }
-  return months;
-});
-
-const dayMap = computed(() => {
-  const map = new Map<string, MonitorHostEventCalendarDay>();
-  for (const calendar of calendars.value) {
-    for (const day of calendar.days) map.set(day.date, day);
-  }
-  return map;
-});
-
-const heatmapWeeks = computed(() => {
-  const startKey = addDays(todayKey, -(heatRangeDays.value - 1));
-  const [year, month, day] = startKey.split("-").map(Number) as [number, number, number];
-  const leading = (new Date(year, month - 1, day).getDay() + 6) % 7;
-  const total = heatRangeDays.value + leading;
-  const padded = Math.ceil(total / 7) * 7;
-  const cells: Array<MonitorHostEventCalendarDay | null> = [];
-  for (let index = 0; index < padded; index += 1) {
-    if (index < leading) {
-      cells.push(null);
-      continue;
-    }
-    const key = addDays(startKey, index - leading);
-    if (key > todayKey) {
-      cells.push(null);
-      continue;
-    }
-    cells.push(dayMap.value.get(key) ?? {
-      date: key,
-      future: key > todayKey,
-      coverageRatio: 1,
-      newEventCount: 0,
-      activeEventCount: 0,
-      infoCount: 0,
-      warningCount: 0,
-      majorCount: 0,
-      criticalCount: 0,
-      affectedMinutes: 0,
-      peakSeverity: null,
-      burdenScore: 0,
-    });
-  }
-  return Array.from({ length: cells.length / 7 }, (_, index) => cells.slice(index * 7, index * 7 + 7));
-});
-
-const monthLabels = computed(() => {
-  const formatter = new Intl.DateTimeFormat(currentLocale(), { month: "short" });
-  const labels: Array<{ key: string; label: string }> = [];
-  for (const week of heatmapWeeks.value) {
-    const first = week.find((day) => day);
-    if (!first) continue;
-    const monthKey = first.date.slice(0, 7);
-    if (labels.at(-1)?.key === monthKey) continue;
-    const [year, month] = monthKey.split("-").map(Number) as [number, number];
-    labels.push({ key: monthKey, label: formatter.format(new Date(year, month - 1, 1)) });
-  }
-  return labels;
-});
-
-const weekdayLabels = computed(() => {
-  const monday = Date.UTC(2026, 7, 24);
-  return Array.from({ length: 7 }, (_, index) => new Intl.DateTimeFormat(currentLocale(), { weekday: "narrow", timeZone: "UTC" })
-    .format(new Date(monday + index * 24 * 60 * 60 * 1000)));
-});
-
-function cellTone(day: MonitorHostEventCalendarDay | null) {
-  if (!day || day.future) return "is-empty";
-  if (day.peakSeverity) return `is-${day.peakSeverity}`;
-  return "is-healthy";
-}
-
-function cellTitle(day: MonitorHostEventCalendarDay | null) {
-  if (!day) return "";
-  if (!day.activeEventCount && !day.newEventCount) return `${day.date}`;
-  return `${day.date} · ${day.newEventCount || day.activeEventCount}`;
-}
-
-async function loadCalendar() {
-  calendarAbort?.abort();
-  calendarAbort = new AbortController();
-  const signal = calendarAbort.signal;
-  const months = neededMonths.value;
-  const cacheKey = platformEventCalendarCacheKey(props.environmentId, timezone, months);
-  const cached = readMonitorUiCache<MonitorHostEventCalendarResponse[]>(cacheKey);
-  calendars.value = cached ?? [];
-  calendarLoading.value = !cached;
-  try {
-    const results = await Promise.all(months.map((month) => {
-      const query = new URLSearchParams({ month, timezone });
-      if (props.environmentId) query.set("environmentId", props.environmentId);
-      return api<MonitorHostEventCalendarResponse>(`/api/v1/monitoring/event-calendar?${query}`, { signal });
-    }));
-    if (signal.aborted) return;
-    calendars.value = results;
-    writeMonitorUiCache(cacheKey, results);
-  } catch (caught) {
-    if ((caught as { name?: string }).name === "AbortError") return;
-    if (!cached) calendars.value = [];
-  } finally {
-    if (calendarAbort?.signal === signal) calendarLoading.value = false;
-  }
-}
-
-async function loadEvents() {
-  eventsAbort?.abort();
-  eventsAbort = new AbortController();
-  const signal = eventsAbort.signal;
-  eventsLoading.value = true;
-  eventsError.value = "";
-  const query = new URLSearchParams({ timezone });
-  const environmentId = eventEnvironmentId.value || props.environmentId;
-  if (environmentId) query.set("environmentId", environmentId);
-  if (eventSeverity.value !== "all") query.set("severity", eventSeverity.value);
-  if (eventStatus.value !== "all") query.set("status", eventStatus.value);
-  if (selectedHeatDate.value) {
-    query.set("date", selectedHeatDate.value);
-  } else {
-    const fromKey = addDays(todayKey, -(eventRangeDays.value - 1));
-    const [year, month, day] = fromKey.split("-").map(Number) as [number, number, number];
-    query.set("from", new Date(year, month - 1, day).toISOString());
-    query.set("to", new Date().toISOString());
-  }
-  try {
-    const response = await api<{ items: MonitorPlatformEventItem[] }>(`/api/v1/monitoring/events?${query}`, { signal });
-    if (!signal.aborted) events.value = response.items;
-  } catch (caught) {
-    if ((caught as { name?: string }).name === "AbortError") return;
-    events.value = [];
-    eventsError.value = caught instanceof Error ? caught.message : tr("读取告警事件失败");
-  } finally {
-    if (eventsAbort?.signal === signal) eventsLoading.value = false;
-  }
-}
-
-watch([heatRangeDays, () => props.environmentId], loadCalendar, { immediate: true });
-watch([selectedHeatDate, eventRangeDays, eventEnvironmentId, eventSeverity, eventStatus, () => props.environmentId], loadEvents, { immediate: true });
 watch(() => props.environmentId, (value) => {
   eventEnvironmentId.value = value;
-});
-onBeforeUnmount(() => {
-  calendarAbort?.abort();
-  eventsAbort?.abort();
-});
+}, { immediate: true });
 
-function selectHeatDate(day: MonitorHostEventCalendarDay | null) {
-  if (!day) return;
-  selectedHeatDate.value = selectedHeatDate.value === day.date ? "" : day.date;
+function selectHeatDate(date: string) {
+  selectedHeatDate.value = selectedHeatDate.value === date ? "" : date;
 }
+
+const rangeStartKey = computed(() => selectedHeatDate.value || addDays(todayKey, -(eventRangeDays.value - 1)));
+const rangeEndKey = computed(() => selectedHeatDate.value || todayKey);
+
+const events = computed(() => {
+  const environmentId = eventEnvironmentId.value || props.environmentId;
+  return props.alerts.filter((alert) => {
+    if (environmentId && alert.environmentId !== environmentId) return false;
+    if (eventSeverity.value !== "all" && alert.peakSeverity !== eventSeverity.value) return false;
+    if (eventStatus.value !== "all" && alert.status !== eventStatus.value) return false;
+    const dates = monitorAlertLocalDateKeys(alert);
+    if (!dates.length) return alert.status === "active" && !selectedHeatDate.value;
+    return dates.some((date) => date >= rangeStartKey.value && date <= rangeEndKey.value);
+  });
+});
 
 const eventRangeLabel = computed(() => {
   if (selectedHeatDate.value) return selectedHeatDate.value;
@@ -233,16 +66,16 @@ function severityLabel(value: MonitorAlertSeverity) {
   return ({ info: "INFO", warning: "WARNING", major: "MAJOR", critical: "CRITICAL" })[value];
 }
 
-function statusLabel(status: MonitorPlatformEventItem["status"]) {
+function statusLabel(status: MonitorAlertItem["status"]) {
   return status === "active" ? tr("活动中") : status === "recovered" ? tr("已恢复") : tr("事件");
 }
 
-function eventTime(event: MonitorPlatformEventItem) {
-  const at = new Date(event.triggeredAt);
-  return `${localDateKey(at)} ${at.toLocaleTimeString(currentLocale(), { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
+function eventTime(event: MonitorAlertItem) {
+  const at = new Date(event.lastSeenAt || event.triggeredAt);
+  return `${monitorAlertLocalDateKey(at.toISOString())} ${at.toLocaleTimeString(currentLocale(), { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
 }
 
-function eventTarget(event: MonitorPlatformEventItem) {
+function eventTarget(event: MonitorAlertItem) {
   return event.serviceName || event.connectionName || event.targetName;
 }
 
@@ -296,55 +129,13 @@ function serviceAlertText(service: MonitoringServiceCard) {
 
 <template>
   <section class="alert-service-panel">
-    <section class="observe-panel">
-      <header class="observe-panel__head">
-        <div class="observe-panel__title">
-          <span class="observe-panel__icon"><CalendarDays :size="16" /></span>
-          <strong>{{ $t('告警事件热力矩阵') }}</strong>
-        </div>
-        <div class="range-pills" role="group" :aria-label="$t('热力矩阵时间范围')">
-          <button type="button" :class="{ 'is-active': heatRangeDays === 30 }" @click="heatRangeDays = 30">1M</button>
-          <button type="button" :class="{ 'is-active': heatRangeDays === 90 }" @click="heatRangeDays = 90">3M</button>
-          <button type="button" :class="{ 'is-active': heatRangeDays === 180 }" @click="heatRangeDays = 180">6M</button>
-          <button type="button" :class="{ 'is-active': heatRangeDays === 365 }" @click="heatRangeDays = 365">12M</button>
-        </div>
-      </header>
-      <div class="heat-body" :class="{ 'is-loading': calendarLoading }">
-        <div class="heat-months">
-          <span v-for="item in monthLabels" :key="item.key">{{ item.label }}</span>
-        </div>
-        <div class="heat-plot">
-          <div class="heat-weekdays" aria-hidden="true">
-            <span v-for="(label, index) in weekdayLabels" :key="index">{{ index % 2 === 0 ? label : "" }}</span>
-          </div>
-          <div class="heat-grid" :style="{ gridTemplateColumns: `repeat(${heatmapWeeks.length}, minmax(10px, 1fr))` }">
-            <template v-for="(week, weekIndex) in heatmapWeeks" :key="weekIndex">
-              <button
-                v-for="(day, dayIndex) in week"
-                :key="`${weekIndex}-${dayIndex}`"
-                type="button"
-                class="heat-cell"
-                :class="[cellTone(day), { 'is-selected': day && selectedHeatDate === day.date }]"
-                :disabled="!day"
-                :title="cellTitle(day)"
-                :aria-label="cellTitle(day)"
-                @click="selectHeatDate(day)"
-              />
-            </template>
-          </div>
-        </div>
-      </div>
-      <footer class="observe-panel__foot">
-        <div class="heat-legend">
-          <span>{{ $t('低') }}</span>
-          <i class="is-healthy"></i>
-          <i class="is-warning"></i>
-          <i class="is-major"></i>
-          <i class="is-critical"></i>
-          <span>{{ $t('高') }}</span>
-        </div>
-      </footer>
-    </section>
+    <HostEventCalendar
+      mode="platform"
+      :environment-id="environmentId"
+      :overlay-alerts="alerts"
+      :selected-date="selectedHeatDate"
+      @select-date="selectHeatDate"
+    />
 
     <section class="observe-panel">
       <header class="observe-panel__head">
@@ -380,9 +171,7 @@ function serviceAlertText(service: MonitoringServiceCard) {
           </el-select>
         </div>
       </div>
-      <p v-if="eventsError" class="observe-empty">{{ eventsError }}</p>
-      <div v-else-if="eventsLoading && !events.length" class="observe-empty">{{ $t('正在读取告警事件') }}</div>
-      <div v-else-if="!events.length" class="observe-empty">{{ $t('当前条件下没有告警事件') }}</div>
+      <div v-if="!events.length" class="observe-empty">{{ $t('当前条件下没有告警事件') }}</div>
       <div v-else class="event-list">
         <button
           v-for="event in events"

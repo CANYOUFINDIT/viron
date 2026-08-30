@@ -1,20 +1,38 @@
 <script setup lang="ts">
 import { CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock3, RefreshCw } from "@lucide/vue";
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import type {
-  MonitorAlertSeverity,
-  MonitorHostEventCalendarDay,
-  MonitorHostEventCalendarResponse,
-  MonitorHostEventCalendarSummary,
-  MonitorHostEventItem,
+import {
+  monitorAlertSeverityRank,
+  monitorAlertSeverityWeight,
+  type MonitorAlertItem,
+  type MonitorAlertSeverity,
+  type MonitorHostEventCalendarDay,
+  type MonitorHostEventCalendarResponse,
+  type MonitorHostEventCalendarSummary,
+  type MonitorHostEventItem,
 } from "../../../shared/monitor-alerts";
 import { api } from "../../api";
 import { currentLocale, translate as tr } from "../../i18n";
-import { monitorHostEventDiskLabel, monitorHostEventDurationMinutes } from "../../monitor-host-event-display";
-import { monitorEventCalendarCacheKey, readMonitorUiCache, writeMonitorUiCache } from "../../monitor-ui-cache";
+import { monitorAlertLocalDateKeys, monitorHostEventDiskLabel, monitorHostEventDurationMinutes } from "../../monitor-host-event-display";
+import { monitorEventCalendarCacheKey, platformEventCalendarCacheKey, readMonitorUiCache, writeMonitorUiCache } from "../../monitor-ui-cache";
 import { monitorAlertRuleLabel } from "../../monitor-alert-copy";
 
-const props = defineProps<{ environmentId: string; hostId: string }>();
+const props = withDefaults(defineProps<{
+  environmentId?: string;
+  hostId?: string;
+  mode?: "host" | "platform";
+  overlayAlerts?: MonitorAlertItem[];
+  selectedDate?: string;
+}>(), {
+  environmentId: "",
+  hostId: "",
+  mode: "host",
+  overlayAlerts: () => [],
+  selectedDate: "",
+});
+
+const emit = defineEmits<{ "select-date": [date: string] }>();
+const isPlatform = computed(() => props.mode === "platform");
 
 // 默认选择近 3 个月，整年 12 个月（1 年）全矩阵展示，可通过拖动竖线调整 1 ~ 12 个月
 const rangeMonths = ref(3);
@@ -27,7 +45,7 @@ const loading = ref(false);
 const error = ref("");
 const calendars = ref<MonitorHostEventCalendarResponse[]>([]);
 const drawerOpen = ref(false);
-const selectedDate = ref("");
+const drawerDate = ref("");
 const events = ref<MonitorHostEventItem[]>([]);
 const eventsLoading = ref(false);
 const isDragging = ref(false);
@@ -91,12 +109,83 @@ function placeholderMonthDays(monthKey: string): MonitorHostEventCalendarDay[] {
   });
 }
 
+function overlayAlertDays(days: MonitorHostEventCalendarDay[]): MonitorHostEventCalendarDay[] {
+  const alerts = (props.overlayAlerts ?? []).filter((alert) => !props.environmentId || alert.environmentId === props.environmentId);
+  if (!alerts.length) return days;
+  const overlay = new Map<string, MonitorHostEventCalendarDay>();
+  for (const alert of alerts) {
+    for (const date of monitorAlertLocalDateKeys(alert)) {
+      const current = overlay.get(date) ?? {
+        date,
+        future: false,
+        coverageRatio: 0,
+        newEventCount: 0,
+        activeEventCount: 0,
+        infoCount: 0,
+        warningCount: 0,
+        majorCount: 0,
+        criticalCount: 0,
+        affectedMinutes: 0,
+        peakSeverity: null,
+        burdenScore: 0,
+      };
+      const severity = alert.peakSeverity;
+      current.newEventCount += 1;
+      current.activeEventCount += 1;
+      if (severity === "info") current.infoCount += 1;
+      if (severity === "warning") current.warningCount += 1;
+      if (severity === "major") current.majorCount += 1;
+      if (severity === "critical") current.criticalCount += 1;
+      if (!current.peakSeverity || monitorAlertSeverityRank(severity) > monitorAlertSeverityRank(current.peakSeverity)) {
+        current.peakSeverity = severity;
+      }
+      current.burdenScore = Math.round((current.burdenScore + monitorAlertSeverityWeight[severity]) * 10) / 10;
+      overlay.set(date, current);
+    }
+  }
+  return days.map((day) => {
+    const extra = overlay.get(day.date);
+    if (!extra || extra.newEventCount <= day.newEventCount) return day;
+    return {
+      ...day,
+      newEventCount: extra.newEventCount,
+      activeEventCount: Math.max(day.activeEventCount, extra.activeEventCount),
+      infoCount: Math.max(day.infoCount, extra.infoCount),
+      warningCount: Math.max(day.warningCount, extra.warningCount),
+      majorCount: Math.max(day.majorCount, extra.majorCount),
+      criticalCount: Math.max(day.criticalCount, extra.criticalCount),
+      peakSeverity: extra.peakSeverity && (!day.peakSeverity || monitorAlertSeverityRank(extra.peakSeverity) > monitorAlertSeverityRank(day.peakSeverity))
+        ? extra.peakSeverity
+        : day.peakSeverity,
+      burdenScore: Math.max(day.burdenScore, extra.burdenScore),
+    };
+  });
+}
+
+function summaryFromDays(days: MonitorHostEventCalendarDay[]): MonitorHostEventCalendarSummary {
+  const visible = days.filter((day) => !day.future);
+  return {
+    healthyDays: visible.filter((day) => day.activeEventCount === 0 && day.coverageRatio >= 0.8).length,
+    affectedDays: visible.filter((day) => day.activeEventCount > 0).length,
+    noDataDays: visible.filter((day) => day.activeEventCount === 0 && day.coverageRatio < 0.8).length,
+    criticalEvents: visible.reduce((total, day) => total + day.criticalCount, 0),
+    totalEvents: visible.reduce((total, day) => total + day.newEventCount, 0),
+    affectedMinutes: visible.reduce((total, day) => total + day.affectedMinutes, 0),
+    meanRecoveryMinutes: null,
+  };
+}
+
+const paintedCalendars = computed(() => calendars.value.map((calendar) => {
+  const days = overlayAlertDays(calendar.days);
+  return { ...calendar, days, summary: summaryFromDays(days) };
+}));
+
 // 整合整年 12 个月的全部日期，未加载的非活跃月份自动填充占位日，保证方块矩阵尺寸 100% 完整铺满
 const allDays = computed(() => {
-  const calendarMap = new Map(calendars.value.map((item) => [item.month, item]));
+  const calendarMap = new Map(paintedCalendars.value.map((item) => [item.month, item]));
   return fullYearMonths.value.flatMap((monthKey) => {
     const loaded = calendarMap.get(monthKey);
-    return loaded ? loaded.days : placeholderMonthDays(monthKey);
+    return loaded ? loaded.days : overlayAlertDays(placeholderMonthDays(monthKey));
   });
 });
 
@@ -147,25 +236,9 @@ const dividerLeftPercent = computed(() => {
   return (activeWeekIndex.value / heatmapWeeks.value.length) * 100;
 });
 
-// 统计信息严格按当前选中的活跃时间范围（竖线右侧）聚合计算
-const activeCalendars = computed(() => calendars.value.filter((item) => activeMonths.value.includes(item.month)));
-const summary = computed<MonitorHostEventCalendarSummary>(() => activeCalendars.value.reduce((total, item) => ({
-  healthyDays: total.healthyDays + item.summary.healthyDays,
-  affectedDays: total.affectedDays + item.summary.affectedDays,
-  noDataDays: total.noDataDays + item.summary.noDataDays,
-  criticalEvents: total.criticalEvents + item.summary.criticalEvents,
-  totalEvents: total.totalEvents + item.summary.totalEvents,
-  affectedMinutes: total.affectedMinutes + item.summary.affectedMinutes,
-  meanRecoveryMinutes: null,
-}), {
-  healthyDays: 0,
-  affectedDays: 0,
-  noDataDays: 0,
-  criticalEvents: 0,
-  totalEvents: 0,
-  affectedMinutes: 0,
-  meanRecoveryMinutes: null,
-}));
+const summary = computed<MonitorHostEventCalendarSummary>(() => (
+  summaryFromDays(allDays.value.filter((day) => day.date >= activeStartDate.value && !day.future))
+));
 
 const canShiftForward = computed(() => anchorMonth.value < currentMonth);
 
@@ -310,8 +383,11 @@ function eventMetric(event: MonitorHostEventItem) {
 }
 
 async function loadCalendar() {
+  if (!isPlatform.value && (!props.environmentId || !props.hostId)) return;
   const neededMonths = activeMonths.value;
-  const cacheKey = monitorEventCalendarCacheKey(props.environmentId, props.hostId, timezone, neededMonths);
+  const cacheKey = isPlatform.value
+    ? platformEventCalendarCacheKey(props.environmentId, timezone, neededMonths)
+    : monitorEventCalendarCacheKey(props.environmentId, props.hostId, timezone, neededMonths);
   const cachedCalendars = readMonitorUiCache<MonitorHostEventCalendarResponse[]>(cacheKey);
   calendars.value = cachedCalendars ?? [];
   calendarAbort?.abort();
@@ -322,10 +398,11 @@ async function loadCalendar() {
   try {
     const results = await Promise.all(neededMonths.map((monthKey) => {
       const query = new URLSearchParams({ month: monthKey, timezone });
-      return api<MonitorHostEventCalendarResponse>(
-        `/api/v1/environments/${props.environmentId}/monitor-hosts/${props.hostId}/event-calendar?${query}`,
-        { signal: controller.signal },
-      );
+      if (isPlatform.value && props.environmentId) query.set("environmentId", props.environmentId);
+      const path = isPlatform.value
+        ? `/api/v1/monitoring/event-calendar?${query}`
+        : `/api/v1/environments/${props.environmentId}/monitor-hosts/${props.hostId}/event-calendar?${query}`;
+      return api<MonitorHostEventCalendarResponse>(path, { signal: controller.signal });
     }));
     if (!controller.signal.aborted) {
       // 严格基于当前 host 缓存与新结果建立 map，避免旧主机数据残留
@@ -346,7 +423,11 @@ async function loadCalendar() {
 
 async function openDay(day: MonitorHostEventCalendarDay) {
   if (!isInteractiveDay(day)) return;
-  selectedDate.value = day.date;
+  if (isPlatform.value) {
+    emit("select-date", day.date);
+    return;
+  }
+  drawerDate.value = day.date;
   drawerOpen.value = true;
   events.value = [];
   eventsAbort?.abort();
@@ -366,10 +447,10 @@ async function openDay(day: MonitorHostEventCalendarDay) {
   }
 }
 
-watch(() => [props.environmentId, props.hostId], () => {
+watch(() => [props.environmentId, props.hostId, props.mode], () => {
   calendars.value = [];
 });
-watch(() => [props.environmentId, props.hostId, anchorMonth.value, rangeMonths.value], loadCalendar, { immediate: true });
+watch(() => [props.environmentId, props.hostId, props.mode, anchorMonth.value, rangeMonths.value], loadCalendar, { immediate: true });
 onBeforeUnmount(() => {
   calendarAbort?.abort();
   eventsAbort?.abort();
@@ -377,12 +458,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="event-calendar" :aria-label="$t('主机事件热力图')">
+  <section class="event-calendar" :aria-label="isPlatform ? $t('告警事件热力图') : $t('主机事件热力图')">
     <header class="event-calendar__header">
       <div class="event-calendar__identity">
         <span class="event-calendar__icon"><CalendarDays :size="18" /></span>
         <div class="event-calendar__title-wrap">
-          <h4>{{ $t('主机事件热力图') }}</h4>
+          <h4>{{ isPlatform ? $t('告警事件热力图') : $t('主机事件热力图') }}</h4>
           <p>{{ $t('每天一个方格，颜色表示严重级别，深浅表示事件负载') }}</p>
         </div>
       </div>
@@ -486,6 +567,7 @@ onBeforeUnmount(() => {
                       {
                         'is-interactive': isDayActive(day) && isInteractiveDay(day),
                         'is-today': day.date === todayKey,
+                        'is-selected': Boolean(props.selectedDate) && day.date === props.selectedDate,
                       }
                     ]"
                     :aria-label="dayTitle(day)"
@@ -623,7 +705,7 @@ onBeforeUnmount(() => {
     </footer>
   </section>
 
-  <el-drawer v-model="drawerOpen" size="min(460px, 94vw)" append-to-body :title="$t('{0} 主机事件', [selectedDate])">
+  <el-drawer v-model="drawerOpen" size="min(460px, 94vw)" append-to-body :title="$t('{0} 主机事件', [drawerDate])">
     <section class="event-day-drawer" v-loading="eventsLoading">
       <div v-if="events.length" class="event-day-drawer__list">
         <article v-for="event in events" :key="event.id" :class="`is-${event.peakSeverity}`">
@@ -1279,6 +1361,11 @@ onBeforeUnmount(() => {
 .event-calendar__cell.is-today {
   box-shadow: 0 0 0 1.5px var(--surface), 0 0 0 3px var(--teal-600) !important;
   z-index: 2;
+}
+
+.event-calendar__cell.is-selected {
+  box-shadow: 0 0 0 1.5px var(--surface), 0 0 0 3px var(--ink-800) !important;
+  z-index: 3;
 }
 
 .event-calendar__loading-grid {
