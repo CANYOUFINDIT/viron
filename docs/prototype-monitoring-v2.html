@@ -1,0 +1,2127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Viron Observability · 企业级全景监控平台 (1000+ 台大规模集群)</title>
+  <style>
+    :root {
+      --bg-canvas: #0b0f19;
+      --bg-surface: #111827;
+      --bg-surface-elevated: #1e293b;
+      --bg-surface-hover: #27354f;
+      --border-subtle: rgba(255, 255, 255, 0.08);
+      --border-strong: rgba(255, 255, 255, 0.16);
+      --border-focus: #38bdf8;
+
+      --text-primary: #f8fafc;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+      --text-inverse: #0b0f19;
+
+      --color-primary: #38bdf8;
+      --color-primary-rgb: 56, 189, 248;
+      --color-success: #10b981;
+      --color-success-rgb: 16, 185, 129;
+      --color-warning: #f59e0b;
+      --color-warning-rgb: 245, 158, 11;
+      --color-danger: #ef4444;
+      --color-danger-rgb: 239, 68, 68;
+      --color-purple: #a855f7;
+      --color-offline: #64748b;
+
+      --radius-sm: 4px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+      --radius-full: 9999px;
+
+      --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.4);
+      --shadow-md: 0 4px 12px -1px rgba(0, 0, 0, 0.5);
+      --shadow-xl: 0 20px 35px -5px rgba(0, 0, 0, 0.7);
+
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    [data-theme="light"] {
+      --bg-canvas: #f8fafc;
+      --bg-surface: #ffffff;
+      --bg-surface-elevated: #f1f5f9;
+      --bg-surface-hover: #e2e8f0;
+      --border-subtle: rgba(0, 0, 0, 0.08);
+      --border-strong: rgba(0, 0, 0, 0.16);
+      --border-focus: #0284c7;
+
+      --text-primary: #0f172a;
+      --text-secondary: #475569;
+      --text-muted: #94a3b8;
+      --text-inverse: #ffffff;
+
+      --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.08);
+      --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.08);
+      --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.15);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--font-sans);
+      background-color: var(--bg-canvas);
+      color: var(--text-primary);
+      line-height: 1.5;
+      font-size: 13px;
+      min-height: 100vh;
+    }
+
+    /* 顶部导航与全局状态栏 */
+    .app-header {
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 10px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 40;
+      backdrop-filter: blur(12px);
+    }
+
+    .brand-section {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .brand-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 15px;
+      letter-spacing: -0.3px;
+      color: var(--text-primary);
+    }
+
+    .brand-logo svg { color: var(--color-primary); }
+
+    .badge-scale {
+      background: rgba(var(--color-primary-rgb), 0.12);
+      color: var(--color-primary);
+      border: 1px solid rgba(var(--color-primary-rgb), 0.3);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: var(--radius-full);
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .pulse-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--color-success);
+      box-shadow: 0 0 8px var(--color-success);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.8); }
+    }
+
+    /* 主 Tab 导航切换 (主机舰队 / 业务 APM / 告警中心 / 容量热点) */
+    .main-nav-tabs {
+      display: flex;
+      background: var(--bg-canvas);
+      padding: 3px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-subtle);
+    }
+
+    .main-nav-tabs button {
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      padding: 5px 12px;
+      font-size: 12px;
+      font-weight: 500;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+    }
+
+    .main-nav-tabs button:hover { color: var(--text-primary); }
+
+    .main-nav-tabs button.is-active {
+      background: var(--bg-surface-elevated);
+      color: var(--color-primary);
+      font-weight: 600;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .segmented-control {
+      background: var(--bg-canvas);
+      padding: 3px;
+      border-radius: var(--radius-md);
+      display: inline-flex;
+      border: 1px solid var(--border-subtle);
+    }
+
+    .segmented-control button {
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 500;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .segmented-control button.is-active {
+      background: var(--bg-surface-elevated);
+      color: var(--text-primary);
+      box-shadow: var(--shadow-sm);
+      font-weight: 600;
+    }
+
+    .btn {
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-primary);
+      padding: 5px 12px;
+      border-radius: var(--radius-md);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+    }
+
+    .btn:hover { background: var(--bg-surface-hover); border-color: var(--border-strong); }
+
+    .btn-primary {
+      background: var(--color-primary);
+      color: #04101e;
+      border-color: transparent;
+      font-weight: 600;
+    }
+
+    .btn-primary:hover { filter: brightness(1.1); }
+
+    /* 主内容区 */
+    .app-main {
+      padding: 16px 24px 80px 24px;
+      max-width: 1680px;
+      margin: 0 auto;
+    }
+
+    /* KPI 态势栏 */
+    .kpi-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    @media (max-width: 1024px) {
+      .kpi-row { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    .kpi-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 14px 16px;
+      position: relative;
+    }
+
+    .kpi-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .kpi-title {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .kpi-value-wrap {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .kpi-number {
+      font-size: 24px;
+      font-weight: 700;
+      font-family: var(--font-mono);
+      letter-spacing: -0.5px;
+    }
+
+    .kpi-subtext {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .cluster-progress-bar {
+      height: 6px;
+      background: var(--bg-surface-elevated);
+      border-radius: var(--radius-full);
+      overflow: hidden;
+      display: flex;
+    }
+
+    .bar-slice { height: 100%; transition: width 0.3s ease; }
+    .bar-slice.healthy { background: var(--color-success); }
+    .bar-slice.warning { background: var(--color-warning); }
+    .bar-slice.danger { background: var(--color-danger); }
+    .bar-slice.offline { background: var(--color-offline); }
+
+    /* 异常先行置顶专区 (Attention Needed) */
+    .attention-banner {
+      background: linear-gradient(90deg, rgba(239, 68, 68, 0.08) 0%, rgba(245, 158, 11, 0.04) 100%);
+      border: 1px solid rgba(239, 68, 68, 0.25);
+      border-radius: var(--radius-lg);
+      padding: 12px 16px;
+      margin-bottom: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .attention-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .attention-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      font-size: 13px;
+      color: #fca5a5;
+    }
+
+    .attention-pills {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+    }
+
+    .alert-pill {
+      background: var(--bg-surface);
+      border: 1px solid rgba(239, 68, 68, 0.35);
+      border-radius: var(--radius-md);
+      padding: 6px 10px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.15s ease;
+    }
+
+    .alert-pill:hover {
+      background: var(--bg-surface-hover);
+      transform: translateY(-1px);
+      border-color: var(--color-danger);
+    }
+
+    .alert-pill strong { font-size: 12px; color: var(--text-primary); }
+
+    .alert-tag {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 1px 5px;
+      border-radius: var(--radius-sm);
+      text-transform: uppercase;
+      font-family: var(--font-mono);
+    }
+
+    .alert-tag.cpu { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+    .alert-tag.mem { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
+    .alert-tag.disk { background: rgba(168, 85, 247, 0.2); color: #c084fc; }
+    .alert-tag.offline { background: rgba(100, 116, 139, 0.2); color: #94a3b8; }
+
+    /* 工具与过滤操作栏 */
+    .filter-toolbar {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+
+    .toolbar-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex: 1;
+      min-width: 280px;
+    }
+
+    .search-input-wrap {
+      position: relative;
+      width: 240px;
+    }
+
+    .search-input-wrap svg {
+      position: absolute;
+      left: 9px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-muted);
+    }
+
+    .search-input {
+      width: 100%;
+      background: var(--bg-canvas);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-primary);
+      padding: 6px 10px 6px 30px;
+      border-radius: var(--radius-md);
+      font-size: 12px;
+      outline: none;
+      transition: all 0.15s ease;
+    }
+
+    .search-input:focus {
+      border-color: var(--border-focus);
+      box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
+    }
+
+    .filter-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+
+    .filter-chip {
+      background: var(--bg-canvas);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+      padding: 4px 10px;
+      border-radius: var(--radius-full);
+      font-size: 11px;
+      font-weight: 500;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      transition: all 0.15s ease;
+    }
+
+    .filter-chip:hover { color: var(--text-primary); border-color: var(--border-strong); }
+
+    .filter-chip.is-active {
+      background: rgba(var(--color-primary-rgb), 0.15);
+      border-color: rgba(var(--color-primary-rgb), 0.5);
+      color: var(--color-primary);
+      font-weight: 600;
+    }
+
+    .filter-chip .chip-count {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      background: rgba(255, 255, 255, 0.08);
+      padding: 1px 5px;
+      border-radius: var(--radius-full);
+    }
+
+    .toolbar-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .sort-select {
+      background: var(--bg-canvas);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-primary);
+      padding: 6px 10px;
+      border-radius: var(--radius-md);
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    /* 视图容器 */
+    .view-container {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      min-height: 480px;
+    }
+
+    /* 1. 蜂窝热力矩阵 (Heatmap View) */
+    .heatmap-view { padding: 20px; }
+
+    .heatmap-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .heatmap-legend { display: flex; align-items: center; gap: 14px; }
+    .legend-item { display: flex; align-items: center; gap: 5px; font-size: 11px; }
+    .legend-box { width: 10px; height: 10px; border-radius: 2px; }
+
+    .heatmap-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(22px, 1fr));
+      gap: 4px;
+      max-height: 560px;
+      overflow-y: auto;
+      padding: 4px;
+      border-radius: var(--radius-md);
+      background: var(--bg-canvas);
+    }
+
+    .heatmap-cell {
+      aspect-ratio: 1;
+      border-radius: 3px;
+      cursor: pointer;
+      transition: transform 0.1s ease, filter 0.1s ease, box-shadow 0.1s ease;
+      position: relative;
+    }
+
+    .heatmap-cell:hover {
+      transform: scale(1.4);
+      z-index: 10;
+      box-shadow: 0 0 10px rgba(0, 0, 0, 0.8);
+      filter: brightness(1.2);
+    }
+
+    .heatmap-cell.status-healthy { background-color: #059669; }
+    .heatmap-cell.status-healthy-low { background-color: #10b981; }
+    .heatmap-cell.status-warning { background-color: #f59e0b; }
+    .heatmap-cell.status-danger { background-color: #ef4444; }
+    .heatmap-cell.status-offline { background-color: #334155; }
+
+    .heatmap-cell.is-selected { outline: 2px solid #ffffff; outline-offset: 1px; }
+
+    /* 2. 紧凑表格视图 (Table View) */
+    .table-view { width: 100%; overflow-x: auto; }
+
+    .monitoring-table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 12px;
+    }
+
+    .monitoring-table th {
+      background: var(--bg-surface-elevated);
+      color: var(--text-secondary);
+      font-weight: 600;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border-subtle);
+      white-space: nowrap;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .monitoring-table th:hover { color: var(--text-primary); }
+
+    .monitoring-table td {
+      padding: 8px 14px;
+      border-bottom: 1px solid var(--border-subtle);
+      white-space: nowrap;
+    }
+
+    .monitoring-table tbody tr { cursor: pointer; }
+    .monitoring-table tbody tr:hover { background: var(--bg-surface-hover); }
+
+    .monitoring-table tbody tr.is-selected {
+      background: rgba(var(--color-primary-rgb), 0.12);
+      border-left: 3px solid var(--color-primary);
+    }
+
+    .metric-cell-wrap { display: flex; align-items: center; gap: 8px; width: 140px; }
+    .metric-cell-val { font-family: var(--font-mono); font-size: 11px; width: 44px; text-align: right; }
+    .mini-track { flex: 1; height: 4px; background: rgba(255, 255, 255, 0.08); border-radius: var(--radius-full); overflow: hidden; }
+    .mini-fill { height: 100%; border-radius: var(--radius-full); }
+
+    .text-green { color: var(--color-success); }
+    .text-amber { color: var(--color-warning); }
+    .text-red { color: var(--color-danger); }
+    .text-muted { color: var(--text-muted); }
+    .bg-green { background-color: var(--color-success); }
+    .bg-amber { background-color: var(--color-warning); }
+    .bg-red { background-color: var(--color-danger); }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 7px;
+      border-radius: var(--radius-full);
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    .status-badge.online { background: rgba(16, 185, 129, 0.12); color: #34d399; }
+    .status-badge.warning { background: rgba(245, 158, 11, 0.12); color: #fbbf24; }
+    .status-badge.danger { background: rgba(239, 68, 68, 0.12); color: #f87171; }
+    .status-badge.offline { background: rgba(100, 116, 139, 0.12); color: #94a3b8; }
+
+    /* 3. 卡片网格视图 (Grid View) */
+    .grid-view {
+      padding: 16px;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 12px;
+      max-height: 680px;
+      overflow-y: auto;
+    }
+
+    .host-card-item {
+      background: var(--bg-canvas);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 12px 14px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .host-card-item:hover {
+      border-color: var(--border-strong);
+      background: var(--bg-surface-elevated);
+      transform: translateY(-1px);
+    }
+
+    .host-card-item.is-selected {
+      border-color: var(--color-primary);
+      box-shadow: 0 0 0 1px var(--color-primary);
+    }
+
+    .host-card-header { display: flex; justify-content: space-between; align-items: flex-start; }
+    .host-card-name { font-weight: 600; font-size: 13px; }
+    .host-card-sub { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); }
+    .host-card-bars { display: flex; flex-direction: column; gap: 6px; }
+    .card-bar-row { display: flex; justify-content: space-between; font-size: 11px; }
+
+    /* 分页与底栏 */
+    .table-footer {
+      padding: 10px 16px;
+      border-top: 1px solid var(--border-subtle);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      color: var(--text-secondary);
+      background: var(--bg-surface);
+    }
+
+    .pagination-btns { display: flex; gap: 4px; }
+
+    /* ============================================================
+       TAB 2: 业务服务 APM 视图 (Service APM)
+       ============================================================ */
+    .apm-layout {
+      display: grid;
+      grid-template-columns: 340px 1fr;
+      gap: 16px;
+      padding: 16px;
+    }
+
+    @media (max-width: 1024px) {
+      .apm-layout { grid-template-columns: 1fr; }
+    }
+
+    .service-list-card {
+      background: var(--bg-canvas);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .service-list-header {
+      padding: 12px 14px;
+      background: var(--bg-surface-elevated);
+      border-bottom: 1px solid var(--border-subtle);
+      font-weight: 600;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .service-items {
+      display: flex;
+      flex-direction: column;
+      max-height: 520px;
+      overflow-y: auto;
+    }
+
+    .service-item {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border-subtle);
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: background 0.15s ease;
+    }
+
+    .service-item:hover { background: var(--bg-surface-hover); }
+
+    .service-item.is-active {
+      background: rgba(var(--color-primary-rgb), 0.12);
+      border-left: 3px solid var(--color-primary);
+    }
+
+    .apm-detail-card {
+      background: var(--bg-canvas);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .apm-charts-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    /* ============================================================
+       TAB 3: 告警中心与 NOC 全屏大屏视图
+       ============================================================ */
+    .alerts-layout {
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .alert-item-card {
+      background: var(--bg-canvas);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .alert-item-card.p0 { border-left: 4px solid var(--color-danger); }
+    .alert-item-card.p1 { border-left: 4px solid var(--color-warning); }
+    .alert-item-card.p2 { border-left: 4px solid var(--color-purple); }
+
+    .alert-info-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .alert-title-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+    }
+
+    /* ============================================================
+       TAB 4: 集群热点与容量分析 (Capacity & Top-N)
+       ============================================================ */
+    .capacity-layout {
+      padding: 16px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+
+    @media (max-width: 1200px) {
+      .capacity-layout { grid-template-columns: 1fr; }
+    }
+
+    .ranking-card {
+      background: var(--bg-canvas);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .ranking-card-head {
+      font-weight: 600;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-secondary);
+    }
+
+    .ranking-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .ranking-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 12px;
+      padding: 6px 8px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+    }
+
+    .ranking-row:hover { background: var(--bg-surface-hover); }
+
+    .rank-idx {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--bg-surface-elevated);
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      font-weight: 700;
+      font-family: var(--font-mono);
+    }
+
+    .rank-idx.top1 { background: var(--color-danger); color: #fff; }
+    .rank-idx.top2 { background: var(--color-warning); color: #000; }
+    .rank-idx.top3 { background: var(--color-purple); color: #fff; }
+
+    /* ============================================================
+       右侧滑出抽屉面板 (Slide-over Detail Drawer)
+       ============================================================ */
+    .drawer-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(2px);
+      z-index: 50;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s ease;
+    }
+
+    .drawer-backdrop.is-open { opacity: 1; pointer-events: auto; }
+
+    .drawer-panel {
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 600px;
+      max-width: 95vw;
+      background: var(--bg-surface);
+      border-left: 1px solid var(--border-strong);
+      box-shadow: var(--shadow-xl);
+      z-index: 60;
+      transform: translateX(100%);
+      transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .drawer-panel.is-open { transform: translateX(0); }
+
+    .drawer-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--bg-surface-elevated);
+    }
+
+    .drawer-header-left { display: flex; align-items: center; gap: 12px; }
+
+    .drawer-icon-wrap {
+      width: 36px;
+      height: 36px;
+      border-radius: var(--radius-md);
+      background: rgba(var(--color-primary-rgb), 0.12);
+      color: var(--color-primary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .drawer-title-group h2 { font-size: 15px; font-weight: 700; }
+    .drawer-title-group p { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); }
+    .drawer-header-right { display: flex; align-items: center; gap: 8px; }
+
+    .btn-icon {
+      background: transparent;
+      border: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+      width: 30px;
+      height: 30px;
+      border-radius: var(--radius-md);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .btn-icon:hover { background: var(--bg-surface-hover); color: var(--text-primary); border-color: var(--border-strong); }
+
+    .drawer-body {
+      padding: 20px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      flex: 1;
+    }
+
+    .drawer-actions-bar { display: flex; gap: 8px; flex-wrap: wrap; }
+
+    /* 抽屉内指标维度切换 Tabs */
+    .metric-tabs-bar {
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      border-bottom: 1px solid var(--border-subtle);
+      padding-bottom: 8px;
+    }
+
+    .metric-tab-btn {
+      background: var(--bg-canvas);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+      padding: 4px 10px;
+      border-radius: var(--radius-full);
+      font-size: 11px;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .metric-tab-btn.is-active {
+      background: rgba(var(--color-primary-rgb), 0.15);
+      border-color: var(--color-primary);
+      color: var(--color-primary);
+      font-weight: 600;
+    }
+
+    .chart-card {
+      background: var(--bg-canvas);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 14px;
+    }
+
+    .chart-card-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+
+    .chart-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .chart-metric-now { font-family: var(--font-mono); font-weight: 700; font-size: 13px; }
+    .canvas-holder { width: 100%; height: 110px; position: relative; }
+    canvas { width: 100%; height: 100%; display: block; }
+
+    .process-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+      font-family: var(--font-mono);
+    }
+
+    .process-table th { text-align: left; padding: 4px 6px; color: var(--text-muted); border-bottom: 1px solid var(--border-subtle); }
+    .process-table td { padding: 6px; border-bottom: 1px solid var(--border-subtle); }
+
+    .floating-tooltip {
+      position: fixed;
+      background: #0f172a;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: var(--radius-md);
+      padding: 8px 12px;
+      font-size: 11px;
+      color: #f8fafc;
+      box-shadow: var(--shadow-xl);
+      pointer-events: none;
+      z-index: 100;
+      display: none;
+      line-height: 1.4;
+    }
+
+    .floating-tooltip strong { display: block; margin-bottom: 3px; font-size: 12px; color: #38bdf8; }
+  </style>
+</head>
+<body>
+
+  <!-- 顶部导航栏 -->
+  <header class="app-header">
+    <div class="brand-section">
+      <div class="brand-logo">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+          <rect width="20" height="8" x="2" y="2" rx="2" ry="2"/>
+          <rect width="20" height="8" x="2" y="14" rx="2" ry="2"/>
+          <line x1="6" x2="6.01" y1="6" y2="6"/>
+          <line x1="6" x2="6.01" y1="18" y2="18"/>
+        </svg>
+        <span>Viron Observability</span>
+      </div>
+
+      <!-- 主大盘 Tab 导航 (覆盖完整监控架构) -->
+      <nav class="main-nav-tabs">
+        <button type="button" class="main-tab-btn is-active" data-tab="hosts" onclick="switchMainTab('hosts')">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/></svg>
+          <span>主机舰队 (Fleet)</span>
+        </button>
+        <button type="button" class="main-tab-btn" data-tab="apm" onclick="switchMainTab('apm')">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+          <span>业务服务 (APM)</span>
+        </button>
+        <button type="button" class="main-tab-btn" data-tab="alerts" onclick="switchMainTab('alerts')">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/></svg>
+          <span>告警与事件 (NOC)</span>
+          <span style="background:var(--color-danger); color:#fff; font-size:10px; padding:1px 5px; border-radius:10px; font-weight:700;">18</span>
+        </button>
+        <button type="button" class="main-tab-btn" data-tab="capacity" onclick="switchMainTab('capacity')">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+          <span>集群热点与容量 (Top-N)</span>
+        </button>
+      </nav>
+    </div>
+
+    <div class="header-actions">
+      <!-- 规模模拟切换器 -->
+      <div class="badge-scale">
+        <span class="pulse-dot"></span>
+        <span id="currentScaleText">1,000 台超大集群</span>
+      </div>
+
+      <div class="segmented-control">
+        <button type="button" class="scale-btn" data-scale="15" onclick="changeDataScale(15)">15 台</button>
+        <button type="button" class="scale-btn" data-scale="120" onclick="changeDataScale(120)">120 台</button>
+        <button type="button" class="scale-btn is-active" data-scale="1000" onclick="changeDataScale(1000)">1000 台</button>
+      </div>
+
+      <button class="btn" onclick="toggleTheme()" title="切换深/浅主题">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/></svg>
+        <span id="themeText">浅色</span>
+      </button>
+
+      <button class="btn btn-primary" onclick="simulateDataPulse()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+        <span>实时采样</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- 主体工作区 -->
+  <main class="app-main">
+
+    <!-- KPI 态势概览 -->
+    <section class="kpi-row">
+      <article class="kpi-card">
+        <div class="kpi-head">
+          <span class="kpi-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+            主机总数与就绪率
+          </span>
+          <span class="status-badge online" id="kpiOnlineRate">96.8% 在线</span>
+        </div>
+        <div class="kpi-value-wrap">
+          <span class="kpi-number" id="kpiOnlineHosts">968</span>
+          <span class="kpi-subtext" id="kpiTotalHosts">/ 1000 台纳管</span>
+        </div>
+        <div class="cluster-progress-bar">
+          <div class="bar-slice healthy" id="kpiBarHealthy" style="width: 93%;"></div>
+          <div class="bar-slice warning" id="kpiBarWarning" style="width: 4%;"></div>
+          <div class="bar-slice danger" id="kpiBarDanger" style="width: 2%;"></div>
+          <div class="bar-slice offline" id="kpiBarOffline" style="width: 1%;"></div>
+        </div>
+      </article>
+
+      <article class="kpi-card">
+        <div class="kpi-head">
+          <span class="kpi-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/></svg>
+            集群平均 CPU 负荷
+          </span>
+          <span class="status-badge online" id="kpiCpuBadge">健康</span>
+        </div>
+        <div class="kpi-value-wrap">
+          <span class="kpi-number" id="kpiAvgCpu">34.2%</span>
+          <span class="kpi-subtext">峰值节点 98.6%</span>
+        </div>
+        <div class="cluster-progress-bar">
+          <div class="bar-slice healthy" id="kpiCpuBar" style="width: 34.2%;"></div>
+        </div>
+      </article>
+
+      <article class="kpi-card">
+        <div class="kpi-head">
+          <span class="kpi-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 19v-3M10 19v-3M14 19v-3M18 19v-3M6 5v3M10 5v3M14 5v3M18 5v3M4 8h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2Z"/></svg>
+            集群平均内存占用
+          </span>
+          <span class="status-badge online" id="kpiMemBadge">健康</span>
+        </div>
+        <div class="kpi-value-wrap">
+          <span class="kpi-number" id="kpiAvgMem">52.8%</span>
+          <span class="kpi-subtext">已分配 14.2 TB / 26.8 TB</span>
+        </div>
+        <div class="cluster-progress-bar">
+          <div class="bar-slice healthy" id="kpiMemBar" style="width: 52.8%;"></div>
+        </div>
+      </article>
+
+      <article class="kpi-card" style="border-color: rgba(239, 68, 68, 0.3);">
+        <div class="kpi-head">
+          <span class="kpi-title" style="color: #f87171;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            当前告警与异常
+          </span>
+          <span class="status-badge danger" id="kpiAlertBadge">需关注</span>
+        </div>
+        <div class="kpi-value-wrap">
+          <span class="kpi-number text-red" id="kpiAlertCount">18</span>
+          <span class="kpi-subtext">12 告警 · 6 离线</span>
+        </div>
+        <div class="cluster-progress-bar">
+          <div class="bar-slice danger" style="width: 65%;"></div>
+          <div class="bar-slice warning" style="width: 35%;"></div>
+        </div>
+      </article>
+    </section>
+
+    <!-- ============================================================
+         模块 1: 主机舰队视图 (Host Fleet)
+         ============================================================ -->
+    <div id="tabContentHosts">
+      <!-- 异常先行专区 -->
+      <section class="attention-banner" id="attentionSection">
+        <div class="attention-header">
+          <div class="attention-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/></svg>
+            <span>异常与高危主机速查 (Top-N 告警节点)</span>
+          </div>
+          <span style="font-size: 11px; color: var(--text-muted);">点击任意主机直接滑出右侧排障抽屉</span>
+        </div>
+        <div class="attention-pills" id="attentionPillContainer"></div>
+      </section>
+
+      <!-- 过滤操作栏 -->
+      <section class="filter-toolbar">
+        <div class="toolbar-left">
+          <div class="search-input-wrap">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            <input type="text" id="searchInput" class="search-input" placeholder="搜索主机名、IP、环境..." oninput="handleSearch()" />
+          </div>
+
+          <div class="filter-chips">
+            <button class="filter-chip is-active" data-filter="all" onclick="setFilter('all')">全部 <span class="chip-count" id="countAll">1000</span></button>
+            <button class="filter-chip" data-filter="alert" onclick="setFilter('alert')">⚠️ 告警 <span class="chip-count" id="countAlert">18</span></button>
+            <button class="filter-chip" data-filter="high-cpu" onclick="setFilter('high-cpu')">🔥 CPU > 80% <span class="chip-count" id="countCpu">8</span></button>
+            <button class="filter-chip" data-filter="high-mem" onclick="setFilter('high-mem')">🧠 内存 > 85% <span class="chip-count" id="countMem">6</span></button>
+            <button class="filter-chip" data-filter="offline" onclick="setFilter('offline')">🔌 离线 <span class="chip-count" id="countOffline">6</span></button>
+          </div>
+        </div>
+
+        <div class="toolbar-right">
+          <select class="sort-select" id="sortSelect" onchange="handleSortChange(this.value)">
+            <option value="severity">⚠️ 状态严重度优先</option>
+            <option value="cpu-desc">🔥 CPU 使用率 (高 → 低)</option>
+            <option value="mem-desc">🧠 内存使用率 (高 → 低)</option>
+            <option value="disk-desc">💾 磁盘占用率 (高 → 低)</option>
+            <option value="name-asc">🔤 主机名 (A → Z)</option>
+          </select>
+
+          <div class="segmented-control">
+            <button type="button" class="view-btn is-active" data-view="heatmap" onclick="switchView('heatmap')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>
+              <span>热力矩阵</span>
+            </button>
+            <button type="button" class="view-btn" data-view="table" onclick="switchView('table')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h18v18H3zM3 9h18M3 15h18M9 3v18"/></svg>
+              <span>紧凑表格</span>
+            </button>
+            <button type="button" class="view-btn" data-view="grid" onclick="switchView('grid')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+              <span>卡片网格</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 视图容器 -->
+      <section class="view-container">
+        <!-- 1. 蜂窝热力矩阵 -->
+        <div id="heatmapView" class="heatmap-view">
+          <div class="heatmap-header">
+            <div>
+              <strong>全景态势矩阵</strong>
+              <span style="margin-left: 8px; color: var(--text-muted);" id="heatmapSummaryText">展示 1,000 台主机状态，点击任意色块查看详情</span>
+            </div>
+            <div class="heatmap-legend">
+              <div class="legend-item"><span class="legend-box" style="background:#10b981;"></span> 正常 (&lt;70%)</div>
+              <div class="legend-item"><span class="legend-box" style="background:#f59e0b;"></span> 警告 (70~85%)</div>
+              <div class="legend-item"><span class="legend-box" style="background:#ef4444;"></span> 高危 (&gt;85%)</div>
+              <div class="legend-item"><span class="legend-box" style="background:#334155;"></span> 离线/失联</div>
+            </div>
+          </div>
+          <div class="heatmap-grid" id="heatmapGrid"></div>
+        </div>
+
+        <!-- 2. 紧凑表格视图 -->
+        <div id="tableView" class="table-view" style="display: none;">
+          <table class="monitoring-table">
+            <thead>
+              <tr>
+                <th onclick="toggleTableSort('name')">主机名称 / IP ⬍</th>
+                <th>所属环境</th>
+                <th>运行状态</th>
+                <th onclick="toggleTableSort('cpu')">CPU 使用率 ⬍</th>
+                <th onclick="toggleTableSort('mem')">内存占用 ⬍</th>
+                <th onclick="toggleTableSort('disk')">根磁盘 ⬍</th>
+                <th>网络吞吐 (↓/↑)</th>
+                <th>探针版本</th>
+              </tr>
+            </thead>
+            <tbody id="tableBody"></tbody>
+          </table>
+          <div class="table-footer">
+            <span id="tablePaginationInfo">显示 1 - 50 / 共 1,000 台</span>
+            <div class="pagination-btns">
+              <button class="btn" onclick="prevPage()">上一页</button>
+              <button class="btn" onclick="nextPage()">下一页</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. 卡片网格视图 -->
+        <div id="gridView" class="grid-view" style="display: none;"></div>
+      </section>
+    </div>
+
+    <!-- ============================================================
+         模块 2: 业务服务 APM 视图 (Service APM)
+         ============================================================ -->
+    <div id="tabContentApm" style="display: none;">
+      <section class="view-container apm-layout">
+        <!-- 左侧服务列表 -->
+        <div class="service-list-card">
+          <div class="service-list-header">
+            <span>核心业务微服务 (8 个服务)</span>
+            <span style="font-size: 11px; color: var(--text-muted);">共 32 个实例</span>
+          </div>
+          <div class="service-items">
+            <div class="service-item is-active" onclick="selectApmService('payment-service')">
+              <div>
+                <strong>payment-service</strong>
+                <div style="font-size: 11px; color: var(--text-muted);">生产环境 · 6 节点部署</div>
+              </div>
+              <span class="status-badge online">健康</span>
+            </div>
+            <div class="service-item" onclick="selectApmService('user-auth-api')">
+              <div>
+                <strong>user-auth-api</strong>
+                <div style="font-size: 11px; color: var(--text-muted);">核心网关 · 4 节点部署</div>
+              </div>
+              <span class="status-badge danger">CPU 高载</span>
+            </div>
+            <div class="service-item" onclick="selectApmService('order-processor')">
+              <div>
+                <strong>order-processor</strong>
+                <div style="font-size: 11px; color: var(--text-muted);">生产环境 · 8 节点部署</div>
+              </div>
+              <span class="status-badge online">健康</span>
+            </div>
+            <div class="service-item" onclick="selectApmService('realtime-stream')">
+              <div>
+                <strong>realtime-stream</strong>
+                <div style="font-size: 11px; color: var(--text-muted);">大数据 · 4 节点部署</div>
+              </div>
+              <span class="status-badge warning">延迟波动</span>
+            </div>
+            <div class="service-item" onclick="selectApmService('cache-redis-proxy')">
+              <div>
+                <strong>cache-redis-proxy</strong>
+                <div style="font-size: 11px; color: var(--text-muted);">网关环境 · 4 节点部署</div>
+              </div>
+              <span class="status-badge online">健康</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 右侧服务详情与拓扑 -->
+        <div class="apm-detail-card">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div>
+              <h2 style="font-size:16px;" id="apmDataTitle">payment-service · 性能态势</h2>
+              <p style="font-size:11px; color:var(--text-muted);">6 实例活跃 · 平均响应 14ms · 错误率 0.01%</p>
+            </div>
+            <button class="btn btn-primary" onclick="alert('已打开全链路调用追踪 Trace 面板')">链路追踪 Trace</button>
+          </div>
+
+          <div class="apm-charts-grid">
+            <div class="chart-card">
+              <div class="chart-card-head">
+                <span class="chart-title">服务吞吐 QPS & 错误率</span>
+                <span class="chart-metric-now text-green">1,420 req/s</span>
+              </div>
+              <div class="canvas-holder"><canvas id="apmQpsCanvas"></canvas></div>
+            </div>
+            <div class="chart-card">
+              <div class="chart-card-head">
+                <span class="chart-title">P95 / P99 响应延迟</span>
+                <span class="chart-metric-now text-amber">18.4 ms</span>
+              </div>
+              <div class="canvas-holder"><canvas id="apmLatencyCanvas"></canvas></div>
+            </div>
+          </div>
+
+          <!-- 实例部署节点健康表 -->
+          <div class="chart-card">
+            <div class="chart-card-head">
+              <span class="chart-title">服务实例分布与主机节点映射</span>
+            </div>
+            <table class="monitoring-table">
+              <thead>
+                <tr>
+                  <th>实例 ID</th>
+                  <th>所在主机</th>
+                  <th>IP 地址</th>
+                  <th>状态</th>
+                  <th>CPU 使用率</th>
+                  <th>内存使用</th>
+                  <th>重启次数</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>payment-inst-01</td>
+                  <td><strong>node-prod-001</strong></td>
+                  <td style="font-family:var(--font-mono);">192.168.10.1</td>
+                  <td><span class="status-badge online">运行中</span></td>
+                  <td class="text-green">24.5%</td>
+                  <td>1.8 GB</td>
+                  <td>0</td>
+                </tr>
+                <tr>
+                  <td>payment-inst-02</td>
+                  <td><strong>node-prod-002</strong></td>
+                  <td style="font-family:var(--font-mono);">192.168.10.2</td>
+                  <td><span class="status-badge online">运行中</span></td>
+                  <td class="text-green">31.2%</td>
+                  <td>2.1 GB</td>
+                  <td>0</td>
+                </tr>
+                <tr>
+                  <td>payment-inst-03</td>
+                  <td><strong>node-prod-008</strong></td>
+                  <td style="font-family:var(--font-mono);">192.168.10.8</td>
+                  <td><span class="status-badge danger">告警</span></td>
+                  <td class="text-red">92.4%</td>
+                  <td>3.6 GB</td>
+                  <td>2</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ============================================================
+         模块 3: 告警中心与 NOC 全屏大屏视图
+         ============================================================ -->
+    <div id="tabContentAlerts" style="display: none;">
+      <section class="view-container alerts-layout">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <h2 style="font-size:16px;">实时告警与事件流水 (Active Alerts)</h2>
+            <p style="font-size:11px; color:var(--text-muted);">共 18 条活跃告警 · 最近触发于 1 分钟前</p>
+          </div>
+          <div style="display:flex; gap:8px;">
+            <button class="btn" onclick="alert('已将所有低级别告警静默 2 小时')">批量静默告警</button>
+            <button class="btn btn-primary" onclick="alert('已进入 NOC 全屏指挥大屏模式')">进入 NOC 影院模式</button>
+          </div>
+        </div>
+
+        <div class="alert-item-card p0">
+          <div class="alert-info-group">
+            <div class="alert-title-row">
+              <span class="alert-tag cpu" style="background:#ef4444; color:#fff;">P0 紧急</span>
+              <span>node-prod-b-006 (192.168.10.7) CPU 使用率持续高于 95% 超过 10 分钟</span>
+            </div>
+            <div style="font-size:11px; color:var(--text-muted);">触发时间: 2026-08-29 23:08:12 · 规则: Cluster.Host.HighCpu · 关联服务: payment-service</div>
+          </div>
+          <div style="display:flex; gap:8px;">
+            <button class="btn" onclick="openDrawerById('host-6')">查看主机</button>
+            <button class="btn" onclick="alert('已确认告警并通知运维团队')">确认 Ack</button>
+          </div>
+        </div>
+
+        <div class="alert-item-card p0">
+          <div class="alert-info-group">
+            <div class="alert-title-row">
+              <span class="alert-tag offline" style="background:#64748b; color:#fff;">P0 离线</span>
+              <span>node-gateway-043 (192.168.10.44) 探针心跳丢失，无法连通主机</span>
+            </div>
+            <div style="font-size:11px; color:var(--text-muted);">触发时间: 2026-08-29 23:05:00 · 规则: Cluster.Host.HeartbeatMissing</div>
+          </div>
+          <div style="display:flex; gap:8px;">
+            <button class="btn" onclick="openDrawerById('host-43')">排查节点</button>
+            <button class="btn" onclick="alert('正在下发探测探针指令')">重新探活</button>
+          </div>
+        </div>
+
+        <div class="alert-item-card p1">
+          <div class="alert-info-group">
+            <div class="alert-title-row">
+              <span class="alert-tag mem" style="background:#f59e0b; color:#000;">P1 警告</span>
+              <span>node-gateway-033 (192.168.10.34) 内存占用率达到 88.5% (已超警戒阈值)</span>
+            </div>
+            <div style="font-size:11px; color:var(--text-muted);">触发时间: 2026-08-29 23:11:45 · 规则: Cluster.Host.MemoryThreshold</div>
+          </div>
+          <div style="display:flex; gap:8px;">
+            <button class="btn" onclick="openDrawerById('host-33')">查看详情</button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ============================================================
+         模块 4: 集群热点与容量分析 (Capacity & Top-N)
+         ============================================================ -->
+    <div id="tabContentCapacity" style="display: none;">
+      <section class="view-container capacity-layout">
+        <!-- CPU Top 5 -->
+        <div class="ranking-card">
+          <div class="ranking-card-head">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="16" height="16" x="4" y="4" rx="2"/></svg>
+            <span>CPU 消耗 Top 5 主机排行</span>
+          </div>
+          <div class="ranking-list" id="rankCpuList"></div>
+        </div>
+
+        <!-- 内存 Top 5 -->
+        <div class="ranking-card">
+          <div class="ranking-card-head">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 19v-3M10 19v-3M14 19v-3M18 19v-3"/></svg>
+            <span>内存消耗 Top 5 主机排行</span>
+          </div>
+          <div class="ranking-list" id="rankMemList"></div>
+        </div>
+
+        <!-- 磁盘占用 Top 5 -->
+        <div class="ranking-card">
+          <div class="ranking-card-head">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="8" x="2" y="2" rx="2"/></svg>
+            <span>磁盘最高占用节点 (容量告急)</span>
+          </div>
+          <div class="ranking-list" id="rankDiskList"></div>
+        </div>
+      </section>
+    </div>
+
+  </main>
+
+  <!-- 悬停气泡 Tooltip -->
+  <div id="floatingTooltip" class="floating-tooltip"></div>
+
+  <!-- ============================================================
+       右侧滑出抽屉面板 (Slide-over Detail Drawer · 深度单机可观测性)
+       ============================================================ -->
+  <div id="drawerBackdrop" class="drawer-backdrop" onclick="closeDrawer()"></div>
+  <aside id="drawerPanel" class="drawer-panel">
+    <header class="drawer-header">
+      <div class="drawer-header-left">
+        <div class="drawer-icon-wrap">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg>
+        </div>
+        <div class="drawer-title-group">
+          <h2 id="dHostName">node-prod-042.cluster.internal</h2>
+          <p id="dHostMeta">192.168.5.146 · Prod-A · Ubuntu 22.04 LTS (x86_64)</p>
+        </div>
+      </div>
+      <div class="drawer-header-right">
+        <button class="btn-icon" onclick="navigateHost(-1)" title="上一个主机 (快捷键: ←)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg></button>
+        <button class="btn-icon" onclick="navigateHost(1)" title="下一个主机 (快捷键: →)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></button>
+        <button class="btn-icon" onclick="closeDrawer()" title="关闭 (快捷键: ESC)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+    </header>
+
+    <div class="drawer-body">
+      <!-- 快捷操作栏 -->
+      <div class="drawer-actions-bar">
+        <button class="btn btn-primary" onclick="alert('已开启 Web SSH 终端会话')">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>
+          <span>Web SSH 终端</span>
+        </button>
+        <button class="btn" onclick="alert('跳转至环境维护')">服务维护</button>
+        <button class="btn" onclick="alert('已下发探针心跳与重启指令')">重启探针</button>
+      </div>
+
+      <!-- 深度指标维度 Tab 切换 -->
+      <div class="metric-tabs-bar">
+        <button class="metric-tab-btn is-active" onclick="switchMetricTab('overview')">综合概览</button>
+        <button class="metric-tab-btn" onclick="switchMetricTab('cpu')">CPU 模式/堆叠</button>
+        <button class="metric-tab-btn" onclick="switchMetricTab('mem')">内存/Swap</button>
+        <button class="metric-tab-btn" onclick="switchMetricTab('io')">磁盘 IOPS/延迟</button>
+        <button class="metric-tab-btn" onclick="switchMetricTab('net')">网络吞吐/丢包</button>
+        <button class="metric-tab-btn" onclick="switchMetricTab('psi')">PSI 资源压力</button>
+      </div>
+
+      <!-- CPU 时序图 -->
+      <div class="chart-card">
+        <div class="chart-card-head">
+          <span class="chart-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="16" height="16" x="4" y="4" rx="2"/></svg>
+            CPU 负载时序 (User/Sys/IOWait 堆叠)
+          </span>
+          <span class="chart-metric-now text-green" id="dCpuNow">34.5%</span>
+        </div>
+        <div class="canvas-holder"><canvas id="cpuChartCanvas"></canvas></div>
+      </div>
+
+      <!-- 内存时序图 -->
+      <div class="chart-card">
+        <div class="chart-card-head">
+          <span class="chart-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 19v-3M10 19v-3M14 19v-3"/></svg>
+            内存与 Swap 占用趋势
+          </span>
+          <span class="chart-metric-now text-amber" id="dMemNow">68.2%</span>
+        </div>
+        <div class="canvas-holder"><canvas id="memChartCanvas"></canvas></div>
+      </div>
+
+      <!-- 磁盘卷挂载 -->
+      <div class="chart-card">
+        <div class="chart-card-head">
+          <span class="chart-title">磁盘各挂载点使用水位</span>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:10px;">
+          <div>
+            <div style="display:flex; justify-content:space-between; font-size:11px; margin-bottom:4px;">
+              <span>/dev/nvme0n1p1 (/)</span>
+              <strong>48.2% (120 GB / 250 GB)</strong>
+            </div>
+            <div class="mini-track"><div class="mini-fill bg-green" style="width:48.2%;"></div></div>
+          </div>
+          <div>
+            <div style="display:flex; justify-content:space-between; font-size:11px; margin-bottom:4px;">
+              <span>/dev/sdb1 (/data/storage)</span>
+              <strong>78.5% (785 GB / 1000 GB)</strong>
+            </div>
+            <div class="mini-track"><div class="mini-fill bg-amber" style="width:78.5%;"></div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Top 5 进程列表 -->
+      <div class="chart-card">
+        <div class="chart-card-head">
+          <span class="chart-title">Top 5 资源消耗进程</span>
+          <span style="font-size:11px; color:var(--text-muted);">实时采样</span>
+        </div>
+        <table class="process-table">
+          <thead>
+            <tr><th>PID</th><th>进程名</th><th>CPU%</th><th>内存</th></tr>
+          </thead>
+          <tbody id="dProcessTable"></tbody>
+        </table>
+      </div>
+
+    </div>
+  </aside>
+
+  <!-- ============================================================
+       JavaScript 核心交互与模拟引擎
+       ============================================================ -->
+  <script>
+    let currentScale = 1000;
+    let allHosts = [];
+    let filteredHosts = [];
+    let currentFilter = 'all';
+    let currentSort = 'severity';
+    let currentView = 'heatmap';
+    let currentMainTab = 'hosts';
+    let selectedHost = null;
+    let currentPage = 1;
+    const pageSize = 50;
+
+    // 1. 生成模拟集群数据
+    function generateHosts(count) {
+      const environments = ['Prod-A', 'Prod-B', 'Staging', 'Gateway', 'BigData'];
+      const hostList = [];
+
+      for (let i = 1; i <= count; i++) {
+        const id = `host-${i}`;
+        const env = environments[i % environments.length];
+        const paddedIndex = String(i).padStart(3, '0');
+        const name = `node-${env.toLowerCase()}-${paddedIndex}`;
+        const ip = `192.168.${10 + Math.floor(i / 250)}.${(i % 250) + 1}`;
+
+        const seed = Math.random();
+        let status = 'online';
+        let cpu = Math.floor(10 + Math.random() * 45);
+        let mem = Math.floor(20 + Math.random() * 55);
+        let disk = Math.floor(30 + Math.random() * 45);
+
+        if (seed > 0.97) {
+          status = 'offline';
+          cpu = null; mem = null; disk = null;
+        } else if (seed > 0.94) {
+          status = 'danger';
+          cpu = Math.floor(88 + Math.random() * 11);
+          mem = Math.floor(85 + Math.random() * 12);
+          disk = Math.floor(86 + Math.random() * 12);
+        } else if (seed > 0.90) {
+          status = 'warning';
+          cpu = Math.floor(72 + Math.random() * 14);
+          mem = Math.floor(75 + Math.random() * 12);
+        }
+
+        hostList.push({
+          id, name, ip, env, status, cpu, mem, disk,
+          netIn: status === 'offline' ? 0 : Math.floor(100 + Math.random() * 4000),
+          netOut: status === 'offline' ? 0 : Math.floor(100 + Math.random() * 6000),
+          os: 'Ubuntu 22.04 LTS', arch: 'x86_64', agentVersion: '1.3.2',
+          topProcesses: [
+            { pid: 1402, name: 'java -jar payment.jar', cpu: cpu ? (cpu * 0.45).toFixed(1) : 0, mem: '3.4 GB' },
+            { pid: 382, name: 'mysqld', cpu: cpu ? (cpu * 0.22).toFixed(1) : 0, mem: '2.1 GB' },
+            { pid: 8901, name: 'node /srv/gateway', cpu: cpu ? (cpu * 0.15).toFixed(1) : 0, mem: '840 MB' },
+            { pid: 902, name: 'redis-server', cpu: '2.1', mem: '512 MB' },
+            { pid: 110, name: 'viron-monitor', cpu: '0.4', mem: '28 MB' }
+          ]
+        });
+      }
+      return hostList;
+    }
+
+    // 2. 主 Tab 切换
+    function switchMainTab(tabName) {
+      currentMainTab = tabName;
+      document.querySelectorAll('.main-tab-btn').forEach(btn => {
+        btn.classList.toggle('is-active', btn.dataset.tab === tabName);
+      });
+
+      document.getElementById('tabContentHosts').style.display = tabName === 'hosts' ? 'block' : 'none';
+      document.getElementById('tabContentApm').style.display = tabName === 'apm' ? 'block' : 'none';
+      document.getElementById('tabContentAlerts').style.display = tabName === 'alerts' ? 'block' : 'none';
+      document.getElementById('tabContentCapacity').style.display = tabName === 'capacity' ? 'block' : 'none';
+
+      if (tabName === 'apm') {
+        setTimeout(() => {
+          drawWaveChart('apmQpsCanvas', 65, '#10b981');
+          drawWaveChart('apmLatencyCanvas', 30, '#f59e0b');
+        }, 50);
+      } else if (tabName === 'capacity') {
+        renderCapacityRankings();
+      }
+    }
+
+    // 3. 计算与渲染容量 Top 5
+    function renderCapacityRankings() {
+      const sortedCpu = [...allHosts].filter(h => h.cpu !== null).sort((a, b) => b.cpu - a.cpu).slice(0, 5);
+      const sortedMem = [...allHosts].filter(h => h.mem !== null).sort((a, b) => b.mem - a.mem).slice(0, 5);
+      const sortedDisk = [...allHosts].filter(h => h.disk !== null).sort((a, b) => b.disk - a.disk).slice(0, 5);
+
+      function renderList(list, key, unit, containerId) {
+        document.getElementById(containerId).innerHTML = list.map((h, i) => `
+          <div class="ranking-row" onclick="openDrawerById('${h.id}')">
+            <span class="rank-idx ${i === 0 ? 'top1' : i === 1 ? 'top2' : i === 2 ? 'top3' : ''}">${i + 1}</span>
+            <div style="flex:1;">
+              <strong>${h.name}</strong>
+              <div style="font-size:10px; color:var(--text-muted);">${h.ip} · ${h.env}</div>
+            </div>
+            <strong class="${h[key] >= 85 ? 'text-red' : h[key] >= 70 ? 'text-amber' : 'text-green'}">${h[key]}${unit}</strong>
+          </div>
+        `).join('');
+      }
+
+      renderList(sortedCpu, 'cpu', '%', 'rankCpuList');
+      renderList(sortedMem, 'mem', '%', 'rankMemList');
+      renderList(sortedDisk, 'disk', '%', 'rankDiskList');
+    }
+
+    // 4. KPI 统计计算
+    function recalculateKPIs() {
+      const total = allHosts.length;
+      const onlineHosts = allHosts.filter(h => h.status !== 'offline');
+      const onlineCount = onlineHosts.length;
+      const dangerCount = allHosts.filter(h => h.status === 'danger').length;
+      const warningCount = allHosts.filter(h => h.status === 'warning').length;
+      const offlineCount = total - onlineCount;
+      const alertTotal = dangerCount + warningCount + offlineCount;
+
+      const validCpus = onlineHosts.map(h => h.cpu).filter(c => c !== null);
+      const avgCpu = validCpus.length ? (validCpus.reduce((a, b) => a + b, 0) / validCpus.length).toFixed(1) : '0';
+
+      const validMems = onlineHosts.map(h => h.mem).filter(m => m !== null);
+      const avgMem = validMems.length ? (validMems.reduce((a, b) => a + b, 0) / validMems.length).toFixed(1) : '0';
+
+      document.getElementById('kpiOnlineHosts').textContent = onlineCount.toLocaleString();
+      document.getElementById('kpiTotalHosts').textContent = `/ ${total.toLocaleString()} 台纳管`;
+      document.getElementById('kpiOnlineRate').textContent = `${((onlineCount / total) * 100).toFixed(1)}% 在线`;
+
+      document.getElementById('kpiBarHealthy').style.width = `${((onlineCount - dangerCount - warningCount) / total) * 100}%`;
+      document.getElementById('kpiBarWarning').style.width = `${(warningCount / total) * 100}%`;
+      document.getElementById('kpiBarDanger').style.width = `${(dangerCount / total) * 100}%`;
+      document.getElementById('kpiBarOffline').style.width = `${(offlineCount / total) * 100}%`;
+
+      document.getElementById('kpiAvgCpu').textContent = `${avgCpu}%`;
+      document.getElementById('kpiCpuBar').style.width = `${avgCpu}%`;
+      document.getElementById('kpiAvgMem').textContent = `${avgMem}%`;
+      document.getElementById('kpiMemBar').style.width = `${avgMem}%`;
+
+      document.getElementById('kpiAlertCount').textContent = alertTotal;
+      document.getElementById('kpiAlertBadge').textContent = alertTotal > 0 ? `${alertTotal} 需关注` : '全部正常';
+
+      document.getElementById('countAll').textContent = total.toLocaleString();
+      document.getElementById('countAlert').textContent = alertTotal;
+      document.getElementById('countCpu').textContent = allHosts.filter(h => (h.cpu ?? 0) >= 80).length;
+      document.getElementById('countMem').textContent = allHosts.filter(h => (h.mem ?? 0) >= 85).length;
+      document.getElementById('countOffline').textContent = offlineCount;
+
+      renderAttentionSection();
+      if (currentMainTab === 'capacity') renderCapacityRankings();
+    }
+
+    // 5. 渲染异常专区
+    function renderAttentionSection() {
+      const alertHosts = allHosts.filter(h => h.status === 'danger' || h.status === 'warning' || h.status === 'offline');
+      const container = document.getElementById('attentionPillContainer');
+      const section = document.getElementById('attentionSection');
+
+      if (!alertHosts.length) {
+        section.style.display = 'none';
+        return;
+      }
+      section.style.display = 'flex';
+
+      const topAlerts = alertHosts.slice(0, 15);
+      container.innerHTML = topAlerts.map(h => {
+        let tagHtml = '';
+        if (h.status === 'offline') tagHtml = '<span class="alert-tag offline">离线</span>';
+        else if ((h.cpu ?? 0) >= 85) tagHtml = `<span class="alert-tag cpu">CPU ${h.cpu}%</span>`;
+        else if ((h.mem ?? 0) >= 85) tagHtml = `<span class="alert-tag mem">MEM ${h.mem}%</span>`;
+        else tagHtml = '<span class="alert-tag disk">警告</span>';
+
+        return `
+          <div class="alert-pill" onclick="openDrawerById('${h.id}')">
+            ${tagHtml}
+            <strong>${h.name}</strong>
+            <small style="color:var(--text-muted); font-family:var(--font-mono); font-size:11px;">${h.ip}</small>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // 6. 过滤与排序
+    function applyFilterAndSort() {
+      const query = (document.getElementById('searchInput').value || '').toLowerCase().trim();
+
+      filteredHosts = allHosts.filter(h => {
+        if (query) {
+          const match = h.name.toLowerCase().includes(query) || h.ip.includes(query) || h.env.toLowerCase().includes(query);
+          if (!match) return false;
+        }
+        if (currentFilter === 'alert') return h.status === 'danger' || h.status === 'warning' || h.status === 'offline';
+        if (currentFilter === 'high-cpu') return (h.cpu ?? 0) >= 80;
+        if (currentFilter === 'high-mem') return (h.mem ?? 0) >= 85;
+        if (currentFilter === 'offline') return h.status === 'offline';
+        return true;
+      });
+
+      filteredHosts.sort((a, b) => {
+        if (currentSort === 'severity') {
+          const score = (h) => (h.status === 'danger' ? 4 : h.status === 'warning' ? 3 : h.status === 'offline' ? 2 : 1);
+          return score(b) - score(a);
+        }
+        if (currentSort === 'cpu-desc') return (b.cpu ?? -1) - (a.cpu ?? -1);
+        if (currentSort === 'mem-desc') return (b.mem ?? -1) - (a.mem ?? -1);
+        if (currentSort === 'disk-desc') return (b.disk ?? -1) - (a.disk ?? -1);
+        if (currentSort === 'name-asc') return a.name.localeCompare(b.name);
+        return 0;
+      });
+
+      renderCurrentView();
+    }
+
+    function renderCurrentView() {
+      if (currentView === 'heatmap') renderHeatmap();
+      else if (currentView === 'table') renderTable();
+      else if (currentView === 'grid') renderGrid();
+    }
+
+    // 7. 渲染热力矩阵
+    function renderHeatmap() {
+      const grid = document.getElementById('heatmapGrid');
+      document.getElementById('heatmapSummaryText').textContent = `展示 ${filteredHosts.length.toLocaleString()} 台主机状态，点击任意色块查看详情`;
+
+      grid.innerHTML = filteredHosts.map(h => {
+        let statusClass = 'status-healthy';
+        if (h.status === 'offline') statusClass = 'status-offline';
+        else if (h.status === 'danger') statusClass = 'status-danger';
+        else if (h.status === 'warning') statusClass = 'status-warning';
+        else if ((h.cpu ?? 0) < 30) statusClass = 'status-healthy-low';
+
+        const isSel = selectedHost?.id === h.id ? 'is-selected' : '';
+
+        return `<div
+          class="heatmap-cell ${statusClass} ${isSel}"
+          data-id="${h.id}"
+          onmouseenter="showTooltip(event, '${h.id}')"
+          onmouseleave="hideTooltip()"
+          onclick="openDrawerById('${h.id}')"
+        ></div>`;
+      }).join('');
+    }
+
+    // 8. 渲染表格
+    function renderTable() {
+      const tbody = document.getElementById('tableBody');
+      const start = (currentPage - 1) * pageSize;
+      const end = Math.min(start + pageSize, filteredHosts.length);
+      const pageData = filteredHosts.slice(start, end);
+
+      document.getElementById('tablePaginationInfo').textContent = `显示 ${start + 1} - ${end} / 共 ${filteredHosts.length.toLocaleString()} 台`;
+
+      tbody.innerHTML = pageData.map(h => {
+        const isSel = selectedHost?.id === h.id ? 'is-selected' : '';
+        const cpuClass = (h.cpu ?? 0) >= 85 ? 'text-red bg-red' : (h.cpu ?? 0) >= 70 ? 'text-amber bg-amber' : 'text-green bg-green';
+        const memClass = (h.mem ?? 0) >= 85 ? 'text-red bg-red' : (h.mem ?? 0) >= 70 ? 'text-amber bg-amber' : 'text-green bg-green';
+
+        let badgeHtml = '<span class="status-badge online">● 在线</span>';
+        if (h.status === 'offline') badgeHtml = '<span class="status-badge offline">○ 离线</span>';
+        else if (h.status === 'danger') badgeHtml = '<span class="status-badge danger">▲ 严重告警</span>';
+        else if (h.status === 'warning') badgeHtml = '<span class="status-badge warning">▲ 警告</span>';
+
+        return `
+          <tr class="${isSel}" onclick="openDrawerById('${h.id}')">
+            <td>
+              <strong>${h.name}</strong>
+              <div style="color:var(--text-muted); font-size:11px; font-family:var(--font-mono);">${h.ip}</div>
+            </td>
+            <td><span class="btn" style="padding:2px 6px; font-size:10px;">${h.env}</span></td>
+            <td>${badgeHtml}</td>
+            <td>
+              <div class="metric-cell-wrap">
+                <span class="metric-cell-val ${cpuClass.split(' ')[0]}">${h.cpu !== null ? h.cpu + '%' : '—'}</span>
+                <div class="mini-track"><div class="mini-fill ${cpuClass.split(' ')[1]}" style="width:${h.cpu || 0}%;"></div></div>
+              </div>
+            </td>
+            <td>
+              <div class="metric-cell-wrap">
+                <span class="metric-cell-val ${memClass.split(' ')[0]}">${h.mem !== null ? h.mem + '%' : '—'}</span>
+                <div class="mini-track"><div class="mini-fill ${memClass.split(' ')[1]}" style="width:${h.mem || 0}%;"></div></div>
+              </div>
+            </td>
+            <td>
+              <div class="metric-cell-wrap">
+                <span class="metric-cell-val">${h.disk !== null ? h.disk + '%' : '—'}</span>
+                <div class="mini-track"><div class="mini-fill bg-green" style="width:${h.disk || 0}%;"></div></div>
+              </div>
+            </td>
+            <td style="font-family:var(--font-mono); font-size:11px;">
+              ↓ ${(h.netIn / 1024).toFixed(1)} MB/s · ↑ ${(h.netOut / 1024).toFixed(1)} MB/s
+            </td>
+            <td style="color:var(--text-muted); font-size:11px;">v${h.agentVersion}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    // 9. 渲染卡片
+    function renderGrid() {
+      const grid = document.getElementById('gridView');
+      const pageData = filteredHosts.slice(0, 100);
+
+      grid.innerHTML = pageData.map(h => {
+        const isSel = selectedHost?.id === h.id ? 'is-selected' : '';
+        return `
+          <div class="host-card-item ${isSel}" onclick="openDrawerById('${h.id}')">
+            <div class="host-card-header">
+              <div>
+                <div class="host-card-name">${h.name}</div>
+                <div class="host-card-sub">${h.ip} · ${h.env}</div>
+              </div>
+              <span class="status-badge ${h.status === 'offline' ? 'offline' : h.status === 'danger' ? 'danger' : 'online'}">
+                ${h.status === 'offline' ? '离线' : h.status === 'danger' ? '告警' : '正常'}
+              </span>
+            </div>
+            <div class="host-card-bars">
+              <div class="card-bar-row">
+                <span>CPU: <strong>${h.cpu !== null ? h.cpu + '%' : '—'}</strong></span>
+                <span>内存: <strong>${h.mem !== null ? h.mem + '%' : '—'}</strong></span>
+                <span>磁盘: <strong>${h.disk !== null ? h.disk + '%' : '—'}</strong></span>
+              </div>
+              <div class="mini-track">
+                <div class="mini-fill ${(h.cpu ?? 0) >= 80 ? 'bg-red' : 'bg-green'}" style="width:${h.cpu || 0}%;"></div>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // 10. 抽屉详情展示
+    function openDrawerById(hostId) {
+      const host = allHosts.find(h => h.id === hostId);
+      if (!host) return;
+      selectedHost = host;
+
+      document.getElementById('dHostName').textContent = host.name;
+      document.getElementById('dHostMeta').textContent = `${host.ip} · ${host.env} · ${host.os} (${host.arch}) · Agent v${host.agentVersion}`;
+      document.getElementById('dCpuNow').textContent = host.cpu !== null ? `${host.cpu}%` : '离线';
+      document.getElementById('dMemNow').textContent = host.mem !== null ? `${host.mem}% (10.9 GB / 16.0 GB)` : '离线';
+
+      const procTbody = document.getElementById('dProcessTable');
+      procTbody.innerHTML = host.topProcesses.map(p => `
+        <tr>
+          <td>${p.pid}</td>
+          <td><strong>${p.name}</strong></td>
+          <td class="text-green">${p.cpu}%</td>
+          <td>${p.mem}</td>
+        </tr>
+      `).join('');
+
+      document.getElementById('drawerBackdrop').classList.add('is-open');
+      document.getElementById('drawerPanel').classList.add('is-open');
+
+      setTimeout(() => {
+        drawWaveChart('cpuChartCanvas', host.cpu || 20, '#38bdf8');
+        drawWaveChart('memChartCanvas', host.mem || 45, '#10b981');
+      }, 50);
+
+      renderCurrentView();
+    }
+
+    function closeDrawer() {
+      document.getElementById('drawerBackdrop').classList.remove('is-open');
+      document.getElementById('drawerPanel').classList.remove('is-open');
+    }
+
+    function navigateHost(direction) {
+      if (!selectedHost) return;
+      const idx = filteredHosts.findIndex(h => h.id === selectedHost.id);
+      if (idx === -1) return;
+      const nextIdx = (idx + direction + filteredHosts.length) % filteredHosts.length;
+      openDrawerById(filteredHosts[nextIdx].id);
+    }
+
+    function switchMetricTab(tab) {
+      document.querySelectorAll('.metric-tab-btn').forEach(btn => {
+        btn.classList.toggle('is-active', btn.textContent.toLowerCase().includes(tab));
+      });
+      // 动态微调图表以响应不同指标
+      drawWaveChart('cpuChartCanvas', selectedHost?.cpu || 30, tab === 'io' ? '#f59e0b' : '#38bdf8');
+    }
+
+    // 11. Canvas 高清绘制波形图
+    function drawWaveChart(canvasId, currentVal, strokeColor) {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas) return;
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width === 0) return;
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+
+      const ctx = canvas.getContext('2d');
+      ctx.scale(dpr, dpr);
+      ctx.clearRect(0, 0, rect.width, rect.height);
+
+      const points = 30;
+      const data = [];
+      for (let i = 0; i < points; i++) {
+        const noise = (Math.sin(i * 0.5) * 12) + (Math.random() * 8 - 4);
+        data.push(Math.max(5, Math.min(95, currentVal + noise)));
+      }
+
+      const grad = ctx.createLinearGradient(0, 0, 0, rect.height);
+      grad.addColorStop(0, strokeColor + '44');
+      grad.addColorStop(1, strokeColor + '00');
+
+      ctx.beginPath();
+      ctx.moveTo(0, rect.height);
+      data.forEach((val, i) => {
+        const x = (i / (points - 1)) * rect.width;
+        const y = rect.height - (val / 100) * (rect.height - 10);
+        if (i === 0) ctx.lineTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.lineTo(rect.width, rect.height);
+      ctx.closePath();
+      ctx.fillStyle = grad;
+      ctx.fill();
+
+      ctx.beginPath();
+      data.forEach((val, i) => {
+        const x = (i / (points - 1)) * rect.width;
+        const y = rect.height - (val / 100) * (rect.height - 10);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    function showTooltip(e, hostId) {
+      const host = allHosts.find(h => h.id === hostId);
+      if (!host) return;
+      const tooltip = document.getElementById('floatingTooltip');
+      tooltip.innerHTML = `
+        <strong>${host.name}</strong>
+        <div>IP: ${host.ip} · ${host.env}</div>
+        <div>CPU: <strong>${host.cpu !== null ? host.cpu + '%' : '离线'}</strong> | 内存: <strong>${host.mem !== null ? host.mem + '%' : '—'}</strong></div>
+        <div style="font-size:10px; color:var(--text-muted); margin-top:2px;">点击打开详情抽屉</div>
+      `;
+      tooltip.style.display = 'block';
+      tooltip.style.left = `${e.clientX + 12}px`;
+      tooltip.style.top = `${e.clientY + 12}px`;
+    }
+
+    function hideTooltip() {
+      document.getElementById('floatingTooltip').style.display = 'none';
+    }
+
+    function changeDataScale(count) {
+      currentScale = count;
+      document.querySelectorAll('.scale-btn').forEach(btn => {
+        btn.classList.toggle('is-active', Number(btn.dataset.scale) === count);
+      });
+      document.getElementById('currentScaleText').textContent = `${count.toLocaleString()} 台集群`;
+      allHosts = generateHosts(count);
+      currentPage = 1;
+      recalculateKPIs();
+      applyFilterAndSort();
+    }
+
+    function switchView(viewName) {
+      currentView = viewName;
+      document.querySelectorAll('.view-btn').forEach(btn => {
+        btn.classList.toggle('is-active', btn.dataset.view === viewName);
+      });
+      document.getElementById('heatmapView').style.display = viewName === 'heatmap' ? 'block' : 'none';
+      document.getElementById('tableView').style.display = viewName === 'table' ? 'block' : 'none';
+      document.getElementById('gridView').style.display = viewName === 'grid' ? 'grid' : 'none';
+      renderCurrentView();
+    }
+
+    function setFilter(filter) {
+      currentFilter = filter;
+      document.querySelectorAll('.filter-chip').forEach(chip => {
+        chip.classList.toggle('is-active', chip.dataset.filter === filter);
+      });
+      currentPage = 1;
+      applyFilterAndSort();
+    }
+
+    function handleSearch() {
+      currentPage = 1;
+      applyFilterAndSort();
+    }
+
+    function handleSortChange(val) {
+      currentSort = val;
+      applyFilterAndSort();
+    }
+
+    function prevPage() {
+      if (currentPage > 1) { currentPage--; renderTable(); }
+    }
+
+    function nextPage() {
+      if (currentPage * pageSize < filteredHosts.length) { currentPage++; renderTable(); }
+    }
+
+    function simulateDataPulse() {
+      allHosts.forEach(h => {
+        if (h.status !== 'offline') {
+          h.cpu = Math.max(5, Math.min(99, h.cpu + Math.floor(Math.random() * 9 - 4)));
+        }
+      });
+      recalculateKPIs();
+      applyFilterAndSort();
+    }
+
+    function toggleTheme() {
+      const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+      document.documentElement.setAttribute('data-theme', isLight ? 'dark' : 'light');
+      document.getElementById('themeText').textContent = isLight ? '浅色' : '深色';
+    }
+
+    function selectApmService(serviceName) {
+      document.querySelectorAll('.service-item').forEach(item => {
+        item.classList.toggle('is-active', item.textContent.includes(serviceName));
+      });
+      document.getElementById('apmDataTitle').textContent = `${serviceName} · 性能态势`;
+      drawWaveChart('apmQpsCanvas', Math.floor(40 + Math.random() * 40), '#10b981');
+      drawWaveChart('apmLatencyCanvas', Math.floor(20 + Math.random() * 30), '#f59e0b');
+    }
+
+    window.addEventListener('keydown', e => {
+      if (e.key === 'Escape') closeDrawer();
+      if (e.key === 'ArrowLeft') navigateHost(-1);
+      if (e.key === 'ArrowRight') navigateHost(1);
+    });
+
+    window.addEventListener('DOMContentLoaded', () => {
+      changeDataScale(1000);
+    });
+  </script>
+</body>
+</html>
