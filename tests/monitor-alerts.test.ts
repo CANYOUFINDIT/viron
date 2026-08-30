@@ -406,6 +406,20 @@ describe("monitor alerts", () => {
         cookies,
       });
       expect(events.json().items).toEqual([expect.objectContaining({ id: originalAlertId, occurrenceCount: 2, peakSeverity: "critical" })]);
+      const platformCalendar = await app.inject({
+        method: "GET",
+        url: `/api/v1/monitoring/event-calendar?month=${now.slice(0, 7)}&timezone=UTC`,
+        cookies,
+      });
+      expect(platformCalendar.statusCode).toBe(200);
+      expect(platformCalendar.json().summary.totalEvents).toBeGreaterThanOrEqual(1);
+      const platformEvents = await app.inject({
+        method: "GET",
+        url: `/api/v1/monitoring/events?date=${now.slice(0, 10)}&timezone=UTC`,
+        cookies,
+      });
+      expect(platformEvents.statusCode).toBe(200);
+      expect(platformEvents.json().items).toEqual([expect.objectContaining({ id: originalAlertId, environmentId })]);
       expect((await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/service-deployments`, cookies })).json().discovery.hosts[0].sshConnectionId).toBe(connectionId);
     } finally {
       await app.close();

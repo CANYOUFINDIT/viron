@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildApp } from "../src/server/app.js";
 import { ensureAdmin, openDatabase } from "../src/server/database.js";
-import { capSeriesPoints, compareMonitoringHosts, isMonitorStale, monitoringSeverityRank } from "../src/shared/monitoring.js";
+import { capSeriesPoints, compareMonitoringHosts, hostPressureScore, hostPriorityState, isMonitorStale, monitoringSeverityRank } from "../src/shared/monitoring.js";
 import { clearMonitoringOverviewCache } from "../src/server/monitoring-overview.js";
 import { monitoringTestConfig, runMonitoringContractSuite } from "./helpers/monitoring-harness.js";
 
@@ -56,6 +56,24 @@ describe("monitoring severity ranking", () => {
     const ranked = [...hosts].sort(compareMonitoringHosts).map((host) => host.connectionName);
     expect(ranked).toEqual(["offline", "hot-disk", "stale", "healthy"]);
     expect(monitoringSeverityRank(hosts[3]!)).toBeLessThan(monitoringSeverityRank(hosts[0]!));
+  });
+
+  it("scores unmanaged hosts low and saturated disks as critical", () => {
+    expect(hostPressureScore({ missing: true })).toBe(8);
+    expect(hostPriorityState({ missing: true })).toBe("unmanaged");
+    const hot = hostPressureScore({
+      cpuUsedPercent: 35,
+      memoryUsedPercent: 72,
+      diskUsedPercent: 94,
+      alertCounts: { critical: 2, major: 0, warning: 0 },
+    });
+    expect(hot).toBeGreaterThanOrEqual(80);
+    expect(hostPriorityState({
+      cpuUsedPercent: 35,
+      memoryUsedPercent: 72,
+      diskUsedPercent: 94,
+      alertCounts: { critical: 2, major: 0, warning: 0 },
+    }, hot)).toBe("critical");
   });
 });
 

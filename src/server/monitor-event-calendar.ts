@@ -5,9 +5,11 @@ import {
   monitorAlertSeverityWeight,
   type MonitorAlertRuleType,
   type MonitorAlertSeverity,
+  type MonitorAlertTargetType,
   type MonitorHostEventCalendarDay,
   type MonitorHostEventCalendarResponse,
   type MonitorHostEventItem,
+  type MonitorPlatformEventItem,
 } from "../shared/monitor-alerts.js";
 
 interface HostIdentity {
@@ -28,6 +30,16 @@ interface StoredEventRow {
   triggered_at: string;
   recovered_at: string | null;
   last_seen_at: string;
+}
+
+interface PlatformStoredEventRow extends StoredEventRow {
+  environment_id: string;
+  environment_name: string;
+  ssh_connection_id: string | null;
+  service_id: string | null;
+  service_name: string;
+  connection_name: string;
+  target_type: MonitorAlertTargetType;
 }
 
 interface StoredSampleCoverageRow {
@@ -386,4 +398,131 @@ export async function loadMonitorHostEvents(
     recoveredAt: row.recovered_at,
     lastSeenAt: row.last_seen_at || row.recovered_at || row.triggered_at,
   }));
+}
+
+export interface PlatformMonitorAlertQuery {
+  workspaceType: string;
+  workspaceId: string;
+  environmentId?: string;
+  allowedEnvironmentIds?: string[] | null;
+  from: number;
+  to: number;
+  severity?: MonitorAlertSeverity | "all";
+  status?: "active" | "recovered" | "event" | "all";
+  limit?: number;
+}
+
+async function loadPlatformAlertRows(
+  app: FastifyInstance,
+  query: PlatformMonitorAlertQuery,
+): Promise<PlatformStoredEventRow[]> {
+  const clauses = ["e.workspace_type = ?", "e.workspace_id = ?", "a.triggered_at < ?", "(CASE WHEN a.status = 'active' THEN ? WHEN a.recovered_at IS NOT NULL THEN a.recovered_at ELSE a.triggered_at END) >= ?"];
+  const parameters: unknown[] = [
+    query.workspaceType,
+    query.workspaceId,
+    new Date(query.to).toISOString(),
+    new Date().toISOString(),
+    new Date(query.from).toISOString(),
+  ];
+  if (query.environmentId) {
+    clauses.push("a.environment_id = ?");
+    parameters.push(query.environmentId);
+  }
+  if (query.allowedEnvironmentIds) {
+    if (!query.allowedEnvironmentIds.length) return [];
+    clauses.push(`a.environment_id IN (${query.allowedEnvironmentIds.map(() => "?").join(",")})`);
+    parameters.push(...query.allowedEnvironmentIds);
+  }
+  if (query.severity && query.severity !== "all") {
+    clauses.push("a.peak_severity = ?");
+    parameters.push(query.severity);
+  }
+  if (query.status && query.status !== "all") {
+    clauses.push("a.status = ?");
+    parameters.push(query.status);
+  }
+  const limit = Math.min(Math.max(1, query.limit ?? 500), 2_000);
+  return app.db.prepare(`
+    SELECT a.id, a.rule_type, a.rule_key, a.status, a.severity, a.peak_severity, a.occurrence_count,
+      a.target_name, a.details_json, a.triggered_at, a.recovered_at, a.last_seen_at,
+      a.environment_id, a.environment_name, a.ssh_connection_id, a.service_id, a.service_name,
+      a.connection_name, a.target_type
+    FROM monitor_alerts a
+    JOIN environments e ON e.id = a.environment_id
+    WHERE ${clauses.join(" AND ")}
+    ORDER BY CASE WHEN a.status = 'active' THEN 0 WHEN a.status = 'event' THEN 1 ELSE 2 END, a.triggered_at DESC
+    LIMIT ${limit}
+  `).all(...parameters) as Promise<PlatformStoredEventRow[]>;
+}
+
+function mapPlatformEvent(row: PlatformStoredEventRow): MonitorPlatformEventItem {
+  return {
+    id: row.id,
+    ruleType: row.rule_type,
+    ruleKey: row.rule_key,
+    status: row.status,
+    severity: severity(row.severity),
+    peakSeverity: severity(row.peak_severity),
+    occurrenceCount: Math.max(1, Number(row.occurrence_count) || 1),
+    targetName: row.target_name,
+    details: parseDetails(row.details_json),
+    triggeredAt: row.triggered_at,
+    recoveredAt: row.recovered_at,
+    lastSeenAt: row.last_seen_at || row.recovered_at || row.triggered_at,
+    environmentId: row.environment_id,
+    environmentName: row.environment_name,
+    sshConnectionId: row.ssh_connection_id,
+    serviceId: row.service_id,
+    serviceName: row.service_name,
+    connectionName: row.connection_name,
+    targetType: row.target_type,
+  };
+}
+
+export async function loadPlatformEventCalendar(
+  app: FastifyInstance,
+  query: Omit<PlatformMonitorAlertQuery, "from" | "to" | "severity" | "status" | "limit"> & { month: string; timezone: string },
+): Promise<MonitorHostEventCalendarResponse | null> {
+  const days = monitorMonthDays(query.month, query.timezone);
+  if (!days.length) return null;
+  const generatedAt = Date.now();
+  const from = days[0]!.start;
+  const to = days.at(-1)!.end;
+  const events = await loadPlatformAlertRows(app, { ...query, from, to, limit: 2_000 });
+  const coverage = days.map((day) => ({ start: day.start, end: Math.min(day.end, generatedAt) }));
+  const aggregates = days.map((day) => dayAggregate(day, events, coverage, generatedAt));
+  const triggeredInMonth = events.filter((event) => {
+    const triggeredAt = Date.parse(event.triggered_at);
+    return triggeredAt >= from && triggeredAt < to;
+  });
+  const recoveredDurations = triggeredInMonth.flatMap((event) => event.recovered_at
+    ? [Math.max(0, Date.parse(event.recovered_at) - Date.parse(event.triggered_at)) / 60_000]
+    : []);
+  return {
+    month: query.month,
+    timezone: query.timezone,
+    from: new Date(from).toISOString(),
+    to: new Date(to).toISOString(),
+    generatedAt: new Date(generatedAt).toISOString(),
+    days: aggregates,
+    summary: {
+      healthyDays: aggregates.filter((day) => !day.future && day.activeEventCount === 0).length,
+      affectedDays: aggregates.filter((day) => !day.future && day.activeEventCount > 0).length,
+      noDataDays: 0,
+      criticalEvents: triggeredInMonth.filter((event) => severity(event.peak_severity) === "critical").length,
+      totalEvents: triggeredInMonth.length,
+      affectedMinutes: aggregates.reduce((total, day) => total + day.affectedMinutes, 0),
+      meanRecoveryMinutes: recoveredDurations.length
+        ? Math.round(recoveredDurations.reduce((total, value) => total + value, 0) / recoveredDurations.length)
+        : null,
+    },
+  };
+}
+
+export async function loadPlatformEvents(
+  app: FastifyInstance,
+  query: PlatformMonitorAlertQuery,
+): Promise<MonitorPlatformEventItem[]> {
+  const rows = await loadPlatformAlertRows(app, query);
+  return rows.map(mapPlatformEvent);
 }

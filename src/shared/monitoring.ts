@@ -67,6 +67,39 @@ export function compareMonitoringHosts(left: MonitoringSeverityHost, right: Moni
   return String(left.connectionName || left.name || "").localeCompare(String(right.connectionName || right.name || ""), "zh");
 }
 
+export interface MonitoringAlertCounts {
+  critical: number;
+  major: number;
+  warning: number;
+}
+
+export type MonitoringHostPriorityState = "unmanaged" | "critical" | "warning" | "healthy";
+
+export function hostPressureScore(host: MonitoringSeverityHost & { alertCounts?: MonitoringAlertCounts }): number {
+  if (host.missing) return 8;
+  const cpu = finiteMetric(host.cpuUsedPercent) ?? 0;
+  const memory = finiteMetric(host.memoryUsedPercent) ?? 0;
+  const disk = finiteMetric(host.diskUsedPercent) ?? 0;
+  const saturation = Math.max(cpu / 85, memory / 85, disk / 90);
+  const breadth = ((cpu + memory + disk) / 300) * 20;
+  const alerts = host.alertCounts ?? { critical: 0, major: 0, warning: 0 };
+  const alertWeight = alerts.critical * 15 + alerts.major * 8 + alerts.warning * 3;
+  const capacityWeight = disk >= 90 ? 10 : disk >= 80 ? 5 : 0;
+  const freshnessWeight = host.stale ? 8 : 0;
+  return Math.min(100, Math.round(saturation * 55 + breadth + alertWeight + capacityWeight + freshnessWeight));
+}
+
+export function hostPriorityState(
+  host: MonitoringSeverityHost & { alertCounts?: MonitoringAlertCounts },
+  score = hostPressureScore(host),
+): MonitoringHostPriorityState {
+  const alerts = host.alertCounts ?? { critical: 0, major: 0, warning: 0 };
+  if (host.missing) return "unmanaged";
+  if (score >= 80 || alerts.critical > 0) return "critical";
+  if (score >= 55 || alerts.major > 0 || alerts.warning > 0 || host.stale) return "warning";
+  return "healthy";
+}
+
 export function isMonitorStale(lastCollectedAt: string | null | undefined, resolutionSeconds = MONITORING_DEFAULT_RESOLUTION_SECONDS, now = Date.now()): boolean {
   if (!lastCollectedAt) return false;
   const collected = Date.parse(lastCollectedAt);

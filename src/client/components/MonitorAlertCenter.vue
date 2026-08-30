@@ -59,7 +59,7 @@ function navigationTarget(alert: Pick<MonitorAlertItem, "environmentId" | "sshCo
     name: "monitoring" as const,
     query: {
       environmentId: alert.environmentId,
-      view: alert.serviceId ? "services" : "hosts",
+      view: alert.serviceId ? "overview" : "hosts",
       ...(alert.sshConnectionId ? { hostId: alert.sshConnectionId } : {}),
       ...(alert.serviceId ? { serviceId: alert.serviceId } : {}),
     },

@@ -26,6 +26,14 @@ export function monitorEventCalendarCacheKey(
   return `event-calendar:${environmentId}:${hostId}:${timezone}:${months.join(",")}`;
 }
 
+export function platformEventCalendarCacheKey(
+  environmentId: string,
+  timezone: string,
+  months: string[],
+): string {
+  return `platform-event-calendar:${environmentId}:${timezone}:${months.join(",")}`;
+}
+
 export function readMonitorUiCache<T>(key: string): T | null {
   if (!monitorUiCache.has(key)) return null;
   return touchCacheEntry(key, monitorUiCache.get(key) as T);

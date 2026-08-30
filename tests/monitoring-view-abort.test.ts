@@ -21,33 +21,17 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("monitoring timeseries abort", () => {
-  it("aborts an in-flight timeseries request when leaving the service scope", async () => {
+describe("monitoring overview abort", () => {
+  it("aborts an in-flight overview request when leaving the monitoring page", async () => {
     const aborted: boolean[] = [];
-    let resolveOverview: ((value: unknown) => void) | undefined;
     mockedApi.mockImplementation(async (path: string, init?: { signal?: AbortSignal }) => {
-      if (String(path).includes("/monitoring/services/") && String(path).includes("/timeseries")) {
+      if (String(path).includes("/monitoring/overview")) {
         return await new Promise((resolve, reject) => {
           init?.signal?.addEventListener("abort", () => {
             aborted.push(true);
             const error = new Error("Aborted");
             error.name = "AbortError";
             reject(error);
-          });
-          setTimeout(() => resolve({ points: [{ at: "stale-point", cpuUsedPercent: 99, memoryBytes: 1 }] }), 200);
-        });
-      }
-      if (String(path).includes("/monitoring/overview")) {
-        return await new Promise((resolve) => {
-          resolveOverview = resolve;
-          resolve({
-            generatedAt: new Date().toISOString(),
-            partialFailures: [],
-            summary: { hostTotal: 0, hostOnline: 0, hostOffline: 0, hostMissing: 0, hostStale: 0, serviceTotal: 1, avgCpuPercent: null, avgMemoryPercent: null, diskAlerts: 0 },
-            hosts: [],
-            services: [{ id: "svc-1", name: "api", status: "active", environmentId: "env-1", environmentName: "env", deploymentCount: 1, runningCount: 1, problemCount: 0, cpuUsedPercent: 1, memoryBytes: 1, health: "running" }],
-            serviceRanking: [],
-            problemNodes: [],
           });
         });
       }
@@ -58,16 +42,19 @@ describe("monitoring timeseries abort", () => {
 
     const router = createRouter({
       history: createMemoryHistory(),
-      routes: [{ name: "monitoring", path: "/monitoring", component: MonitoringView }],
+      routes: [
+        { name: "monitoring", path: "/monitoring", component: MonitoringView },
+        { name: "overview", path: "/", component: { template: "<div class='home'>home</div>" } },
+      ],
     });
-    await router.push({ name: "monitoring", query: { view: "services", serviceId: "svc-1" } });
+    await router.push({ name: "monitoring", query: { view: "overview" } });
     const wrapper = mount(MonitoringView, {
       global: {
         plugins: [router, i18nPlugin],
         stubs: {
           PageHeader: { template: "<div><slot name='actions' /></div>" },
           HostFleetPanel: true,
-          ServiceApmPanel: { props: ["points"], template: "<div class='apm'>{{ JSON.stringify(points) }}</div>" },
+          AlertServicePanel: true,
           NocScreen: true,
           "el-select": true,
           "el-option": true,
@@ -76,20 +63,9 @@ describe("monitoring timeseries abort", () => {
       },
     });
     await flushPromises();
-    await router.replace({ name: "monitoring", query: { view: "hosts" } });
+    await router.push({ name: "overview" });
     await flushPromises();
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(aborted[0]).toBe(true);
-    expect(wrapper.text()).not.toContain("stale-point");
-    resolveOverview?.({
-      generatedAt: new Date().toISOString(),
-      partialFailures: [],
-      summary: { hostTotal: 0, hostOnline: 0, hostOffline: 0, hostMissing: 0, hostStale: 0, serviceTotal: 0, avgCpuPercent: null, avgMemoryPercent: null, diskAlerts: 0 },
-      hosts: [],
-      services: [],
-      serviceRanking: [],
-      problemNodes: [],
-    });
     wrapper.unmount();
+    expect(aborted[0]).toBe(true);
   });
 });

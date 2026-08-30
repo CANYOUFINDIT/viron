@@ -25,6 +25,7 @@ export interface MonitoringServiceCard {
   problemCount: number;
   cpuUsedPercent: number | null;
   memoryBytes: number | null;
+  restartCount?: number;
   health: string;
 }
 
