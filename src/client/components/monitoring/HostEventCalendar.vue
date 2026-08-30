@@ -77,7 +77,7 @@ function placeholderMonthDays(monthKey: string): MonitorHostEventCalendarDay[] {
     return {
       date,
       future: date > todayKey,
-      coverageRatio: 1,
+      coverageRatio: 0,
       newEventCount: 0,
       activeEventCount: 0,
       infoCount: 0,
