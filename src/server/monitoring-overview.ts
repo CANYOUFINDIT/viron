@@ -114,6 +114,9 @@ export async function loadMonitoringOverview(
         device: String(disk.device ?? ""),
         filesystem: String(disk.filesystem ?? ""),
         usedPercent: disk.usedPercent,
+        usedBytes: disk.usedBytes,
+        totalBytes: disk.totalBytes,
+        freeBytes: disk.freeBytes,
       })).filter((disk) => disk.path),
       diskSettings,
     );
@@ -158,12 +161,23 @@ export async function loadMonitoringOverview(
       networkReceiveBytesPerSecond: missing ? null : finiteMetric(snapshot.networkReceiveBytesPerSecond),
       networkTransmitBytesPerSecond: missing ? null : finiteMetric(snapshot.networkTransmitBytesPerSecond),
       temperatureCelsius: missing ? null : hottest,
+      cpuCount: missing ? null : finiteMetric(snapshot.cpuCount),
+      load5: missing ? null : finiteMetric(snapshot.load5),
       operatingSystem: snapshot.operatingSystem ? String(snapshot.operatingSystem) : "",
       architecture: snapshot.architecture ? String(snapshot.architecture) : "",
       worstDisk: worstDisk ? {
         path: String(worstDisk.path ?? ""),
         usedPercent: finiteMetric(worstDisk.usedPercent),
       } : null,
+      disks: missing ? [] : disks.map((disk) => ({
+        path: disk.path,
+        device: disk.device,
+        filesystem: disk.filesystem,
+        usedPercent: finiteMetric(disk.usedPercent),
+        usedBytes: finiteMetric(disk.usedBytes),
+        totalBytes: finiteMetric(disk.totalBytes),
+        freeBytes: finiteMetric(disk.freeBytes),
+      })),
     };
   });
 
@@ -270,6 +284,7 @@ export async function loadMonitoringOverview(
       problemCount: problem,
       cpuUsedPercent: average(cpuValues),
       memoryBytes: average(memoryValues),
+      restartCount: service.deployments.reduce((sum, item) => sum + (finiteMetric(item.restartCount) ?? 0), 0),
       health: service.status === "disabled" ? "disabled" : problem ? "degraded" : running && running === service.deployments.length ? "running" : service.deployments.length ? "unknown" : "empty",
     };
   });

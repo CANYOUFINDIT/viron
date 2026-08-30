@@ -143,6 +143,16 @@ export interface MonitorHostEventItem {
   lastSeenAt: string;
 }
 
+export interface MonitorPlatformEventItem extends MonitorHostEventItem {
+  environmentId: string;
+  environmentName: string;
+  sshConnectionId: string | null;
+  serviceId: string | null;
+  serviceName: string;
+  connectionName: string;
+  targetType: MonitorAlertTargetType;
+}
+
 export interface DesktopMonitorAlertNotification {
   id: string;
   title: string;

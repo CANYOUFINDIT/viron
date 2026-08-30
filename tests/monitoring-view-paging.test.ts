@@ -79,7 +79,7 @@ describe("monitoring host pages", () => {
       history: createMemoryHistory(),
       routes: [{ name: "monitoring", path: "/monitoring", component: MonitoringView }],
     });
-    await router.push({ name: "monitoring" });
+    await router.push({ name: "monitoring", query: { view: "hosts" } });
     const wrapper = mount(MonitoringView, {
       global: {
         plugins: [router, i18nPlugin],
@@ -88,7 +88,7 @@ describe("monitoring host pages", () => {
             props: ["hosts", "loadingMore"],
             template: `<div class="fleet">{{ hosts.map((host) => host.connectionName).join(",") }}{{ loadingMore ? "|more" : "" }}</div>`,
           },
-          ServiceApmPanel: true,
+          AlertServicePanel: true,
           NocScreen: true,
           "el-select": true,
           "el-option": true,
@@ -135,7 +135,7 @@ describe("monitoring host pages", () => {
         plugins: [router, i18nPlugin],
         stubs: {
           HostFleetPanel: true,
-          ServiceApmPanel: true,
+          AlertServicePanel: true,
           NocScreen: true,
           "el-select": true,
           "el-option": true,
