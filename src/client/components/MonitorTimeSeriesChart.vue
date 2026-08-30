@@ -74,6 +74,7 @@ const plotWidth = computed(() => chartWidth - plot.value.left - plot.value.right
 const plotHeight = computed(() => chartHeight.value - plot.value.top - plot.value.bottom);
 const hoveredIndex = ref<number | null>(null);
 const hoveredX = ref<number | null>(null);
+const hoveredLegendKey = ref<string | null>(null);
 const gradientId = `monitor-area-${Math.random().toString(36).slice(2)}`;
 
 const stackedTotals = computed(() => props.points.map((_, pointIndex) => props.series.reduce((sum, series) => {
@@ -376,7 +377,16 @@ function clearHover() {
         </div>
       </div>
       <div class="monitor-chart-card__legend" :aria-label="tr('图例')">
-        <span v-for="item in series" :key="item.key"><i :style="{ background: item.color }"></i>{{ item.label }}</span>
+        <span
+          v-for="item in series"
+          :key="item.key"
+          :class="{ 'is-hovered': hoveredLegendKey === item.key }"
+          @pointerenter="hoveredLegendKey = item.key"
+          @pointerleave="hoveredLegendKey = null"
+        >
+          <i :style="{ background: item.color }"></i>
+          {{ item.label }}
+        </span>
       </div>
     </header>
     <div v-if="hasData" class="monitor-chart-card__plot">
@@ -449,7 +459,18 @@ function clearHover() {
         </template>
         <template v-else>
           <path v-if="series.length === 1" :d="areaPath(series[0]!)" :fill="`url(#${gradientId})`" class="chart-area" />
-          <path v-for="item in series" :key="item.key" :d="linePath(item)" :stroke="item.color" class="chart-line" :filter="series.length === 1 ? `url(#${gradientId}-glow)` : undefined" />
+          <path
+            v-for="item in series"
+            :key="item.key"
+            :d="linePath(item)"
+            :stroke="item.color"
+            class="chart-line"
+            :class="{
+              'is-dimmed': hoveredLegendKey && hoveredLegendKey !== item.key,
+              'is-focused': hoveredLegendKey === item.key,
+            }"
+            :filter="series.length === 1 ? `url(#${gradientId}-glow)` : undefined"
+          />
         </template>
         <g v-if="hoveredIndex !== null && hoveredX !== null" class="chart-hover">
           <line :x1="hoveredX" :x2="hoveredX" :y1="plot.top" :y2="plot.top + plotHeight" />
@@ -573,7 +594,7 @@ function clearHover() {
   display: flex !important;
   justify-content: flex-end;
   flex-wrap: wrap;
-  gap: 4px 10px !important;
+  gap: 4px 6px !important;
 }
 
 .monitor-chart-card__legend span {
@@ -583,6 +604,16 @@ function clearHover() {
   color: var(--ink-500);
   font-size: 10.5px;
   white-space: nowrap;
+  padding: 1px 5px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color .15s ease, color .15s ease;
+}
+
+.monitor-chart-card__legend span:hover,
+.monitor-chart-card__legend span.is-hovered {
+  color: var(--ink-950);
+  background: var(--ink-100);
 }
 
 .monitor-chart-card__legend i,
@@ -676,6 +707,17 @@ function clearHover() {
   stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
   pointer-events: none;
+  transition: opacity .18s ease, stroke-width .18s ease;
+}
+
+.chart-line.is-dimmed {
+  opacity: 0.18;
+}
+
+.chart-line.is-focused {
+  opacity: 1;
+  stroke-width: 3.2;
+  filter: drop-shadow(0 0 6px rgba(0, 0, 0, 0.28));
 }
 
 .chart-annotations rect {
