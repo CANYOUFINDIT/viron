@@ -56,6 +56,7 @@ export class MonitorInstallTaskConflictError extends Error {
 
 const taskLogLimit = 300;
 const taskRetentionMs = 30 * 24 * 60 * 60 * 1000;
+export const monitorInstallTaskConcurrency = 4;
 
 export function sanitizeMonitorInstallOutput(value: string): string {
   return value
@@ -99,6 +100,8 @@ function publicTask(task: MonitorInstallTask): PublicMonitorInstallTask {
 export class MonitorInstallTaskManager {
   private readonly activeConnections = new Set<string>();
   private readonly activeRuns = new Set<Promise<void>>();
+  private readonly pendingRuns: Array<() => void> = [];
+  private activeRunCount = 0;
   private closing = false;
 
   constructor(private readonly app: FastifyInstance) {}
@@ -161,8 +164,7 @@ export class MonitorInstallTaskManager {
         updatedAt: now,
       };
       await this.persist(task, true);
-      const run = this.run(task, runner)
-        .catch((error) => this.app.log.error({ err: error, taskId: task.id }, "monitor installation task persistence failed"))
+      const run = this.enqueue(task, runner)
         .finally(() => {
           this.activeConnections.delete(input.connectionId);
           this.activeRuns.delete(run);
@@ -178,6 +180,31 @@ export class MonitorInstallTaskManager {
   async closeAll(): Promise<void> {
     this.closing = true;
     await Promise.allSettled([...this.activeRuns]);
+  }
+
+  private enqueue(
+    task: MonitorInstallTask,
+    runner: (reporter: MonitorInstallTaskReporter) => Promise<Record<string, unknown>>,
+  ): Promise<void> {
+    return new Promise((resolve) => {
+      this.pendingRuns.push(() => {
+        this.activeRunCount += 1;
+        void this.run(task, runner)
+          .catch((error) => this.app.log.error({ err: error, taskId: task.id }, "monitor installation task persistence failed"))
+          .finally(() => {
+            this.activeRunCount -= 1;
+            resolve();
+            this.drainQueue();
+          });
+      });
+      this.drainQueue();
+    });
+  }
+
+  private drainQueue(): void {
+    while (this.activeRunCount < monitorInstallTaskConcurrency && this.pendingRuns.length) {
+      this.pendingRuns.shift()!();
+    }
   }
 
   private async run(task: MonitorInstallTask, runner: (reporter: MonitorInstallTaskReporter) => Promise<Record<string, unknown>>): Promise<void> {

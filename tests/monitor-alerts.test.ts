@@ -420,6 +420,31 @@ describe("monitor alerts", () => {
       });
       expect(platformEvents.statusCode).toBe(200);
       expect(platformEvents.json().items).toEqual([expect.objectContaining({ id: originalAlertId, environmentId })]);
+      expect(platformEvents.json()).toMatchObject({ total: 1, page: 1, pageSize: 100 });
+
+      const cleared = await app.inject({ method: "POST", url: "/api/v1/monitor-alerts/clear-all", cookies });
+      expect(cleared.statusCode).toBe(200);
+      expect(cleared.json().updated).toBeGreaterThanOrEqual(1);
+      expect((await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies })).json().items).toEqual([]);
+
+      const systemEventsAfterClear = await app.inject({
+        method: "GET",
+        url: `/api/v1/monitoring/events?date=${now.slice(0, 10)}&timezone=UTC&pageSize=1`,
+        cookies,
+      });
+      expect(systemEventsAfterClear.statusCode).toBe(200);
+      expect(systemEventsAfterClear.json()).toMatchObject({
+        total: 1,
+        page: 1,
+        pageSize: 1,
+        items: [expect.objectContaining({ id: originalAlertId })],
+      });
+      const systemCalendarAfterClear = await app.inject({
+        method: "GET",
+        url: `/api/v1/monitoring/event-calendar?month=${now.slice(0, 7)}&timezone=UTC`,
+        cookies,
+      });
+      expect(systemCalendarAfterClear.json().summary.totalEvents).toBeGreaterThanOrEqual(1);
       expect((await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/service-deployments`, cookies })).json().discovery.hosts[0].sshConnectionId).toBe(connectionId);
     } finally {
       await app.close();

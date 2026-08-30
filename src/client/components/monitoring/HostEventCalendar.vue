@@ -2,9 +2,6 @@
 import { CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock3, RefreshCw } from "@lucide/vue";
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import {
-  monitorAlertSeverityRank,
-  monitorAlertSeverityWeight,
-  type MonitorAlertItem,
   type MonitorAlertSeverity,
   type MonitorHostEventCalendarDay,
   type MonitorHostEventCalendarResponse,
@@ -13,7 +10,7 @@ import {
 } from "../../../shared/monitor-alerts";
 import { api } from "../../api";
 import { currentLocale, translate as tr } from "../../i18n";
-import { monitorAlertLocalDateKeys, monitorHostEventDiskLabel, monitorHostEventDurationMinutes } from "../../monitor-host-event-display";
+import { monitorHostEventDiskLabel, monitorHostEventDurationMinutes } from "../../monitor-host-event-display";
 import { monitorEventCalendarCacheKey, platformEventCalendarCacheKey, readMonitorUiCache, writeMonitorUiCache } from "../../monitor-ui-cache";
 import { monitorAlertRuleLabel } from "../../monitor-alert-copy";
 
@@ -21,13 +18,13 @@ const props = withDefaults(defineProps<{
   environmentId?: string;
   hostId?: string;
   mode?: "host" | "platform";
-  overlayAlerts?: MonitorAlertItem[];
+  refreshKey?: string;
   selectedDate?: string;
 }>(), {
   environmentId: "",
   hostId: "",
   mode: "host",
-  overlayAlerts: () => [],
+  refreshKey: "",
   selectedDate: "",
 });
 
@@ -109,59 +106,6 @@ function placeholderMonthDays(monthKey: string): MonitorHostEventCalendarDay[] {
   });
 }
 
-function overlayAlertDays(days: MonitorHostEventCalendarDay[]): MonitorHostEventCalendarDay[] {
-  const alerts = (props.overlayAlerts ?? []).filter((alert) => !props.environmentId || alert.environmentId === props.environmentId);
-  if (!alerts.length) return days;
-  const overlay = new Map<string, MonitorHostEventCalendarDay>();
-  for (const alert of alerts) {
-    for (const date of monitorAlertLocalDateKeys(alert)) {
-      const current = overlay.get(date) ?? {
-        date,
-        future: false,
-        coverageRatio: 0,
-        newEventCount: 0,
-        activeEventCount: 0,
-        infoCount: 0,
-        warningCount: 0,
-        majorCount: 0,
-        criticalCount: 0,
-        affectedMinutes: 0,
-        peakSeverity: null,
-        burdenScore: 0,
-      };
-      const severity = alert.peakSeverity;
-      current.newEventCount += 1;
-      current.activeEventCount += 1;
-      if (severity === "info") current.infoCount += 1;
-      if (severity === "warning") current.warningCount += 1;
-      if (severity === "major") current.majorCount += 1;
-      if (severity === "critical") current.criticalCount += 1;
-      if (!current.peakSeverity || monitorAlertSeverityRank(severity) > monitorAlertSeverityRank(current.peakSeverity)) {
-        current.peakSeverity = severity;
-      }
-      current.burdenScore = Math.round((current.burdenScore + monitorAlertSeverityWeight[severity]) * 10) / 10;
-      overlay.set(date, current);
-    }
-  }
-  return days.map((day) => {
-    const extra = overlay.get(day.date);
-    if (!extra || extra.newEventCount <= day.newEventCount) return day;
-    return {
-      ...day,
-      newEventCount: extra.newEventCount,
-      activeEventCount: Math.max(day.activeEventCount, extra.activeEventCount),
-      infoCount: Math.max(day.infoCount, extra.infoCount),
-      warningCount: Math.max(day.warningCount, extra.warningCount),
-      majorCount: Math.max(day.majorCount, extra.majorCount),
-      criticalCount: Math.max(day.criticalCount, extra.criticalCount),
-      peakSeverity: extra.peakSeverity && (!day.peakSeverity || monitorAlertSeverityRank(extra.peakSeverity) > monitorAlertSeverityRank(day.peakSeverity))
-        ? extra.peakSeverity
-        : day.peakSeverity,
-      burdenScore: Math.max(day.burdenScore, extra.burdenScore),
-    };
-  });
-}
-
 function summaryFromDays(days: MonitorHostEventCalendarDay[]): MonitorHostEventCalendarSummary {
   const visible = days.filter((day) => !day.future);
   return {
@@ -175,17 +119,12 @@ function summaryFromDays(days: MonitorHostEventCalendarDay[]): MonitorHostEventC
   };
 }
 
-const paintedCalendars = computed(() => calendars.value.map((calendar) => {
-  const days = overlayAlertDays(calendar.days);
-  return { ...calendar, days, summary: summaryFromDays(days) };
-}));
-
 // 整合整年 12 个月的全部日期，未加载的非活跃月份自动填充占位日，保证方块矩阵尺寸 100% 完整铺满
 const allDays = computed(() => {
-  const calendarMap = new Map(paintedCalendars.value.map((item) => [item.month, item]));
+  const calendarMap = new Map(calendars.value.map((item) => [item.month, item]));
   return fullYearMonths.value.flatMap((monthKey) => {
     const loaded = calendarMap.get(monthKey);
-    return loaded ? loaded.days : overlayAlertDays(placeholderMonthDays(monthKey));
+    return loaded ? loaded.days : placeholderMonthDays(monthKey);
   });
 });
 
@@ -293,6 +232,7 @@ function severityLabel(value: MonitorAlertSeverity) {
 function dayTone(day: MonitorHostEventCalendarDay) {
   if (day.future) return "is-future";
   if (day.peakSeverity) return `is-${day.peakSeverity}`;
+  if (isPlatform.value) return "is-healthy";
   if (day.date === todayKey && day.coverageRatio < 0.8) return "is-detecting";
   if (day.coverageRatio < 0.8) return "is-no-data";
   return "is-healthy";
@@ -318,6 +258,7 @@ function dayTitle(day: MonitorHostEventCalendarDay) {
       day.affectedMinutes,
     ]);
   }
+  if (isPlatform.value) return tr("{0} · 无告警事件", [day.date]);
   if (day.date === todayKey && day.coverageRatio < 0.8) {
     return tr("{0} · 检测中 · 采集覆盖率 {1}%", [day.date, Math.round(day.coverageRatio * 100)]);
   }
@@ -328,6 +269,7 @@ function dayTitle(day: MonitorHostEventCalendarDay) {
 }
 
 function isInteractiveDay(day: MonitorHostEventCalendarDay) {
+  if (isPlatform.value) return !day.future;
   return !day.future && (day.activeEventCount > 0 || day.coverageRatio < 0.8 || day.date === todayKey);
 }
 
@@ -450,7 +392,7 @@ async function openDay(day: MonitorHostEventCalendarDay) {
 watch(() => [props.environmentId, props.hostId, props.mode], () => {
   calendars.value = [];
 });
-watch(() => [props.environmentId, props.hostId, props.mode, anchorMonth.value, rangeMonths.value], loadCalendar, { immediate: true });
+watch(() => [props.environmentId, props.hostId, props.mode, props.refreshKey, anchorMonth.value, rangeMonths.value], loadCalendar, { immediate: true });
 onBeforeUnmount(() => {
   calendarAbort?.abort();
   eventsAbort?.abort();
@@ -464,7 +406,7 @@ onBeforeUnmount(() => {
         <span class="event-calendar__icon"><CalendarDays :size="18" /></span>
         <div class="event-calendar__title-wrap">
           <h4>{{ isPlatform ? $t('告警事件热力图') : $t('主机事件热力图') }}</h4>
-          <p>{{ $t('每天一个方格，颜色表示严重级别，深浅表示事件负载') }}</p>
+          <p>{{ isPlatform ? $t('系统历史告警统计，不受个人通知读取或清除影响') : $t('每天一个方格，颜色表示严重级别，深浅表示事件负载') }}</p>
         </div>
       </div>
 
@@ -624,6 +566,8 @@ onBeforeUnmount(() => {
                   ? $t('未来')
                   : hoveredDay.day.peakSeverity
                     ? severityLabel(hoveredDay.day.peakSeverity)
+                    : isPlatform
+                      ? $t('无告警')
                     : hoveredDay.day.date === todayKey && hoveredDay.day.coverageRatio < 0.8
                       ? $t('检测中')
                       : hoveredDay.day.coverageRatio < 0.8
@@ -649,6 +593,12 @@ onBeforeUnmount(() => {
             <div class="tooltip-hint" v-if="isInteractiveDay(hoveredDay.day)">
               {{ $t('点击查看事件详情') }} ↗
             </div>
+          </template>
+          <template v-else-if="isPlatform">
+            <div class="tooltip-stat is-healthy">
+              <CheckCircle2 :size="12" /> {{ $t('当天没有系统告警事件') }}
+            </div>
+            <div class="tooltip-hint">{{ $t('点击筛选当天事件列表') }} ↗</div>
           </template>
           <template v-else-if="hoveredDay.day.date === todayKey && hoveredDay.day.coverageRatio < 0.8">
             <div class="tooltip-stat is-detecting-stat">
@@ -683,22 +633,24 @@ onBeforeUnmount(() => {
           <span class="pill-label">{{ $t('累计影响') }}</span>
           <strong>{{ formatDuration(summary.affectedMinutes) }}</strong>
         </span>
-        <span v-if="summary.noDataDays" class="totals-pill is-faint">
+        <span v-if="!isPlatform && summary.noDataDays" class="totals-pill is-faint">
           <strong>{{ summary.noDataDays }}</strong> {{ $t('天无数据') }}
         </span>
       </div>
       <div class="event-calendar__legend-group">
         <div class="event-calendar__legend" :aria-label="$t('严重级别图例')">
-          <span class="legend-label">{{ $t('健康') }}</span>
-          <i class="is-healthy" :title="$t('健康')"></i>
+          <span class="legend-label">{{ isPlatform ? $t('无告警') : $t('健康') }}</span>
+          <i class="is-healthy" :title="isPlatform ? $t('无告警') : $t('健康')"></i>
           <i class="is-info" :title="$t('提示')"></i>
           <i class="is-warning" :title="$t('警告')"></i>
           <i class="is-major" :title="$t('高危')"></i>
           <i class="is-critical" :title="$t('严重')"></i>
           <span class="legend-label">{{ $t('严重') }}</span>
-          <span class="legend-sep"></span>
-          <i class="is-no-data" :title="$t('无数据')"></i>
-          <span class="legend-label">{{ $t('无数据') }}</span>
+          <template v-if="!isPlatform">
+            <span class="legend-sep"></span>
+            <i class="is-no-data" :title="$t('无数据')"></i>
+            <span class="legend-label">{{ $t('无数据') }}</span>
+          </template>
         </div>
         <small class="event-calendar__timezone">{{ timezone }}</small>
       </div>

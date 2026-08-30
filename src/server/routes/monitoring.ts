@@ -50,6 +50,8 @@ const platformEventsQuerySchema = z.object({
   environmentId: z.string().uuid().optional(),
   severity: z.enum(["all", "info", "warning", "major", "critical"]).optional(),
   status: z.enum(["all", "active", "recovered", "event"]).optional(),
+  page: z.coerce.number().int().min(1).max(100_000).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(100),
 });
 
 function currentMonth(timezone: string): string {
@@ -178,7 +180,7 @@ export async function registerMonitoringRoutes(app: FastifyInstance): Promise<vo
     }
     const [workspaceType, workspaceId] = workspaceParams(request);
     const access = await getWorkspaceAccess(app.db, request.admin!);
-    const items = await loadPlatformEvents(app, {
+    const result = await loadPlatformEvents(app, {
       workspaceType,
       workspaceId,
       environmentId: query.data.environmentId,
@@ -187,7 +189,13 @@ export async function registerMonitoringRoutes(app: FastifyInstance): Promise<vo
       to,
       severity: query.data.severity ?? "all",
       status: query.data.status ?? "all",
+      limit: query.data.pageSize,
+      offset: (query.data.page - 1) * query.data.pageSize,
     });
-    return { items };
+    return {
+      ...result,
+      page: query.data.page,
+      pageSize: query.data.pageSize,
+    };
   });
 }

@@ -16,7 +16,6 @@ describe("monitoring dashboard wiring", () => {
   it("registers the global monitoring route and cancels overlapping overview requests", () => {
     expect(router).toContain('path: "/monitoring"');
     expect(monitoringView).toContain("overviewAbort?.abort()");
-    expect(monitoringView).toContain("alertsAbort?.abort()");
     expect(noc).toContain("host.stale");
     expect(noc).toContain("is-unknown");
     expect(monitoringView).toContain("document.hidden");
@@ -39,8 +38,10 @@ describe("monitoring dashboard wiring", () => {
   it("shows a GitHub-style host event heatmap in monitoring and service maintenance", () => {
     expect(alertService).toContain("mode=\"platform\"");
     expect(alertService).toContain("HostEventCalendar");
-    expect(alertService).toContain(":overlay-alerts=\"alerts\"");
-    expect(hostEventCalendar).toContain("overlayAlertDays");
+    expect(alertService).toContain("/api/v1/monitoring/events?");
+    expect(alertService).toContain("系统事件记录，不受个人通知清除影响");
+    expect(alertService).not.toContain("/api/v1/monitor-alerts");
+    expect(hostEventCalendar).toContain("系统历史告警统计，不受个人通知读取或清除影响");
     expect(hostFleet).toContain("priority-host-grid");
     expect(maintenanceDiscovery).toContain("<HostEventCalendar");
     expect(maintenanceDiscovery).toContain(':host-id="selectedHost.sshConnectionId"');
@@ -57,11 +58,9 @@ describe("monitoring dashboard wiring", () => {
     expect(hostDashboard).toContain("cachedHistory ?? emptyHistory()");
   });
 
-  it("loads NOC alerts and shows empty-state copy for APM and NOC panels", () => {
-    expect(monitoringView).toContain("loadAlerts");
-    expect(monitoringView).toContain(":alerts=\"alerts\"");
-    expect(monitoringView).not.toContain(":alerts=\"[]\"");
-    expect(monitoringView).not.toContain("if (overviewInFlight) return");
+  it("keeps the dashboard to two pages and shows empty-state copy for monitoring panels", () => {
+    expect(monitoringView).not.toContain("loadAlerts");
+    expect(monitoringView).not.toContain("NOC 全屏");
     expect(monitoringView).toContain("$t('告警与服务')");
     expect(monitoringView).toContain("$t('主机节点')");
     expect(alertService).toContain("$t('告警事件')");
@@ -84,6 +83,7 @@ describe("monitoring dashboard wiring", () => {
     expect(monitoringView).not.toContain("environmentId: environmentId.value || firstMonitored.environmentId");
     expect(monitoringView).not.toContain("environmentId: environmentId.value || host.environmentId");
     expect(monitoringView).toContain("patchQuery({ view: \"hosts\", hostId: host?.sshConnectionId })");
+    expect(monitoringView).toContain("hostId: undefined");
     expect(monitoringView).toContain("MONITORING_HOST_PAGE_SIZE");
     expect(monitoringView).toContain("hostOffset");
     expect(monitoringView).toContain("hostsOnly");

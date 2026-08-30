@@ -26,6 +26,8 @@ export interface MonitoringServiceCard {
   cpuUsedPercent: number | null;
   memoryBytes: number | null;
   restartCount?: number;
+  activeAlertCount?: number;
+  activeAlertPeakSeverity?: "info" | "warning" | "major" | "critical" | null;
   health: string;
 }
 
@@ -505,4 +507,3 @@ function formatBytes(value: number | null) {
   }
 }
 </style>
-

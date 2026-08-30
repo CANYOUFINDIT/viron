@@ -2,8 +2,10 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { canAccessEnvironment, getWorkspaceAccess, workspaceParams } from "./access-control.js";
 import {
   defaultMonitorAlertSettings,
+  monitorAlertSeverityRank,
   parseMonitoredDiskTypes,
   visibleMonitorDisks,
+  type MonitorAlertSeverity,
   type MonitorAlertSettings,
 } from "../shared/monitor-alerts.js";
 import {
@@ -59,6 +61,14 @@ export async function loadMonitoringOverview(
   const serviceLimit = Math.min(Math.max(1, query.serviceLimit ?? MONITORING_MAX_SERVICES), MONITORING_MAX_SERVICES);
   const environmentFilter = query.environmentId ? "AND e.id = ?" : "";
   const environmentParams = query.environmentId ? [query.environmentId] : [];
+  const scopedEnvironmentRows = await app.db.prepare(`
+    SELECT e.id
+    FROM environments e
+    WHERE e.workspace_type = ? AND e.workspace_id = ? ${environmentFilter}
+  `).all(workspaceType, workspaceId, ...environmentParams) as Array<{ id: string }>;
+  const alertEnvironmentIds = scopedEnvironmentRows
+    .map((row) => String(row.id))
+    .filter((id) => access.canManage || access.environmentIds.has(id));
 
   const hostRows = await app.db.prepare(`
     SELECT e.id AS environment_id, e.name AS environment_name,
@@ -84,6 +94,40 @@ export async function loadMonitoringOverview(
   }
 
   const environmentIds = [...new Set(visibleHosts.map((row) => String(row.environment_id)))];
+  const activeAlertRows = alertEnvironmentIds.length
+    ? await app.db.prepare(`
+        SELECT ssh_connection_id, service_id, peak_severity, COUNT(*) AS count
+        FROM monitor_alerts
+        WHERE status = 'active'
+          AND environment_id IN (${alertEnvironmentIds.map(() => "?").join(",")})
+        GROUP BY ssh_connection_id, service_id, peak_severity
+      `).all(...alertEnvironmentIds) as Array<{
+        ssh_connection_id: string | null;
+        service_id: string | null;
+        peak_severity: MonitorAlertSeverity;
+        count: number | string;
+      }>
+    : [];
+  const hostAlertCounts = new Map<string, { critical: number; major: number; warning: number }>();
+  const serviceAlertCounts = new Map<string, { count: number; peakSeverity: MonitorAlertSeverity | null }>();
+  for (const row of activeAlertRows) {
+    const count = Math.max(0, Number(row.count) || 0);
+    if (row.ssh_connection_id) {
+      const current = hostAlertCounts.get(row.ssh_connection_id) ?? { critical: 0, major: 0, warning: 0 };
+      if (row.peak_severity === "critical") current.critical += count;
+      else if (row.peak_severity === "major") current.major += count;
+      else if (row.peak_severity === "warning") current.warning += count;
+      hostAlertCounts.set(row.ssh_connection_id, current);
+    }
+    if (row.service_id) {
+      const current = serviceAlertCounts.get(row.service_id) ?? { count: 0, peakSeverity: null };
+      current.count += count;
+      if (!current.peakSeverity || monitorAlertSeverityRank(row.peak_severity) > monitorAlertSeverityRank(current.peakSeverity)) {
+        current.peakSeverity = row.peak_severity;
+      }
+      serviceAlertCounts.set(row.service_id, current);
+    }
+  }
   const diskSettingsByEnvironment = new Map<string, Pick<MonitorAlertSettings, "monitoredDiskTypes" | "excludedDisks">>();
   if (environmentIds.length) {
     const placeholders = environmentIds.map(() => "?").join(",");
@@ -155,6 +199,8 @@ export async function loadMonitoringOverview(
       lastPulledAt: row.last_pulled_at ? String(row.last_pulled_at) : null,
       lastError: String(row.last_error ?? ""),
       installManaged: Boolean(row.install_managed),
+      installPath: String(row.install_path ?? ""),
+      alertCounts: hostAlertCounts.get(String(row.ssh_connection_id)) ?? { critical: 0, major: 0, warning: 0 },
       cpuUsedPercent: missing ? null : finiteMetric(snapshot.cpuUsedPercent),
       memoryUsedPercent: missing ? null : finiteMetric(snapshot.memoryUsedPercent),
       diskUsedPercent: missing ? null : (diskPercents.length ? Math.max(...diskPercents) : null),
@@ -273,6 +319,7 @@ export async function loadMonitoringOverview(
     const problem = service.deployments.filter((item) => item.status === "stopped" || item.status === "degraded").length;
     const cpuValues = service.deployments.map((item) => finiteMetric(item.cpuUsedPercent));
     const memoryValues = service.deployments.map((item) => finiteMetric(item.memoryBytes));
+    const activeAlerts = serviceAlertCounts.get(service.id) ?? { count: 0, peakSeverity: null };
     return {
       id: service.id,
       name: service.name,
@@ -285,6 +332,8 @@ export async function loadMonitoringOverview(
       cpuUsedPercent: average(cpuValues),
       memoryBytes: average(memoryValues),
       restartCount: service.deployments.reduce((sum, item) => sum + (finiteMetric(item.restartCount) ?? 0), 0),
+      activeAlertCount: activeAlerts.count,
+      activeAlertPeakSeverity: activeAlerts.peakSeverity,
       health: service.status === "disabled" ? "disabled" : problem ? "degraded" : running && running === service.deployments.length ? "running" : service.deployments.length ? "unknown" : "empty",
     };
   });

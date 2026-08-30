@@ -9,7 +9,7 @@ import { buildApp } from "../src/server/app.js";
 import type { AppConfig } from "../src/server/config.js";
 import { ensureAdmin, openDatabase } from "../src/server/database.js";
 import { MonitorInstallError, normalizeMonitorInstallPath, restartMonitorServiceCommand } from "../src/server/monitor-installer.js";
-import { sanitizeMonitorInstallOutput } from "../src/server/monitor-install-task-manager.js";
+import { monitorInstallTaskConcurrency, sanitizeMonitorInstallOutput } from "../src/server/monitor-install-task-manager.js";
 import { PRODUCT_VERSION } from "../src/server/product-info.js";
 
 const directories: string[] = [];
@@ -26,6 +26,14 @@ const packageFiles = [
 afterEach(() => {
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
+
+async function waitUntil(predicate: () => boolean) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) return;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  throw new Error("condition was not reached");
+}
 
 function testConfig(directory: string, monitorPackageDir: string): AppConfig {
   return {
@@ -462,6 +470,77 @@ describe("monitor installer", () => {
     } finally {
       await context.app.close();
       await context.ssh.close();
+    }
+  });
+
+  it("queues installation tasks above the global concurrency limit", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "viron-monitor-install-queue-"));
+    directories.push(directory);
+    writeMonitorPackage(directory);
+    const config = testConfig(directory, directory);
+    const db = await openDatabase(config);
+    await ensureAdmin(db, config);
+    const app = await buildApp({ config, db, logger: false });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let running = 0;
+    let peakRunning = 0;
+    let started = 0;
+    try {
+      const login = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { username: "admin", password: config.adminPassword } });
+      const cookies = { envman_session: login.cookies.find((item) => item.name === "envman_session")!.value };
+      const environment = await app.inject({ method: "POST", url: "/api/v1/environments", cookies, payload: { name: "安装队列" } });
+      const environmentId = environment.json().id as string;
+      const connectionIds: string[] = [];
+      for (let index = 0; index < monitorInstallTaskConcurrency + 2; index += 1) {
+        const connection = await app.inject({
+          method: "POST",
+          url: "/api/v1/ssh-connections",
+          cookies,
+          payload: {
+            environmentId,
+            name: `queue-${index}`,
+            host: `127.0.0.${index + 1}`,
+            port: 22,
+            username: "operator",
+            authType: "password",
+            credential: { password: "monitor-secret" },
+            options: { terminalType: "xterm-256color", keepAliveSeconds: 30, encoding: "utf-8", hostKeySha256: "", loginScriptEnabled: false, loginScript: "" },
+          },
+        });
+        connectionIds.push(connection.json().id as string);
+      }
+      const actor = await db.prepare("SELECT id FROM admin_users WHERE username = 'admin'").get() as { id: string };
+      await Promise.all(connectionIds.map((connectionId, index) => app.monitorInstallTasks.start({
+        environmentId,
+        connectionId,
+        connectionName: `queue-${index}`,
+        installPath: "/opt/viron/monitor",
+        actorUserId: actor.id,
+      }, async () => {
+        running += 1;
+        started += 1;
+        peakRunning = Math.max(peakRunning, running);
+        await gate;
+        running -= 1;
+        return {};
+      })));
+
+      await waitUntil(() => started === monitorInstallTaskConcurrency);
+      expect(peakRunning).toBe(monitorInstallTaskConcurrency);
+      const statesBeforeRelease = await Promise.all(connectionIds.map((id) => app.monitorInstallTasks.latest(id)));
+      expect(statesBeforeRelease.filter((task) => task?.status === "running")).toHaveLength(monitorInstallTaskConcurrency);
+      expect(statesBeforeRelease.filter((task) => task?.status === "pending")).toHaveLength(2);
+
+      release();
+      await app.monitorInstallTasks.closeAll();
+      expect(started).toBe(connectionIds.length);
+      expect(peakRunning).toBe(monitorInstallTaskConcurrency);
+      const statesAfterRelease = await Promise.all(connectionIds.map((id) => app.monitorInstallTasks.latest(id)));
+      expect(statesAfterRelease.every((task) => task?.status === "success")).toBe(true);
+    } finally {
+      release();
+      await app.close();
     }
   });
 

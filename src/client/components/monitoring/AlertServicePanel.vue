@@ -1,9 +1,14 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
-import type { MonitorAlertItem, MonitorAlertSeverity } from "../../../shared/monitor-alerts";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
+import type {
+  MonitorAlertSeverity,
+  MonitorPlatformEventItem,
+  MonitorPlatformEventListResponse,
+} from "../../../shared/monitor-alerts";
+import { api } from "../../api";
 import { currentLocale, translate as tr } from "../../i18n";
 import { monitorAlertRuleLabel } from "../../monitor-alert-copy";
-import { monitorAlertLocalDateKey, monitorAlertLocalDateKeys } from "../../monitor-host-event-display";
+import { monitorAlertLocalDateKey } from "../../monitor-host-event-display";
 import HostEventCalendar from "./HostEventCalendar.vue";
 import type { MonitoringServiceCard } from "./ServiceApmPanel.vue";
 
@@ -11,11 +16,11 @@ const props = defineProps<{
   environmentId: string;
   environments: Array<{ id: string; name: string }>;
   services: MonitoringServiceCard[];
-  alerts: MonitorAlertItem[];
+  refreshKey?: string;
 }>();
 
 const emit = defineEmits<{
-  "open-event": [event: MonitorAlertItem];
+  "open-event": [event: MonitorPlatformEventItem];
   "open-service": [service: MonitoringServiceCard];
 }>();
 
@@ -24,17 +29,21 @@ const selectedHeatDate = ref("");
 const eventEnvironmentId = ref("");
 const eventSeverity = ref<"all" | MonitorAlertSeverity>("all");
 const eventStatus = ref<"all" | "active" | "recovered" | "event">("all");
+const events = ref<MonitorPlatformEventItem[]>([]);
+const eventTotal = ref(0);
+const eventPage = ref(1);
+const eventPageSize = 100;
+const eventsLoading = ref(false);
+const eventsError = ref("");
 const serviceQuery = ref("");
 const todayKey = monitorAlertLocalDateKey(new Date().toISOString());
+const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+let eventsAbort: AbortController | null = null;
 
 function addDays(key: string, delta: number) {
   const [year, month, day] = key.split("-").map(Number) as [number, number, number];
   return monitorAlertLocalDateKey(new Date(year, month - 1, day + delta).toISOString());
 }
-
-watch(() => props.environmentId, (value) => {
-  eventEnvironmentId.value = value;
-}, { immediate: true });
 
 function selectHeatDate(date: string) {
   selectedHeatDate.value = selectedHeatDate.value === date ? "" : date;
@@ -42,18 +51,51 @@ function selectHeatDate(date: string) {
 
 const rangeStartKey = computed(() => selectedHeatDate.value || addDays(todayKey, -(eventRangeDays.value - 1)));
 const rangeEndKey = computed(() => selectedHeatDate.value || todayKey);
+const effectiveEventEnvironmentId = computed(() => props.environmentId || eventEnvironmentId.value);
 
-const events = computed(() => {
-  const environmentId = eventEnvironmentId.value || props.environmentId;
-  return props.alerts.filter((alert) => {
-    if (environmentId && alert.environmentId !== environmentId) return false;
-    if (eventSeverity.value !== "all" && alert.peakSeverity !== eventSeverity.value) return false;
-    if (eventStatus.value !== "all" && alert.status !== eventStatus.value) return false;
-    const dates = monitorAlertLocalDateKeys(alert);
-    if (!dates.length) return alert.status === "active" && !selectedHeatDate.value;
-    return dates.some((date) => date >= rangeStartKey.value && date <= rangeEndKey.value);
-  });
-});
+function boundaryIso(key: string, dayOffset = 0) {
+  const [year, month, day] = key.split("-").map(Number) as [number, number, number];
+  return new Date(year, month - 1, day + dayOffset, 0, 0, 0, 0).toISOString();
+}
+
+async function loadEvents() {
+  eventsAbort?.abort();
+  eventsAbort = new AbortController();
+  const controller = eventsAbort;
+  eventsLoading.value = true;
+  eventsError.value = "";
+  try {
+    const query = new URLSearchParams({
+      timezone,
+      severity: eventSeverity.value,
+      status: eventStatus.value,
+      page: String(eventPage.value),
+      pageSize: String(eventPageSize),
+    });
+    if (selectedHeatDate.value) query.set("date", selectedHeatDate.value);
+    else {
+      query.set("from", boundaryIso(rangeStartKey.value));
+      query.set("to", boundaryIso(rangeEndKey.value, 1));
+    }
+    if (effectiveEventEnvironmentId.value) query.set("environmentId", effectiveEventEnvironmentId.value);
+    const response = await api<MonitorPlatformEventListResponse>(`/api/v1/monitoring/events?${query}`, { signal: controller.signal });
+    if (controller.signal.aborted) return;
+    events.value = response.items;
+    eventTotal.value = response.total;
+  } catch (caught) {
+    if ((caught as { name?: string }).name === "AbortError") return;
+    events.value = [];
+    eventTotal.value = 0;
+    eventsError.value = caught instanceof Error ? caught.message : tr("读取系统告警事件失败");
+  } finally {
+    if (eventsAbort === controller) eventsLoading.value = false;
+  }
+}
+
+function chooseRange(days: number) {
+  selectedHeatDate.value = "";
+  eventRangeDays.value = days;
+}
 
 const eventRangeLabel = computed(() => {
   if (selectedHeatDate.value) return selectedHeatDate.value;
@@ -66,32 +108,18 @@ function severityLabel(value: MonitorAlertSeverity) {
   return ({ info: "INFO", warning: "WARNING", major: "MAJOR", critical: "CRITICAL" })[value];
 }
 
-function statusLabel(status: MonitorAlertItem["status"]) {
+function statusLabel(status: MonitorPlatformEventItem["status"]) {
   return status === "active" ? tr("活动中") : status === "recovered" ? tr("已恢复") : tr("事件");
 }
 
-function eventTime(event: MonitorAlertItem) {
+function eventTime(event: MonitorPlatformEventItem) {
   const at = new Date(event.lastSeenAt || event.triggeredAt);
   return `${monitorAlertLocalDateKey(at.toISOString())} ${at.toLocaleTimeString(currentLocale(), { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
 }
 
-function eventTarget(event: MonitorAlertItem) {
+function eventTarget(event: MonitorPlatformEventItem) {
   return event.serviceName || event.connectionName || event.targetName;
 }
-
-const activeAlertsByService = computed(() => {
-  const map = new Map<string, { count: number; peak: MonitorAlertSeverity | null }>();
-  for (const alert of props.alerts) {
-    if (alert.status !== "active" || !alert.serviceId) continue;
-    const current = map.get(alert.serviceId) ?? { count: 0, peak: null };
-    current.count += 1;
-    if (!current.peak || ["info", "warning", "major", "critical"].indexOf(alert.peakSeverity) > ["info", "warning", "major", "critical"].indexOf(current.peak)) {
-      current.peak = alert.peakSeverity;
-    }
-    map.set(alert.serviceId, current);
-  }
-  return map;
-});
 
 const visibleServices = computed(() => {
   const query = serviceQuery.value.trim().toLowerCase();
@@ -121,10 +149,34 @@ function formatBytes(value: number | null) {
 }
 
 function serviceAlertText(service: MonitoringServiceCard) {
-  const item = activeAlertsByService.value.get(service.id);
-  if (!item?.count) return "0";
-  return item.peak ? `${item.count} ${severityLabel(item.peak)}` : String(item.count);
+  if (!service.activeAlertCount) return "0";
+  return service.activeAlertPeakSeverity
+    ? `${service.activeAlertCount} ${severityLabel(service.activeAlertPeakSeverity)}`
+    : String(service.activeAlertCount);
 }
+
+watch(() => props.environmentId, (value) => {
+  eventEnvironmentId.value = value;
+}, { immediate: true });
+
+watch(
+  () => [
+    props.environmentId,
+    eventEnvironmentId.value,
+    eventRangeDays.value,
+    selectedHeatDate.value,
+    eventSeverity.value,
+    eventStatus.value,
+    props.refreshKey,
+  ],
+  () => {
+    if (eventPage.value !== 1) eventPage.value = 1;
+    else void loadEvents();
+  },
+  { immediate: true },
+);
+watch(eventPage, () => void loadEvents());
+onBeforeUnmount(() => eventsAbort?.abort());
 </script>
 
 <template>
@@ -132,28 +184,28 @@ function serviceAlertText(service: MonitoringServiceCard) {
     <HostEventCalendar
       mode="platform"
       :environment-id="environmentId"
-      :overlay-alerts="alerts"
+      :refresh-key="refreshKey"
       :selected-date="selectedHeatDate"
       @select-date="selectHeatDate"
     />
 
-    <section class="observe-panel">
+    <section class="observe-panel" v-loading="eventsLoading">
       <header class="observe-panel__head">
         <div>
           <h3>{{ $t('告警事件') }}</h3>
-          <small>{{ eventRangeLabel }} · {{ events.length }}</small>
+          <small>{{ eventRangeLabel }} · {{ eventTotal }} · {{ $t('系统事件记录，不受个人通知清除影响') }}</small>
         </div>
       </header>
       <div class="event-filter-bar">
         <div class="event-range-tabs" role="group" :aria-label="$t('告警事件时间范围')">
-          <button type="button" :class="{ 'is-active': !selectedHeatDate && eventRangeDays === 1 }" @click="selectedHeatDate = ''; eventRangeDays = 1">{{ $t('今天') }}</button>
-          <button type="button" :class="{ 'is-active': !selectedHeatDate && eventRangeDays === 7 }" @click="selectedHeatDate = ''; eventRangeDays = 7">{{ $t('近 7 天') }}</button>
-          <button type="button" :class="{ 'is-active': !selectedHeatDate && eventRangeDays === 30 }" @click="selectedHeatDate = ''; eventRangeDays = 30">{{ $t('近 30 天') }}</button>
-          <button type="button" :class="{ 'is-active': !selectedHeatDate && eventRangeDays === 90 }" @click="selectedHeatDate = ''; eventRangeDays = 90">{{ $t('近 90 天') }}</button>
-          <button type="button" :class="{ 'is-active': !selectedHeatDate && eventRangeDays === 365 }" @click="selectedHeatDate = ''; eventRangeDays = 365">{{ $t('近一年') }}</button>
+          <button type="button" :class="{ 'is-active': !selectedHeatDate && eventRangeDays === 1 }" @click="chooseRange(1)">{{ $t('今天') }}</button>
+          <button type="button" :class="{ 'is-active': !selectedHeatDate && eventRangeDays === 7 }" @click="chooseRange(7)">{{ $t('近 7 天') }}</button>
+          <button type="button" :class="{ 'is-active': !selectedHeatDate && eventRangeDays === 30 }" @click="chooseRange(30)">{{ $t('近 30 天') }}</button>
+          <button type="button" :class="{ 'is-active': !selectedHeatDate && eventRangeDays === 90 }" @click="chooseRange(90)">{{ $t('近 90 天') }}</button>
+          <button type="button" :class="{ 'is-active': !selectedHeatDate && eventRangeDays === 365 }" @click="chooseRange(365)">{{ $t('近一年') }}</button>
         </div>
         <div class="event-filter-controls">
-          <el-select v-model="eventEnvironmentId" clearable :placeholder="$t('全部环境')" class="filter-select">
+          <el-select v-model="eventEnvironmentId" clearable :disabled="Boolean(environmentId)" :placeholder="$t('全部环境')" class="filter-select">
             <el-option v-for="item in environments" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
           <el-select v-model="eventSeverity" class="filter-select">
@@ -171,7 +223,8 @@ function serviceAlertText(service: MonitoringServiceCard) {
           </el-select>
         </div>
       </div>
-      <div v-if="!events.length" class="observe-empty">{{ $t('当前条件下没有告警事件') }}</div>
+      <div v-if="eventsError" class="event-list-error">{{ eventsError }}</div>
+      <div v-else-if="!events.length && !eventsLoading" class="observe-empty">{{ $t('当前条件下没有告警事件') }}</div>
       <div v-else class="event-list">
         <button
           v-for="event in events"
@@ -193,6 +246,15 @@ function serviceAlertText(service: MonitoringServiceCard) {
           <span class="tone-badge" :class="event.status === 'active' ? 'is-critical' : event.status === 'recovered' ? 'is-healthy' : 'is-info'">{{ statusLabel(event.status) }}</span>
         </button>
       </div>
+      <footer v-if="eventTotal > eventPageSize" class="event-pagination">
+        <el-pagination
+          v-model:current-page="eventPage"
+          :page-size="eventPageSize"
+          :total="eventTotal"
+          layout="prev, pager, next"
+          background
+        />
+      </footer>
     </section>
 
     <section class="observe-panel service-section">
@@ -218,7 +280,7 @@ function serviceAlertText(service: MonitoringServiceCard) {
           </div>
           <span>{{ service.runningCount }} / {{ service.deploymentCount }}</span>
           <span><b class="tone-badge" :class="`is-${service.health}`">{{ healthLabel(service.health) }}</b></span>
-          <span :class="{ 'is-hot': (activeAlertsByService.get(service.id)?.count ?? 0) > 0 }">{{ serviceAlertText(service) }}</span>
+          <span :class="{ 'is-hot': (service.activeAlertCount ?? 0) > 0 }">{{ serviceAlertText(service) }}</span>
           <span>{{ service.restartCount ?? 0 }}</span>
           <span>CPU {{ formatPercent(service.cpuUsedPercent) }} · MEM {{ formatBytes(service.memoryBytes) }}</span>
           <button type="button" class="row-action" @click="emit('open-service', service)">{{ $t('服务维护') }} →</button>
@@ -453,6 +515,22 @@ function serviceAlertText(service: MonitoringServiceCard) {
 .service-search { width: 220px; }
 
 .event-list { min-width: 0; }
+
+.event-list-error {
+  padding: 12px 14px;
+  background: var(--red-100);
+  color: var(--red-600);
+  font-size: 12px;
+}
+
+.event-pagination {
+  min-height: 48px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--ink-100);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
 
 .event-row,
 .service-row {

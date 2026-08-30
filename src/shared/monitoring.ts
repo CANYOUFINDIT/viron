@@ -73,9 +73,10 @@ export interface MonitoringAlertCounts {
   warning: number;
 }
 
-export type MonitoringHostPriorityState = "unmanaged" | "critical" | "warning" | "healthy";
+export type MonitoringHostPriorityState = "offline" | "unmanaged" | "critical" | "warning" | "healthy";
 
 export function hostPressureScore(host: MonitoringSeverityHost & { alertCounts?: MonitoringAlertCounts }): number {
+  if (host.offline) return 100;
   if (host.missing) return 8;
   const cpu = finiteMetric(host.cpuUsedPercent) ?? 0;
   const memory = finiteMetric(host.memoryUsedPercent) ?? 0;
@@ -94,6 +95,7 @@ export function hostPriorityState(
   score = hostPressureScore(host),
 ): MonitoringHostPriorityState {
   const alerts = host.alertCounts ?? { critical: 0, major: 0, warning: 0 };
+  if (host.offline) return "offline";
   if (host.missing) return "unmanaged";
   if (score >= 80 || alerts.critical > 0) return "critical";
   if (score >= 55 || alerts.major > 0 || alerts.warning > 0 || host.stale) return "warning";
