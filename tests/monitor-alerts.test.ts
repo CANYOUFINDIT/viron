@@ -760,4 +760,122 @@ describe("monitor alerts", () => {
       await app.close();
     }
   });
+
+  it("does not treat kubelet NFS/CSI mounts as missing disks unless container mounts are opted in", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "viron-monitor-alert-disk-types-"));
+    directories.push(directory);
+    const config = testConfig(directory);
+    const db = await openDatabase(config);
+    await ensureAdmin(db, config);
+    const app = await buildApp({ config, db, logger: false });
+    try {
+      const login = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { username: "admin", password: config.adminPassword } });
+      const cookies = { envman_session: login.cookies.find((item) => item.name === "envman_session")!.value };
+      const environment = await app.inject({ method: "POST", url: "/api/v1/environments", cookies, payload: { name: "磁盘类型环境" } });
+      const environmentId = environment.json().id as string;
+      const connection = await app.inject({
+        method: "POST",
+        url: "/api/v1/ssh-connections",
+        cookies,
+        payload: {
+          environmentId,
+          name: "k8s 节点",
+          host: "127.0.0.1",
+          port: 22,
+          username: "operator",
+          authType: "password",
+          credential: { password: "monitor-secret" },
+          options: { terminalType: "xterm-256color", keepAliveSeconds: 30, encoding: "utf-8", hostKeySha256: "", loginScriptEnabled: false, loginScript: "" },
+        },
+      });
+      const connectionId = connection.json().id as string;
+      const agentId = "a11c0d4e-2b9f-4c71-8e0a-5d6f7b12c8aa";
+      const now = new Date().toISOString();
+      await app.db.prepare(`
+        INSERT INTO monitor_hosts (
+          ssh_connection_id, agent_id, agent_version, protocol_version, status, last_sequence,
+          latest_host_json, latest_candidates_json, latest_kubernetes_configs_json, last_error,
+          last_collected_at, last_pulled_at, updated_at
+        ) VALUES (?, ?, '0.1.6', 1, 'ready', 1, '{}', '[]', '[]', '', ?, ?, ?)
+      `).run(connectionId, agentId, now, now, now);
+      const saveSettings = async (monitoredDiskTypes: string[]) => {
+        const saved = await app.inject({
+          method: "PUT",
+          url: `/api/v1/environments/${environmentId}/monitor-alert-settings`,
+          cookies,
+          payload: {
+            ...defaultMonitorAlertSettings,
+            enabled: true,
+            hostOfflineEnabled: false,
+            cpuEnabled: false,
+            memoryEnabled: false,
+            diskUsageEnabled: false,
+            temperatureEnabled: false,
+            deploymentStatusEnabled: false,
+            diskMissingEnabled: true,
+            monitoredDiskTypes,
+          },
+        });
+        expect(saved.statusCode).toBe(200);
+        expect(saved.json().item.monitoredDiskTypes).toEqual(monitoredDiskTypes);
+      };
+      await saveSettings(["host_local"]);
+      const evaluate = (value: MonitorAlertSample) => evaluateMonitorAlertSamples(app, {
+        agentId,
+        workspaceType: "personal",
+        workspaceId: login.json().user.id,
+        samples: [value],
+      });
+      const at = (seconds: number) => new Date(Date.parse(now) + seconds * 1000).toISOString();
+      const withPodVolumes = (value: MonitorAlertSample): MonitorAlertSample => ({
+        ...value,
+        host: {
+          ...value.host,
+          disks: [
+            ...value.host.disks,
+            {
+              path: "/var/lib/kubelet/pods/pod-id/volumes/kubernetes.io~nfs/models",
+              device: "192.168.5.195:/opt/onepro/hehao/vllm",
+              filesystem: "nfs",
+              totalBytes: 1000, freeBytes: 500, usedBytes: 500, usedPercent: 50,
+            },
+            {
+              path: "/var/lib/kubelet/pods/pod-id/volumes/kubernetes.io~csi/pvc-data/mount",
+              device: "/dev/sdz1",
+              filesystem: "ext4",
+              totalBytes: 1000, freeBytes: 500, usedBytes: 500, usedPercent: 50,
+            },
+          ],
+        },
+      });
+      const diskAlertPaths = async () => {
+        const listed = await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies });
+        return (listed.json().items as Array<{ ruleType: string; details: Record<string, unknown> }>)
+          .filter((item) => ["disk_added", "disk_missing"].includes(item.ruleType))
+          .map((item) => String(item.details.path ?? ""));
+      };
+
+      await evaluate(withPodVolumes(sample(at(30), { cpu: 20, dataDisk: true, deploymentStatus: "running" })));
+      await evaluate(withPodVolumes(sample(at(60), { cpu: 20, dataDisk: true, deploymentStatus: "running" })));
+      await evaluate(sample(at(90), { cpu: 20, dataDisk: true, deploymentStatus: "running" }));
+      await evaluate(sample(at(120), { cpu: 20, dataDisk: true, deploymentStatus: "running" }));
+      expect((await diskAlertPaths()).some((path) => path.includes("/var/lib/kubelet/pods/"))).toBe(false);
+
+      await saveSettings(["host_local", "container_pod"]);
+      await evaluate(withPodVolumes(sample(at(150), { cpu: 20, dataDisk: true, deploymentStatus: "running" })));
+      await evaluate(withPodVolumes(sample(at(180), { cpu: 20, dataDisk: true, deploymentStatus: "running" })));
+      expect((await diskAlertPaths()).some((path) => path.includes("/var/lib/kubelet/pods/"))).toBe(false);
+      await evaluate(sample(at(210), { cpu: 20, dataDisk: true, deploymentStatus: "running" }));
+      await evaluate(sample(at(240), { cpu: 20, dataDisk: true, deploymentStatus: "running" }));
+      const missingPaths = (await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies })).json().items
+        .filter((item: { ruleType: string; status: string }) => item.ruleType === "disk_missing" && item.status === "active")
+        .map((item: { details: Record<string, unknown> }) => String(item.details.path ?? ""));
+      expect(missingPaths).toEqual(expect.arrayContaining([
+        "/var/lib/kubelet/pods/pod-id/volumes/kubernetes.io~nfs/models",
+        "/var/lib/kubelet/pods/pod-id/volumes/kubernetes.io~csi/pvc-data/mount",
+      ]));
+    } finally {
+      await app.close();
+    }
+  });
 });

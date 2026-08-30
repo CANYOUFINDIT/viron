@@ -17,7 +17,10 @@ import {
 } from "../monitor-alerts.js";
 import {
   MONITOR_ALERT_SEVERITIES,
+  MONITOR_DISK_TYPES,
+  defaultMonitoredDiskTypes,
   monitorAlertSeverityRank,
+  parseMonitoredDiskTypes,
   type MonitorAlertItem,
   type MonitorAlertNotificationPhase,
   type MonitorAlertRuleType,
@@ -45,6 +48,7 @@ const settingsSchema = z.object({
   tlsWarnDays: z.union([z.literal(7), z.literal(14), z.literal(30)]).optional(),
   tlsHostnameMismatchEnabled: z.boolean().optional(),
   excludedDisks: z.array(z.string().min(1).max(1024)).max(512).transform((items) => [...new Set(items)]),
+  monitoredDiskTypes: z.array(z.enum(MONITOR_DISK_TYPES)).max(MONITOR_DISK_TYPES.length).optional(),
   section: z.enum(["monitor", "tls"]).optional(),
 });
 const notificationSchema = z.object({ phase: z.enum(["active", "escalated", "recovered"]) });
@@ -368,26 +372,32 @@ export async function registerMonitorAlertRoutes(app: FastifyInstance): Promise<
       if (!await canAccessEnvironment(app.db, request.admin!, request.params.environmentId)) {
         return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
       }
-      const currentSettings = await app.db.prepare("SELECT host_offline_enabled, tls_enabled, tls_warn_days, tls_hostname_mismatch_enabled FROM monitor_alert_settings WHERE environment_id = ?")
+      const currentSettings = await app.db.prepare("SELECT host_offline_enabled, tls_enabled, tls_warn_days, tls_hostname_mismatch_enabled, monitored_disk_types_json FROM monitor_alert_settings WHERE environment_id = ?")
         .get(request.params.environmentId) as {
           host_offline_enabled?: number | string;
           tls_enabled?: number | string;
           tls_warn_days?: number | string;
           tls_hostname_mismatch_enabled?: number | string;
+          monitored_disk_types_json?: string | null;
         } | undefined;
       const hostOfflineEnabled = body.hostOfflineEnabled ?? Boolean(Number(currentSettings?.host_offline_enabled ?? 0));
       const tlsEnabled = body.tlsEnabled ?? (currentSettings?.tls_enabled == null ? true : Boolean(Number(currentSettings.tls_enabled)));
       const tlsWarnDays = body.tlsWarnDays ?? (Number(currentSettings?.tls_warn_days) || 14);
       const tlsHostnameMismatchEnabled = body.tlsHostnameMismatchEnabled
         ?? (currentSettings?.tls_hostname_mismatch_enabled == null ? true : Boolean(Number(currentSettings.tls_hostname_mismatch_enabled)));
+      let currentMonitoredDiskTypes = [...defaultMonitoredDiskTypes];
+      if (currentSettings?.monitored_disk_types_json) {
+        try { currentMonitoredDiskTypes = parseMonitoredDiskTypes(JSON.parse(currentSettings.monitored_disk_types_json)); } catch { /* keep default */ }
+      }
+      const monitoredDiskTypes = body.monitoredDiskTypes ?? currentMonitoredDiskTypes;
       const now = new Date().toISOString();
       await app.db.prepare(`
         INSERT INTO monitor_alert_settings (
           environment_id, enabled, host_offline_enabled, cpu_enabled, cpu_threshold, memory_enabled, memory_threshold,
           disk_usage_enabled, disk_usage_threshold, temperature_enabled, temperature_threshold,
           deployment_status_enabled, disk_missing_enabled, tls_enabled, tls_warn_days, tls_hostname_mismatch_enabled,
-          excluded_disks_json, updated_by_user_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          excluded_disks_json, monitored_disk_types_json, updated_by_user_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(environment_id) DO UPDATE SET
           enabled = excluded.enabled,
           host_offline_enabled = excluded.host_offline_enabled,
@@ -405,6 +415,7 @@ export async function registerMonitorAlertRoutes(app: FastifyInstance): Promise<
           tls_warn_days = excluded.tls_warn_days,
           tls_hostname_mismatch_enabled = excluded.tls_hostname_mismatch_enabled,
           excluded_disks_json = excluded.excluded_disks_json,
+          monitored_disk_types_json = excluded.monitored_disk_types_json,
           updated_by_user_id = excluded.updated_by_user_id,
           updated_at = excluded.updated_at
       `).run(
@@ -416,7 +427,7 @@ export async function registerMonitorAlertRoutes(app: FastifyInstance): Promise<
         body.temperatureEnabled ? 1 : 0, body.temperatureThreshold,
         body.deploymentStatusEnabled ? 1 : 0, body.diskMissingEnabled ? 1 : 0,
         tlsEnabled ? 1 : 0, tlsWarnDays, tlsHostnameMismatchEnabled ? 1 : 0,
-        JSON.stringify(body.excludedDisks), request.admin!.id, now, now,
+        JSON.stringify(body.excludedDisks), JSON.stringify(monitoredDiskTypes), request.admin!.id, now, now,
       );
       const section = body.section ?? "all";
       if (section === "tls") {
@@ -452,6 +463,7 @@ export async function registerMonitorAlertRoutes(app: FastifyInstance): Promise<
           tlsWarnDays,
           tlsHostnameMismatchEnabled,
           excludedDiskCount: body.excludedDisks.length,
+          monitoredDiskTypes,
         },
         request,
       });

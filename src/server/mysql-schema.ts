@@ -656,6 +656,7 @@ CREATE TABLE IF NOT EXISTS monitor_alert_settings (
   tls_warn_days INT NOT NULL DEFAULT 14,
   tls_hostname_mismatch_enabled TINYINT NOT NULL DEFAULT 1,
   excluded_disks_json LONGTEXT NOT NULL,
+  monitored_disk_types_json LONGTEXT NOT NULL,
   updated_by_user_id VARCHAR(64) NULL,
   created_at VARCHAR(32) NOT NULL,
   updated_at VARCHAR(32) NOT NULL,

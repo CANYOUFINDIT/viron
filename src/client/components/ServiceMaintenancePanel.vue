@@ -248,6 +248,7 @@ const {
   memoryVisualThreshold,
   diskVisualThreshold,
   monitorDiskOptions,
+  monitorDiskTypeOptions,
   openAlertSettings,
   saveAlertSettings,
 } = maintenance;
@@ -304,7 +305,7 @@ onBeforeUnmount(() => {
       <nav class="maintenance-switcher" :aria-label="$t('服务维护清单')">
         <div class="maintenance-switcher__primary" role="tablist" :aria-label="$t('服务与主机')">
           <button type="button" role="tab" :aria-selected="activeWorkspace === 'service'" :class="{ 'is-active': activeWorkspace === 'service' }" @click="openWorkspaceTab('service')">{{ $t('服务') }}<small>{{ payload.services.length }}</small></button>
-          <button type="button" role="tab" :aria-selected="activeWorkspace === 'host'" :class="{ 'is-active': activeWorkspace === 'host' }" @click="openWorkspaceTab('host')">{{ $t('扫描发现') }}<small>{{ payload.hosts.reduce((sum, host) => sum + (host.candidateCount ?? host.candidates.length), 0) }}</small></button>
+          <button type="button" role="tab" :aria-selected="activeWorkspace === 'host'" :class="{ 'is-active': activeWorkspace === 'host' }" @click="openWorkspaceTab('host')">{{ $t('节点') }}<small>{{ payload.hosts.length }}</small></button>
         </div>
       </nav>
       <header class="maintenance-toolbar">
@@ -542,6 +543,18 @@ onBeforeUnmount(() => {
             <span>{{ $t('已纳管节点进入停止或异常状态时告警') }}</span>
           </article>
         </div>
+        <section class="monitor-alert-exclusions">
+          <div>
+            <strong>{{ $t('监控磁盘类型') }}</strong>
+            <p>{{ $t('默认只监控宿主机本地磁盘。Kubernetes Pod 挂载和网络卷不会进入看板、使用率告警和掉盘检测，除非在此开启。') }}</p>
+          </div>
+          <el-checkbox-group v-model="alertSettingsForm.monitoredDiskTypes" class="monitor-alert-disk-types">
+            <label v-for="option in monitorDiskTypeOptions" :key="option.value" class="monitor-alert-disk-type">
+              <el-checkbox :value="option.value">{{ $t(option.label) }}</el-checkbox>
+              <span>{{ $t(option.description) }}</span>
+            </label>
+          </el-checkbox-group>
+        </section>
         <section class="monitor-alert-exclusions">
           <div>
             <strong>{{ $t('排除磁盘') }}</strong>
@@ -1411,6 +1424,9 @@ onBeforeUnmount(() => {
 .monitor-alert-exclusions p { display: block; margin: 0; }
 .monitor-alert-exclusions strong { color: var(--ink-800); font-size: .875rem; }
 .monitor-alert-exclusions p { margin-top: .25rem; color: var(--ink-400); font-size: .6875rem; line-height: 1.5; }
+.monitor-alert-disk-types { display: grid; gap: .5rem; }
+.monitor-alert-disk-type { display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: start; gap: .5rem .75rem; }
+.monitor-alert-disk-type > span { color: var(--ink-500); font-size: .75rem; line-height: 1.45; padding-top: .15rem; }
 
 @media (hover: hover) and (pointer: fine) {
   .service-index__row:hover:not(.is-active),

@@ -2,7 +2,7 @@ import { translate as tr } from "../../i18n";
 import { ElMessage } from "element-plus";
 import { computed, reactive, ref } from "vue";
 import { api } from "../../api";
-import { defaultMonitorAlertSettings, monitorDiskKey, type MonitorAlertSettings, } from "../../../shared/monitor-alerts";
+import { defaultMonitorAlertSettings, defaultMonitoredDiskTypes, MONITOR_DISK_TYPE_OPTIONS, monitorDiskKey, visibleMonitorDisks, type MonitorAlertSettings, } from "../../../shared/monitor-alerts";
 
 import type { MaintenancePanelProps, MaintenancePanelEmit } from "./types";
 import { deferMaintenancePart, type MaintenanceContext } from "./context";
@@ -16,7 +16,8 @@ export function useAlertSettings(ctx: MaintenanceContext, props: Readonly<Mainte
 
   const savingAlertSettings = ref(false);
 
-  const alertSettingsForm = reactive<MonitorAlertSettings>({ ...defaultMonitorAlertSettings, excludedDisks: [] });
+  const alertSettingsForm = reactive<MonitorAlertSettings>({ ...defaultMonitorAlertSettings, excludedDisks: [], monitoredDiskTypes: [...defaultMonitoredDiskTypes] });
+  const monitorDiskTypeOptions = MONITOR_DISK_TYPE_OPTIONS;
 
   const cpuVisualThreshold = computed(() => $payload.visualThreshold($payload.payload.value.alertSettings.cpuEnabled, $payload.payload.value.alertSettings.cpuThreshold, 80));
 
@@ -30,7 +31,7 @@ export function useAlertSettings(ctx: MaintenanceContext, props: Readonly<Mainte
           label: string;
       }>();
       for (const host of $payload.payload.value.hosts) {
-          for (const disk of host.snapshot?.disks ?? []) {
+          for (const disk of visibleMonitorDisks(host.snapshot?.disks ?? [], alertSettingsForm)) {
               const key = monitorDiskKey(disk);
               const identity = [disk.device, disk.path].filter(Boolean).join(" · ");
               options.set(key, { key, label: `${host.connectionName} · ${identity}` });
@@ -40,13 +41,16 @@ export function useAlertSettings(ctx: MaintenanceContext, props: Readonly<Mainte
   });
 
   function copyAlertSettingsForm() {
-      Object.assign(alertSettingsForm, $payload.payload.value.alertSettings, { excludedDisks: [...$payload.payload.value.alertSettings.excludedDisks] });
+      Object.assign(alertSettingsForm, $payload.payload.value.alertSettings, {
+          excludedDisks: [...$payload.payload.value.alertSettings.excludedDisks],
+          monitoredDiskTypes: [...($payload.payload.value.alertSettings.monitoredDiskTypes ?? defaultMonitoredDiskTypes)],
+      });
   }
 
   async function openAlertSettings() {
       try {
           const response = await api<{ item: MonitorAlertSettings }>(`/api/v1/environments/${props.environmentId}/monitor-alert-settings`);
-          $payload.payload.value = { ...$payload.payload.value, alertSettings: { ...response.item, excludedDisks: [...(response.item.excludedDisks ?? [])] } };
+          $payload.payload.value = { ...$payload.payload.value, alertSettings: { ...response.item, excludedDisks: [...(response.item.excludedDisks ?? [])], monitoredDiskTypes: [...(response.item.monitoredDiskTypes ?? defaultMonitoredDiskTypes)] } };
       } catch {
           /* keep last known settings */
       }
@@ -70,6 +74,7 @@ export function useAlertSettings(ctx: MaintenanceContext, props: Readonly<Mainte
           deploymentStatusEnabled: alertSettingsForm.deploymentStatusEnabled,
           diskMissingEnabled: alertSettingsForm.diskMissingEnabled,
           excludedDisks: alertSettingsForm.excludedDisks,
+          monitoredDiskTypes: alertSettingsForm.monitoredDiskTypes,
       };
   }
 
@@ -103,6 +108,7 @@ export function useAlertSettings(ctx: MaintenanceContext, props: Readonly<Mainte
     memoryVisualThreshold,
     diskVisualThreshold,
     monitorDiskOptions,
+    monitorDiskTypeOptions,
     openAlertSettings,
     saveAlertSettings,
   };

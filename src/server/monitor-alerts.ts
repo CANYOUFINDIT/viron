@@ -3,9 +3,11 @@ import type { FastifyInstance } from "fastify";
 import {
   defaultMonitorAlertSettings,
   monitorAlertSeverityRank,
+  monitorDiskIdentity,
   monitorDiskIsEligible,
   monitorDiskKey,
-  stableMonitorDisks,
+  parseMonitoredDiskTypes,
+  visibleMonitorDisks,
   type MonitorAlertRuleType,
   type MonitorAlertSeverity,
   type MonitorAlertSettings,
@@ -31,6 +33,7 @@ interface MonitorAlertSettingsRow {
   tls_warn_days?: number | string;
   tls_hostname_mismatch_enabled?: number | string;
   excluded_disks_json: string;
+  monitored_disk_types_json?: string | null;
 }
 
 interface MonitorAlertEnvironment {
@@ -107,6 +110,15 @@ function parseExcludedDisks(value: string): string[] {
   }
 }
 
+function parseMonitoredDiskTypesJson(value: string | null | undefined): MonitorAlertSettings["monitoredDiskTypes"] {
+  if (value == null || value === "") return [...defaultMonitorAlertSettings.monitoredDiskTypes];
+  try {
+    return parseMonitoredDiskTypes(JSON.parse(value));
+  } catch {
+    return [...defaultMonitorAlertSettings.monitoredDiskTypes];
+  }
+}
+
 export function monitorAlertSettingsFromRow(row?: MonitorAlertSettingsRow | null): MonitorAlertSettings {
   if (!row) return { ...defaultMonitorAlertSettings, excludedDisks: [] };
   return {
@@ -128,6 +140,7 @@ export function monitorAlertSettingsFromRow(row?: MonitorAlertSettingsRow | null
       : DEFAULT_TLS_WARN_DAYS,
     tlsHostnameMismatchEnabled: row.tls_hostname_mismatch_enabled == null ? true : Boolean(Number(row.tls_hostname_mismatch_enabled)),
     excludedDisks: parseExcludedDisks(row.excluded_disks_json),
+    monitoredDiskTypes: parseMonitoredDiskTypesJson(row.monitored_disk_types_json),
     consecutiveSamples: 2,
   };
 }
@@ -207,15 +220,7 @@ function missingDiskDetails(ruleKey: string): Record<string, unknown> {
 }
 
 function diskRuleKeyDetails(ruleKey: string): { device: string; path: string } | null {
-  try {
-    const parsed = JSON.parse(ruleKey);
-    if (Array.isArray(parsed) && parsed.length === 2) {
-      return { device: String(parsed[0] ?? ""), path: String(parsed[1] ?? "") };
-    }
-  } catch {
-    // Old opaque disk identities remain monitored conservatively.
-  }
-  return null;
+  return monitorDiskIdentity(ruleKey);
 }
 
 function stateDiskDetails(state: MonitorAlertStateRow): { device: string; path: string; filesystem: string } | null {
@@ -240,7 +245,7 @@ async function monitoredEnvironments(
       s.enabled, s.host_offline_enabled, s.cpu_enabled, s.cpu_threshold, s.memory_enabled, s.memory_threshold,
       s.disk_usage_enabled, s.disk_usage_threshold, s.temperature_enabled, s.temperature_threshold,
       s.deployment_status_enabled, s.disk_missing_enabled,
-      s.tls_enabled, s.tls_warn_days, s.tls_hostname_mismatch_enabled, s.excluded_disks_json,
+      s.tls_enabled, s.tls_warn_days, s.tls_hostname_mismatch_enabled, s.excluded_disks_json, s.monitored_disk_types_json,
       h.install_managed, h.status, h.last_collected_at, ce.maintenance_sort_order
     FROM environments e
     JOIN ssh_connection_environments ce ON ce.environment_id = e.id
@@ -316,11 +321,6 @@ function hostObservations(
       details: { value: temperature.celsius, threshold: settings.temperatureThreshold, chip: temperature.chip, feature: temperature.feature ?? "" },
     });
   }
-  const excluded = new Set(settings.excludedDisks);
-  const excludedPaths = new Set(settings.excludedDisks.flatMap((key) => {
-    const disk = diskRuleKeyDetails(key);
-    return disk?.path ? [disk.path] : [];
-  }));
   if (settings.diskMissingEnabled && diskCollectionComplete) {
     observations.push({
       ...target,
@@ -335,9 +335,8 @@ function hostObservations(
     });
   }
   if (!diskCollectionComplete) return observations;
-  for (const disk of stableMonitorDisks(host.disks)) {
+  for (const disk of visibleMonitorDisks(host.disks, settings)) {
     const key = monitorDiskKey(disk);
-    if (excluded.has(key) || excludedPaths.has(disk.path.trim())) continue;
     if (settings.diskUsageEnabled) {
       observations.push({
         ...target,
@@ -404,7 +403,7 @@ async function applyObservations(
   for (const state of stateRows) {
     if (!["disk_missing", "disk_usage"].includes(state.rule_type) || state.rule_key === diskBaselineRuleKey) continue;
     const disk = stateDiskDetails(state);
-    if (!disk?.path || !monitorDiskIsEligible(disk)) continue;
+    if (!disk?.path || !monitorDiskIsEligible(disk, environment.settings.monitoredDiskTypes)) continue;
     const key = `${state.rule_type}\0${targetPathKey(state.target_id, disk.path)}`;
     const current = stateByRuleAndPath.get(key);
     if (!current || Boolean(state.active_alert_id) || Date.parse(state.last_evaluated_at) > Date.parse(current.last_evaluated_at)) {
@@ -435,7 +434,7 @@ async function applyObservations(
   const diskStateSuppressed = (state: MonitorAlertStateRow): boolean => {
     if (excludedDisks.has(state.rule_key)) return true;
     const disk = stateDiskDetails(state);
-    return Boolean(disk && (excludedDiskPaths.has(disk.path) || !monitorDiskIsEligible(disk)));
+    return Boolean(disk && (excludedDiskPaths.has(disk.path) || !monitorDiskIsEligible(disk, environment.settings.monitoredDiskTypes)));
   };
   const knownDiskPaths = new Set(stateRows.flatMap((state) => {
     if (state.rule_type !== "disk_missing" || state.rule_key === diskBaselineRuleKey || diskStateSuppressed(state)) return [];
@@ -854,7 +853,7 @@ export async function evaluateTlsEndpointAlerts(app: FastifyInstance, environmen
     SELECT e.id, e.name, s.enabled, s.host_offline_enabled, s.cpu_enabled, s.cpu_threshold, s.memory_enabled, s.memory_threshold,
       s.disk_usage_enabled, s.disk_usage_threshold, s.temperature_enabled, s.temperature_threshold,
       s.deployment_status_enabled, s.disk_missing_enabled, s.tls_enabled, s.tls_warn_days,
-      s.tls_hostname_mismatch_enabled, s.excluded_disks_json
+      s.tls_hostname_mismatch_enabled, s.excluded_disks_json, s.monitored_disk_types_json
     FROM environments e
     LEFT JOIN monitor_alert_settings s ON s.environment_id = e.id
     WHERE e.id = ?

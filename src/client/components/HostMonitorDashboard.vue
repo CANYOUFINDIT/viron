@@ -10,6 +10,7 @@ import type {
 import { aggregateMonitorProcessesByIdentity, monitorProcessIdentity, monitorProcessLabel } from "../../shared/monitor-performance";
 import { api } from "../api";
 import { translate as tr } from "../i18n";
+import { visibleMonitorDisks, type MonitorDiskType } from "../../shared/monitor-alerts";
 import {
   DEFAULT_MONITOR_HISTORY_RANGE,
   monitorHistoryLoadPlan,
@@ -116,6 +117,8 @@ const props = withDefaults(defineProps<{
   cpuThreshold?: number;
   memoryThreshold?: number;
   diskThreshold?: number;
+  monitoredDiskTypes?: MonitorDiskType[];
+  excludedDisks?: string[];
 }>(), {
   focusMetric: "cpu",
   cpuThreshold: 80,
@@ -161,9 +164,16 @@ const initialLoadingLabel = computed(() => (
     ? tr("正在优先读取最近 1 小时的数据")
     : tr("正在读取监控历史")
 ));
+function disksForPoint(point: HistoryPoint): HistoryDisk[] {
+  if (!props.monitoredDiskTypes) return point.host.disks;
+  return visibleMonitorDisks(point.host.disks, {
+    monitoredDiskTypes: props.monitoredDiskTypes,
+    excludedDisks: props.excludedDisks ?? [],
+  });
+}
 const diskOptions = computed(() => {
   const options = new Map<string, { value: string; label: string }>();
-  for (const point of points.value) for (const disk of point.host.disks) {
+  for (const point of points.value) for (const disk of disksForPoint(point)) {
     const key = `${disk.path}\0${disk.device}`;
     options.set(key, { value: key, label: disk.device ? `${disk.path} · ${disk.device}` : disk.path });
   }
@@ -216,7 +226,7 @@ async function loadHistory() {
   }
 }
 
-watch([() => props.environmentId, () => props.hostId, () => props.lastCollectedAt, range], () => void loadHistory(), { immediate: true });
+watch([() => props.environmentId, () => props.hostId, () => props.lastCollectedAt, () => (props.monitoredDiskTypes ?? []).join(","), () => (props.excludedDisks ?? []).join("|"), range], () => void loadHistory(), { immediate: true });
 watch(() => props.focusMetric, (value) => { if (value) selectedFocus.value = value; });
 watch(() => props.hostId, () => { showAllMetrics.value = false; });
 onBeforeUnmount(() => {
@@ -236,7 +246,7 @@ function series(key: string, label: string, color: string, read: (point: History
   return { key, label, color, values: values(read) };
 }
 function diskAt(point: HistoryPoint): HistoryDisk | undefined {
-  return point.host.disks.find((disk) => `${disk.path}\0${disk.device}` === activeDisk.value);
+  return disksForPoint(point).find((disk) => `${disk.path}\0${disk.device}` === activeDisk.value);
 }
 function hasValues(items: MonitorChartSeries[]): boolean {
   return items.some((item) => item.values.some((value) => Number.isFinite(value)));

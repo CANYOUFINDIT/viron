@@ -44,6 +44,7 @@ export type MaintenancePayloadApi = MaintenancePart<
   | "attentionItems"
   | "selectedUnmanagedCount"
   | "selectedWorstDisk"
+  | "selectedDiskCount"
   | "selectableKubernetesConfigs"
   | "discoveryManagedKeys"
   | "load"
@@ -184,6 +185,7 @@ export type AlertSettingsApi = MaintenancePart<
   | "memoryVisualThreshold"
   | "diskVisualThreshold"
   | "monitorDiskOptions"
+  | "monitorDiskTypeOptions"
   | "openAlertSettings"
   | "saveAlertSettings"
 >;

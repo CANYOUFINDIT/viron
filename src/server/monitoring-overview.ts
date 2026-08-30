@@ -1,6 +1,12 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { canAccessEnvironment, getWorkspaceAccess, workspaceParams } from "./access-control.js";
 import {
+  defaultMonitorAlertSettings,
+  parseMonitoredDiskTypes,
+  visibleMonitorDisks,
+  type MonitorAlertSettings,
+} from "../shared/monitor-alerts.js";
+import {
   MONITORING_MAX_HOSTS,
   MONITORING_MAX_SERVICES,
   MONITORING_OVERVIEW_CACHE_MS,
@@ -77,11 +83,42 @@ export async function loadMonitoringOverview(
     visibleHosts.push(row);
   }
 
+  const environmentIds = [...new Set(visibleHosts.map((row) => String(row.environment_id)))];
+  const diskSettingsByEnvironment = new Map<string, Pick<MonitorAlertSettings, "monitoredDiskTypes" | "excludedDisks">>();
+  if (environmentIds.length) {
+    const placeholders = environmentIds.map(() => "?").join(",");
+    const settingRows = await app.db.prepare(`
+      SELECT environment_id, excluded_disks_json, monitored_disk_types_json
+      FROM monitor_alert_settings WHERE environment_id IN (${placeholders})
+    `).all(...environmentIds) as Array<{ environment_id: string; excluded_disks_json: string; monitored_disk_types_json?: string | null }>;
+    for (const row of settingRows) {
+      let excludedDisks: string[] = [];
+      try {
+        const parsed = JSON.parse(row.excluded_disks_json);
+        excludedDisks = Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+      } catch { excludedDisks = []; }
+      let monitoredDiskTypes = defaultMonitorAlertSettings.monitoredDiskTypes;
+      if (row.monitored_disk_types_json) {
+        try { monitoredDiskTypes = parseMonitoredDiskTypes(JSON.parse(row.monitored_disk_types_json)); } catch { /* default */ }
+      }
+      diskSettingsByEnvironment.set(String(row.environment_id), { excludedDisks, monitoredDiskTypes });
+    }
+  }
+
   const mappedHosts = visibleHosts.map((row) => {
     const snapshot = parseObject(row.latest_host_json);
-    const disks = Array.isArray(snapshot.disks) ? snapshot.disks as Array<Record<string, unknown>> : [];
+    const diskSettings = diskSettingsByEnvironment.get(String(row.environment_id)) ?? defaultMonitorAlertSettings;
+    const disks = visibleMonitorDisks(
+      (Array.isArray(snapshot.disks) ? snapshot.disks as Array<Record<string, unknown>> : []).map((disk) => ({
+        path: String(disk.path ?? ""),
+        device: String(disk.device ?? ""),
+        filesystem: String(disk.filesystem ?? ""),
+        usedPercent: disk.usedPercent,
+      })).filter((disk) => disk.path),
+      diskSettings,
+    );
     const diskPercents = disks.map((disk) => finiteMetric(disk.usedPercent)).filter((value): value is number => value !== null);
-    const worstDisk = disks.reduce<Record<string, unknown> | null>((worst, disk) => {
+    const worstDisk = disks.reduce<(typeof disks)[number] | null>((worst, disk) => {
       const used = finiteMetric(disk.usedPercent);
       if (used === null) return worst;
       const worstUsed = finiteMetric(worst?.usedPercent);
