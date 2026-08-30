@@ -14,7 +14,7 @@ import { monitorAlertRuleLabel } from "../../monitor-alert-copy";
 
 const props = defineProps<{ environmentId: string; hostId: string }>();
 
-const RANGE_MONTHS = 12;
+const RANGE_MONTHS = 6;
 const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 const today = new Date();
 const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
@@ -215,13 +215,13 @@ onBeforeUnmount(() => {
         <span class="event-calendar__icon"><CalendarDays :size="18" /></span>
         <div>
           <h4>{{ $t('主机事件热力图') }}</h4>
-          <p>{{ $t('过去 12 个月每天一个方格，颜色表示最高严重级别，深浅表示事件负载') }}</p>
+          <p>{{ $t('过去 6 个月每天一个方格，颜色表示最高严重级别，深浅表示事件负载') }}</p>
         </div>
       </div>
       <div class="event-calendar__range-control">
-        <button type="button" :aria-label="$t('上一年')" @click="shiftRange(-1)"><ChevronLeft :size="15" /></button>
+        <button type="button" :aria-label="$t('上一区间')" @click="shiftRange(-1)"><ChevronLeft :size="15" /></button>
         <strong>{{ rangeLabel }}</strong>
-        <button type="button" :aria-label="$t('下一年')" :disabled="!canShiftForward" @click="shiftRange(1)"><ChevronRight :size="15" /></button>
+        <button type="button" :aria-label="$t('下一区间')" :disabled="!canShiftForward" @click="shiftRange(1)"><ChevronRight :size="15" /></button>
         <button type="button" :aria-label="$t('刷新事件热力图')" :disabled="loading" @click="loadCalendar"><RefreshCw :size="14" :class="{ 'is-spinning': loading }" /></button>
       </div>
     </header>

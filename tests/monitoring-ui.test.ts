@@ -36,13 +36,13 @@ describe("monitoring dashboard wiring", () => {
     expect(alerts).toContain('name: "ssh-keys"');
   });
 
-  it("shows a GitHub-style yearly host event heatmap in monitoring and service maintenance", () => {
+  it("shows a GitHub-style host event heatmap in monitoring and service maintenance", () => {
     expect(hostFleet).toContain("<HostEventCalendar");
     expect(maintenanceDiscovery).toContain("<HostEventCalendar");
     expect(maintenanceDiscovery).toContain(':host-id="selectedHost.sshConnectionId"');
     expect(hostEventCalendar).toContain("/event-calendar?");
     expect(hostEventCalendar).toContain("/events?");
-    expect(hostEventCalendar).toContain("RANGE_MONTHS = 12");
+    expect(hostEventCalendar).toContain("RANGE_MONTHS = 6");
     expect(hostEventCalendar).toContain("heatmapWeeks");
     expect(hostEventCalendar).toContain("event-calendar__week");
     expect(hostEventCalendar).toContain("day.coverageRatio < 0.8");
