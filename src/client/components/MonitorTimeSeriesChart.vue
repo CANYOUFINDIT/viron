@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { Component } from "vue";
 import { computed, ref } from "vue";
+import { ZoomIn, ZoomOut } from "@lucide/vue";
 import { translate as tr } from "../i18n";
 import { monitorChartPointerPosition } from "../monitor-chart-pointer";
 
@@ -77,6 +78,49 @@ const hoveredX = ref<number | null>(null);
 const hoveredLegendKey = ref<string | null>(null);
 const gradientId = `monitor-area-${Math.random().toString(36).slice(2)}`;
 
+const zoomMode = ref<"auto" | "full">("auto");
+const zoomScale = ref<number>(1);
+
+function setZoomMode(mode: "auto" | "full") {
+  zoomMode.value = mode;
+  zoomScale.value = 1;
+}
+
+function zoomIn() {
+  if (zoomScale.value < 8) {
+    zoomScale.value = Math.min(8, zoomScale.value * 2);
+  }
+}
+
+function zoomOut() {
+  if (zoomScale.value > 1) {
+    zoomScale.value = Math.max(1, zoomScale.value / 2);
+  }
+}
+
+function toggleZoom() {
+  if (zoomScale.value > 1) {
+    zoomScale.value = 1;
+    return;
+  }
+  if (props.yMax !== undefined) {
+    zoomMode.value = zoomMode.value === "auto" ? "full" : "auto";
+  } else {
+    zoomScale.value = 2;
+  }
+}
+
+function handleWheel(event: WheelEvent) {
+  if (event.ctrlKey || event.metaKey || event.altKey) {
+    event.preventDefault();
+    if (event.deltaY < 0) {
+      zoomIn();
+    } else if (event.deltaY > 0) {
+      zoomOut();
+    }
+  }
+}
+
 const stackedTotals = computed(() => props.points.map((_, pointIndex) => props.series.reduce((sum, series) => {
   const value = series.values[pointIndex];
   return sum + (Number.isFinite(value) ? Number(value) : 0);
@@ -85,17 +129,57 @@ const finiteValues = computed(() => (props.stacked
   ? (props.totalValues.length ? props.totalValues : stackedTotals.value)
   : props.series.flatMap((series) => series.values)
 ).filter((value): value is number => Number.isFinite(value)));
+
+const maxDataValue = computed(() => {
+  const values = finiteValues.value;
+  if (!values.length) return 1;
+  return Math.max(props.yMin, ...values);
+});
+
+const autoDomainMax = computed(() => {
+  const max = maxDataValue.value;
+  if (props.format === "percent") {
+    if (max <= 5) return 5;
+    if (max <= 10) return 10;
+    if (max <= 20) return 20;
+    if (max <= 35) return 35;
+    if (max <= 50) return 50;
+    if (max <= 75) return 75;
+    return Math.min(100, Math.ceil(max * 1.15));
+  }
+  const padding = (max - props.yMin) * 0.12;
+  return Math.max(props.yMin + 0.01, max + padding);
+});
+
+const canZoom = computed(() => {
+  return props.yMax !== undefined || finiteValues.value.length > 0;
+});
+
 const domain = computed(() => {
-  const maximum = props.yMax ?? Math.max(props.yMin, ...finiteValues.value, 1);
-  if (maximum === props.yMin) return { min: props.yMin, max: props.yMin + 1 };
-  const padding = props.yMax === undefined ? (maximum - props.yMin) * 0.08 : 0;
-  return { min: props.yMin, max: maximum + padding };
+  let targetMax: number;
+  if (zoomMode.value === "auto") {
+    targetMax = props.yMax !== undefined ? Math.min(props.yMax, autoDomainMax.value) : autoDomainMax.value;
+  } else {
+    targetMax = props.yMax ?? Math.max(props.yMin, ...finiteValues.value, 1);
+  }
+
+  if (zoomScale.value > 1) {
+    const range = (targetMax - props.yMin) / zoomScale.value;
+    targetMax = props.yMin + Math.max(0.01, range);
+  }
+
+  if (targetMax <= props.yMin) return { min: props.yMin, max: props.yMin + 1 };
+  return { min: props.yMin, max: targetMax };
 });
 const hasData = computed(() => finiteValues.value.length > 0 && props.points.length > 0);
-const thresholdVisible = computed(() => Number.isFinite(props.threshold));
+const thresholdVisible = computed(() => {
+  if (!Number.isFinite(props.threshold)) return false;
+  const val = Number(props.threshold);
+  return val <= domain.value.max && val >= domain.value.min;
+});
 const thresholdTone = computed(() => {
   if (props.tone) return props.tone;
-  if (!thresholdVisible.value) return "";
+  if (!Number.isFinite(props.threshold)) return "";
   const latest = finiteValues.value.at(-1);
   if (!Number.isFinite(latest)) return "";
   const threshold = Number(props.threshold);
@@ -376,17 +460,61 @@ function clearHover() {
           <small v-if="subtitle">{{ subtitle }}</small>
         </div>
       </div>
-      <div class="monitor-chart-card__legend" :aria-label="tr('图例')">
-        <span
-          v-for="item in series"
-          :key="item.key"
-          :class="{ 'is-hovered': hoveredLegendKey === item.key }"
-          @pointerenter="hoveredLegendKey = item.key"
-          @pointerleave="hoveredLegendKey = null"
-        >
-          <i :style="{ background: item.color }"></i>
-          {{ item.label }}
-        </span>
+      <div class="monitor-chart-card__actions">
+        <div v-if="canZoom" class="chart-scale-control">
+          <button
+            type="button"
+            class="scale-pill-btn"
+            :class="{ 'is-active': zoomMode === 'auto' && zoomScale === 1 }"
+            @click="setZoomMode('auto')"
+            :title="tr('自适应量程：自动放大低数值走势')"
+          >
+            {{ tr('自适应') }}
+          </button>
+          <button
+            v-if="props.yMax !== undefined"
+            type="button"
+            class="scale-pill-btn"
+            :class="{ 'is-active': zoomMode === 'full' && zoomScale === 1 }"
+            @click="setZoomMode('full')"
+            :title="tr('满量程显示 (0 - 100%)')"
+          >
+            {{ formatValue(props.yMax) }}
+          </button>
+          <div class="zoom-stepper">
+            <button
+              type="button"
+              class="zoom-step-btn"
+              :disabled="zoomScale >= 8"
+              @click="zoomIn"
+              :title="tr('进一步放大纵轴')"
+            >
+              <ZoomIn :size="11" />
+            </button>
+            <span v-if="zoomScale > 1" class="zoom-multiplier">{{ zoomScale }}x</span>
+            <button
+              v-if="zoomScale > 1"
+              type="button"
+              class="zoom-step-btn"
+              @click="zoomOut"
+              :title="tr('缩小纵轴')"
+            >
+              <ZoomOut :size="11" />
+            </button>
+          </div>
+        </div>
+        <div class="monitor-chart-card__legend" :aria-label="tr('图例')">
+          <span
+            v-for="item in series"
+            :key="item.key"
+            :class="{ 'is-hovered': hoveredLegendKey === item.key }"
+            @pointerenter="hoveredLegendKey = item.key"
+            @pointerleave="hoveredLegendKey = null"
+          >
+            <i :style="{ background: item.color }"></i>
+            {{ item.label }}
+          </span>
+        </div>
       </div>
     </header>
     <div v-if="hasData" class="monitor-chart-card__plot">
@@ -397,6 +525,8 @@ function clearHover() {
         :aria-label="title"
         @pointermove="hover"
         @pointerleave="clearHover"
+        @dblclick="toggleZoom"
+        @wheel="handleWheel"
       >
         <defs>
           <linearGradient :id="gradientId" x1="0" y1="0" x2="0" y2="1">
@@ -588,6 +718,87 @@ function clearHover() {
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.monitor-chart-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.chart-scale-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background: color-mix(in srgb, var(--ink-100) 80%, transparent);
+  border-radius: 6px;
+  border: 1px solid var(--ink-100);
+}
+
+.scale-pill-btn {
+  border: 0;
+  background: transparent;
+  color: var(--ink-500);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 4px;
+  cursor: pointer;
+  line-height: 1.3;
+  transition: all .15s ease;
+}
+
+.scale-pill-btn:hover {
+  color: var(--ink-900);
+}
+
+.scale-pill-btn.is-active {
+  background: var(--surface);
+  color: var(--teal-700);
+  font-weight: 700;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.zoom-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  margin-left: 2px;
+  border-left: 1px solid color-mix(in srgb, var(--ink-200) 80%, transparent);
+  padding-left: 3px;
+}
+
+.zoom-step-btn {
+  border: 0;
+  background: transparent;
+  color: var(--ink-500);
+  padding: 2px 4px;
+  border-radius: 3px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: all .15s ease;
+}
+
+.zoom-step-btn:hover:not(:disabled) {
+  background: var(--surface);
+  color: var(--ink-900);
+}
+
+.zoom-step-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.zoom-multiplier {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  color: var(--teal-700);
+  padding: 0 2px;
 }
 
 .monitor-chart-card__legend {
