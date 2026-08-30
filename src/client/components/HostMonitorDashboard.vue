@@ -409,7 +409,7 @@ const charts = computed(() => {
     {
       id: "cpu-process" as const, available: hasValues(cpuComposition.value.series),
       icon: Cpu, title: tr("CPU 进程占用组成"), subtitle: "", format: "percent" as const, yMax: 100,
-      stacked: true, series: cpuComposition.value.series, totalValues: cpuComposition.value.totals,
+      stacked: false, series: cpuComposition.value.series, totalValues: cpuComposition.value.totals,
       tooltipRows: cpuComposition.value.tooltipRows, annotations: cpuAnnotations.value,
       totalLabel: tr("CPU 总利用率"), threshold: props.cpuThreshold,
     },
@@ -428,7 +428,7 @@ const charts = computed(() => {
     {
       id: "memory-process" as const, available: hasValues(memoryComposition.value.series),
       icon: MemoryStick, title: tr("内存进程占用组成"), subtitle: "", format: "bytes" as const,
-      stacked: true, series: memoryComposition.value.series, totalValues: memoryComposition.value.totals,
+      stacked: false, series: memoryComposition.value.series, totalValues: memoryComposition.value.totals,
       tooltipRows: memoryComposition.value.tooltipRows, annotations: memoryAnnotations.value,
       totalLabel: tr("已用内存"), threshold: null, yMax: undefined,
     },
@@ -453,7 +453,7 @@ const charts = computed(() => {
     {
       id: "io-process" as const, available: hasValues(ioComposition.value.series),
       icon: HardDrive, title: tr("磁盘 I/O 进程组成"), subtitle: "", format: "bytesPerSecond" as const,
-      stacked: true, series: ioComposition.value.series, totalValues: ioComposition.value.totals,
+      stacked: false, series: ioComposition.value.series, totalValues: ioComposition.value.totals,
       tooltipRows: ioComposition.value.tooltipRows, annotations: ioAnnotations.value,
       totalLabel: tr("磁盘总吞吐"), threshold: null, yMax: undefined,
     },
