@@ -263,23 +263,36 @@ onBeforeUnmount(() => {
 
     <footer class="event-calendar__footer">
       <div class="event-calendar__totals">
-        <span><strong>{{ summary.totalEvents }}</strong>{{ $t('个监控事件') }}</span>
-        <span><strong>{{ summary.affectedDays }}</strong>{{ $t('天出现异常') }}</span>
-        <span>{{ $t('累计影响') }} <strong>{{ formatDuration(summary.affectedMinutes) }}</strong></span>
-        <span v-if="summary.noDataDays"><strong>{{ summary.noDataDays }}</strong>{{ $t('天无数据') }}</span>
+        <span class="totals-pill">
+          <strong>{{ summary.totalEvents }}</strong> {{ $t('个监控事件') }}
+        </span>
+        <span class="totals-pill" :class="{ 'is-affected': summary.affectedDays > 0 }">
+          <strong>{{ summary.affectedDays }}</strong> {{ $t('天出现异常') }}
+        </span>
+        <span class="totals-pill">
+          <span class="pill-label">{{ $t('累计影响') }}</span>
+          <strong>{{ formatDuration(summary.affectedMinutes) }}</strong>
+        </span>
+        <span v-if="summary.noDataDays" class="totals-pill is-faint">
+          <strong>{{ summary.noDataDays }}</strong> {{ $t('天无数据') }}
+        </span>
       </div>
-      <div class="event-calendar__legend" :aria-label="$t('严重级别图例')">
-        <span>{{ $t('健康') }}</span>
-        <i class="is-healthy"></i>
-        <i class="is-info" :title="$t('提示')"></i>
-        <i class="is-warning" :title="$t('警告')"></i>
-        <i class="is-major" :title="$t('高危')"></i>
-        <i class="is-critical" :title="$t('严重')"></i>
-        <span>{{ $t('严重') }}</span>
-        <i class="is-no-data"></i><span>{{ $t('无数据') }}</span>
+      <div class="event-calendar__legend-group">
+        <div class="event-calendar__legend" :aria-label="$t('严重级别图例')">
+          <span class="legend-label">{{ $t('健康') }}</span>
+          <i class="is-healthy" :title="$t('健康')"></i>
+          <i class="is-info" :title="$t('提示')"></i>
+          <i class="is-warning" :title="$t('警告')"></i>
+          <i class="is-major" :title="$t('高危')"></i>
+          <i class="is-critical" :title="$t('严重')"></i>
+          <span class="legend-label">{{ $t('严重') }}</span>
+          <span class="legend-sep"></span>
+          <i class="is-no-data" :title="$t('无数据')"></i>
+          <span class="legend-label">{{ $t('无数据') }}</span>
+        </div>
+        <small class="event-calendar__timezone">{{ timezone }}</small>
       </div>
     </footer>
-    <small class="event-calendar__timezone">{{ timezone }}</small>
   </section>
 
   <el-drawer v-model="drawerOpen" size="min(460px, 94vw)" append-to-body :title="$t('{0} 主机事件', [selectedDate])">
@@ -287,7 +300,7 @@ onBeforeUnmount(() => {
       <div v-if="events.length" class="event-day-drawer__list">
         <article v-for="event in events" :key="event.id" :class="`is-${event.peakSeverity}`">
           <header>
-            <span>{{ severityLabel(event.peakSeverity) }}</span>
+            <span class="event-badge">{{ severityLabel(event.peakSeverity) }}</span>
             <strong>{{ monitorAlertRuleLabel(event) }}</strong>
             <em>{{ event.status === 'active' ? $t('进行中') : event.status === 'event' ? $t('事件') : $t('已恢复') }}</em>
           </header>
@@ -312,115 +325,521 @@ onBeforeUnmount(() => {
   border: 1px solid var(--ink-100);
   border-radius: 12px;
   background: var(--surface);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.03), 0 6px 16px -2px rgba(15, 23, 42, 0.04);
   overflow: hidden;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
+
+.event-calendar:hover {
+  border-color: color-mix(in srgb, var(--ink-200) 80%, transparent);
+}
+
 .event-calendar__header {
-  min-height: 62px;
-  padding: 12px 14px;
+  min-height: 58px;
+  padding: 12px 18px;
   border-bottom: 1px solid var(--ink-100);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
+  gap: 16px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--surface) 96%, var(--ink-50)) 0%, var(--surface) 100%);
 }
-.event-calendar__identity { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.event-calendar__icon { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; background: var(--teal-50); color: var(--teal-700); }
-.event-calendar h4 { margin: 0; color: var(--ink-900); font-size: 13px; font-weight: 800; }
-.event-calendar p { margin: 3px 0 0; color: var(--ink-400); font-size: 10px; }
-.event-calendar__range-control { padding: 3px; border: 1px solid var(--ink-100); border-radius: 8px; background: var(--surface); display: flex; align-items: center; gap: 2px; }
-.event-calendar__range-control button { width: 28px; height: 26px; border: 0; border-radius: 6px; background: transparent; color: var(--ink-500); display: grid; place-items: center; cursor: pointer; }
-.event-calendar__range-control button:hover:not(:disabled) { background: var(--ink-50); color: var(--teal-700); }
-.event-calendar__range-control button:disabled { opacity: .35; cursor: default; }
-.event-calendar__range-control strong { min-width: 166px; color: var(--ink-800); text-align: center; font-size: 10px; }
-.event-calendar__error { margin: 8px 14px 0 !important; color: var(--red-600) !important; }
-.event-calendar__graph-scroll { padding: 15px 14px 12px; overflow-x: auto; transition: opacity .16s ease; scrollbar-width: thin; }
-.event-calendar__graph-scroll.is-loading { opacity: .55; }
-.event-calendar__graph { --heat-cell: 11px; --heat-gap: 3px; width: max-content; min-width: 100%; }
+
+.event-calendar__identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.event-calendar__icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, var(--teal-50) 0%, color-mix(in srgb, var(--teal-100) 60%, var(--surface)) 100%);
+  color: var(--teal-600);
+  border: 1px solid color-mix(in srgb, var(--teal-200) 40%, transparent);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.6);
+  flex-shrink: 0;
+}
+
+.event-calendar h4 {
+  margin: 0;
+  color: var(--ink-900);
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.event-calendar p {
+  margin: 3px 0 0;
+  color: var(--ink-400);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.event-calendar__range-control {
+  padding: 3px 5px;
+  border: 1px solid var(--ink-100);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ink-50) 40%, var(--surface));
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.02);
+}
+
+.event-calendar__range-control button {
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-500);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.event-calendar__range-control button:hover:not(:disabled) {
+  background: var(--surface);
+  color: var(--teal-700);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+.event-calendar__range-control button:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.event-calendar__range-control strong {
+  min-width: 172px;
+  color: var(--ink-800);
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  user-select: none;
+}
+
+.event-calendar__error {
+  margin: 10px 18px 0 !important;
+  color: var(--red-600) !important;
+  font-size: 12px;
+}
+
+.event-calendar__graph-scroll {
+  padding: 18px 18px 14px;
+  overflow-x: auto;
+  transition: opacity 0.16s ease;
+  scrollbar-width: thin;
+}
+
+.event-calendar__graph-scroll.is-loading {
+  opacity: 0.5;
+}
+
+.event-calendar__graph {
+  --heat-cell: 12px;
+  --heat-gap: 3.5px;
+  width: max-content;
+  min-width: 100%;
+}
+
 .event-calendar__months {
-  height: 17px;
-  margin-left: 31px;
+  height: 18px;
+  margin-left: 32px;
   display: grid;
   grid-template-columns: repeat(var(--week-count), var(--heat-cell));
   column-gap: var(--heat-gap);
   color: var(--ink-500);
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 10px;
+  font-weight: 500;
   line-height: 1;
 }
-.event-calendar__months span { width: max-content; }
-.event-calendar__plot { display: flex; align-items: stretch; gap: 8px; }
+
+.event-calendar__months span {
+  width: max-content;
+}
+
+.event-calendar__plot {
+  display: flex;
+  align-items: stretch;
+  gap: 9px;
+}
+
 .event-calendar__weekdays {
   width: 23px;
   display: grid;
   grid-template-rows: repeat(7, var(--heat-cell));
   row-gap: var(--heat-gap);
   color: var(--ink-400);
-  font-size: 8px;
+  font-size: 9px;
   line-height: var(--heat-cell);
   text-align: right;
+  font-family: var(--font-body);
+  user-select: none;
 }
-.event-calendar__weeks { display: grid; grid-template-columns: repeat(var(--week-count), var(--heat-cell)); column-gap: var(--heat-gap); }
-.event-calendar__week { display: grid; grid-template-rows: repeat(7, var(--heat-cell)); row-gap: var(--heat-gap); }
+
+.event-calendar__weeks {
+  display: grid;
+  grid-template-columns: repeat(var(--week-count), var(--heat-cell));
+  column-gap: var(--heat-gap);
+}
+
+.event-calendar__week {
+  display: grid;
+  grid-template-rows: repeat(7, var(--heat-cell));
+  row-gap: var(--heat-gap);
+}
+
+/* 核心方块单元 (Clean Modern Look) */
 .event-calendar__cell {
   width: var(--heat-cell);
   height: var(--heat-cell);
   padding: 0;
-  border: 1px solid color-mix(in srgb, currentColor 12%, var(--ink-100));
-  border-radius: 2px;
+  border-radius: 3px;
+  border: 1px solid transparent;
   background: var(--ink-50);
   color: var(--ink-300);
   cursor: default;
-  transition: transform .1s ease, box-shadow .1s ease, filter .1s ease;
+  transition: transform 0.12s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.12s ease, filter 0.12s ease;
+  position: relative;
 }
-.event-calendar__cell.is-interactive { cursor: pointer; }
+
+.event-calendar__cell.is-interactive {
+  cursor: pointer;
+}
+
 .event-calendar__cell.is-interactive:hover,
-.event-calendar__cell.is-interactive:focus-visible { z-index: 1; transform: scale(1.45); box-shadow: 0 0 0 2px var(--surface), 0 2px 8px rgba(10, 28, 31, .24); outline: none; }
-.event-calendar__cell.is-blank { border-color: transparent; background: transparent; }
-.event-calendar__cell.is-healthy { background: color-mix(in srgb, var(--teal-500) 13%, var(--surface)); color: var(--teal-700); }
-.event-calendar__cell.is-info { background: #93c5fd; color: #2563eb; }
-.event-calendar__cell.is-warning { background: #fbbf24; color: #b45309; }
-.event-calendar__cell.is-major { background: #f97316; color: #c2410c; }
-.event-calendar__cell.is-critical { background: #dc2626; color: #991b1b; }
-.event-calendar__cell.is-no-data { border-color: var(--ink-200); background: repeating-linear-gradient(135deg, var(--ink-50), var(--ink-50) 3px, var(--ink-100) 3px, var(--ink-100) 5px); color: var(--ink-400); }
-.event-calendar__cell.is-future { border-color: color-mix(in srgb, var(--ink-200) 55%, transparent); background: transparent; color: var(--ink-200); }
-.event-calendar__cell.is-intensity-2 { filter: saturate(1.12); }
-.event-calendar__cell.is-intensity-3 { filter: saturate(1.3) brightness(.93); }
-.event-calendar__cell.is-intensity-4 { filter: saturate(1.45) brightness(.82); }
-.event-calendar__cell.is-today { box-shadow: 0 0 0 1px var(--ink-800); }
-.event-calendar__loading-grid { width: 742px; max-width: 100%; display: grid; grid-template-columns: repeat(28, 11px); gap: 3px; }
-.event-calendar__loading-grid i { width: 11px; height: 11px; border-radius: 2px; background: var(--ink-50); }
-.event-calendar__footer { min-height: 38px; padding: 8px 14px; border-top: 1px solid var(--ink-100); background: color-mix(in srgb, var(--ink-50) 45%, var(--surface)); display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.event-calendar__totals { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; color: var(--ink-500); font-size: 9px; }
-.event-calendar__totals span { display: inline-flex; align-items: baseline; gap: 3px; }
-.event-calendar__totals strong { color: var(--ink-800); font-family: var(--font-mono); font-size: 10px; }
-.event-calendar__legend { display: flex; align-items: center; gap: 4px; color: var(--ink-500); font-size: 9px; white-space: nowrap; }
-.event-calendar__legend i { width: 9px; height: 9px; border: 1px solid transparent; border-radius: 2px; display: block; }
-.event-calendar__legend i.is-healthy { background: color-mix(in srgb, var(--teal-500) 13%, var(--surface)); }
-.event-calendar__legend i.is-info { background: #93c5fd; }
-.event-calendar__legend i.is-warning { background: #fbbf24; }
+.event-calendar__cell.is-interactive:focus-visible {
+  z-index: 5;
+  transform: scale(1.45);
+  box-shadow: 0 0 0 2px var(--surface), 0 4px 12px rgba(15, 23, 42, 0.18);
+  outline: none;
+}
+
+.event-calendar__cell.is-blank {
+  border-color: transparent;
+  background: transparent;
+  pointer-events: none;
+}
+
+/* 极简清爽的“无数据”状态：剔除密集斜线马赛克，采用淡雅微槽底色 */
+.event-calendar__cell.is-no-data {
+  background: color-mix(in srgb, var(--ink-100) 45%, var(--surface));
+  border-color: color-mix(in srgb, var(--ink-200) 35%, transparent);
+}
+
+/* 各级别健康度色彩系统 */
+.event-calendar__cell.is-healthy {
+  background: #10b981;
+  border-color: #059669;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.event-calendar__cell.is-info {
+  background: #38bdf8;
+  border-color: #0284c7;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.event-calendar__cell.is-warning {
+  background: #f59e0b;
+  border-color: #d97706;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.event-calendar__cell.is-major {
+  background: #f97316;
+  border-color: #c2410c;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.event-calendar__cell.is-critical {
+  background: #ef4444;
+  border-color: #b91c1c;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 0 6px rgba(239, 68, 68, 0.4);
+}
+
+.event-calendar__cell.is-future {
+  border-color: color-mix(in srgb, var(--ink-100) 60%, transparent);
+  background: transparent;
+  opacity: 0.4;
+}
+
+/* 负载强度阶梯映射 */
+.event-calendar__cell.is-intensity-1 { opacity: 0.82; }
+.event-calendar__cell.is-intensity-2 { opacity: 0.92; filter: saturate(1.1); }
+.event-calendar__cell.is-intensity-3 { opacity: 1; filter: saturate(1.25) brightness(0.96); }
+.event-calendar__cell.is-intensity-4 { opacity: 1; filter: saturate(1.4) brightness(0.9); box-shadow: 0 0 4px rgba(0, 0, 0, 0.25); }
+
+.event-calendar__cell.is-today {
+  box-shadow: 0 0 0 1.5px var(--surface), 0 0 0 3px var(--teal-600) !important;
+  z-index: 2;
+}
+
+.event-calendar__loading-grid {
+  width: 742px;
+  max-width: 100%;
+  display: grid;
+  grid-template-columns: repeat(28, 12px);
+  gap: 3.5px;
+}
+
+.event-calendar__loading-grid i {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: var(--ink-50);
+  animation: calendar-pulse 1.4s infinite ease-in-out;
+}
+
+@keyframes calendar-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.8; }
+}
+
+/* 底部统计栏与图例 */
+.event-calendar__footer {
+  min-height: 42px;
+  padding: 8px 18px;
+  border-top: 1px solid var(--ink-100);
+  background: color-mix(in srgb, var(--ink-50) 50%, var(--surface));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.event-calendar__totals {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.totals-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--surface);
+  border: 1px solid var(--ink-100);
+  color: var(--ink-600);
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.totals-pill strong {
+  color: var(--ink-900);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 11.5px;
+}
+
+.totals-pill.is-affected {
+  background: var(--amber-50);
+  border-color: var(--amber-200);
+  color: var(--amber-800);
+}
+
+.totals-pill.is-affected strong {
+  color: var(--amber-800);
+}
+
+.totals-pill.is-faint {
+  background: transparent;
+  border-color: transparent;
+  color: var(--ink-400);
+}
+
+.totals-pill.is-faint strong {
+  color: var(--ink-500);
+}
+
+.pill-label {
+  color: var(--ink-400);
+}
+
+.event-calendar__legend-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.event-calendar__legend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ink-500);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.legend-label {
+  font-size: 10px;
+  color: var(--ink-400);
+  user-select: none;
+}
+
+.legend-sep {
+  width: 1px;
+  height: 10px;
+  background: var(--ink-200);
+  margin: 0 4px;
+}
+
+.event-calendar__legend i {
+  width: 10px;
+  height: 10px;
+  border-radius: 2.5px;
+  display: block;
+}
+
+.event-calendar__legend i.is-healthy { background: #10b981; }
+.event-calendar__legend i.is-info { background: #38bdf8; }
+.event-calendar__legend i.is-warning { background: #f59e0b; }
 .event-calendar__legend i.is-major { background: #f97316; }
-.event-calendar__legend i.is-critical { background: #dc2626; }
-.event-calendar__legend i.is-no-data { margin-left: 7px; border-color: var(--ink-300); background: repeating-linear-gradient(135deg, var(--ink-50), var(--ink-50) 3px, var(--ink-100) 3px, var(--ink-100) 5px); }
-.event-calendar__timezone { position: absolute; right: 14px; bottom: 3px; color: var(--ink-300); font-family: var(--font-mono); font-size: 8px; pointer-events: none; }
-.event-day-drawer { min-height: 260px; }
-.event-day-drawer__list { display: grid; gap: 10px; }
-.event-day-drawer article { padding: 12px 13px; border: 1px solid var(--ink-100); border-left: 3px solid var(--ink-300); border-radius: 9px; background: var(--surface); }
+.event-calendar__legend i.is-critical { background: #ef4444; }
+.event-calendar__legend i.is-no-data {
+  background: color-mix(in srgb, var(--ink-100) 45%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--ink-200) 35%, transparent);
+}
+
+.event-calendar__timezone {
+  color: var(--ink-400);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  user-select: none;
+}
+
+/* 抽屉排障详情列表 */
+.event-day-drawer {
+  min-height: 260px;
+}
+
+.event-day-drawer__list {
+  display: grid;
+  gap: 12px;
+}
+
+.event-day-drawer article {
+  padding: 14px 16px;
+  border: 1px solid var(--ink-100);
+  border-left: 4px solid var(--ink-300);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.event-day-drawer article:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+}
+
 .event-day-drawer article.is-warning { border-left-color: #f59e0b; }
 .event-day-drawer article.is-major { border-left-color: #f97316; }
 .event-day-drawer article.is-critical { border-left-color: #ef4444; }
-.event-day-drawer article.is-info { border-left-color: #3b82f6; }
-.event-day-drawer article header { display: flex; align-items: center; gap: 7px; }
-.event-day-drawer article header > span { padding: 2px 6px; border-radius: 5px; background: var(--ink-100); color: var(--ink-600); font-size: 9px; font-weight: 800; }
-.event-day-drawer article header strong { color: var(--ink-900); font-size: 12px; }
-.event-day-drawer article header em { margin-left: auto; color: var(--ink-400); font-size: 9px; font-style: normal; }
-.event-day-drawer article p { margin: 8px 0; color: var(--ink-600); font-size: 12px; }
-.event-day-drawer__meta { display: flex; flex-wrap: wrap; gap: 6px; }
-.event-day-drawer__meta span { padding: 3px 6px; border-radius: 5px; background: var(--ink-50); color: var(--ink-500); display: inline-flex; align-items: center; gap: 4px; font-family: var(--font-mono); font-size: 9px; }
-.event-day-drawer article time { margin-top: 8px; color: var(--ink-400); display: block; font-family: var(--font-mono); font-size: 9px; }
-.event-day-drawer__empty { min-height: 260px; color: var(--ink-400); display: grid; place-items: center; align-content: center; gap: 8px; font-size: 12px; }
-.is-spinning { animation: event-calendar-spin .9s linear infinite; }
-@keyframes event-calendar-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .event-calendar__cell, .event-calendar__graph-scroll { transition: none; } .is-spinning { animation: none; } }
+.event-day-drawer article.is-info { border-left-color: #38bdf8; }
+
+.event-day-drawer article header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.event-day-drawer article header .event-badge {
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: var(--ink-100);
+  color: var(--ink-700);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.event-day-drawer article.is-warning .event-badge { background: var(--amber-50); color: var(--amber-800); }
+.event-day-drawer article.is-major .event-badge { background: #ffedd5; color: #c2410c; }
+.event-day-drawer article.is-critical .event-badge { background: #fee2e2; color: #b91c1c; }
+.event-day-drawer article.is-info .event-badge { background: #e0f2fe; color: #0369a1; }
+
+.event-day-drawer article header strong {
+  color: var(--ink-900);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.event-day-drawer article header em {
+  margin-left: auto;
+  color: var(--ink-400);
+  font-size: 10px;
+  font-style: normal;
+  font-family: var(--font-mono);
+}
+
+.event-day-drawer article p {
+  margin: 8px 0;
+  color: var(--ink-600);
+  font-size: 12px;
+}
+
+.event-day-drawer__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.event-day-drawer__meta span {
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--ink-50);
+  color: var(--ink-600);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.event-day-drawer article time {
+  margin-top: 10px;
+  color: var(--ink-400);
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.event-day-drawer__empty {
+  min-height: 260px;
+  color: var(--ink-400);
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.is-spinning {
+  animation: event-calendar-spin 0.9s linear infinite;
+}
+
+@keyframes event-calendar-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .event-calendar__cell,
+  .event-calendar__graph-scroll { transition: none; }
+  .is-spinning { animation: none; }
+}
+
 @media (max-width: 760px) {
   .event-calendar__header { align-items: stretch; flex-direction: column; }
   .event-calendar__range-control { align-self: flex-start; }
@@ -428,3 +847,4 @@ onBeforeUnmount(() => {
   .event-calendar__footer { align-items: flex-start; flex-direction: column; }
 }
 </style>
+
