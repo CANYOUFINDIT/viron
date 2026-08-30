@@ -1,38 +1,28 @@
 <script setup lang="ts">
-import {
-  AlertOctagon,
-  CalendarDays,
-  CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
-  Clock3,
-  DatabaseZap,
-  RefreshCw,
-  ShieldCheck,
-  Siren,
-} from "@lucide/vue";
+import { CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock3, RefreshCw } from "@lucide/vue";
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import type {
   MonitorAlertSeverity,
   MonitorHostEventCalendarDay,
   MonitorHostEventCalendarResponse,
+  MonitorHostEventCalendarSummary,
   MonitorHostEventItem,
 } from "../../../shared/monitor-alerts";
 import { api } from "../../api";
 import { currentLocale, translate as tr } from "../../i18n";
 import { monitorAlertRuleLabel } from "../../monitor-alert-copy";
 
-const props = defineProps<{
-  environmentId: string;
-  hostId: string;
-}>();
+const props = defineProps<{ environmentId: string; hostId: string }>();
 
+const RANGE_MONTHS = 12;
 const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 const today = new Date();
-const month = ref(`${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`);
+const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+const currentMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+const anchorMonth = ref(currentMonth);
 const loading = ref(false);
 const error = ref("");
-const calendar = ref<MonitorHostEventCalendarResponse | null>(null);
+const calendars = ref<MonitorHostEventCalendarResponse[]>([]);
 const drawerOpen = ref(false);
 const selectedDate = ref("");
 const events = ref<MonitorHostEventItem[]>([]);
@@ -40,21 +30,60 @@ const eventsLoading = ref(false);
 let calendarAbort: AbortController | null = null;
 let eventsAbort: AbortController | null = null;
 
+function offsetMonth(monthKey: string, delta: number) {
+  const [year, monthNumber] = monthKey.split("-").map(Number) as [number, number];
+  const next = new Date(Date.UTC(year, monthNumber - 1 + delta, 1));
+  return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+const visibleMonths = computed(() => Array.from(
+  { length: RANGE_MONTHS },
+  (_, index) => offsetMonth(anchorMonth.value, index - RANGE_MONTHS + 1),
+));
 const weekdayLabels = computed(() => {
-  const monday = Date.UTC(2026, 7, 24);
+  const sunday = Date.UTC(2026, 7, 23);
   return Array.from({ length: 7 }, (_, index) => new Intl.DateTimeFormat(currentLocale(), { weekday: "narrow", timeZone: "UTC" })
-    .format(new Date(monday + index * 24 * 60 * 60 * 1000)));
+    .format(new Date(sunday + index * 24 * 60 * 60 * 1000)));
 });
-const monthLabel = computed(() => new Intl.DateTimeFormat(currentLocale(), { year: "numeric", month: "long", timeZone: "UTC" })
-  .format(new Date(`${month.value}-01T00:00:00.000Z`)));
-const calendarCells = computed<Array<MonitorHostEventCalendarDay | null>>(() => {
-  const days = calendar.value?.days ?? [];
-  if (!days.length) return [];
-  const weekday = new Date(`${days[0]!.date}T00:00:00.000Z`).getUTCDay();
-  const leading = (weekday + 6) % 7;
-  return [...Array.from({ length: leading }, () => null), ...days];
+const rangeLabel = computed(() => {
+  const formatter = new Intl.DateTimeFormat(currentLocale(), { year: "numeric", month: "short", timeZone: "UTC" });
+  const first = new Date(`${visibleMonths.value[0]}-01T00:00:00.000Z`);
+  const last = new Date(`${visibleMonths.value.at(-1)}-01T00:00:00.000Z`);
+  return `${formatter.format(first)} – ${formatter.format(last)}`;
 });
-const summary = computed(() => calendar.value?.summary ?? {
+const allDays = computed(() => calendars.value.flatMap((item) => item.days));
+const heatmapWeeks = computed<Array<Array<MonitorHostEventCalendarDay | null>>>(() => {
+  if (!allDays.value.length) return [];
+  const leading = new Date(`${allDays.value[0]!.date}T00:00:00.000Z`).getUTCDay();
+  const cells: Array<MonitorHostEventCalendarDay | null> = [
+    ...Array.from({ length: leading }, () => null),
+    ...allDays.value,
+  ];
+  while (cells.length % 7) cells.push(null);
+  return Array.from({ length: cells.length / 7 }, (_, index) => cells.slice(index * 7, index * 7 + 7));
+});
+const monthMarkers = computed(() => {
+  if (!allDays.value.length) return [];
+  const leading = new Date(`${allDays.value[0]!.date}T00:00:00.000Z`).getUTCDay();
+  const formatter = new Intl.DateTimeFormat(currentLocale(), { month: "short", timeZone: "UTC" });
+  return visibleMonths.value.map((monthKey) => {
+    const dayIndex = allDays.value.findIndex((day) => day.date.startsWith(monthKey));
+    return {
+      month: monthKey,
+      label: formatter.format(new Date(`${monthKey}-01T00:00:00.000Z`)),
+      week: dayIndex < 0 ? 0 : Math.floor((leading + dayIndex) / 7),
+    };
+  });
+});
+const summary = computed<MonitorHostEventCalendarSummary>(() => calendars.value.reduce((total, item) => ({
+  healthyDays: total.healthyDays + item.summary.healthyDays,
+  affectedDays: total.affectedDays + item.summary.affectedDays,
+  noDataDays: total.noDataDays + item.summary.noDataDays,
+  criticalEvents: total.criticalEvents + item.summary.criticalEvents,
+  totalEvents: total.totalEvents + item.summary.totalEvents,
+  affectedMinutes: total.affectedMinutes + item.summary.affectedMinutes,
+  meanRecoveryMinutes: null,
+}), {
   healthyDays: 0,
   affectedDays: 0,
   noDataDays: 0,
@@ -62,12 +91,12 @@ const summary = computed(() => calendar.value?.summary ?? {
   totalEvents: 0,
   affectedMinutes: 0,
   meanRecoveryMinutes: null,
-});
+}));
+const canShiftForward = computed(() => anchorMonth.value < currentMonth);
 
-function shiftMonth(delta: number) {
-  const [year, monthNumber] = month.value.split("-").map(Number) as [number, number];
-  const next = new Date(Date.UTC(year, monthNumber - 1 + delta, 1));
-  month.value = `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}`;
+function shiftRange(years: number) {
+  const next = offsetMonth(anchorMonth.value, years * RANGE_MONTHS);
+  anchorMonth.value = next > currentMonth ? currentMonth : next;
 }
 
 function severityLabel(value: MonitorAlertSeverity) {
@@ -102,6 +131,10 @@ function dayTitle(day: MonitorHostEventCalendarDay) {
   ]);
 }
 
+function isInteractiveDay(day: MonitorHostEventCalendarDay) {
+  return !day.future && (day.activeEventCount > 0 || day.coverageRatio < 0.8);
+}
+
 function formatDuration(minutes: number) {
   if (minutes < 60) return tr("{0} 分钟", [Math.round(minutes)]);
   const hours = Math.floor(minutes / 60);
@@ -125,25 +158,29 @@ function eventMetric(event: MonitorHostEventItem) {
 async function loadCalendar() {
   calendarAbort?.abort();
   calendarAbort = new AbortController();
+  const controller = calendarAbort;
   loading.value = true;
   error.value = "";
   try {
-    const query = new URLSearchParams({ month: month.value, timezone });
-    calendar.value = await api<MonitorHostEventCalendarResponse>(
-      `/api/v1/environments/${props.environmentId}/monitor-hosts/${props.hostId}/event-calendar?${query}`,
-      { signal: calendarAbort.signal },
-    );
+    const results = await Promise.all(visibleMonths.value.map((monthKey) => {
+      const query = new URLSearchParams({ month: monthKey, timezone });
+      return api<MonitorHostEventCalendarResponse>(
+        `/api/v1/environments/${props.environmentId}/monitor-hosts/${props.hostId}/event-calendar?${query}`,
+        { signal: controller.signal },
+      );
+    }));
+    if (!controller.signal.aborted) calendars.value = results;
   } catch (caught) {
     if ((caught as { name?: string }).name === "AbortError") return;
-    calendar.value = null;
+    calendars.value = [];
     error.value = caught instanceof Error ? caught.message : tr("读取主机事件日历失败");
   } finally {
-    loading.value = false;
+    if (calendarAbort === controller) loading.value = false;
   }
 }
 
 async function openDay(day: MonitorHostEventCalendarDay) {
-  if (day.future || (!day.activeEventCount && day.coverageRatio >= 0.8)) return;
+  if (!isInteractiveDay(day)) return;
   selectedDate.value = day.date;
   drawerOpen.value = true;
   events.value = [];
@@ -164,7 +201,7 @@ async function openDay(day: MonitorHostEventCalendarDay) {
   }
 }
 
-watch(() => [props.environmentId, props.hostId, month.value], loadCalendar, { immediate: true });
+watch(() => [props.environmentId, props.hostId, anchorMonth.value], loadCalendar, { immediate: true });
 onBeforeUnmount(() => {
   calendarAbort?.abort();
   eventsAbort?.abort();
@@ -172,61 +209,77 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="event-calendar" :aria-label="$t('主机稳定性日历')">
+  <section class="event-calendar" :aria-label="$t('主机事件热力图')">
     <header class="event-calendar__header">
       <div class="event-calendar__identity">
         <span class="event-calendar__icon"><CalendarDays :size="18" /></span>
         <div>
-          <h4>{{ $t('主机稳定性日历') }}</h4>
-          <p>{{ $t('颜色表示每日最高严重级别，深浅综合事件数量与影响时长') }}</p>
+          <h4>{{ $t('主机事件热力图') }}</h4>
+          <p>{{ $t('过去 12 个月每天一个方格，颜色表示最高严重级别，深浅表示事件负载') }}</p>
         </div>
       </div>
-      <div class="event-calendar__month-control">
-        <button type="button" :aria-label="$t('上个月')" @click="shiftMonth(-1)"><ChevronLeft :size="15" /></button>
-        <strong>{{ monthLabel }}</strong>
-        <button type="button" :aria-label="$t('下个月')" @click="shiftMonth(1)"><ChevronRight :size="15" /></button>
-        <button type="button" :aria-label="$t('刷新事件日历')" :disabled="loading" @click="loadCalendar"><RefreshCw :size="14" :class="{ 'is-spinning': loading }" /></button>
+      <div class="event-calendar__range-control">
+        <button type="button" :aria-label="$t('上一年')" @click="shiftRange(-1)"><ChevronLeft :size="15" /></button>
+        <strong>{{ rangeLabel }}</strong>
+        <button type="button" :aria-label="$t('下一年')" :disabled="!canShiftForward" @click="shiftRange(1)"><ChevronRight :size="15" /></button>
+        <button type="button" :aria-label="$t('刷新事件热力图')" :disabled="loading" @click="loadCalendar"><RefreshCw :size="14" :class="{ 'is-spinning': loading }" /></button>
       </div>
     </header>
 
-    <div class="event-calendar__summary">
-      <span><ShieldCheck :size="14" /><small>{{ $t('健康天数') }}</small><strong>{{ summary.healthyDays }}</strong></span>
-      <span><Siren :size="14" /><small>{{ $t('异常天数') }}</small><strong>{{ summary.affectedDays }}</strong></span>
-      <span><AlertOctagon :size="14" /><small>{{ $t('严重事件') }}</small><strong>{{ summary.criticalEvents }}</strong></span>
-      <span><Clock3 :size="14" /><small>{{ $t('累计影响') }}</small><strong>{{ formatDuration(summary.affectedMinutes) }}</strong></span>
-      <span><DatabaseZap :size="14" /><small>{{ $t('无数据天数') }}</small><strong>{{ summary.noDataDays }}</strong></span>
-    </div>
-
     <p v-if="error" class="event-calendar__error">{{ error }}</p>
-    <div class="event-calendar__matrix" :class="{ 'is-loading': loading }">
-      <span v-for="label in weekdayLabels" :key="label" class="event-calendar__weekday">{{ label }}</span>
-      <template v-for="(day, index) in calendarCells" :key="day?.date ?? `empty-${index}`">
-        <span v-if="!day" class="event-calendar__blank"></span>
-        <button
-          v-else
-          type="button"
-          class="event-calendar__day"
-          :class="[dayTone(day), dayIntensity(day)]"
-          :title="dayTitle(day)"
-          :aria-label="dayTitle(day)"
-          :disabled="day.future"
-          @click="openDay(day)"
-        >
-          <span>{{ Number(day.date.slice(-2)) }}</span>
-          <strong v-if="day.activeEventCount">{{ day.activeEventCount }}</strong>
-          <i v-if="day.coverageRatio < 0.8 && !day.future"></i>
-        </button>
-      </template>
+    <div class="event-calendar__graph-scroll" :class="{ 'is-loading': loading }">
+      <div v-if="heatmapWeeks.length" class="event-calendar__graph" :style="{ '--week-count': heatmapWeeks.length }">
+        <div class="event-calendar__months" aria-hidden="true">
+          <span v-for="marker in monthMarkers" :key="marker.month" :style="{ gridColumnStart: marker.week + 1 }">{{ marker.label }}</span>
+        </div>
+        <div class="event-calendar__plot">
+          <div class="event-calendar__weekdays" aria-hidden="true">
+            <span v-for="(label, index) in weekdayLabels" :key="`${label}-${index}`">{{ index === 1 || index === 3 || index === 5 ? label : '' }}</span>
+          </div>
+          <div class="event-calendar__weeks">
+            <div v-for="(week, weekIndex) in heatmapWeeks" :key="weekIndex" class="event-calendar__week">
+              <template v-for="(day, dayIndex) in week" :key="day?.date ?? `empty-${weekIndex}-${dayIndex}`">
+                <span v-if="!day" class="event-calendar__cell is-blank"></span>
+                <button
+                  v-else
+                  type="button"
+                  class="event-calendar__cell"
+                  :class="[dayTone(day), dayIntensity(day), { 'is-interactive': isInteractiveDay(day), 'is-today': day.date === todayKey }]"
+                  :title="dayTitle(day)"
+                  :aria-label="dayTitle(day)"
+                  :aria-disabled="!isInteractiveDay(day)"
+                  :tabindex="isInteractiveDay(day) ? 0 : -1"
+                  @click="openDay(day)"
+                ></button>
+              </template>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div v-else class="event-calendar__loading-grid" aria-hidden="true">
+        <i v-for="index in 112" :key="index"></i>
+      </div>
     </div>
 
-    <footer class="event-calendar__legend">
-      <span><i class="is-healthy"></i>{{ $t('健康') }}</span>
-      <span><i class="is-warning"></i>{{ $t('警告') }}</span>
-      <span><i class="is-major"></i>{{ $t('高危') }}</span>
-      <span><i class="is-critical"></i>{{ $t('严重') }}</span>
-      <span><i class="is-no-data"></i>{{ $t('无数据') }}</span>
-      <small>{{ timezone }}</small>
+    <footer class="event-calendar__footer">
+      <div class="event-calendar__totals">
+        <span><strong>{{ summary.totalEvents }}</strong>{{ $t('个监控事件') }}</span>
+        <span><strong>{{ summary.affectedDays }}</strong>{{ $t('天出现异常') }}</span>
+        <span>{{ $t('累计影响') }} <strong>{{ formatDuration(summary.affectedMinutes) }}</strong></span>
+        <span v-if="summary.noDataDays"><strong>{{ summary.noDataDays }}</strong>{{ $t('天无数据') }}</span>
+      </div>
+      <div class="event-calendar__legend" :aria-label="$t('严重级别图例')">
+        <span>{{ $t('健康') }}</span>
+        <i class="is-healthy"></i>
+        <i class="is-info" :title="$t('提示')"></i>
+        <i class="is-warning" :title="$t('警告')"></i>
+        <i class="is-major" :title="$t('高危')"></i>
+        <i class="is-critical" :title="$t('严重')"></i>
+        <span>{{ $t('严重') }}</span>
+        <i class="is-no-data"></i><span>{{ $t('无数据') }}</span>
+      </div>
     </footer>
+    <small class="event-calendar__timezone">{{ timezone }}</small>
   </section>
 
   <el-drawer v-model="drawerOpen" size="min(460px, 94vw)" append-to-body :title="$t('{0} 主机事件', [selectedDate])">
@@ -254,10 +307,11 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .event-calendar {
+  position: relative;
   margin-top: 16px;
   border: 1px solid var(--ink-100);
   border-radius: 12px;
-  background: color-mix(in srgb, var(--ink-50) 42%, var(--surface));
+  background: var(--surface);
   overflow: hidden;
 }
 .event-calendar__header {
@@ -273,45 +327,81 @@ onBeforeUnmount(() => {
 .event-calendar__icon { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; background: var(--teal-50); color: var(--teal-700); }
 .event-calendar h4 { margin: 0; color: var(--ink-900); font-size: 13px; font-weight: 800; }
 .event-calendar p { margin: 3px 0 0; color: var(--ink-400); font-size: 10px; }
-.event-calendar__month-control { padding: 3px; border: 1px solid var(--ink-100); border-radius: 8px; background: var(--surface); display: flex; align-items: center; gap: 2px; }
-.event-calendar__month-control button { width: 28px; height: 26px; border: 0; border-radius: 6px; background: transparent; color: var(--ink-500); display: grid; place-items: center; cursor: pointer; }
-.event-calendar__month-control button:hover { background: var(--ink-50); color: var(--teal-700); }
-.event-calendar__month-control button:disabled { opacity: .45; cursor: default; }
-.event-calendar__month-control strong { min-width: 92px; color: var(--ink-800); text-align: center; font-size: 11px; }
-.event-calendar__summary { padding: 10px 14px 4px; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 7px; }
-.event-calendar__summary > span { min-width: 0; padding: 8px 9px; border: 1px solid var(--ink-100); border-radius: 8px; background: var(--surface); display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; }
-.event-calendar__summary svg { grid-row: span 2; color: var(--ink-400); }
-.event-calendar__summary small { color: var(--ink-400); font-size: 9px; }
-.event-calendar__summary strong { color: var(--ink-900); font-family: var(--font-mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.event-calendar__matrix { padding: 10px 14px 12px; display: grid; grid-template-columns: repeat(7, minmax(28px, 1fr)); gap: 6px; transition: opacity .16s ease; }
-.event-calendar__matrix.is-loading { opacity: .55; }
-.event-calendar__weekday { padding-bottom: 2px; color: var(--ink-400); text-align: center; font-size: 9px; font-weight: 700; }
-.event-calendar__blank { min-height: 38px; }
-.event-calendar__day { position: relative; min-height: 42px; padding: 6px 7px; border: 1px solid transparent; border-radius: 8px; display: flex; align-items: flex-start; justify-content: space-between; overflow: hidden; cursor: pointer; transition: transform .14s ease, border-color .14s ease, box-shadow .14s ease; }
-.event-calendar__day:not(:disabled):hover { z-index: 1; transform: translateY(-2px); border-color: color-mix(in srgb, currentColor 50%, var(--ink-200)); box-shadow: 0 5px 12px rgba(12, 30, 34, .10); }
-.event-calendar__day > span { font-family: var(--font-mono); font-size: 10px; font-weight: 700; }
-.event-calendar__day > strong { min-width: 17px; height: 17px; padding: 0 4px; border-radius: 8px; background: rgba(0, 0, 0, .18); color: white; display: grid; place-items: center; font-family: var(--font-mono); font-size: 9px; }
-.event-calendar__day > i { position: absolute; inset: auto 5px 5px auto; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
-.event-calendar__day.is-healthy { background: color-mix(in srgb, var(--teal-500) 18%, var(--surface)); color: var(--teal-800); }
-.event-calendar__day.is-info { background: color-mix(in srgb, #3b82f6 18%, var(--surface)); color: #1d4ed8; }
-.event-calendar__day.is-warning { background: color-mix(in srgb, #f59e0b 35%, var(--surface)); color: #9a5b05; }
-.event-calendar__day.is-major { background: color-mix(in srgb, #f97316 48%, var(--surface)); color: #8f3510; }
-.event-calendar__day.is-critical { background: color-mix(in srgb, #ef4444 58%, var(--surface)); color: #7f1d1d; }
-.event-calendar__day.is-no-data { border-color: var(--ink-200); color: var(--ink-400); background: repeating-linear-gradient(135deg, var(--ink-50), var(--ink-50) 5px, var(--ink-100) 5px, var(--ink-100) 7px); }
-.event-calendar__day.is-future { color: var(--ink-300); background: transparent; cursor: default; }
-.event-calendar__day.is-intensity-2 { filter: saturate(1.12); }
-.event-calendar__day.is-intensity-3 { filter: saturate(1.28) brightness(.96); }
-.event-calendar__day.is-intensity-4 { filter: saturate(1.4) brightness(.90); }
-.event-calendar__legend { padding: 8px 14px; border-top: 1px solid var(--ink-100); background: var(--surface); display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.event-calendar__legend span { color: var(--ink-500); display: inline-flex; align-items: center; gap: 5px; font-size: 9px; }
-.event-calendar__legend i { width: 9px; height: 9px; border-radius: 3px; display: block; }
-.event-calendar__legend i.is-healthy { background: var(--teal-500); }
-.event-calendar__legend i.is-warning { background: #f59e0b; }
-.event-calendar__legend i.is-major { background: #f97316; }
-.event-calendar__legend i.is-critical { background: #ef4444; }
-.event-calendar__legend i.is-no-data { border: 1px solid var(--ink-300); background: var(--ink-100); }
-.event-calendar__legend small { margin-left: auto; color: var(--ink-400); font-family: var(--font-mono); font-size: 9px; }
+.event-calendar__range-control { padding: 3px; border: 1px solid var(--ink-100); border-radius: 8px; background: var(--surface); display: flex; align-items: center; gap: 2px; }
+.event-calendar__range-control button { width: 28px; height: 26px; border: 0; border-radius: 6px; background: transparent; color: var(--ink-500); display: grid; place-items: center; cursor: pointer; }
+.event-calendar__range-control button:hover:not(:disabled) { background: var(--ink-50); color: var(--teal-700); }
+.event-calendar__range-control button:disabled { opacity: .35; cursor: default; }
+.event-calendar__range-control strong { min-width: 166px; color: var(--ink-800); text-align: center; font-size: 10px; }
 .event-calendar__error { margin: 8px 14px 0 !important; color: var(--red-600) !important; }
+.event-calendar__graph-scroll { padding: 15px 14px 12px; overflow-x: auto; transition: opacity .16s ease; scrollbar-width: thin; }
+.event-calendar__graph-scroll.is-loading { opacity: .55; }
+.event-calendar__graph { --heat-cell: 11px; --heat-gap: 3px; width: max-content; min-width: 100%; }
+.event-calendar__months {
+  height: 17px;
+  margin-left: 31px;
+  display: grid;
+  grid-template-columns: repeat(var(--week-count), var(--heat-cell));
+  column-gap: var(--heat-gap);
+  color: var(--ink-500);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1;
+}
+.event-calendar__months span { width: max-content; }
+.event-calendar__plot { display: flex; align-items: stretch; gap: 8px; }
+.event-calendar__weekdays {
+  width: 23px;
+  display: grid;
+  grid-template-rows: repeat(7, var(--heat-cell));
+  row-gap: var(--heat-gap);
+  color: var(--ink-400);
+  font-size: 8px;
+  line-height: var(--heat-cell);
+  text-align: right;
+}
+.event-calendar__weeks { display: grid; grid-template-columns: repeat(var(--week-count), var(--heat-cell)); column-gap: var(--heat-gap); }
+.event-calendar__week { display: grid; grid-template-rows: repeat(7, var(--heat-cell)); row-gap: var(--heat-gap); }
+.event-calendar__cell {
+  width: var(--heat-cell);
+  height: var(--heat-cell);
+  padding: 0;
+  border: 1px solid color-mix(in srgb, currentColor 12%, var(--ink-100));
+  border-radius: 2px;
+  background: var(--ink-50);
+  color: var(--ink-300);
+  cursor: default;
+  transition: transform .1s ease, box-shadow .1s ease, filter .1s ease;
+}
+.event-calendar__cell.is-interactive { cursor: pointer; }
+.event-calendar__cell.is-interactive:hover,
+.event-calendar__cell.is-interactive:focus-visible { z-index: 1; transform: scale(1.45); box-shadow: 0 0 0 2px var(--surface), 0 2px 8px rgba(10, 28, 31, .24); outline: none; }
+.event-calendar__cell.is-blank { border-color: transparent; background: transparent; }
+.event-calendar__cell.is-healthy { background: color-mix(in srgb, var(--teal-500) 13%, var(--surface)); color: var(--teal-700); }
+.event-calendar__cell.is-info { background: #93c5fd; color: #2563eb; }
+.event-calendar__cell.is-warning { background: #fbbf24; color: #b45309; }
+.event-calendar__cell.is-major { background: #f97316; color: #c2410c; }
+.event-calendar__cell.is-critical { background: #dc2626; color: #991b1b; }
+.event-calendar__cell.is-no-data { border-color: var(--ink-200); background: repeating-linear-gradient(135deg, var(--ink-50), var(--ink-50) 3px, var(--ink-100) 3px, var(--ink-100) 5px); color: var(--ink-400); }
+.event-calendar__cell.is-future { border-color: color-mix(in srgb, var(--ink-200) 55%, transparent); background: transparent; color: var(--ink-200); }
+.event-calendar__cell.is-intensity-2 { filter: saturate(1.12); }
+.event-calendar__cell.is-intensity-3 { filter: saturate(1.3) brightness(.93); }
+.event-calendar__cell.is-intensity-4 { filter: saturate(1.45) brightness(.82); }
+.event-calendar__cell.is-today { box-shadow: 0 0 0 1px var(--ink-800); }
+.event-calendar__loading-grid { width: 742px; max-width: 100%; display: grid; grid-template-columns: repeat(28, 11px); gap: 3px; }
+.event-calendar__loading-grid i { width: 11px; height: 11px; border-radius: 2px; background: var(--ink-50); }
+.event-calendar__footer { min-height: 38px; padding: 8px 14px; border-top: 1px solid var(--ink-100); background: color-mix(in srgb, var(--ink-50) 45%, var(--surface)); display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.event-calendar__totals { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; color: var(--ink-500); font-size: 9px; }
+.event-calendar__totals span { display: inline-flex; align-items: baseline; gap: 3px; }
+.event-calendar__totals strong { color: var(--ink-800); font-family: var(--font-mono); font-size: 10px; }
+.event-calendar__legend { display: flex; align-items: center; gap: 4px; color: var(--ink-500); font-size: 9px; white-space: nowrap; }
+.event-calendar__legend i { width: 9px; height: 9px; border: 1px solid transparent; border-radius: 2px; display: block; }
+.event-calendar__legend i.is-healthy { background: color-mix(in srgb, var(--teal-500) 13%, var(--surface)); }
+.event-calendar__legend i.is-info { background: #93c5fd; }
+.event-calendar__legend i.is-warning { background: #fbbf24; }
+.event-calendar__legend i.is-major { background: #f97316; }
+.event-calendar__legend i.is-critical { background: #dc2626; }
+.event-calendar__legend i.is-no-data { margin-left: 7px; border-color: var(--ink-300); background: repeating-linear-gradient(135deg, var(--ink-50), var(--ink-50) 3px, var(--ink-100) 3px, var(--ink-100) 5px); }
+.event-calendar__timezone { position: absolute; right: 14px; bottom: 3px; color: var(--ink-300); font-family: var(--font-mono); font-size: 8px; pointer-events: none; }
 .event-day-drawer { min-height: 260px; }
 .event-day-drawer__list { display: grid; gap: 10px; }
 .event-day-drawer article { padding: 12px 13px; border: 1px solid var(--ink-100); border-left: 3px solid var(--ink-300); border-radius: 9px; background: var(--surface); }
@@ -330,12 +420,11 @@ onBeforeUnmount(() => {
 .event-day-drawer__empty { min-height: 260px; color: var(--ink-400); display: grid; place-items: center; align-content: center; gap: 8px; font-size: 12px; }
 .is-spinning { animation: event-calendar-spin .9s linear infinite; }
 @keyframes event-calendar-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .event-calendar__day, .event-calendar__matrix { transition: none; } .is-spinning { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .event-calendar__cell, .event-calendar__graph-scroll { transition: none; } .is-spinning { animation: none; } }
 @media (max-width: 760px) {
   .event-calendar__header { align-items: stretch; flex-direction: column; }
-  .event-calendar__month-control { align-self: flex-start; }
-  .event-calendar__summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .event-calendar__matrix { gap: 4px; }
-  .event-calendar__day { min-height: 36px; padding: 5px; }
+  .event-calendar__range-control { align-self: flex-start; }
+  .event-calendar__range-control strong { min-width: 148px; }
+  .event-calendar__footer { align-items: flex-start; flex-direction: column; }
 }
 </style>

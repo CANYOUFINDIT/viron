@@ -10,6 +10,7 @@ const alerts = readFileSync(new URL("../src/client/components/MonitorAlertCenter
 const hostDashboard = readFileSync(new URL("../src/client/components/HostMonitorDashboard.vue", import.meta.url), "utf8");
 const hostFleet = readFileSync(new URL("../src/client/components/monitoring/HostFleetPanel.vue", import.meta.url), "utf8");
 const hostEventCalendar = readFileSync(new URL("../src/client/components/monitoring/HostEventCalendar.vue", import.meta.url), "utf8");
+const maintenanceDiscovery = readFileSync(new URL("../src/client/components/service-maintenance/MaintenanceDiscoveryDrawer.vue", import.meta.url), "utf8");
 
 describe("monitoring dashboard wiring", () => {
   it("registers the global monitoring route and cancels overlapping overview requests", () => {
@@ -35,10 +36,15 @@ describe("monitoring dashboard wiring", () => {
     expect(alerts).toContain('name: "ssh-keys"');
   });
 
-  it("shows a monthly host event calendar with no-data and event drill-down states", () => {
+  it("shows a GitHub-style yearly host event heatmap in monitoring and service maintenance", () => {
     expect(hostFleet).toContain("<HostEventCalendar");
+    expect(maintenanceDiscovery).toContain("<HostEventCalendar");
+    expect(maintenanceDiscovery).toContain(':host-id="selectedHost.sshConnectionId"');
     expect(hostEventCalendar).toContain("/event-calendar?");
     expect(hostEventCalendar).toContain("/events?");
+    expect(hostEventCalendar).toContain("RANGE_MONTHS = 12");
+    expect(hostEventCalendar).toContain("heatmapWeeks");
+    expect(hostEventCalendar).toContain("event-calendar__week");
     expect(hostEventCalendar).toContain("day.coverageRatio < 0.8");
     expect(hostEventCalendar).toContain("event.occurrenceCount > 1");
   });

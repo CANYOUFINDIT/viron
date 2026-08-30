@@ -2,6 +2,7 @@
 import { Activity, CircleAlert, Clock3, Download, EllipsisVertical, Power, RotateCw, ScanSearch } from "@lucide/vue";
 import { localizeMessage } from "../../i18n";
 import HostMonitorDashboard from "../HostMonitorDashboard.vue";
+import HostEventCalendar from "../monitoring/HostEventCalendar.vue";
 import ServiceDiscoveryPanel from "../ServiceDiscoveryPanel.vue";
 
 const { m, environmentId } = defineProps<{
@@ -88,6 +89,11 @@ function peakTemperatureC(temperatures: Array<{ celsius: number }>) {
         <button v-if="selectedHost.snapshot.temperatures.length" type="button" :class="{ 'is-active': hostFocusMetric === 'temperature' }" @click="hostFocusMetric = 'temperature'"><span>{{ $t('温度') }}</span><strong>{{ peakTemperatureC(selectedHost.snapshot.temperatures) }}°C</strong><small>{{ selectedHost.snapshot.temperatures[0]?.chip }}</small></button>
         <div class="host-metric-uptime"><span>{{ $t('运行时间') }}</span><strong>{{ formatDuration(selectedHost.snapshot.uptimeSeconds) }}</strong></div>
       </div>
+      <HostEventCalendar
+        v-if="selectedHost.snapshot || isMonitorInstalled(selectedHost)"
+        :environment-id="environmentId"
+        :host-id="selectedHost.sshConnectionId"
+      />
       <HostMonitorDashboard
         v-if="selectedHost.snapshot || isMonitorInstalled(selectedHost)"
         v-model:focus-metric="hostFocusMetric"
