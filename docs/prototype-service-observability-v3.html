@@ -998,6 +998,23 @@
 
     .empty-events { padding: 45px 20px; color: var(--ink-faint); text-align: center; }
 
+    .monitor-service-section {
+      margin-top: 18px;
+      padding-top: 16px;
+      border-top: 3px solid var(--ink);
+    }
+
+    .monitor-service-section__head {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 13px;
+    }
+
+    .monitor-service-section__head h3 { margin: 4px 0 2px; font-size: 17px; }
+    .monitor-service-section__head p { margin: 0; color: var(--ink-faint); font-size: 10px; }
+
     .service-state-strip {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
@@ -1131,9 +1148,78 @@
       font: 9px/1 var(--mono);
     }
 
-    .host-resource-detail { display: none; }
+    .host-resource-detail { display: none; min-width: 0; }
     .host-resource-detail.is-active { display: block; animation: page-enter 180ms ease-out both; }
-    .host-list-page.is-hidden { display: none; }
+    .host-compact-head { display: none; }
+
+    #host-monitor-workspace.is-active.is-detail-mode {
+      display: grid;
+      grid-template-columns: 284px minmax(0, 1fr);
+      gap: 13px;
+      align-items: start;
+    }
+
+    .host-monitor-workspace.is-detail-mode .host-list-page {
+      min-width: 0;
+      position: sticky;
+      top: 72px;
+      border: 1px solid var(--line-strong);
+      background: var(--paper-strong);
+    }
+
+    .host-monitor-workspace.is-detail-mode .host-compact-head {
+      display: grid;
+      gap: 10px;
+      padding: 12px;
+      border-bottom: 1px solid var(--line-strong);
+      background: var(--ink);
+      color: #edf1ed;
+    }
+
+    .host-compact-head strong,
+    .host-compact-head small { display: block; }
+    .host-compact-head small { margin-top: 2px; color: #9daca4; font-size: 9px; }
+    .host-compact-head .search-input { width: 100%; min-width: 0; border-color: #4b5953; background: #222d29; color: #f2f4ef; }
+    .host-compact-head .search-input::placeholder { color: #86928c; }
+
+    .host-monitor-workspace.is-detail-mode .host-rank-explainer,
+    .host-monitor-workspace.is-detail-mode .host-list-page > .view-toolbar,
+    .host-monitor-workspace.is-detail-mode .bulk-probe-bar { display: none; }
+
+    .host-monitor-workspace.is-detail-mode .priority-host-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      max-height: calc(100vh - 205px);
+      overflow-y: auto;
+    }
+
+    .host-monitor-workspace.is-detail-mode .priority-host-card {
+      min-height: 92px;
+      padding: 10px 11px;
+      border: 0;
+      border-bottom: 1px solid var(--line);
+      border-left: 4px solid var(--good);
+      box-shadow: none;
+    }
+
+    .host-monitor-workspace.is-detail-mode .priority-host-card:last-child { border-bottom: 0; }
+    .host-monitor-workspace.is-detail-mode .priority-host-card:hover { transform: none; background: #f0efe9; box-shadow: none; }
+    .host-monitor-workspace.is-detail-mode .priority-host-card.is-critical { border-left-color: var(--bad); }
+    .host-monitor-workspace.is-detail-mode .priority-host-card.is-warning { border-left-color: var(--warn); }
+    .host-monitor-workspace.is-detail-mode .priority-host-card.is-unmanaged { border-left-color: var(--quiet); }
+    .host-monitor-workspace.is-detail-mode .priority-host-card.is-selected { background: var(--acid-soft); box-shadow: inset 0 0 0 1px #9aaa49; }
+    .host-monitor-workspace.is-detail-mode .priority-host-card h3 { margin: 24px 0 2px; }
+    .host-monitor-workspace.is-detail-mode .host-pressure-score { position: absolute; top: 11px; right: 10px; margin: 0; font-size: 14px; }
+    .host-monitor-workspace.is-detail-mode .host-card-select,
+    .host-monitor-workspace.is-detail-mode .host-resource-bars,
+    .host-monitor-workspace.is-detail-mode .host-card-foot,
+    .host-monitor-workspace.is-detail-mode .host-bottleneck .badge { display: none; }
+    .host-monitor-workspace.is-detail-mode .host-bottleneck { min-height: 0; margin: 7px 0 0; }
+    .host-monitor-workspace.is-detail-mode .host-bottleneck strong { font-size: 9px; }
+    .host-monitor-workspace.is-detail-mode .host-detail-grid { grid-template-columns: minmax(0, 1fr); }
+    .host-monitor-workspace.is-detail-mode .host-disk-table { overflow-x: auto; }
+    .host-monitor-workspace.is-detail-mode .host-disk-table .table { min-width: 720px; }
 
     .detail-back-row {
       display: flex;
@@ -1194,6 +1280,7 @@
     .forecast-number { margin: 5px 0 14px; font: 800 27px/1 var(--mono); color: var(--bad); }
     .forecast-rail { height: 11px; position: relative; background: #d9dad3; }
     .forecast-rail span { display: block; width: var(--value); height: 100%; background: var(--bad); }
+    .forecast-rail span.is-stable { background: var(--good); }
     .forecast-meta { display: flex; justify-content: space-between; margin-top: 8px; color: var(--ink-faint); font: 9px/1 var(--mono); }
 
     .host-disk-table { margin-top: 13px; border: 1px solid var(--line-strong); background: var(--paper-strong); }
@@ -2330,6 +2417,8 @@
       .priority-host-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .service-observe-row { grid-template-columns: minmax(170px, 1.25fr) 90px 105px 92px 78px minmax(120px, .75fr) auto; gap: 8px; }
       .host-detail-grid { grid-template-columns: minmax(0, 1fr) 320px; }
+      #host-monitor-workspace.is-active.is-detail-mode { grid-template-columns: 250px minmax(0, 1fr); }
+      .host-monitor-workspace.is-detail-mode .host-detail-grid { grid-template-columns: minmax(0, 1fr); }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -2434,7 +2523,7 @@
 
     <main class="workspace">
       <header class="topbar">
-        <div class="breadcrumb"><span>VIRON</span><span>/</span><strong id="breadcrumb-current">监控大盘 / 告警总览</strong></div>
+        <div class="breadcrumb"><span>VIRON</span><span>/</span><strong id="breadcrumb-current">监控大盘 / 告警与服务</strong></div>
         <div class="topbar-actions">
           <div class="sync-state"><span class="live-dot"></span><span>工作空间连接正常</span></div>
           <button class="command-button" id="open-command"><svg class="icon"><use href="#i-search"/></svg>快速前往 <span class="keycap">⌘ K</span></button>
@@ -2697,7 +2786,7 @@
             <div>
               <div class="section-kicker">MONITORING / PLATFORM</div>
               <h1>监控大盘</h1>
-              <p>监控从全平台告警开始，再沿服务与主机节点定位影响面、资源瓶颈和处置入口。</p>
+              <p>在同一页面判断全平台告警及其服务影响，再进入主机节点定位资源瓶颈和处置入口。</p>
               <span class="monitoring-heading-note"><span class="live-dot"></span>平台时区 Asia/Shanghai · 最近同步 14:22:18</span>
             </div>
             <div class="heading-actions">
@@ -2708,8 +2797,7 @@
           </div>
 
           <nav class="subnav" aria-label="监控大盘导航">
-            <button class="is-active" data-observe-view="overview">告警总览 <span class="badge bad">4</span></button>
-            <button data-observe-view="services">服务 <span class="badge">12</span></button>
+            <button class="is-active" data-observe-view="overview">告警与服务 <span class="badge bad">4</span></button>
             <button data-observe-view="hosts">主机节点 <span class="badge warn">4 紧张</span></button>
           </nav>
 
@@ -2754,32 +2842,37 @@
               </div>
               <div id="platform-event-list"></div>
             </section>
-          </div>
 
-          <div class="observe-view" data-observe-content="services">
-            <div class="service-state-strip">
+            <section class="monitor-service-section">
+              <div class="monitor-service-section__head">
+                <div><div class="micro-label">SERVICE IMPACT</div><h3>受告警影响的服务与运行状态</h3><p>告警与服务放在同一个判断页面中，先看平台事件，再确认影响了哪些服务和部署。</p></div>
+                <span class="badge">12 SERVICES</span>
+              </div>
+              <div class="service-state-strip">
               <div><span class="micro-label">活动告警</span><strong class="text-bad">4</strong><small>2 个未确认</small></div>
               <div><span class="micro-label">异常服务</span><strong class="text-warn">2</strong><small>需要定位影响部署</small></div>
               <div><span class="micro-label">已停止部署</span><strong class="text-bad">1</strong><small>Billing Scheduler</small></div>
               <div><span class="micro-label">数据陈旧</span><strong class="text-warn">1</strong><small>源主机 8 分钟未上报</small></div>
-            </div>
-            <div class="view-toolbar">
-              <div class="inline-actions"><input class="search-input" id="service-monitor-search" placeholder="按服务名、负责人或环境搜索" /><select class="filter-select"><option>全部环境</option><option>production-cn</option><option>staging</option></select><select class="filter-select"><option>按告警优先</option><option>按运行状态</option><option>按名称</option></select></div>
-              <span class="panel-subtitle">仅展示当前状态、活动告警与部署事实</span>
-            </div>
-            <div class="service-observe-table" id="service-monitor-table">
-              <div class="service-observe-row service-observe-head"><span>服务 / 环境</span><span>部署</span><span>运行状态</span><span>活动告警</span><span>24H 重启</span><span>当前资源</span><span>操作</span></div>
-              <div class="service-observe-row" data-monitor-service="billing scheduler finance production-cn"><div><strong>Billing Scheduler</strong><small>finance · production-cn · P0</small></div><span>1 / 2</span><span><b class="badge bad">degraded</b></span><span><strong class="text-bad">1 Critical</strong></span><span>1</span><span>CPU 9% · MEM 420M</span><button class="btn btn-small" data-toast="已定位 Billing Scheduler 的当前服务维护页面">服务维护 →</button></div>
-              <div class="service-observe-row" data-monitor-service="order worker commerce production-cn"><div><strong>Order Worker</strong><small>commerce · production-cn · P1</small></div><span>3 / 4</span><span><b class="badge warn">unknown</b></span><span><strong class="text-warn">1 Major</strong></span><span>5</span><span>CPU 68% · MEM 1.8G</span><button class="btn btn-small" data-toast="已定位 Order Worker 的当前服务维护页面">服务维护 →</button></div>
-              <div class="service-observe-row" data-monitor-service="mysql primary data production-cn"><div><strong>MySQL Primary</strong><small>data · production-cn · P0</small></div><span>2 / 2</span><span><b class="badge good">healthy</b></span><span><strong class="text-bad">1 Resource</strong></span><span>0</span><span>CPU 35% · MEM 4.8G</span><button class="btn btn-small" data-toast="已定位 MySQL Primary 的当前服务维护页面">服务维护 →</button></div>
-              <div class="service-observe-row" data-monitor-service="api gateway platform production-cn"><div><strong>API Gateway</strong><small>platform · production-cn · P1</small></div><span>3 / 3</span><span><b class="badge good">healthy</b></span><span>0</span><span>0</span><span>CPU 42% · MEM 780M</span><button class="btn btn-small" data-toast="已定位 API Gateway 的当前服务维护页面">服务维护 →</button></div>
-              <div class="service-observe-row" data-monitor-service="redis cache platform production-cn"><div><strong>Redis Cache</strong><small>platform · production-cn · P1</small></div><span>3 / 3</span><span><b class="badge good">healthy</b></span><span>0</span><span>1</span><span>CPU 24% · MEM 3.2G</span><button class="btn btn-small" data-toast="已定位 Redis Cache 的当前服务维护页面">服务维护 →</button></div>
-              <div class="service-observe-row" data-monitor-service="public web growth staging"><div><strong>Public Web</strong><small>growth · staging · P1</small></div><span>6 / 6</span><span><b class="badge good">healthy</b></span><span>0</span><span>0</span><span>CPU 38% · MEM 2.1G</span><button class="btn btn-small" data-toast="已定位 Public Web 的当前服务维护页面">服务维护 →</button></div>
-            </div>
+              </div>
+              <div class="view-toolbar">
+                <div class="inline-actions"><input class="search-input" id="service-monitor-search" placeholder="按服务名、负责人或环境搜索" /><select class="filter-select"><option>全部环境</option><option>production-cn</option><option>staging</option></select><select class="filter-select"><option>按告警优先</option><option>按运行状态</option><option>按名称</option></select></div>
+                <span class="panel-subtitle">仅展示当前状态、活动告警与部署事实</span>
+              </div>
+              <div class="service-observe-table" id="service-monitor-table">
+                <div class="service-observe-row service-observe-head"><span>服务 / 环境</span><span>部署</span><span>运行状态</span><span>活动告警</span><span>24H 重启</span><span>当前资源</span><span>操作</span></div>
+                <div class="service-observe-row" data-monitor-service="billing scheduler finance production-cn"><div><strong>Billing Scheduler</strong><small>finance · production-cn · P0</small></div><span>1 / 2</span><span><b class="badge bad">degraded</b></span><span><strong class="text-bad">1 Critical</strong></span><span>1</span><span>CPU 9% · MEM 420M</span><button class="btn btn-small" data-toast="已定位 Billing Scheduler 的当前服务维护页面">服务维护 →</button></div>
+                <div class="service-observe-row" data-monitor-service="order worker commerce production-cn"><div><strong>Order Worker</strong><small>commerce · production-cn · P1</small></div><span>3 / 4</span><span><b class="badge warn">unknown</b></span><span><strong class="text-warn">1 Major</strong></span><span>5</span><span>CPU 68% · MEM 1.8G</span><button class="btn btn-small" data-toast="已定位 Order Worker 的当前服务维护页面">服务维护 →</button></div>
+                <div class="service-observe-row" data-monitor-service="mysql primary data production-cn"><div><strong>MySQL Primary</strong><small>data · production-cn · P0</small></div><span>2 / 2</span><span><b class="badge good">healthy</b></span><span><strong class="text-bad">1 Resource</strong></span><span>0</span><span>CPU 35% · MEM 4.8G</span><button class="btn btn-small" data-toast="已定位 MySQL Primary 的当前服务维护页面">服务维护 →</button></div>
+                <div class="service-observe-row" data-monitor-service="api gateway platform production-cn"><div><strong>API Gateway</strong><small>platform · production-cn · P1</small></div><span>3 / 3</span><span><b class="badge good">healthy</b></span><span>0</span><span>0</span><span>CPU 42% · MEM 780M</span><button class="btn btn-small" data-toast="已定位 API Gateway 的当前服务维护页面">服务维护 →</button></div>
+                <div class="service-observe-row" data-monitor-service="redis cache platform production-cn"><div><strong>Redis Cache</strong><small>platform · production-cn · P1</small></div><span>3 / 3</span><span><b class="badge good">healthy</b></span><span>0</span><span>1</span><span>CPU 24% · MEM 3.2G</span><button class="btn btn-small" data-toast="已定位 Redis Cache 的当前服务维护页面">服务维护 →</button></div>
+                <div class="service-observe-row" data-monitor-service="public web growth staging"><div><strong>Public Web</strong><small>growth · staging · P1</small></div><span>6 / 6</span><span><b class="badge good">healthy</b></span><span>0</span><span>0</span><span>CPU 38% · MEM 2.1G</span><button class="btn btn-small" data-toast="已定位 Public Web 的当前服务维护页面">服务维护 →</button></div>
+              </div>
+            </section>
           </div>
 
-          <div class="observe-view" data-observe-content="hosts">
+          <div class="observe-view host-monitor-workspace" id="host-monitor-workspace" data-observe-content="hosts">
             <div class="host-list-page" id="host-list-page">
+              <div class="host-compact-head"><div><strong>节点优先级队列</strong><small>点击节点切换右侧监控详情</small></div><input class="search-input" id="compact-host-search" placeholder="筛选节点…" /></div>
               <div class="host-rank-explainer">
                 <div><strong>资源紧张度调度队列</strong><span>卡片不是按名称排列：先比较最接近阈值的资源，再叠加活动告警、容量耗尽时间和数据新鲜度。</span></div>
                 <div class="host-rank-formula">PRESSURE = MAX(CPU/85, MEM/85, DISK/90) × 55<br>+ RESOURCE BREADTH × 20 + ALERT + CAPACITY + FRESHNESS</div>
@@ -2824,8 +2917,8 @@
                   </div>
                 </section>
                 <aside class="capacity-forecast-panel">
-                  <div class="panel-header"><div><div class="panel-title">容量预测</div><div class="panel-subtitle" id="detail-capacity-target">/data · 按最近 7 天增长率</div></div><span class="badge bad">需处理</span></div>
-                  <div class="capacity-forecast-content"><span class="micro-label">预计达到 95% 阈值</span><div class="forecast-number" id="detail-capacity-days">3 天后</div><div class="forecast-rail"><span id="detail-capacity-bar" style="--value:94%"></span></div><div class="forecast-meta"><span>当前 <b id="detail-capacity-current">94%</b></span><span>阈值 95%</span></div><p id="detail-capacity-copy">近 7 天日均增长 1.7%，建议立即扩容或清理历史备份。</p><button class="btn btn-primary" data-toast="已打开 prod-db-02 容量处置记录">查看容量处置 →</button></div>
+                  <div class="panel-header"><div><div class="panel-title">容量预测</div><div class="panel-subtitle" id="detail-capacity-target">/data · 按最近 7 天增长率</div></div><span class="badge bad" id="detail-capacity-state">需处理</span></div>
+                  <div class="capacity-forecast-content"><span class="micro-label">预计达到 95% 阈值</span><div class="forecast-number" id="detail-capacity-days">3 天后</div><div class="forecast-rail"><span id="detail-capacity-bar" style="--value:94%"></span></div><div class="forecast-meta"><span>当前 <b id="detail-capacity-current">94%</b></span><span>阈值 95%</span></div><p id="detail-capacity-copy">近 7 天日均增长 1.7%，建议立即扩容或清理历史备份。</p><button class="btn btn-primary" id="detail-capacity-action" data-toast="已打开 prod-db-02 容量处置记录">查看容量处置 →</button></div>
                 </aside>
               </div>
               <section class="host-disk-table">
@@ -3075,8 +3168,7 @@
     <div class="command-dialog">
       <input class="command-search" id="command-search" placeholder="搜索页面、服务或主机…" />
       <div class="command-list">
-        <button class="command-item" data-command-page="observability" data-command-view="overview"><svg class="icon"><use href="#i-alert"/></svg>监控大盘 / 告警总览<small>4 ACTIVE</small></button>
-        <button class="command-item" data-command-page="observability" data-command-view="services"><svg class="icon"><use href="#i-service"/></svg>监控大盘 / 服务<small>12 SERVICES</small></button>
+        <button class="command-item" data-command-page="observability" data-command-view="overview"><svg class="icon"><use href="#i-alert"/></svg>监控大盘 / 告警与服务<small>4 ACTIVE · 12 SERVICES</small></button>
         <button class="command-item" data-command-page="observability" data-command-view="hosts"><svg class="icon"><use href="#i-agent"/></svg>监控大盘 / 主机节点<small>24 HOSTS</small></button>
       </div>
     </div>
@@ -3087,7 +3179,7 @@
   <script>
     const pagePaths = {
       services: '环境总览 / production-cn / 服务维护',
-      observability: '监控大盘 / 告警总览',
+      observability: '监控大盘 / 告警与服务',
       alerts: '监控大盘 / 告警'
     };
     const services = {
@@ -3290,9 +3382,10 @@
       $$('[data-observe-view]').forEach(button => button.classList.toggle('is-active', button.dataset.observeView === view));
       $$('[data-alert-view]').forEach(button => button.classList.remove('is-active'));
       $$('[data-observe-content]').forEach(section => section.classList.toggle('is-active', section.dataset.observeContent === view));
-      const observePaths = { overview: '监控大盘 / 告警总览', services: '监控大盘 / 服务', hosts: '监控大盘 / 主机节点' };
+      const observePaths = { overview: '监控大盘 / 告警与服务', hosts: '监控大盘 / 主机节点' };
       $('#breadcrumb-current').textContent = observePaths[view] || '监控大盘';
       $('#sidebar-alert-center').classList.toggle('is-active', view === 'overview');
+      if (view === 'hosts') closeHostResourceDetail();
     }
 
     $$('.nav-button[data-page]').forEach(button => button.addEventListener('click', () => button.dataset.page === 'observability' ? showObserveView('overview') : showPage(button.dataset.page)));
@@ -3489,7 +3582,7 @@
         const state = hostPriorityState(host, host.score);
         const bottleneck = hostBottleneck(host);
         const alerts = host.alerts.critical + host.alerts.major + host.alerts.warning;
-        return `<article class="priority-host-card is-${state}" data-priority-host="${host.id}" tabindex="0">
+        return `<article class="priority-host-card is-${state}${activePriorityHost === host.id ? ' is-selected' : ''}" data-priority-host="${host.id}" tabindex="0">
           <span class="host-rank">#${String(index + 1).padStart(2, '0')}</span><span class="host-pressure-score">${host.score}<small>/100</small></span>
           <input class="host-card-select" type="checkbox" data-host-select="${host.id}" ${selectedPriorityHosts.has(host.id) ? 'checked' : ''} aria-label="选择 ${host.name}" />
           <h3>${host.name}</h3><p>${host.ip} · ${host.label} · ${host.environment}</p>
@@ -3510,6 +3603,14 @@
       updateBulkProbeState();
     }
 
+    function trendPoints(currentValue, step, pattern = []) {
+      const current = currentValue ?? 0;
+      return Array.from({ length: 11 }, (_, index) => {
+        const value = Math.max(0, Math.min(100, current - step * (10 - index) + (pattern[index] || 0)));
+        return `${index * 72},${Math.round(160 - value * 1.35)}`;
+      }).join(' ');
+    }
+
     function openHostResourceDetail(hostId) {
       const host = priorityHosts.find(item => item.id === hostId);
       if (!host) return;
@@ -3518,8 +3619,9 @@
       const score = hostPressureScore(host);
       const state = hostPriorityState(host, score);
       const rank = sortedHosts.findIndex(item => item.id === hostId) + 1;
-      $('#host-list-page').classList.add('is-hidden');
+      $('#host-monitor-workspace').classList.add('is-detail-mode');
       $('#host-resource-detail').classList.add('is-active');
+      renderPriorityHosts();
       $('#detail-rank-note').textContent = `调度队列 #${rank} · 资源紧张度 ${score}`;
       $('#detail-host-title').textContent = host.name;
       $('#detail-host-meta').textContent = `${host.ip} · Linux amd64 · ${host.label} · ${host.environment}`;
@@ -3540,12 +3642,37 @@
       $('#detail-capacity-days').className = `forecast-number ${host.daysToFull && host.daysToFull <= 30 ? '' : 'text-good'}`;
       $('#detail-capacity-current').textContent = host.disk == null ? '—' : `${host.disk}%`;
       $('#detail-capacity-bar').style.setProperty('--value', `${host.disk ?? 0}%`);
+      $('#detail-capacity-bar').classList.toggle('is-stable', !host.daysToFull || host.daysToFull > 30);
+      $('#detail-capacity-state').textContent = host.unmanaged ? '等待采集' : host.daysToFull && host.daysToFull <= 30 ? '需处理' : '容量稳定';
+      $('#detail-capacity-state').className = `badge ${host.unmanaged ? 'warn' : host.daysToFull && host.daysToFull <= 30 ? 'bad' : 'good'}`;
       $('#detail-capacity-copy').textContent = host.unmanaged ? '安装监控探针并取得足够历史样本后，系统才会生成容量预测。' : host.daysToFull ? `近 7 天日均增长 ${host.dailyGrowth}，建议在达到阈值前完成扩容或数据清理。` : `近 7 天日均增长 ${host.dailyGrowth}，当前没有容量耗尽风险。`;
+      $('#detail-capacity-action').textContent = host.daysToFull && host.daysToFull <= 30 ? '查看容量处置 →' : '查看容量明细 →';
+      $('#detail-capacity-action').dataset.toast = `已打开 ${host.name} 容量监控明细`;
+      const diskStep = host.unmanaged ? 0 : Number.parseFloat(host.dailyGrowth) * 3;
+      $('#detail-trend-disk').setAttribute('points', trendPoints(host.disk, diskStep));
+      $('#detail-trend-memory').setAttribute('points', trendPoints(host.memory, 0.15, [0,2,-1,3,-2,2,-1,2,-2,1,0]));
+      $('#detail-trend-cpu').setAttribute('points', trendPoints(host.cpu, 0, [-7,5,-4,8,-3,7,-8,4,-5,6,0]));
       $('#detail-disk-body').innerHTML = host.diskRows.length ? host.diskRows.map(row => `<tr><td><strong>${row[0]}</strong></td><td class="mono">${row[1]}</td><td>${row[2]}</td><td class="${Number.parseInt(row[3], 10) >= 85 ? 'text-bad' : ''}"><strong>${row[3]}</strong></td><td>${row[4]}</td><td>${row[5]}</td><td><span class="freshness"><span class="status-dot"></span>${row[6]}</span></td></tr>`).join('') : '<tr><td colspan="7" class="empty-events">尚无监控数据，请先安装探针。</td></tr>';
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
-    $('#priority-host-search').addEventListener('input', renderPriorityHosts);
+    function closeHostResourceDetail() {
+      const workspace = $('#host-monitor-workspace');
+      if (!workspace) return;
+      workspace.classList.remove('is-detail-mode');
+      $('#host-resource-detail').classList.remove('is-active');
+      activePriorityHost = null;
+      renderPriorityHosts();
+    }
+
+    $('#priority-host-search').addEventListener('input', event => {
+      $('#compact-host-search').value = event.target.value;
+      renderPriorityHosts();
+    });
+    $('#compact-host-search').addEventListener('input', event => {
+      $('#priority-host-search').value = event.target.value;
+      renderPriorityHosts();
+    });
     $('#priority-host-state-filter').addEventListener('change', renderPriorityHosts);
     $('#bulk-probe-action').addEventListener('change', updateBulkProbeState);
     $('#select-all-hosts').addEventListener('change', event => {
@@ -3556,7 +3683,7 @@
       const action = $('#bulk-probe-action').value;
       showToast(`已为 ${selectedPriorityHosts.size} 个节点创建“${probeActionLabels[action]}”任务`);
     });
-    $('#back-host-list').addEventListener('click', () => { $('#host-resource-detail').classList.remove('is-active'); $('#host-list-page').classList.remove('is-hidden'); });
+    $('#back-host-list').addEventListener('click', closeHostResourceDetail);
     $$('[data-node-op]').forEach(button => button.addEventListener('click', () => {
       const host = priorityHosts.find(item => item.id === activePriorityHost);
       showToast(`已为 ${host?.name || '当前节点'} 创建“${probeActionLabels[button.dataset.nodeOp]}”任务`);
