@@ -209,10 +209,10 @@ async function loginThroughUi(page, baseUrl, { desktop = false } = {}) {
   await page.getByPlaceholder("输入用户名").fill(adminUsername);
   await page.getByPlaceholder("输入密码").fill(adminPassword);
   await Promise.all([
-    page.waitForURL((url) => desktop ? url.pathname === "/" && url.hash === "#/" : url.pathname === "/", { timeout: 20_000 }),
+    page.waitForURL((url) => desktop ? url.pathname === "/" && url.hash === "#/monitoring" : url.pathname === "/monitoring", { timeout: 20_000 }),
     page.getByRole("button", { name: "进入运维桌面" }).click(),
   ]);
-  await expectVisible(page.locator(".overview-view"), "环境总览");
+  await expectVisible(page.locator(".monitoring-view"), "监控大盘");
   await expectNoRouteError(page, "登录流程");
 }
 
@@ -254,6 +254,10 @@ function seedMonitoringFixture(dataDirectory, { environmentId, connectionId, ser
 }
 
 async function verifyEnvironmentAndMaintenance(page, { baseUrl, sshFixture }) {
+  await page.locator(".primary-menu").getByRole("button", { name: "环境总览" }).click();
+  await page.waitForURL((url) => url.pathname === "/overview", { timeout: 20_000 });
+  await expectVisible(page.locator(".overview-view"), "环境总览");
+
   await page.getByRole("button", { name: "新建环境", exact: true }).click();
   const environmentDialog = page.getByRole("dialog", { name: "新建环境" });
   await expectVisible(environmentDialog, "新建环境对话框");
@@ -390,17 +394,16 @@ async function verifyCredentialsAndMonitoring(page, { environmentId, serviceName
   await page.locator(".primary-menu").getByRole("button", { name: "监控大盘" }).click();
   await page.waitForURL((url) => url.pathname === "/monitoring", { timeout: 20_000 });
   await expectVisible(page.getByRole("heading", { name: "监控大盘" }), "监控大盘页");
+  await page.getByRole("tab", { name: "主机节点" }).click();
+  await expectVisible(page.locator(".priority-host-grid"), "监控主机卡片列表");
   await expectVisible(page.getByRole("heading", { name: "flow-host-a" }), "监控主机下钻");
-  await page.getByRole("tab", { name: "业务服务" }).click();
+  await page.getByRole("heading", { name: "flow-host-a" }).click();
+  await expectVisible(page.locator(".host-resource-detail"), "监控主机详情");
+  await page.getByRole("tab", { name: "主机节点" }).click();
+  await expectVisible(page.locator(".priority-host-grid"), "重新进入主机卡片列表");
+  await page.getByRole("tab", { name: "告警与服务" }).click();
   await expectVisible(page.getByText(serviceName).first(), "服务时序下钻");
-  process.stdout.write("Given/When/Then 监控下钻: pass\n");
-  await page.getByRole("tab", { name: "NOC 全屏" }).click();
-  await expectVisible(page.locator(".noc-screen"), "NOC 全屏");
-  await page.waitForFunction(() => document.fullscreenElement !== null, undefined, { timeout: 10_000 });
-  await page.getByRole("button", { name: "退出全屏" }).click();
-  await page.waitForFunction(() => document.fullscreenElement === null, undefined, { timeout: 10_000 });
-  await expectVisible(page.getByRole("heading", { name: "监控大盘" }), "退出 NOC 后回到监控大盘");
-  process.stdout.write("Given/When/Then NOC 进退全屏: pass\n");
+  process.stdout.write("Given/When/Then 监控双页与主机下钻: pass\n");
   await expectNoRouteError(page, "凭据中心与监控大盘流程");
 }
 

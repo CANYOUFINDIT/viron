@@ -210,8 +210,8 @@ function onWorkspaceMenuPointerEnter() {
   sidebarHoverOpen.value = true;
 }
 
-function onWorkspaceMenuPointerLeave(event: PointerEvent) {
-  if (sidebarPinned.value || isHoverFlyoutTarget(event.relatedTarget)) return;
+function onWorkspaceMenuPointerLeave(event: Event) {
+  if (sidebarPinned.value || isHoverFlyoutTarget((event as PointerEvent).relatedTarget)) return;
   sidebarHoverOpen.value = false;
 }
 

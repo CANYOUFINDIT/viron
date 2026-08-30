@@ -59,6 +59,8 @@ describe("monitoring severity ranking", () => {
   });
 
   it("scores unmanaged hosts low and saturated disks as critical", () => {
+    expect(hostPressureScore({ offline: true })).toBe(100);
+    expect(hostPriorityState({ offline: true })).toBe("offline");
     expect(hostPressureScore({ missing: true })).toBe(8);
     expect(hostPriorityState({ missing: true })).toBe("unmanaged");
     const hot = hostPressureScore({

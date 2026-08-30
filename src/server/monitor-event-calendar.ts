@@ -409,23 +409,23 @@ export interface PlatformMonitorAlertQuery {
   to: number;
   severity?: MonitorAlertSeverity | "all";
   status?: "active" | "recovered" | "event" | "all";
-  limit?: number;
+  limit?: number | null;
+  offset?: number;
 }
 
-async function loadPlatformAlertRows(
-  app: FastifyInstance,
-  query: PlatformMonitorAlertQuery,
-): Promise<PlatformStoredEventRow[]> {
+function platformAlertWhere(query: PlatformMonitorAlertQuery): { clauses: string[]; parameters: unknown[] } | null {
+  const generatedAt = new Date().toISOString();
   const clauses = [
     "e.workspace_type = ?",
     "e.workspace_id = ?",
-    "a.triggered_at <= ?",
-    "COALESCE(NULLIF(a.last_seen_at, ''), a.recovered_at, a.triggered_at) >= ?",
+    "a.triggered_at < ?",
+    "(CASE WHEN a.status = 'active' THEN ? WHEN a.recovered_at IS NOT NULL THEN a.recovered_at ELSE a.triggered_at END) >= ?",
   ];
   const parameters: unknown[] = [
     query.workspaceType,
     query.workspaceId,
     new Date(query.to).toISOString(),
+    generatedAt,
     new Date(query.from).toISOString(),
   ];
   if (query.environmentId) {
@@ -433,7 +433,7 @@ async function loadPlatformAlertRows(
     parameters.push(query.environmentId);
   }
   if (query.allowedEnvironmentIds) {
-    if (!query.allowedEnvironmentIds.length) return [];
+    if (!query.allowedEnvironmentIds.length) return null;
     clauses.push(`a.environment_id IN (${query.allowedEnvironmentIds.map(() => "?").join(",")})`);
     parameters.push(...query.allowedEnvironmentIds);
   }
@@ -445,7 +445,18 @@ async function loadPlatformAlertRows(
     clauses.push("a.status = ?");
     parameters.push(query.status);
   }
-  const limit = Math.min(Math.max(1, query.limit ?? 500), 2_000);
+  return { clauses, parameters };
+}
+
+async function loadPlatformAlertRows(
+  app: FastifyInstance,
+  query: PlatformMonitorAlertQuery,
+): Promise<PlatformStoredEventRow[]> {
+  const where = platformAlertWhere(query);
+  if (!where) return [];
+  const limit = query.limit === null ? null : Math.min(Math.max(1, query.limit ?? 100), 500);
+  const offset = Math.max(0, Math.trunc(query.offset ?? 0));
+  const pagination = limit === null ? "" : `LIMIT ${limit} OFFSET ${offset}`;
   return app.db.prepare(`
     SELECT a.id, a.rule_type, a.rule_key, a.status, a.severity, a.peak_severity, a.occurrence_count,
       a.target_name, a.details_json, a.triggered_at, a.recovered_at, a.last_seen_at,
@@ -453,10 +464,22 @@ async function loadPlatformAlertRows(
       a.connection_name, a.target_type
     FROM monitor_alerts a
     JOIN environments e ON e.id = a.environment_id
-    WHERE ${clauses.join(" AND ")}
+    WHERE ${where.clauses.join(" AND ")}
     ORDER BY CASE WHEN a.status = 'active' THEN 0 WHEN a.status = 'event' THEN 1 ELSE 2 END, a.triggered_at DESC
-    LIMIT ${limit}
-  `).all(...parameters) as Promise<PlatformStoredEventRow[]>;
+    ${pagination}
+  `).all(...where.parameters) as Promise<PlatformStoredEventRow[]>;
+}
+
+async function countPlatformAlertRows(app: FastifyInstance, query: PlatformMonitorAlertQuery): Promise<number> {
+  const where = platformAlertWhere(query);
+  if (!where) return 0;
+  const row = await app.db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM monitor_alerts a
+    JOIN environments e ON e.id = a.environment_id
+    WHERE ${where.clauses.join(" AND ")}
+  `).get(...where.parameters) as { count: number | string } | undefined;
+  return Math.max(0, Number(row?.count) || 0);
 }
 
 function mapPlatformEvent(row: PlatformStoredEventRow): MonitorPlatformEventItem {
@@ -492,8 +515,13 @@ export async function loadPlatformEventCalendar(
   const generatedAt = Date.now();
   const from = days[0]!.start;
   const to = days.at(-1)!.end;
-  const events = await loadPlatformAlertRows(app, { ...query, from, to, limit: 2_000 });
-  const aggregates = days.map((day) => dayAggregate(day, events, [], generatedAt));
+  // The platform calendar is a system fact view. It deliberately reads every
+  // matching alert row and never joins per-user read/cleared state.
+  const events = await loadPlatformAlertRows(app, { ...query, from, to, limit: null });
+  const aggregates = days.map((day) => ({
+    ...dayAggregate(day, events, [], generatedAt),
+    coverageRatio: day.start > generatedAt ? 0 : 1,
+  }));
   const triggeredInMonth = events.filter((event) => {
     const triggeredAt = Date.parse(event.triggered_at);
     return triggeredAt >= from && triggeredAt < to;
@@ -525,7 +553,10 @@ export async function loadPlatformEventCalendar(
 export async function loadPlatformEvents(
   app: FastifyInstance,
   query: PlatformMonitorAlertQuery,
-): Promise<MonitorPlatformEventItem[]> {
-  const rows = await loadPlatformAlertRows(app, query);
-  return rows.map(mapPlatformEvent);
+): Promise<{ items: MonitorPlatformEventItem[]; total: number }> {
+  const [rows, total] = await Promise.all([
+    loadPlatformAlertRows(app, query),
+    countPlatformAlertRows(app, query),
+  ]);
+  return { items: rows.map(mapPlatformEvent), total };
 }

@@ -153,6 +153,13 @@ export interface MonitorPlatformEventItem extends MonitorHostEventItem {
   targetType: MonitorAlertTargetType;
 }
 
+export interface MonitorPlatformEventListResponse {
+  items: MonitorPlatformEventItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
 export interface DesktopMonitorAlertNotification {
   id: string;
   title: string;

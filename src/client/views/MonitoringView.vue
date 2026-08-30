@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { Radio, RefreshCw, Server, ShieldAlert } from "@lucide/vue";
+import { RefreshCw, Server, ShieldAlert } from "@lucide/vue";
 import { ElMessage } from "element-plus";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import type { MonitorAlertItem } from "../../shared/monitor-alerts";
+import type { MonitorPlatformEventItem } from "../../shared/monitor-alerts";
 import {
   MONITORING_HOST_PAGE_CONCURRENCY,
   MONITORING_HOST_PAGE_SIZE,
@@ -15,7 +15,6 @@ import { api } from "../api";
 import PageHeader from "../components/PageHeader.vue";
 import AlertServicePanel from "../components/monitoring/AlertServicePanel.vue";
 import HostFleetPanel, { type MonitoringHostCard } from "../components/monitoring/HostFleetPanel.vue";
-import NocScreen from "../components/monitoring/NocScreen.vue";
 import type { MonitoringProblemNode, MonitoringServiceCard } from "../components/monitoring/ServiceApmPanel.vue";
 import { translate as tr } from "../i18n";
 import { session } from "../session";
@@ -44,7 +43,7 @@ interface OverviewPayload {
 
 interface EnvironmentOption { id: string; name: string }
 
-type MonitoringView = "overview" | "hosts" | "noc";
+type MonitoringView = "overview" | "hosts";
 
 const route = useRoute();
 const router = useRouter();
@@ -54,16 +53,13 @@ const environments = ref<EnvironmentOption[]>([]);
 const overview = ref<OverviewPayload | null>(null);
 const lastUpdated = ref("");
 const error = ref("");
-const alerts = ref<MonitorAlertItem[]>([]);
 const hostsLoadingMore = ref(false);
 let overviewAbort: AbortController | null = null;
-let alertsAbort: AbortController | null = null;
 let refreshTimer: number | undefined;
-let overviewInFlight = false;
 
 const view = computed<MonitoringView>(() => {
   const value = String(route.query.view ?? "overview");
-  if (value === "hosts" || value === "noc") return value;
+  if (value === "hosts") return value;
   return "overview";
 });
 const environmentId = computed(() => String(route.query.environmentId ?? ""));
@@ -96,7 +92,7 @@ function overviewQuery(extra: Record<string, string>) {
   return `/api/v1/monitoring/overview?${params}`;
 }
 
-function mergeHostPage(page: OverviewPayload, replace: boolean, keepIds?: Set<string>) {
+function mergeHostPage(page: OverviewPayload, replace: boolean, keepIds?: Set<string>, refreshCollections = false) {
   const current = overview.value;
   if (replace || !current) {
     overview.value = page;
@@ -114,12 +110,12 @@ function mergeHostPage(page: OverviewPayload, replace: boolean, keepIds?: Set<st
     partialFailures: page.partialFailures,
     summary: {
       ...page.summary,
-      serviceTotal: page.summary.serviceTotal || current.summary.serviceTotal,
+      serviceTotal: refreshCollections ? page.summary.serviceTotal : page.summary.serviceTotal || current.summary.serviceTotal,
     },
     hosts: merged.sort(compareMonitoringHosts),
-    services: current.services.length ? current.services : page.services,
-    serviceRanking: current.serviceRanking.length ? current.serviceRanking : page.serviceRanking,
-    problemNodes: current.problemNodes.length ? current.problemNodes : page.problemNodes,
+    services: refreshCollections ? page.services : current.services.length ? current.services : page.services,
+    serviceRanking: refreshCollections ? page.serviceRanking : current.serviceRanking.length ? current.serviceRanking : page.serviceRanking,
+    problemNodes: refreshCollections ? page.problemNodes : current.problemNodes.length ? current.problemNodes : page.problemNodes,
   };
 }
 
@@ -127,7 +123,6 @@ async function loadOverview(silent = false) {
   overviewAbort?.abort();
   overviewAbort = new AbortController();
   const signal = overviewAbort.signal;
-  overviewInFlight = true;
   if (!silent) loading.value = true;
   else refreshing.value = true;
   const seenIds = new Set<string>();
@@ -138,12 +133,11 @@ async function loadOverview(silent = false) {
     );
     if (signal.aborted || !isMonitoringRoute()) return;
     for (const host of first.hosts) seenIds.add(host.sshConnectionId);
-    mergeHostPage(first, !silent);
+    mergeHostPage(first, !silent, undefined, true);
     lastUpdated.value = first.generatedAt;
     error.value = "";
     loading.value = false;
     refreshing.value = false;
-    void loadAlerts();
 
     const total = Math.min(first.summary.hostTotal, MONITORING_MAX_HOSTS);
     const offsets: number[] = [];
@@ -181,26 +175,10 @@ async function loadOverview(silent = false) {
     else ElMessage.warning(caught instanceof Error ? caught.message : tr("部分主机监控数据加载失败"));
   } finally {
     if (overviewAbort?.signal === signal) {
-      overviewInFlight = false;
       loading.value = false;
       refreshing.value = false;
       hostsLoadingMore.value = false;
     }
-  }
-}
-
-async function loadAlerts() {
-  alertsAbort?.abort();
-  alertsAbort = new AbortController();
-  try {
-    const params = new URLSearchParams();
-    if (environmentId.value) params.set("environmentId", environmentId.value);
-    params.set("limit", "500");
-    const response = await api<{ items: MonitorAlertItem[] }>(`/api/v1/monitor-alerts?${params.toString()}`, { signal: alertsAbort.signal });
-    alerts.value = response.items;
-  } catch (caught) {
-    if ((caught as { name?: string }).name === "AbortError") return;
-    alerts.value = [];
   }
 }
 
@@ -216,7 +194,6 @@ function startRefresh() {
   refreshTimer = window.setInterval(() => {
     if (document.hidden || !isMonitoringRoute()) return;
     void loadOverview(true);
-    void loadAlerts();
   }, refreshSeconds.value * 1000);
 }
 
@@ -240,7 +217,6 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   stopRefresh();
   overviewAbort?.abort();
-  alertsAbort?.abort();
   document.removeEventListener("visibilitychange", onVisibility);
 });
 
@@ -251,13 +227,16 @@ watch(environmentId, () => {
 watch(() => route.name, (name) => {
   if (name === "monitoring") return;
   overviewAbort?.abort();
-  alertsAbort?.abort();
   stopRefresh();
 });
 watch(refreshSeconds, () => startRefresh());
 
 function selectHost(host: MonitoringHostCard | null) {
   patchQuery({ view: "hosts", hostId: host?.sshConnectionId });
+}
+
+function switchView(next: MonitoringView) {
+  patchQuery({ view: next, hostId: undefined, serviceId: undefined });
 }
 
 function openService(service: MonitoringServiceCard) {
@@ -268,7 +247,7 @@ function openService(service: MonitoringServiceCard) {
   });
 }
 
-function openEvent(event: MonitorAlertItem) {
+function openEvent(event: MonitorPlatformEventItem) {
   if (event.targetType === "tls_endpoint") {
     void router.push({ name: "ssh-keys", query: { tab: "ssl" } });
     return;
@@ -293,10 +272,6 @@ function openHostMaintenance(host: MonitoringHostCard) {
     params: { id: host.environmentId },
     query: { tab: "maintenance", hostId: host.sshConnectionId },
   });
-}
-
-function openInstall(host: MonitoringHostCard) {
-  void router.push({ name: "environment", params: { id: host.environmentId }, query: { tab: "maintenance", maintenanceHostId: host.sshConnectionId } });
 }
 
 const summary = computed(() => overview.value?.summary ?? {
@@ -341,7 +316,7 @@ const summary = computed(() => overview.value?.summary ?? {
         role="tab"
         :aria-selected="view === 'overview'"
         :class="{ 'is-active': view === 'overview' }"
-        @click="patchQuery({ view: 'overview' })"
+        @click="switchView('overview')"
       >
         <ShieldAlert :size="14" />
         {{ $t('告警与服务') }}
@@ -351,20 +326,10 @@ const summary = computed(() => overview.value?.summary ?? {
         role="tab"
         :aria-selected="view === 'hosts'"
         :class="{ 'is-active': view === 'hosts' }"
-        @click="patchQuery({ view: 'hosts' })"
+        @click="switchView('hosts')"
       >
         <Server :size="14" />
         {{ $t('主机节点') }}
-      </button>
-      <button
-        type="button"
-        role="tab"
-        :aria-selected="view === 'noc'"
-        :class="{ 'is-active': view === 'noc' }"
-        @click="patchQuery({ view: 'noc' })"
-      >
-        <Radio :size="14" />
-        {{ $t('NOC 全屏') }}
       </button>
     </nav>
 
@@ -376,32 +341,21 @@ const summary = computed(() => overview.value?.summary ?? {
         :environment-id="environmentId"
         :environments="environments"
         :services="overview?.services ?? []"
-        :alerts="alerts"
+        :refresh-key="overview?.generatedAt"
         @open-event="openEvent"
         @open-service="openService"
       />
       <HostFleetPanel
         v-else-if="view === 'hosts'"
         :hosts="overview?.hosts ?? []"
-        :alerts="alerts"
         :selected-host-id="selectedHostId"
         :can-operate="canOperate"
         :loading-more="hostsLoadingMore"
         :loaded-count="overview?.hosts.length ?? 0"
         :host-total="summary.hostTotal"
         @select="selectHost"
-        @install="openInstall"
+        @refresh="loadOverview(true)"
         @open-maintenance="openHostMaintenance"
-      />
-      <NocScreen
-        v-else-if="view === 'noc' && overview"
-        :generated-at="overview.generatedAt"
-        :summary="summary"
-        :hosts="overview.hosts"
-        :problem-nodes="overview.problemNodes"
-        :ranking="overview.serviceRanking"
-        :alerts="alerts"
-        @exit="patchQuery({ view: 'overview' })"
       />
     </main>
   </section>

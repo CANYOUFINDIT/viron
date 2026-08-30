@@ -2,7 +2,6 @@
 import { RefreshCw, Server } from "@lucide/vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { computed, ref } from "vue";
-import type { MonitorAlertItem } from "../../../shared/monitor-alerts";
 import {
   compareMonitoringHosts,
   hostPressureScore,
@@ -12,6 +11,7 @@ import {
 } from "../../../shared/monitoring";
 import { api } from "../../api";
 import { translate as tr } from "../../i18n";
+import type { MonitorInstallPreflight, MonitorInstallTask } from "../service-maintenance/types";
 import HostMonitorDashboard from "../HostMonitorDashboard.vue";
 
 export interface MonitoringHostDisk {
@@ -47,6 +47,9 @@ export interface MonitoringHostCard {
   load5?: number | null;
   operatingSystem: string;
   architecture: string;
+  installManaged?: boolean;
+  installPath?: string;
+  alertCounts?: MonitoringAlertCounts;
   worstDisk: { path: string; usedPercent: number | null } | null;
   disks?: MonitoringHostDisk[];
 }
@@ -55,7 +58,6 @@ type ProbeAction = "install" | "update" | "reinstall" | "restart" | "clear";
 
 const props = defineProps<{
   hosts: MonitoringHostCard[];
-  alerts?: MonitorAlertItem[];
   selectedHostId: string;
   canOperate: boolean;
   loadingMore?: boolean;
@@ -65,7 +67,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   select: [host: MonitoringHostCard | null];
-  install: [host: MonitoringHostCard];
+  refresh: [];
   "open-maintenance": [host: MonitoringHostCard];
 }>();
 
@@ -74,39 +76,40 @@ const stateFilter = ref<"all" | MonitoringHostPriorityState>("all");
 const selectedIds = ref(new Set<string>());
 const bulkAction = ref<ProbeAction | "">("");
 const probeBusy = ref(false);
+const probeResultsOpen = ref(false);
+const probeResults = ref<Array<{
+  id: string;
+  host: string;
+  action: ProbeAction;
+  status: "success" | "submitted" | "skipped" | "failed";
+  message: string;
+  taskId?: string;
+}>>([]);
+const probeOperationConcurrency = 4;
+const maxBulkHosts = 50;
 
-const alertCountsByHost = computed(() => {
-  const map = new Map<string, MonitoringAlertCounts>();
-  for (const alert of props.alerts ?? []) {
-    if (alert.status !== "active" || !alert.sshConnectionId) continue;
-    const current = map.get(alert.sshConnectionId) ?? { critical: 0, major: 0, warning: 0 };
-    if (alert.peakSeverity === "critical") current.critical += 1;
-    else if (alert.peakSeverity === "major") current.major += 1;
-    else if (alert.peakSeverity === "warning") current.warning += 1;
-    map.set(alert.sshConnectionId, current);
-  }
-  return map;
-});
-
-const rankedHosts = computed(() => {
-  const query = hostQuery.value.trim().toLowerCase();
+const allRankedHosts = computed(() => {
   return [...props.hosts]
     .map((host) => {
-      const alertCounts = alertCountsByHost.value.get(host.sshConnectionId) ?? { critical: 0, major: 0, warning: 0 };
+      const alertCounts = host.alertCounts ?? { critical: 0, major: 0, warning: 0 };
       const score = hostPressureScore({ ...host, alertCounts });
       const state = hostPriorityState({ ...host, alertCounts }, score);
       return { host, score, state, alertCounts };
     })
-    .sort((left, right) => right.score - left.score || compareMonitoringHosts(left.host, right.host))
-    .filter((item) => {
-      const matchesQuery = !query || `${item.host.connectionName} ${item.host.host} ${item.host.environmentName}`.toLowerCase().includes(query);
-      const matchesState = stateFilter.value === "all" || item.state === stateFilter.value;
-      return matchesQuery && matchesState;
-    });
+    .sort((left, right) => right.score - left.score || compareMonitoringHosts(left.host, right.host));
+});
+
+const rankedHosts = computed(() => {
+  const query = hostQuery.value.trim().toLowerCase();
+  return allRankedHosts.value.filter((item) => {
+    const matchesQuery = !query || `${item.host.connectionName} ${item.host.host} ${item.host.environmentName}`.toLowerCase().includes(query);
+    const matchesState = stateFilter.value === "all" || item.state === stateFilter.value;
+    return matchesQuery && matchesState;
+  });
 });
 
 const selected = computed(() => props.hosts.find((host) => host.sshConnectionId === props.selectedHostId) ?? null);
-const selectedRank = computed(() => rankedHosts.value.find((item) => item.host.sshConnectionId === props.selectedHostId) ?? null);
+const selectedRank = computed(() => allRankedHosts.value.find((item) => item.host.sshConnectionId === props.selectedHostId) ?? null);
 const detailMode = computed(() => Boolean(selected.value));
 const visibleIds = computed(() => rankedHosts.value.map((item) => item.host.sshConnectionId));
 const selectedCount = computed(() => visibleIds.value.filter((id) => selectedIds.value.has(id)).length);
@@ -134,6 +137,7 @@ function formatFreshness(value: string | null | undefined) {
 }
 
 function bottleneck(host: MonitoringHostCard, _state: MonitoringHostPriorityState, alerts: MonitoringAlertCounts) {
+  if (host.offline) return tr("主机或监控探针离线");
   if (host.missing) return tr("未安装监控探针");
   if ((host.diskUsedPercent ?? 0) >= 90 && host.worstDisk?.path) return `${host.worstDisk.path} ${formatPercent(host.diskUsedPercent)}`;
   if (host.stale) return tr("监控数据陈旧");
@@ -149,6 +153,7 @@ function bottleneck(host: MonitoringHostCard, _state: MonitoringHostPriorityStat
 }
 
 function stateLabel(state: MonitoringHostPriorityState) {
+  if (state === "offline") return tr("离线");
   if (state === "critical") return tr("资源紧张");
   if (state === "warning") return tr("需要关注");
   if (state === "unmanaged") return tr("未安装探针");
@@ -179,54 +184,164 @@ function closeDetail() {
   emit("select", null);
 }
 
-function probePath(host: MonitoringHostCard, action: "install-tasks" | "restart" | "clear") {
+function probePath(host: MonitoringHostCard, action: "install/preflight" | "install-tasks" | "restart" | "clear") {
   return `/api/v1/environments/${host.environmentId}/monitor-hosts/${host.sshConnectionId}/${action}`;
 }
 
-async function runProbe(host: MonitoringHostCard, action: ProbeAction) {
-  if (action === "clear") {
-    await ElMessageBox.confirm(tr("确认清理 {{0}} 的监控数据？", [host.connectionName]), tr("清理监控数据"), {
-      type: "warning",
-      confirmButtonText: tr("清理"),
-      cancelButtonText: tr("取消"),
-    });
+function probeActionLabel(action: ProbeAction) {
+  return ({
+    install: tr("安装探针"),
+    update: tr("更新探针"),
+    reinstall: tr("重装探针"),
+    restart: tr("重启探针"),
+    clear: tr("清理节点监控数据"),
+  })[action];
+}
+
+function installRequestBody(installPath: string | undefined) {
+  return JSON.stringify(installPath ? { installPath } : {});
+}
+
+async function requestPreflight(host: MonitoringHostCard, installPath?: string) {
+  return await api<{ item: MonitorInstallPreflight }>(
+    probePath(host, "install/preflight"),
+    { method: "POST", body: installRequestBody(installPath) },
+  ).then((response) => response.item);
+}
+
+async function preflightInstall(host: MonitoringHostCard, action: ProbeAction, allowPathPrompt: boolean) {
+  let result = await requestPreflight(host, host.installPath || undefined);
+  if (!result.canInstall && allowPathPrompt && (result.pathState === "conflict" || result.pathState === "legacy")) {
+    const prompted = await ElMessageBox.prompt(
+      `${result.issues.map((issue) => issue.message).join("；")}。${tr("请输入新的安装目录")}`,
+      probeActionLabel(action),
+      {
+        inputValue: result.defaultInstallPath,
+        inputPattern: /^\/.+/,
+        inputErrorMessage: tr("安装目录必须是绝对路径"),
+        confirmButtonText: tr("重新预检"),
+        cancelButtonText: tr("取消"),
+      },
+    );
+    result = await requestPreflight(host, prompted.value);
+  }
+  if (!result.canInstall) {
+    throw new Error(result.issues.map((issue) => issue.message).join("；") || tr("监控探针安装预检未通过"));
+  }
+  if ((action === "update" || action === "reinstall") && result.pathState !== "upgrade") {
+    throw new Error(tr("没有检测到可管理的 Viron 监控探针，请改用安装操作"));
+  }
+  return result;
+}
+
+async function executeProbe(host: MonitoringHostCard, action: ProbeAction, allowPathPrompt: boolean) {
+  if (action === "install" && !host.missing) {
+    return { status: "skipped" as const, message: tr("已安装探针，未重复安装") };
+  }
+  if ((action === "update" || action === "reinstall" || action === "restart" || action === "clear") && host.missing) {
+    return { status: "skipped" as const, message: tr("尚未安装探针") };
   }
   if (action === "install" || action === "update" || action === "reinstall") {
-    await api(probePath(host, "install-tasks"), { method: "POST", body: "{}" });
-    emit("install", host);
-    return;
+    const preflight = await preflightInstall(host, action, allowPathPrompt);
+    const response = await api<{ item: MonitorInstallTask }>(probePath(host, "install-tasks"), {
+      method: "POST",
+      body: installRequestBody(preflight.installPath),
+    });
+    return {
+      status: "submitted" as const,
+      message: tr("安装任务已进入队列"),
+      taskId: response.item.id,
+    };
   }
   if (action === "restart") {
     await api(probePath(host, "restart"), { method: "POST" });
-    return;
+    return { status: "success" as const, message: tr("监控探针已重启") };
   }
   await api(probePath(host, "clear"), { method: "POST" });
+  return { status: "success" as const, message: tr("节点本地监控缓冲已清理") };
+}
+
+async function mapConcurrent<T, R>(items: T[], concurrency: number, worker: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      results[index] = await worker(items[index]!);
+    }
+  }));
+  return results;
+}
+
+async function confirmProbe(hosts: MonitoringHostCard[], action: ProbeAction) {
+  const target = hosts.length === 1 ? hosts[0]!.connectionName : tr("{{0}} 台主机", [hosts.length]);
+  const detail = action === "clear"
+    ? tr("此操作只清理目标节点上的 viron-monitor 本地缓冲；不会删除 Viron 数据库中的历史采样、系统告警或个人通知。")
+    : action === "reinstall"
+      ? tr("将覆盖现有 Viron 监控探针程序，安装任务会在后台按队列执行。")
+      : action === "install" || action === "update"
+        ? tr("安装任务会先逐台预检，再在后台按队列执行。")
+        : tr("操作将按最多 {{0}} 台并发执行。", [probeOperationConcurrency]);
+  await ElMessageBox.confirm(
+    `${tr("确认对 {{0}} 执行“{{1}}”？", [target, probeActionLabel(action)])}\n${detail}`,
+    probeActionLabel(action),
+    {
+      type: action === "clear" || action === "reinstall" ? "warning" : "info",
+      confirmButtonText: tr("确认执行"),
+      cancelButtonText: tr("取消"),
+    },
+  );
 }
 
 async function applyProbe(hosts: MonitoringHostCard[], action: ProbeAction) {
-  if (!hosts.length) return;
-  probeBusy.value = true;
-  let failed = 0;
+  if (!hosts.length || probeBusy.value) return;
+  if (hosts.length > maxBulkHosts) {
+    ElMessage.warning(tr("单次最多操作 {{0}} 台主机，请缩小选择范围", [maxBulkHosts]));
+    return;
+  }
   try {
-    for (const host of hosts) {
+    await confirmProbe(hosts, action);
+  } catch (caught) {
+    if (caught === "cancel" || caught === "close") return;
+    throw caught;
+  }
+  probeBusy.value = true;
+  try {
+    probeResults.value = await mapConcurrent(hosts, probeOperationConcurrency, async (host) => {
       try {
-        await runProbe(host, action);
+        const result = await executeProbe(host, action, hosts.length === 1);
+        return { id: host.sshConnectionId, host: host.connectionName, action, ...result };
       } catch (caught) {
-        if (caught === "cancel" || caught === "close") return;
-        failed += 1;
-        ElMessage.error(caught instanceof Error ? caught.message : tr("探针操作失败"));
+        return {
+          id: host.sshConnectionId,
+          host: host.connectionName,
+          action,
+          status: caught === "cancel" || caught === "close" ? "skipped" as const : "failed" as const,
+          message: caught === "cancel" || caught === "close"
+            ? tr("已取消")
+            : caught instanceof Error ? caught.message : tr("探针操作失败"),
+        };
       }
-    }
-    if (!failed) ElMessage.success(tr("已提交探针操作"));
+    });
+    const failed = probeResults.value.filter((item) => item.status === "failed").length;
+    const submitted = probeResults.value.filter((item) => item.status === "submitted").length;
+    probeResultsOpen.value = true;
+    if (failed) ElMessage.warning(tr("探针操作完成，{{0}} 项失败", [failed]));
+    else if (submitted) ElMessage.success(tr("{{0}} 个安装任务已进入队列", [submitted]));
+    else ElMessage.success(tr("探针操作已完成"));
+    selectedIds.value = new Set();
+    emit("refresh");
   } finally {
     probeBusy.value = false;
   }
 }
 
 async function applyBulk() {
-  if (!bulkAction.value || !selectedCount.value) return;
+  const action = bulkAction.value;
+  if (!action || !selectedCount.value) return;
   const hosts = rankedHosts.value.filter((item) => selectedIds.value.has(item.host.sshConnectionId)).map((item) => item.host);
-  await applyProbe(hosts, bulkAction.value);
+  await applyProbe(hosts, action);
 }
 
 function probeSelected(action: ProbeAction) {
@@ -236,6 +351,13 @@ function probeSelected(action: ProbeAction) {
 
 function resourceHot(value: number | null) {
   return (value ?? 0) >= 80;
+}
+
+function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]) {
+  if (status === "submitted") return tr("已入队");
+  if (status === "success") return tr("成功");
+  if (status === "skipped") return tr("已跳过");
+  return tr("失败");
 }
 </script>
 
@@ -252,6 +374,7 @@ function resourceHot(value: number | null) {
           <el-input v-model="hostQuery" clearable :placeholder="$t('按主机名、IP 或环境搜索')" class="host-search" />
           <el-select v-model="stateFilter" class="state-filter">
             <el-option value="all" :label="$t('全部状态')" />
+            <el-option value="offline" :label="$t('离线')" />
             <el-option value="critical" :label="$t('资源紧张')" />
             <el-option value="warning" :label="$t('需要关注')" />
             <el-option value="unmanaged" :label="$t('未安装探针')" />
@@ -338,14 +461,14 @@ function resourceHot(value: number | null) {
     <div v-if="selected && selectedRank" class="host-resource-detail">
       <div class="detail-back-row">
         <el-button @click="closeDetail">← {{ $t('返回主机节点') }}</el-button>
-        <span>#{{ rankedHosts.findIndex((item) => item.host.sshConnectionId === selected?.sshConnectionId) + 1 }} · {{ selectedRank.score }}</span>
+        <span>#{{ allRankedHosts.findIndex((item) => item.host.sshConnectionId === selected?.sshConnectionId) + 1 }} · {{ selectedRank.score }}</span>
       </div>
       <section class="host-detail-hero">
         <div>
           <div class="hero-badges">
             <span class="tone-badge" :class="`is-${selectedRank.state}`">{{ stateLabel(selectedRank.state) }}</span>
-            <span class="tone-badge" :class="selected.missing || selected.stale ? 'is-warning' : 'is-healthy'">
-              {{ selected.missing ? $t('未安装探针') : selected.stale ? $t('数据陈旧') : $t('探针在线') }}
+            <span class="tone-badge" :class="selected.offline ? 'is-critical' : selected.missing || selected.stale ? 'is-warning' : 'is-healthy'">
+              {{ selected.offline ? $t('探针离线') : selected.missing ? $t('未安装探针') : selected.stale ? $t('数据陈旧') : $t('探针在线') }}
             </span>
           </div>
           <h2>{{ selected.connectionName }}</h2>
@@ -403,6 +526,24 @@ function resourceHot(value: number | null) {
       />
     </div>
   </section>
+
+  <el-dialog v-model="probeResultsOpen" :title="$t('探针操作结果')" width="min(720px, 94vw)" append-to-body>
+    <div class="probe-result-summary">
+      <span>{{ $t('本批次共 {0} 台主机', [probeResults.length]) }}</span>
+      <small>{{ $t('安装、更新和重装任务会在服务端按并发上限继续执行') }}</small>
+    </div>
+    <div class="probe-result-list">
+      <article v-for="item in probeResults" :key="item.id">
+        <strong>{{ item.host }}</strong>
+        <span>{{ probeActionLabel(item.action) }}</span>
+        <b :class="`is-${item.status}`">{{ resultStatusLabel(item.status) }}</b>
+        <small>{{ item.message }}<template v-if="item.taskId"> · {{ item.taskId }}</template></small>
+      </article>
+    </div>
+    <template #footer>
+      <el-button @click="probeResultsOpen = false">{{ $t('关闭') }}</el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <style scoped>
@@ -515,6 +656,7 @@ function resourceHot(value: number | null) {
 }
 
 .priority-host-card.is-critical { border-top-color: var(--red-600); }
+.priority-host-card.is-offline { border-top-color: var(--red-600); background: color-mix(in srgb, var(--red-100) 30%, var(--surface)); }
 .priority-host-card.is-warning { border-top-color: var(--amber-600); }
 .priority-host-card.is-unmanaged { border-top-color: var(--ink-300); }
 .priority-host-card.is-selected { background: var(--teal-50); }
@@ -676,6 +818,7 @@ function resourceHot(value: number | null) {
 }
 
 .tone-badge.is-critical { background: var(--red-100); color: var(--red-600); }
+.tone-badge.is-offline { background: var(--red-100); color: var(--red-600); }
 .tone-badge.is-warning,
 .tone-badge.is-unmanaged { background: var(--amber-100); color: var(--amber-600); }
 .tone-badge.is-healthy { background: var(--teal-50); color: var(--teal-700); }
@@ -710,6 +853,40 @@ function resourceHot(value: number | null) {
 .host-disk-table td { padding: 8px 14px; border-bottom: 1px solid var(--ink-100); text-align: left; }
 .host-disk-table th { color: var(--ink-400); font-weight: 650; }
 
+.probe-result-summary {
+  margin-bottom: 10px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.probe-result-summary small { color: var(--ink-400); }
+
+.probe-result-list {
+  max-height: 52vh;
+  overflow-y: auto;
+  border: 1px solid var(--ink-100);
+  border-radius: var(--radius-card, 8px);
+}
+
+.probe-result-list article {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) 110px 72px minmax(180px, 1.5fr);
+  gap: 10px;
+  align-items: center;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--ink-100);
+  font-size: 12px;
+}
+
+.probe-result-list article:last-child { border-bottom: 0; }
+.probe-result-list small { color: var(--ink-400); overflow-wrap: anywhere; }
+.probe-result-list b.is-success,
+.probe-result-list b.is-submitted { color: var(--teal-700); }
+.probe-result-list b.is-skipped { color: var(--ink-400); }
+.probe-result-list b.is-failed { color: var(--red-600); }
+
 @media (max-width: 1100px) {
   .priority-host-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .host-fleet.is-detail-mode { grid-template-columns: minmax(0, 1fr); }
@@ -718,5 +895,6 @@ function resourceHot(value: number | null) {
 
 @media (max-width: 720px) {
   .priority-host-grid { grid-template-columns: minmax(0, 1fr); }
+  .probe-result-list article { grid-template-columns: 1fr auto; }
 }
 </style>
