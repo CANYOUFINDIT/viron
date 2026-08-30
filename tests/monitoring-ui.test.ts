@@ -47,6 +47,10 @@ describe("monitoring dashboard wiring", () => {
     expect(hostEventCalendar).toContain("event-calendar__week");
     expect(hostEventCalendar).toContain("day.coverageRatio < 0.8");
     expect(hostEventCalendar).toContain("event.occurrenceCount > 1");
+    expect(hostEventCalendar).toContain("monitorEventCalendarCacheKey");
+    expect(hostEventCalendar).toContain("cachedCalendars ?? []");
+    expect(hostDashboard).toContain("monitorHistoryCacheKey");
+    expect(hostDashboard).toContain("cachedHistory ?? emptyHistory()");
   });
 
   it("loads NOC alerts and shows empty-state copy for APM and NOC panels", () => {
