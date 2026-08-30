@@ -42,7 +42,7 @@ describe("monitoring dashboard wiring", () => {
     expect(maintenanceDiscovery).toContain(':host-id="selectedHost.sshConnectionId"');
     expect(hostEventCalendar).toContain("/event-calendar?");
     expect(hostEventCalendar).toContain("/events?");
-    expect(hostEventCalendar).toContain("RANGE_MONTHS = 6");
+    expect(hostEventCalendar).toContain("rangeMonths");
     expect(hostEventCalendar).toContain("heatmapWeeks");
     expect(hostEventCalendar).toContain("event-calendar__week");
     expect(hostEventCalendar).toContain("day.coverageRatio < 0.8");

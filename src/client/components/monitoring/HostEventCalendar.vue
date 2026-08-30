@@ -10,11 +10,12 @@ import type {
 } from "../../../shared/monitor-alerts";
 import { api } from "../../api";
 import { currentLocale, translate as tr } from "../../i18n";
+import { monitorHostEventDiskLabel, monitorHostEventDurationMinutes } from "../../monitor-host-event-display";
 import { monitorAlertRuleLabel } from "../../monitor-alert-copy";
 
 const props = defineProps<{ environmentId: string; hostId: string }>();
 
-const RANGE_MONTHS = 6;
+const rangeMonths = ref(3); // 默认展示近 3 个月，最大可拉拽到 12 个月（1 年）
 const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 const today = new Date();
 const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
@@ -37,21 +38,25 @@ function offsetMonth(monthKey: string, delta: number) {
 }
 
 const visibleMonths = computed(() => Array.from(
-  { length: RANGE_MONTHS },
-  (_, index) => offsetMonth(anchorMonth.value, index - RANGE_MONTHS + 1),
+  { length: rangeMonths.value },
+  (_, index) => offsetMonth(anchorMonth.value, index - rangeMonths.value + 1),
 ));
+
 const weekdayLabels = computed(() => {
   const sunday = Date.UTC(2026, 7, 23);
   return Array.from({ length: 7 }, (_, index) => new Intl.DateTimeFormat(currentLocale(), { weekday: "narrow", timeZone: "UTC" })
     .format(new Date(sunday + index * 24 * 60 * 60 * 1000)));
 });
+
 const rangeLabel = computed(() => {
   const formatter = new Intl.DateTimeFormat(currentLocale(), { year: "numeric", month: "short", timeZone: "UTC" });
   const first = new Date(`${visibleMonths.value[0]}-01T00:00:00.000Z`);
   const last = new Date(`${visibleMonths.value.at(-1)}-01T00:00:00.000Z`);
   return `${formatter.format(first)} – ${formatter.format(last)}`;
 });
+
 const allDays = computed(() => calendars.value.flatMap((item) => item.days));
+
 const heatmapWeeks = computed<Array<Array<MonitorHostEventCalendarDay | null>>>(() => {
   if (!allDays.value.length) return [];
   const leading = new Date(`${allDays.value[0]!.date}T00:00:00.000Z`).getUTCDay();
@@ -62,19 +67,29 @@ const heatmapWeeks = computed<Array<Array<MonitorHostEventCalendarDay | null>>>(
   while (cells.length % 7) cells.push(null);
   return Array.from({ length: cells.length / 7 }, (_, index) => cells.slice(index * 7, index * 7 + 7));
 });
+
+// 纯日期数学运算计算月份横坐标位置，彻底杜绝数据切换时的坐标跑偏与重叠
 const monthMarkers = computed(() => {
-  if (!allDays.value.length) return [];
-  const leading = new Date(`${allDays.value[0]!.date}T00:00:00.000Z`).getUTCDay();
+  if (!visibleMonths.value.length) return [];
   const formatter = new Intl.DateTimeFormat(currentLocale(), { month: "short", timeZone: "UTC" });
+  const firstMonthKey = visibleMonths.value[0]!;
+  const [startYear, startMonthNumber] = firstMonthKey.split("-").map(Number) as [number, number];
+  const startDate = new Date(Date.UTC(startYear, startMonthNumber - 1, 1));
+  const leading = startDate.getUTCDay();
+
   return visibleMonths.value.map((monthKey) => {
-    const dayIndex = allDays.value.findIndex((day) => day.date.startsWith(monthKey));
+    const [y, m] = monthKey.split("-").map(Number) as [number, number];
+    const mDate = new Date(Date.UTC(y, m - 1, 1));
+    const diffDays = Math.round((mDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000));
+    const weekIndex = Math.floor((leading + diffDays) / 7);
     return {
       month: monthKey,
-      label: formatter.format(new Date(`${monthKey}-01T00:00:00.000Z`)),
-      week: dayIndex < 0 ? 0 : Math.floor((leading + dayIndex) / 7),
+      label: formatter.format(mDate),
+      week: weekIndex,
     };
   });
 });
+
 const summary = computed<MonitorHostEventCalendarSummary>(() => calendars.value.reduce((total, item) => ({
   healthyDays: total.healthyDays + item.summary.healthyDays,
   affectedDays: total.affectedDays + item.summary.affectedDays,
@@ -92,11 +107,16 @@ const summary = computed<MonitorHostEventCalendarSummary>(() => calendars.value.
   affectedMinutes: 0,
   meanRecoveryMinutes: null,
 }));
+
 const canShiftForward = computed(() => anchorMonth.value < currentMonth);
 
-function shiftRange(years: number) {
-  const next = offsetMonth(anchorMonth.value, years * RANGE_MONTHS);
+function shiftRange(step: number) {
+  const next = offsetMonth(anchorMonth.value, step * rangeMonths.value);
   anchorMonth.value = next > currentMonth ? currentMonth : next;
+}
+
+function setPresetMonths(months: number) {
+  rangeMonths.value = months;
 }
 
 function severityLabel(value: MonitorAlertSeverity) {
@@ -143,8 +163,8 @@ function formatDuration(minutes: number) {
 }
 
 function eventDuration(event: MonitorHostEventItem) {
-  const end = event.recoveredAt ? Date.parse(event.recoveredAt) : Date.now();
-  return formatDuration(Math.max(0, end - Date.parse(event.triggeredAt)) / 60_000);
+  const minutes = monitorHostEventDurationMinutes(event);
+  return minutes == null ? "" : formatDuration(minutes);
 }
 
 function eventMetric(event: MonitorHostEventItem) {
@@ -201,7 +221,7 @@ async function openDay(day: MonitorHostEventCalendarDay) {
   }
 }
 
-watch(() => [props.environmentId, props.hostId, anchorMonth.value], loadCalendar, { immediate: true });
+watch(() => [props.environmentId, props.hostId, anchorMonth.value, rangeMonths.value], loadCalendar, { immediate: true });
 onBeforeUnmount(() => {
   calendarAbort?.abort();
   eventsAbort?.abort();
@@ -215,14 +235,61 @@ onBeforeUnmount(() => {
         <span class="event-calendar__icon"><CalendarDays :size="18" /></span>
         <div>
           <h4>{{ $t('主机事件热力图') }}</h4>
-          <p>{{ $t('过去 6 个月每天一个方格，颜色表示最高严重级别，深浅表示事件负载') }}</p>
+          <p>{{ $t('每天一个方格，颜色表示最高严重级别，深浅表示事件负载') }}</p>
         </div>
       </div>
-      <div class="event-calendar__range-control">
-        <button type="button" :aria-label="$t('上一区间')" @click="shiftRange(-1)"><ChevronLeft :size="15" /></button>
-        <strong>{{ rangeLabel }}</strong>
-        <button type="button" :aria-label="$t('下一区间')" :disabled="!canShiftForward" @click="shiftRange(1)"><ChevronRight :size="15" /></button>
-        <button type="button" :aria-label="$t('刷新事件热力图')" :disabled="loading" @click="loadCalendar"><RefreshCw :size="14" :class="{ 'is-spinning': loading }" /></button>
+
+      <!-- 交互式时间轴拉拽与范围控制器 -->
+      <div class="event-calendar__controls-wrap">
+        <div class="timeline-bar">
+          <span class="timeline-bar__label">{{ $t('时间跨度') }}</span>
+          <div class="timeline-presets">
+            <button
+              type="button"
+              class="preset-chip"
+              :class="{ 'is-active': rangeMonths === 3 }"
+              @click="setPresetMonths(3)"
+            >
+              3 {{ $t('个月') }}
+            </button>
+            <button
+              type="button"
+              class="preset-chip"
+              :class="{ 'is-active': rangeMonths === 6 }"
+              @click="setPresetMonths(6)"
+            >
+              6 {{ $t('个月') }}
+            </button>
+            <button
+              type="button"
+              class="preset-chip"
+              :class="{ 'is-active': rangeMonths === 12 }"
+              @click="setPresetMonths(12)"
+            >
+              1 {{ $t('年') }}
+            </button>
+          </div>
+
+          <!-- 时间轴滑块 -->
+          <div class="timeline-slider-holder" :title="$t('拉拽调整时间轴跨度（1 ~ 12 个月）')">
+            <input
+              type="range"
+              class="timeline-slider"
+              min="1"
+              max="12"
+              step="1"
+              v-model.number="rangeMonths"
+            />
+            <span class="timeline-slider__val">{{ rangeMonths }}M</span>
+          </div>
+        </div>
+
+        <div class="event-calendar__range-control">
+          <button type="button" :aria-label="$t('上一区间')" @click="shiftRange(-1)"><ChevronLeft :size="15" /></button>
+          <strong>{{ rangeLabel }}</strong>
+          <button type="button" :aria-label="$t('下一区间')" :disabled="!canShiftForward" @click="shiftRange(1)"><ChevronRight :size="15" /></button>
+          <button type="button" :aria-label="$t('刷新事件热力图')" :disabled="loading" @click="loadCalendar"><RefreshCw :size="14" :class="{ 'is-spinning': loading }" /></button>
+        </div>
       </div>
     </header>
 
@@ -230,7 +297,13 @@ onBeforeUnmount(() => {
     <div class="event-calendar__graph-scroll" :class="{ 'is-loading': loading }">
       <div v-if="heatmapWeeks.length" class="event-calendar__graph" :style="{ '--week-count': heatmapWeeks.length }">
         <div class="event-calendar__months" aria-hidden="true">
-          <span v-for="marker in monthMarkers" :key="marker.month" :style="{ gridColumnStart: marker.week + 1 }">{{ marker.label }}</span>
+          <span
+            v-for="marker in monthMarkers"
+            :key="marker.month"
+            :style="{ gridColumnStart: marker.week + 1 }"
+          >
+            {{ marker.label }}
+          </span>
         </div>
         <div class="event-calendar__plot">
           <div class="event-calendar__weekdays" aria-hidden="true">
@@ -257,9 +330,10 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <div v-else class="event-calendar__loading-grid" aria-hidden="true">
-        <i v-for="index in 112" :key="index"></i>
+        <i v-for="index in 84" :key="index"></i>
       </div>
     </div>
+
 
     <footer class="event-calendar__footer">
       <div class="event-calendar__totals">
@@ -306,11 +380,13 @@ onBeforeUnmount(() => {
           </header>
           <p>{{ event.targetName }}</p>
           <div class="event-day-drawer__meta">
-            <span><Clock3 :size="12" />{{ eventDuration(event) }}</span>
+            <span v-if="eventDuration(event)"><Clock3 :size="12" />{{ eventDuration(event) }}</span>
+            <span v-if="monitorHostEventDiskLabel(event)">{{ monitorHostEventDiskLabel(event) }}</span>
             <span v-if="eventMetric(event)">{{ eventMetric(event) }}</span>
             <span v-if="event.occurrenceCount > 1">{{ $t('合并 {0} 次短时复发', [event.occurrenceCount - 1]) }}</span>
           </div>
-          <time>{{ new Date(event.triggeredAt).toLocaleString(currentLocale()) }} → {{ event.recoveredAt ? new Date(event.recoveredAt).toLocaleString(currentLocale()) : $t('至今') }}</time>
+          <time v-if="event.status === 'event'">{{ new Date(event.triggeredAt).toLocaleString(currentLocale()) }}</time>
+          <time v-else>{{ new Date(event.triggeredAt).toLocaleString(currentLocale()) }} → {{ event.recoveredAt ? new Date(event.recoveredAt).toLocaleString(currentLocale()) : $t('至今') }}</time>
         </article>
       </div>
       <div v-else-if="!eventsLoading" class="event-day-drawer__empty"><CheckCircle2 :size="28" /><strong>{{ $t('当天没有监控事件') }}</strong></div>
@@ -380,6 +456,112 @@ onBeforeUnmount(() => {
   line-height: 1.35;
 }
 
+.event-calendar__controls-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* 交互式时间轴控制器 */
+.timeline-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px;
+  border: 1px solid var(--ink-100);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ink-50) 40%, var(--surface));
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.02);
+}
+
+.timeline-bar__label {
+  font-size: 10.5px;
+  color: var(--ink-400);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.timeline-presets {
+  display: flex;
+  gap: 2px;
+}
+
+.preset-chip {
+  padding: 2px 7px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink-600);
+  font-size: 10.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.preset-chip:hover {
+  background: var(--surface);
+  color: var(--ink-900);
+}
+
+.preset-chip.is-active {
+  background: var(--teal-600);
+  color: #ffffff;
+  font-weight: 700;
+  box-shadow: 0 1px 3px rgba(20, 184, 166, 0.25);
+}
+
+.timeline-slider-holder {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px;
+}
+
+.timeline-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 72px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--ink-200);
+  outline: none;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.timeline-slider:hover {
+  background: var(--teal-200);
+}
+
+.timeline-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--teal-600);
+  border: 2px solid var(--surface);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+.timeline-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.25);
+  background: var(--teal-500);
+}
+
+.timeline-slider__val {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--teal-700);
+  min-width: 24px;
+  text-align: center;
+}
+
 .event-calendar__range-control {
   padding: 3px 5px;
   border: 1px solid var(--ink-100);
@@ -416,7 +598,7 @@ onBeforeUnmount(() => {
 }
 
 .event-calendar__range-control strong {
-  min-width: 172px;
+  min-width: 160px;
   color: var(--ink-800);
   text-align: center;
   font-size: 11px;
@@ -449,21 +631,28 @@ onBeforeUnmount(() => {
   min-width: 100%;
 }
 
+/* 月份横坐标：单行网格、强制不换行、绝对对齐周列 */
 .event-calendar__months {
+  position: relative;
   height: 18px;
   margin-left: 32px;
   display: grid;
   grid-template-columns: repeat(var(--week-count), var(--heat-cell));
+  grid-template-rows: 18px;
   column-gap: var(--heat-gap);
   color: var(--ink-500);
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 500;
-  line-height: 1;
+  line-height: 18px;
+  overflow: visible;
 }
 
 .event-calendar__months span {
+  grid-row: 1;
   width: max-content;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 .event-calendar__plot {
@@ -797,6 +986,8 @@ onBeforeUnmount(() => {
 }
 
 .event-day-drawer__meta span {
+  min-width: 0;
+  max-width: 100%;
   padding: 3px 8px;
   border-radius: 6px;
   background: var(--ink-50);
@@ -806,6 +997,7 @@ onBeforeUnmount(() => {
   gap: 4px;
   font-family: var(--font-mono);
   font-size: 10px;
+  overflow-wrap: anywhere;
 }
 
 .event-day-drawer article time {
@@ -847,4 +1039,3 @@ onBeforeUnmount(() => {
   .event-calendar__footer { align-items: flex-start; flex-direction: column; }
 }
 </style>
-
