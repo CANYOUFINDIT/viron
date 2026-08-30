@@ -482,6 +482,304 @@
 
     .page-heading.is-nested h1 { font-size: clamp(25px, 2.6vw, 36px); }
 
+    .maintenance-nav {
+      min-height: 46px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin: -8px 0 22px;
+      padding: 5px;
+      border: 1px solid var(--line-strong);
+      background: var(--ink);
+    }
+
+    .maintenance-nav button {
+      height: 34px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 12px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: #aeb9b3;
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    .maintenance-nav button:hover { color: #fff; }
+
+    .maintenance-nav button.is-active {
+      border-color: #5b6962;
+      background: #2c3934;
+      color: var(--acid);
+    }
+
+    .maintenance-nav__path {
+      margin-left: auto;
+      padding: 0 10px;
+      color: #8f9d96;
+      font: 9px/1 var(--mono);
+      letter-spacing: .03em;
+    }
+
+    .maintenance-view { display: none; }
+    .maintenance-view.is-active { display: block; animation: page-enter 180ms ease-out both; }
+
+    .lifecycle-board {
+      margin-bottom: 16px;
+      border: 1px solid var(--line-strong);
+      background: var(--paper-strong);
+    }
+
+    .lifecycle-board__head {
+      min-height: 49px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 9px 15px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .lifecycle-board__head strong { display: block; }
+    .lifecycle-board__head span { color: var(--ink-faint); font-size: 10px; }
+
+    .lifecycle-flow {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(112px, 1fr));
+      padding: 14px;
+      background: #e8e7e1;
+    }
+
+    .lifecycle-stage {
+      min-height: 82px;
+      position: relative;
+      padding: 12px 14px 10px 36px;
+      border: 1px solid var(--line);
+      border-right: 0;
+      background: var(--paper-strong);
+    }
+
+    .lifecycle-stage:last-child { border-right: 1px solid var(--line); }
+
+    .lifecycle-stage::after {
+      content: "";
+      position: absolute;
+      z-index: 2;
+      top: 50%;
+      right: -5px;
+      width: 9px;
+      height: 9px;
+      border-top: 1px solid var(--line-strong);
+      border-right: 1px solid var(--line-strong);
+      background: var(--paper-strong);
+      transform: translateY(-50%) rotate(45deg);
+    }
+
+    .lifecycle-stage:last-child::after { display: none; }
+
+    .stage-index {
+      position: absolute;
+      left: 11px;
+      top: 12px;
+      color: var(--cyan);
+      font: 800 10px/1 var(--mono);
+    }
+
+    .lifecycle-stage strong { display: block; font-size: 11px; }
+    .lifecycle-stage b { display: block; margin-top: 8px; font: 750 16px/1 var(--mono); }
+    .lifecycle-stage small { display: block; margin-top: 5px; color: var(--ink-faint); font-size: 9px; }
+
+    .host-chain-layout {
+      display: grid;
+      grid-template-columns: 304px minmax(0, 1fr);
+      min-height: 650px;
+      border: 1px solid var(--line-strong);
+      background: var(--paper);
+    }
+
+    .host-directory {
+      border-right: 1px solid var(--line-strong);
+      background: #e7e6e0;
+    }
+
+    .host-directory__tools {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 7px;
+      padding: 10px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .chain-host-list { padding: 6px; }
+
+    .chain-host-row {
+      width: 100%;
+      min-height: 67px;
+      display: grid;
+      grid-template-columns: 8px minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      padding: 9px 10px;
+      border: 1px solid transparent;
+      background: transparent;
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .chain-host-row:hover { background: rgba(255,254,249,.72); }
+
+    .chain-host-row.is-active {
+      border-color: var(--line-strong);
+      background: var(--paper-strong);
+      box-shadow: 3px 3px 0 rgba(24,32,30,.07);
+    }
+
+    .chain-host-row > i {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--good);
+      box-shadow: 0 0 0 3px var(--good-soft);
+    }
+
+    .chain-host-row > i.warn { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
+    .chain-host-row > i.bad { background: var(--bad); box-shadow: 0 0 0 3px var(--bad-soft); }
+    .chain-host-row strong { display: block; font: 700 11px/1.2 var(--mono); }
+    .chain-host-row small { display: block; margin-top: 4px; color: var(--ink-faint); font-size: 9px; }
+    .chain-host-row em { color: var(--ink-soft); font: normal 9px/1.2 var(--mono); text-align: right; }
+
+    .host-workbench { min-width: 0; background: var(--paper-strong); }
+
+    .host-workbench__hero {
+      min-height: 78px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 14px 17px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .host-workbench__hero h2 { margin: 5px 0 2px; font: 750 18px/1.2 var(--mono); }
+    .host-workbench__hero p { margin: 0; color: var(--ink-faint); font-size: 10px; }
+
+    .selected-host-chain {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      background: #efeee8;
+    }
+
+    .host-chain-step {
+      min-height: 66px;
+      position: relative;
+      padding: 9px 9px 8px 26px;
+      border-top: 2px solid var(--line-strong);
+    }
+
+    .host-chain-step::before {
+      content: "";
+      position: absolute;
+      left: 5px;
+      top: 12px;
+      width: 9px;
+      height: 9px;
+      border: 2px solid var(--line-strong);
+      border-radius: 50%;
+      background: var(--paper-strong);
+    }
+
+    .host-chain-step.is-done { border-top-color: var(--good); }
+    .host-chain-step.is-done::before { border-color: var(--good); background: var(--good); }
+    .host-chain-step.is-current { border-top-color: var(--cyan); background: var(--cyan-soft); }
+    .host-chain-step.is-current::before { border-color: var(--cyan); background: var(--cyan); box-shadow: 0 0 0 4px rgba(61,143,149,.12); }
+    .host-chain-step.is-warning { border-top-color: var(--warn); background: var(--warn-soft); }
+    .host-chain-step.is-warning::before { border-color: var(--warn); background: var(--warn); }
+    .host-chain-step.is-blocked { color: var(--ink-faint); }
+    .host-chain-step strong { display: block; font-size: 10px; }
+    .host-chain-step span { display: block; margin-top: 5px; color: var(--ink-faint); font: 9px/1.3 var(--mono); }
+
+    .host-workbench__body { padding: 15px; }
+
+    .monitor-strip {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      margin-bottom: 15px;
+      border: 1px solid var(--line);
+      background: #f4f3ed;
+    }
+
+    .monitor-metric {
+      padding: 11px 12px;
+      border-right: 1px solid var(--line);
+    }
+
+    .monitor-metric:last-child { border-right: 0; }
+    .monitor-metric strong { display: block; margin-top: 6px; font: 750 15px/1 var(--mono); }
+    .monitor-metric small { display: block; margin-top: 5px; color: var(--ink-faint); font-size: 9px; }
+
+    .discovery-section {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(250px, .65fr);
+      gap: 14px;
+    }
+
+    .inline-panel { border: 1px solid var(--line); background: var(--paper-strong); }
+
+    .host-candidate-row {
+      min-height: 55px;
+      display: grid;
+      grid-template-columns: minmax(150px, 1fr) 72px 85px auto;
+      gap: 9px;
+      align-items: center;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .host-candidate-row:last-child { border-bottom: 0; }
+    .host-candidate-row strong { display: block; font-size: 10px; }
+    .host-candidate-row small { display: block; margin-top: 3px; color: var(--ink-faint); font: 9px/1.2 var(--mono); }
+
+    .managed-services { padding: 11px; }
+
+    .managed-service {
+      display: grid;
+      grid-template-columns: 7px 1fr auto;
+      gap: 8px;
+      align-items: center;
+      min-height: 45px;
+      padding: 7px 6px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .managed-service:last-child { border-bottom: 0; }
+    .managed-service i { width: 7px; height: 7px; border-radius: 50%; background: var(--good); }
+    .managed-service strong { display: block; font-size: 10px; }
+    .managed-service small { display: block; color: var(--ink-faint); font-size: 9px; }
+
+    .service-create-panel {
+      display: none;
+      margin-top: 14px;
+      padding: 13px;
+      border: 1px solid var(--cyan);
+      background: var(--cyan-soft);
+    }
+
+    .service-create-panel.is-open { display: block; animation: page-enter 160ms ease-out both; }
+
+    .create-grid {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr 1fr auto;
+      gap: 9px;
+      align-items: end;
+      margin-top: 10px;
+    }
+
+    .create-field label { display: block; margin-bottom: 5px; color: var(--ink-faint); font: 9px/1 var(--mono); }
+    .create-field input, .create-field select { width: 100%; height: 32px; padding: 0 8px; border: 1px solid var(--line-strong); background: var(--paper-strong); }
+
     .page { display: none; }
 
     .page.is-active {
@@ -1606,6 +1904,11 @@
       .ledger-cell { padding-inline: 12px; }
       .host-heatmap { grid-template-columns: repeat(6, minmax(82px, 1fr)); }
       .content { padding-inline: 24px; }
+      .maintenance-nav__path { display: none; }
+      .lifecycle-stage { padding-left: 30px; padding-right: 8px; }
+      .host-chain-layout { grid-template-columns: 276px minmax(0, 1fr); }
+      .selected-host-chain { padding-inline: 9px; }
+      .host-chain-step { padding-left: 22px; }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -1738,10 +2041,116 @@
               <button data-toast="原型未展开数据库"><svg class="icon"><use href="#i-database"/></svg>数据库 <small>4</small></button>
               <button data-toast="原型未展开 Redis"><svg class="icon"><use href="#i-capacity"/></svg>Redis <small>3</small></button>
               <button data-toast="原型未展开知识库"><svg class="icon"><use href="#i-book"/></svg>知识库 <small>8</small></button>
-              <button class="is-active"><svg class="icon"><use href="#i-service"/></svg>服务维护 <small>服务 12 · 主机 24</small></button>
+              <button class="is-active"><svg class="icon"><use href="#i-service"/></svg>服务维护 <small id="environment-maintenance-count">服务 12 · 主机 24</small></button>
             </nav>
           </section>
 
+          <nav class="maintenance-nav" aria-label="服务维护内部导航">
+            <button class="is-active" data-maintenance-view="hosts"><svg class="icon"><use href="#i-agent"/></svg>主机接入与服务发现 <span class="badge warn">4 待处理</span></button>
+            <button data-maintenance-view="services"><svg class="icon"><use href="#i-service"/></svg>服务运行维护 <span class="badge">12 服务</span></button>
+            <span class="maintenance-nav__path">SSH HOST → PROBE → TELEMETRY → DISCOVERY → CATALOG → OPERATE</span>
+          </nav>
+
+          <div class="maintenance-view is-active" data-maintenance-content="hosts">
+            <div class="page-heading is-nested">
+              <div>
+                <div class="section-kicker">环境详情 / 服务维护 / 主机接入与发现</div>
+                <h1>从主机到服务的完整链路</h1>
+                <p>以 SSH 主机为起点，连续完成探针安装、监控采集、服务发现、建档和运行维护。</p>
+              </div>
+              <div class="heading-actions">
+                <button class="btn" data-toast="已开始探测 24 台 SSH 主机"><svg class="icon"><use href="#i-scan"/></svg>重新探测</button>
+                <button class="btn btn-primary" data-toast="已打开批量探针安装任务"><svg class="icon"><use href="#i-agent"/></svg>批量安装探针</button>
+              </div>
+            </div>
+
+            <section class="lifecycle-board">
+              <div class="lifecycle-board__head">
+                <div><strong>环境接入链路</strong><span>每台主机独立推进，不要求整个环境同时完成</span></div>
+                <div class="inline-actions"><span class="badge good">18 台已贯通</span><span class="badge warn">4 台待处理</span><span class="badge">2 台未接入</span></div>
+              </div>
+              <div class="lifecycle-flow">
+                <div class="lifecycle-stage"><span class="stage-index">01</span><strong>SSH 主机</strong><b>24</b><small>连接可用 24</small></div>
+                <div class="lifecycle-stage"><span class="stage-index">02</span><strong>探针安装</strong><b>22</b><small>viron-monitor</small></div>
+                <div class="lifecycle-stage"><span class="stage-index">03</span><strong>监控采集</strong><b>20</b><small>实时 · 2 陈旧</small></div>
+                <div class="lifecycle-stage"><span class="stage-index">04</span><strong>服务发现</strong><b>34</b><small>6 个新候选</small></div>
+                <div class="lifecycle-stage"><span class="stage-index">05</span><strong>服务建档</strong><b id="lifecycle-service-count">12</b><small id="lifecycle-deployment-note">28 个部署实例</small></div>
+                <div class="lifecycle-stage"><span class="stage-index">06</span><strong>运行维护</strong><b id="lifecycle-running-count">26/28</b><small>实例正在运行</small></div>
+              </div>
+            </section>
+
+            <div class="host-chain-layout">
+              <aside class="host-directory">
+                <div class="panel-header"><div><div class="panel-title">环境主机</div><div class="panel-subtitle">24 SSH hosts · 按链路阻塞优先</div></div><span class="badge">24</span></div>
+                <div class="host-directory__tools"><input class="search-input" id="chain-host-search" placeholder="主机名或 IP" /><select class="filter-select"><option>全部</option><option>待处理</option><option>未安装</option><option>数据陈旧</option></select></div>
+                <div class="chain-host-list">
+                  <button class="chain-host-row is-active" data-chain-host="app03"><i></i><span><strong>prod-app-03</strong><small>10.20.2.23 · agent v0.5.0</small></span><em>已贯通<br>2 服务</em></button>
+                  <button class="chain-host-row" data-chain-host="worker04"><i class="warn"></i><span><strong>prod-worker-04</strong><small>10.20.3.34 · agent v0.5.0</small></span><em>待建档<br>1 候选</em></button>
+                  <button class="chain-host-row" data-chain-host="batch01"><i class="bad"></i><span><strong>prod-batch-01</strong><small>10.20.7.71 · SSH ready</small></span><em>未安装<br>探针</em></button>
+                  <button class="chain-host-row" data-chain-host="app07"><i class="warn"></i><span><strong>prod-app-07</strong><small>10.20.2.27 · last seen 8m</small></span><em>数据<br>陈旧</em></button>
+                  <button class="chain-host-row" data-chain-host="db02"><i></i><span><strong>prod-db-02</strong><small>10.20.4.42 · agent v0.5.0</small></span><em>已贯通<br>2 服务</em></button>
+                </div>
+              </aside>
+
+              <section class="host-workbench">
+                <div class="host-workbench__hero">
+                  <div><div class="inline-actions"><span class="badge good" id="host-ssh-badge">SSH 可用</span><span class="badge good" id="host-data-badge">数据实时</span></div><h2 id="chain-host-title">prod-app-03</h2><p id="chain-host-meta">10.20.2.23 · Linux amd64 · connection/ssh-prod-app-03</p></div>
+                  <div class="inline-actions"><button class="btn btn-small" data-toast="已打开 prod-app-03 SSH 终端"><svg class="icon"><use href="#i-terminal"/></svg>SSH</button><button class="btn btn-small" id="host-full-monitor"><svg class="icon"><use href="#i-pulse"/></svg>完整主机监控</button><button class="btn btn-small btn-primary" id="host-primary-action">扫描服务</button></div>
+                </div>
+
+                <div class="selected-host-chain" id="selected-host-chain">
+                  <div class="host-chain-step is-done" data-host-stage="connection"><strong>SSH 连接</strong><span id="stage-connection">凭据可用</span></div>
+                  <div class="host-chain-step is-done" data-host-stage="agent"><strong>监控探针</strong><span id="stage-agent">v0.5.0 运行中</span></div>
+                  <div class="host-chain-step is-done" data-host-stage="telemetry"><strong>监控采集</strong><span id="stage-telemetry">12 秒前</span></div>
+                  <div class="host-chain-step is-done" data-host-stage="discovery"><strong>服务发现</strong><span id="stage-discovery">3 个候选</span></div>
+                  <div class="host-chain-step is-done" data-host-stage="catalog"><strong>服务建档</strong><span id="stage-catalog">2 个已纳管</span></div>
+                  <div class="host-chain-step is-current" data-host-stage="maintenance"><strong>运行维护</strong><span id="stage-maintenance">可执行操作</span></div>
+                </div>
+
+                <div class="host-workbench__body">
+                  <div class="section-row"><h3>最新主机监控摘要</h3><span class="panel-subtitle" id="host-sample-time">采集于 12 秒前 · 点击“完整主机监控”查看趋势</span></div>
+                  <div class="monitor-strip">
+                    <div class="monitor-metric"><div class="micro-label">CPU</div><strong id="host-metric-cpu">52%</strong><small>8 cores · load 3.2</small></div>
+                    <div class="monitor-metric"><div class="micro-label">内存</div><strong id="host-metric-memory">67%</strong><small>10.7 / 16 GB</small></div>
+                    <div class="monitor-metric"><div class="micro-label">磁盘 MAX</div><strong id="host-metric-disk">45%</strong><small>/data · 230 GB free</small></div>
+                    <div class="monitor-metric"><div class="micro-label">温度</div><strong id="host-metric-temp">54°C</strong><small>normal</small></div>
+                    <div class="monitor-metric"><div class="micro-label">Agent</div><strong id="host-metric-agent">v0.5.0</strong><small id="host-agent-note">systemd · running</small></div>
+                  </div>
+
+                  <div class="discovery-section">
+                    <section class="inline-panel">
+                      <div class="panel-header"><div><div class="panel-title">服务发现候选</div><div class="panel-subtitle" id="candidate-summary">3 个候选 · systemd 1 · docker 2</div></div><button class="btn btn-small" id="scan-selected-host"><svg class="icon"><use href="#i-scan"/></svg>重新扫描</button></div>
+                      <div id="host-candidate-list">
+                        <div class="host-candidate-row"><div><strong>gateway</strong><small>docker · gateway-cn-03</small></div><span class="badge good">running</span><span class="mono">CPU 42%</span><button class="btn btn-small" disabled>已纳管</button></div>
+                        <div class="host-candidate-row"><div><strong>payment-reconcile.service</strong><small>systemd · PID 4821</small></div><span class="badge good">running</span><span class="mono">CPU 8%</span><button class="btn btn-small btn-primary" id="open-create-service">创建服务</button></div>
+                        <div class="host-candidate-row"><div><strong>node-exporter</strong><small>docker · infrastructure</small></div><span class="badge good">running</span><span class="mono">CPU 1%</span><button class="btn btn-small btn-quiet" data-toast="已忽略基础设施候选">忽略</button></div>
+                      </div>
+                    </section>
+
+                    <aside class="inline-panel">
+                      <div class="panel-header"><div><div class="panel-title">已纳管服务</div><div class="panel-subtitle" id="managed-summary">2 services on this host</div></div></div>
+                      <div class="managed-services" id="managed-services">
+                        <div class="managed-service"><i></i><span><strong>API Gateway</strong><small>gateway-cn-03 · running</small></span><button class="btn btn-small btn-quiet" data-service-maintenance="gateway">维护 →</button></div>
+                        <div class="managed-service"><i></i><span><strong>Inventory Sync</strong><small>inventory-sync · running</small></span><button class="btn btn-small btn-quiet" data-service-maintenance="order">维护 →</button></div>
+                      </div>
+                    </aside>
+                  </div>
+
+                  <section class="service-create-panel" id="service-create-panel">
+                    <div class="section-row"><div><strong>从发现候选创建服务与部署</strong><div class="panel-subtitle">候选、主机和 Provider 信息会自动带入，确认业务名称即可建档。</div></div><button class="icon-button" id="close-create-service"><svg class="icon"><use href="#i-close"/></svg></button></div>
+                    <div class="create-grid">
+                      <div class="create-field"><label>服务名称</label><input id="new-service-name" value="Payment Reconcile" /></div>
+                      <div class="create-field"><label>Provider</label><select><option>systemd</option></select></div>
+                      <div class="create-field"><label>部署目标</label><input value="prod-app-03" disabled /></div>
+                      <button class="btn btn-primary" id="confirm-create-service">创建并进入维护</button>
+                    </div>
+                  </section>
+                </div>
+              </section>
+            </div>
+          </div>
+
+          <div class="maintenance-view" data-maintenance-content="services">
           <div class="page-heading is-nested">
             <div>
               <div class="section-kicker">环境详情 / 服务维护 / 服务运行</div>
@@ -1762,12 +2171,12 @@
             </div>
             <div class="ledger-cell">
               <div class="micro-label">服务</div>
-              <div class="ledger-value">12 <small>catalogued</small></div>
+              <div class="ledger-value"><span id="service-ledger-count">12</span> <small>catalogued</small></div>
               <span class="ledger-note">11 个已启用</span>
             </div>
             <div class="ledger-cell">
               <div class="micro-label">部署实例</div>
-              <div class="ledger-value">28 <small>desired</small></div>
+              <div class="ledger-value"><span id="deployment-ledger-count">28</span> <small>desired</small></div>
               <span class="ledger-note"><span class="text-good">26 运行</span> · 2 异常</span>
             </div>
             <div class="ledger-cell">
@@ -1785,7 +2194,7 @@
           <div class="service-layout">
             <aside class="service-index">
               <div class="panel-header">
-                <div><div class="panel-title">服务目录</div><div class="panel-subtitle">12 services / 28 deployments</div></div>
+                <div><div class="panel-title">服务目录</div><div class="panel-subtitle" id="service-directory-count">12 services / 28 deployments</div></div>
                 <button class="icon-button" data-toast="服务筛选已重置" aria-label="更多"><svg class="icon"><use href="#i-more"/></svg></button>
               </div>
               <div class="index-tools">
@@ -1821,7 +2230,7 @@
                   <div class="service-id" id="service-id">svc_api_gateway · owner/platform · criticality/P1</div>
                 </div>
                 <div class="inline-actions">
-                  <button class="btn btn-small" id="open-observe-service"><svg class="icon"><use href="#i-pulse"/></svg>在可观测性中查看</button>
+                  <button class="btn btn-small" id="open-observe-service"><svg class="icon"><use href="#i-pulse"/></svg>在监控大盘中查看</button>
                   <button class="btn btn-small"><svg class="icon"><use href="#i-more"/></svg></button>
                 </div>
               </div>
@@ -1843,21 +2252,22 @@
                 </div>
 
                 <table class="table">
-                  <thead><tr><th>实例</th><th>目标主机</th><th>运行状态</th><th>数据状态</th><th>最近变更</th><th></th></tr></thead>
+                  <thead><tr><th>实例</th><th>目标主机</th><th>运行状态</th><th>数据状态</th><th>部署资源</th><th>主机风险</th><th></th></tr></thead>
                   <tbody id="deployment-body">
-                    <tr><td><strong>gateway-cn-01</strong><br><span class="mono">systemd/nginx.service</span></td><td><strong>prod-edge-01</strong><br><span class="mono">10.20.1.11</span></td><td><span class="badge good">running</span></td><td><span class="freshness"><span class="status-dot"></span>12s</span></td><td class="mono">3d ago · deploy</td><td><button class="btn btn-small btn-quiet">日志</button></td></tr>
-                    <tr><td><strong>gateway-cn-02</strong><br><span class="mono">systemd/nginx.service</span></td><td><strong>prod-edge-02</strong><br><span class="mono">10.20.1.12</span></td><td><span class="badge good">running</span></td><td><span class="freshness"><span class="status-dot"></span>18s</span></td><td class="mono">3d ago · deploy</td><td><button class="btn btn-small btn-quiet">SSH</button></td></tr>
-                    <tr><td><strong>gateway-cn-03</strong><br><span class="mono">docker/gateway</span></td><td><strong>prod-app-03</strong><br><span class="mono">10.20.2.23</span></td><td><span class="badge good">running</span></td><td><span class="freshness"><span class="status-dot"></span>26s</span></td><td class="mono">8h ago · config</td><td><button class="btn btn-small btn-quiet">详情</button></td></tr>
+                    <tr><td><strong>gateway-cn-01</strong><br><span class="mono">systemd/nginx.service</span></td><td><strong>prod-edge-01</strong><br><span class="mono">10.20.1.11</span></td><td><span class="badge good">running</span></td><td><span class="freshness"><span class="status-dot"></span>12s</span></td><td class="mono">CPU 18% · MEM 420M</td><td><span class="badge good">正常 · D39%</span></td><td><button class="btn btn-small btn-quiet" data-host-jump="prod-edge-01">主机 →</button></td></tr>
+                    <tr><td><strong>gateway-cn-02</strong><br><span class="mono">systemd/nginx.service</span></td><td><strong>prod-edge-02</strong><br><span class="mono">10.20.1.12</span></td><td><span class="badge good">running</span></td><td><span class="freshness"><span class="status-dot"></span>18s</span></td><td class="mono">CPU 31% · MEM 438M</td><td><span class="badge warn">CPU 76%</span></td><td><button class="btn btn-small btn-quiet" data-host-jump="prod-edge-02">主机 →</button></td></tr>
+                    <tr><td><strong>gateway-cn-03</strong><br><span class="mono">docker/gateway</span></td><td><strong>prod-app-03</strong><br><span class="mono">10.20.2.23</span></td><td><span class="badge good">running</span></td><td><span class="freshness"><span class="status-dot"></span>26s</span></td><td class="mono">CPU 42% · MEM 780M</td><td><span class="badge good">正常 · D45%</span></td><td><button class="btn btn-small btn-quiet" data-host-jump="prod-app-03">主机 →</button></td></tr>
                   </tbody>
                 </table>
 
                 <div class="runbook-strip">
                   <div class="runbook-icon"><svg class="icon"><use href="#i-play"/></svg></div>
-                  <div><strong>Runbook · gateway-safe-restart</strong><span>并发 1 · 超时 8m · 失败自动停止 · 上次成功于昨天 20:41</span></div>
+                  <div><strong id="service-runbook-title">Runbook · gateway-safe-restart</strong><span id="service-runbook-meta">并发 1 · 超时 8m · 失败自动停止 · 上次成功于昨天 20:41</span></div>
                   <button class="btn btn-small" data-toast="已打开 Runbook 执行记录">查看记录</button>
                 </div>
               </div>
             </section>
+          </div>
           </div>
         </section>
 
@@ -2170,11 +2580,88 @@
       }
     };
 
+    const deploymentResourceSignals = {
+      'gateway-cn-01': 'CPU 18% · MEM 420M', 'gateway-cn-02': 'CPU 31% · MEM 438M', 'gateway-cn-03': 'CPU 42% · MEM 780M',
+      'order-worker-01': 'CPU 38% · MEM 1.4G', 'order-worker-02': 'CPU 68% · MEM 1.8G', 'order-worker-03': '数据陈旧',
+      'mysql-primary': 'CPU 27% · MEM 4.6G', 'mysql-replica': 'CPU 35% · MEM 4.8G',
+      'redis-01': 'CPU 22% · MEM 2.9G', 'redis-02': 'CPU 24% · MEM 3.2G', 'redis-sentinel': 'CPU 3% · MEM 180M',
+      'billing-main': 'CPU 9% · MEM 420M', 'billing-fallback': 'CPU 0% · MEM —',
+      'web-deployment': 'CPU 38% · MEM 2.1G', 'web-ingress': 'CPU 12% · MEM 380M'
+    };
+
+    const hostRiskSignals = {
+      'prod-edge-01': ['正常 · D39%', 'good'], 'prod-edge-02': ['CPU 76%', 'warn'], 'prod-app-03': ['正常 · D45%', 'good'],
+      'prod-worker-01': ['正常 · D28%', 'good'], 'prod-worker-02': ['重启 5 次', 'warn'], 'prod-app-07': ['数据陈旧', 'warn'],
+      'prod-db-01': ['磁盘 73%', 'warn'], 'prod-db-02': ['磁盘 89%', 'bad'], 'prod-cache-01': ['正常 · D18%', 'good'],
+      'prod-cache-02': ['正常 · D19%', 'good'], 'prod-worker-03': ['正常 · D31%', 'good'], 'prod-worker-04': ['服务停止', 'bad'],
+      'k8s-prod-01': ['正常 · 集群', 'good']
+    };
+
+    const chainKeyByHostName = {
+      'prod-app-03': 'app03', 'prod-worker-04': 'worker04', 'prod-batch-01': 'batch01', 'prod-app-07': 'app07', 'prod-db-02': 'db02'
+    };
+
+    const serviceRunbooks = {
+      gateway: ['Runbook · gateway-safe-restart', '并发 1 · 超时 8m · 失败自动停止 · 上次成功于昨天 20:41'],
+      order: ['Runbook · worker-rolling-restart', '并发 1 · 超时 12m · 异常节点自动跳过'],
+      mysql: ['Runbook · mysql-safe-restart', '需二次确认 · 主从切换检查 · 超时 15m'],
+      redis: ['Runbook · redis-rolling-restart', '逐节点执行 · 自动验证集群状态'],
+      billing: ['Runbook · billing-recover', '先检查任务锁 · 恢复后验证下次调度'],
+      web: ['Runbook · web-rolling-update', '最大不可用 1 · 自动健康检查'],
+      discovered: ['尚未配置 Runbook', '新建服务已完成建档；配置安全操作流程后可执行批量维护。']
+    };
+
     const alerts = {
       disk: { severity: 'CRITICAL · 未确认', badge: 'bad', title: 'prod-db-02 磁盘空间不足', description: '/data 已使用 89%，按照最近 7 天增长趋势预计 4 天后超过 95%。', first: '今天 14:04:21', last: '今天 14:22:02', count: '6 events merged', owner: 'database / platform' },
       billing: { severity: 'CRITICAL · 未确认', badge: 'bad', title: 'Billing Scheduler 期望服务已停止', description: 'prod-worker-04 上的 billing.service 为 inactive，但服务期望状态仍为 enabled。', first: '今天 13:56:04', last: '今天 14:20:31', count: '4 events merged', owner: 'finance / application' },
       stale: { severity: 'MAJOR · 已确认', badge: 'warn', title: 'prod-app-07 采集数据陈旧', description: '最后一次成功采集发生在 8 分钟前，已超过环境阈值 5 分钟。', first: '今天 14:14:01', last: '今天 14:22:18', count: '2 events merged', owner: 'platform / collection' },
       tls: { severity: 'WARNING · 已静默', badge: 'info', title: 'api.example.com TLS 证书即将过期', description: '证书将在 12 天后过期，当前处于发布维护窗口静默状态。', first: '今天 12:21:09', last: '今天 14:21:09', count: '1 event', owner: 'edge / security' }
+    };
+
+    const chainHosts = {
+      app03: {
+        title: 'prod-app-03', meta: '10.20.2.23 · Linux amd64 · connection/ssh-prod-app-03', ssh: ['SSH 可用', 'good'], data: ['数据实时', 'good'], action: ['扫描服务', 'scan'],
+        stages: ['done','done','done','done','done','current'], stageText: ['凭据可用','v0.5.0 运行中','12 秒前','3 个候选','2 个已纳管','可执行操作'],
+        sample: '采集于 12 秒前 · 点击“完整主机监控”查看趋势', metrics: ['52%','67%','45%','54°C','v0.5.0'], agentNote: 'systemd · running',
+        candidates: [
+          { name: 'gateway', meta: 'docker · gateway-cn-03', status: 'running', badge: 'good', resource: 'CPU 42%', action: 'managed' },
+          { name: 'payment-reconcile.service', meta: 'systemd · PID 4821', status: 'running', badge: 'good', resource: 'CPU 8%', action: 'create' },
+          { name: 'node-exporter', meta: 'docker · infrastructure', status: 'running', badge: 'good', resource: 'CPU 1%', action: 'ignore' }
+        ],
+        managed: [
+          { name: 'API Gateway', meta: 'gateway-cn-03 · running', key: 'gateway' },
+          { name: 'Inventory Sync', meta: 'inventory-sync · running', key: 'order' }
+        ]
+      },
+      worker04: {
+        title: 'prod-worker-04', meta: '10.20.3.34 · Linux amd64 · connection/ssh-prod-worker-04', ssh: ['SSH 可用', 'good'], data: ['数据实时', 'good'], action: ['扫描服务', 'scan'],
+        stages: ['done','done','done','done','current','blocked'], stageText: ['凭据可用','v0.5.0 运行中','22 秒前','2 个候选','1 个待建档','等待建档'],
+        sample: '采集于 22 秒前 · Billing Scheduler 存在活动告警', metrics: ['19%','41%','34%','49°C','v0.5.0'], agentNote: 'systemd · running',
+        candidates: [
+          { name: 'billing.service', meta: 'systemd · inactive', status: 'stopped', badge: 'bad', resource: 'CPU 0%', action: 'managed' },
+          { name: 'payment-notify.service', meta: 'systemd · PID 9127', status: 'running', badge: 'good', resource: 'CPU 4%', action: 'create' }
+        ],
+        managed: [{ name: 'Billing Scheduler', meta: 'billing-fallback · stopped', key: 'billing' }]
+      },
+      batch01: {
+        title: 'prod-batch-01', meta: '10.20.7.71 · Linux amd64 · connection/ssh-prod-batch-01', ssh: ['SSH 可用', 'good'], data: ['尚未采集', 'warn'], action: ['安装监控探针', 'install'],
+        stages: ['done','current','blocked','blocked','blocked','blocked'], stageText: ['凭据可用','等待安装','依赖探针','依赖监控数据','尚无服务','尚不可维护'],
+        sample: '尚无监控样本 · 安装 viron-monitor 后自动开始首次采集', metrics: ['—','—','—','—','未安装'], agentNote: 'SSH 预检已通过',
+        candidates: [], managed: []
+      },
+      app07: {
+        title: 'prod-app-07', meta: '10.20.2.27 · Linux arm64 · connection/ssh-prod-app-07', ssh: ['SSH 可用', 'good'], data: ['数据陈旧', 'warn'], action: ['立即采集', 'refresh'],
+        stages: ['done','done','warning','blocked','blocked','blocked'], stageText: ['凭据可用','v0.4.1 运行中','最后采集 8m','等待新鲜数据','保持现状','保持现状'],
+        sample: '最后采集于 8 分钟前 · 陈旧数据不用于新的服务发现', metrics: ['38%','57%','41%','51°C','v0.4.1'], agentNote: '可升级 · last seen 8m',
+        candidates: [], managed: [{ name: 'Order Worker', meta: 'order-worker-03 · 状态未知', key: 'order' }]
+      },
+      db02: {
+        title: 'prod-db-02', meta: '10.20.4.42 · Linux amd64 · connection/ssh-prod-db-02', ssh: ['SSH 可用', 'good'], data: ['数据实时', 'good'], action: ['扫描服务', 'scan'],
+        stages: ['done','done','done','done','done','current'], stageText: ['凭据可用','v0.5.0 运行中','17 秒前','2 个候选','2 个已纳管','1 个主机告警'],
+        sample: '采集于 17 秒前 · /data 磁盘使用率已触发 Critical 告警', metrics: ['35%','72%','89%','57°C','v0.5.0'], agentNote: 'systemd · running',
+        candidates: [{ name: 'mysqld.service', meta: 'systemd · PID 1632', status: 'running', badge: 'good', resource: 'MEM 4.8G', action: 'managed' }],
+        managed: [{ name: 'MySQL Primary', meta: 'mysql-replica · running', key: 'mysql' }, { name: 'Database Exporter', meta: 'mysqld-exporter · running', key: 'mysql' }]
+      }
     };
 
     const $ = (selector, root = document) => root.querySelector(selector);
@@ -2214,6 +2701,120 @@
     $('#sidebar-alert-center').addEventListener('click', () => showPage('alerts'));
     $$('[data-toast]').forEach(button => button.addEventListener('click', () => showToast(button.dataset.toast)));
 
+    let activeChainHost = 'app03';
+    let selectedCandidateName = 'payment-reconcile.service';
+
+    function showMaintenanceView(view) {
+      $$('[data-maintenance-view]').forEach(button => button.classList.toggle('is-active', button.dataset.maintenanceView === view));
+      $$('[data-maintenance-content]').forEach(section => section.classList.toggle('is-active', section.dataset.maintenanceContent === view));
+      $('#breadcrumb-current').textContent = view === 'hosts'
+        ? '环境总览 / production-cn / 服务维护 / 主机接入与发现'
+        : '环境总览 / production-cn / 服务维护 / 服务运行';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    $$('[data-maintenance-view]').forEach(button => button.addEventListener('click', () => showMaintenanceView(button.dataset.maintenanceView)));
+
+    function candidateAction(candidate) {
+      if (candidate.action === 'managed') return '<button class="btn btn-small" disabled>已纳管</button>';
+      if (candidate.action === 'create') return `<button class="btn btn-small btn-primary" data-create-candidate="${candidate.name}">创建服务</button>`;
+      return `<button class="btn btn-small btn-quiet" data-ignore-candidate="${candidate.name}">忽略</button>`;
+    }
+
+    function renderChainHost(key) {
+      const host = chainHosts[key];
+      if (!host) return;
+      activeChainHost = key;
+      $$('.chain-host-row').forEach(row => row.classList.toggle('is-active', row.dataset.chainHost === key));
+      $('#chain-host-title').textContent = host.title;
+      $('#chain-host-meta').textContent = host.meta;
+      $('#host-ssh-badge').textContent = host.ssh[0];
+      $('#host-ssh-badge').className = `badge ${host.ssh[1]}`;
+      $('#host-data-badge').textContent = host.data[0];
+      $('#host-data-badge').className = `badge ${host.data[1]}`;
+      $('#host-primary-action').textContent = host.action[0];
+      $$('[data-host-stage]').forEach((stage, index) => {
+        stage.className = `host-chain-step is-${host.stages[index]}`;
+        const copy = stage.querySelector('span');
+        if (copy) copy.textContent = host.stageText[index];
+      });
+      $('#host-sample-time').textContent = host.sample;
+      ['cpu','memory','disk','temp','agent'].forEach((metric, index) => {
+        const element = $(`#host-metric-${metric}`);
+        element.textContent = host.metrics[index];
+        element.className = metric === 'disk' && Number.parseInt(host.metrics[index], 10) >= 85 ? 'text-bad' : '';
+      });
+      $('#host-agent-note').textContent = host.agentNote;
+      $('#candidate-summary').textContent = host.candidates.length
+        ? `${host.candidates.length} 个候选 · 来自最新监控快照`
+        : host.action[1] === 'install' ? '需要先安装监控探针' : '等待新鲜监控数据';
+      $('#host-candidate-list').innerHTML = host.candidates.length
+        ? host.candidates.map(candidate => `<div class="host-candidate-row"><div><strong>${candidate.name}</strong><small>${candidate.meta}</small></div><span class="badge ${candidate.badge}">${candidate.status}</span><span class="mono">${candidate.resource}</span>${candidateAction(candidate)}</div>`).join('')
+        : `<div style="padding:22px 14px;color:var(--ink-faint);text-align:center"><svg class="icon" style="margin-bottom:7px"><use href="#i-scan"/></svg><br>${host.action[1] === 'install' ? '探针安装完成并取得首个样本后，才能发现主机上的服务。' : '数据陈旧时不会生成新的服务候选，请先恢复采集。'}</div>`;
+      $('#managed-summary').textContent = `${host.managed.length} services on this host`;
+      $('#managed-services').innerHTML = host.managed.length
+        ? host.managed.map(service => `<div class="managed-service"><i></i><span><strong>${service.name}</strong><small>${service.meta}</small></span><button class="btn btn-small btn-quiet" data-service-maintenance="${service.key}">维护 →</button></div>`).join('')
+        : '<div style="padding:24px 8px;color:var(--ink-faint);text-align:center">该主机还没有已纳管服务</div>';
+      $('#service-create-panel').classList.remove('is-open');
+    }
+
+    $$('.chain-host-row').forEach(row => row.addEventListener('click', () => renderChainHost(row.dataset.chainHost)));
+    $('#chain-host-search').addEventListener('input', event => {
+      const query = event.target.value.trim().toLowerCase();
+      $$('.chain-host-row').forEach(row => { row.hidden = !row.textContent.toLowerCase().includes(query); });
+    });
+
+    $('#host-primary-action').addEventListener('click', () => {
+      const host = chainHosts[activeChainHost];
+      if (host.action[1] === 'install') {
+        showToast(`正在通过 SSH 为 ${host.title} 安装 viron-monitor`);
+        host.action = ['立即采集', 'refresh'];
+        host.data = ['等待首次采集', 'warn'];
+        host.stages = ['done','done','current','blocked','blocked','blocked'];
+        host.stageText = ['凭据可用','v0.5.0 已启动','等待首个样本','依赖监控数据','尚无服务','尚不可维护'];
+        host.metrics[4] = 'v0.5.0';
+        host.agentNote = 'systemd · starting';
+        host.sample = '探针安装完成 · 正在等待首次监控采集';
+        renderChainHost(activeChainHost);
+        return;
+      }
+      if (host.action[1] === 'refresh') {
+        showToast(`已触发 ${host.title} 立即采集`);
+        host.data = ['数据实时', 'good'];
+        host.action = ['扫描服务', 'scan'];
+        host.stages = ['done','done','done','current','blocked','blocked'];
+        host.stageText = ['凭据可用',host.metrics[4] + ' 运行中','刚刚','等待扫描','等待发现','尚不可维护'];
+        host.sample = '刚刚取得最新主机监控 · 可以开始服务发现';
+        renderChainHost(activeChainHost);
+        return;
+      }
+      showToast(`已基于 ${host.title} 的最新监控快照刷新服务候选`);
+    });
+
+    $('#scan-selected-host').addEventListener('click', () => showToast(`正在扫描 ${chainHosts[activeChainHost].title} 的 systemd、Docker 与 Kubernetes 服务`));
+    $('#host-full-monitor').addEventListener('click', () => { showObserveView('hosts'); showToast(`已在监控大盘定位 ${chainHosts[activeChainHost].title}`); });
+
+    $('#host-candidate-list').addEventListener('click', event => {
+      const createButton = event.target.closest('[data-create-candidate]');
+      const ignoreButton = event.target.closest('[data-ignore-candidate]');
+      if (createButton) {
+        selectedCandidateName = createButton.dataset.createCandidate;
+        $('#new-service-name').value = selectedCandidateName.replace(/\.service$/, '').split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
+        $('#service-create-panel').classList.add('is-open');
+        $('#service-create-panel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+      if (ignoreButton) showToast(`已忽略候选 ${ignoreButton.dataset.ignoreCandidate}`);
+    });
+
+    $('#managed-services').addEventListener('click', event => {
+      const button = event.target.closest('[data-service-maintenance]');
+      if (!button) return;
+      showMaintenanceView('services');
+      renderService(button.dataset.serviceMaintenance);
+    });
+
+    $('#close-create-service').addEventListener('click', () => $('#service-create-panel').classList.remove('is-open'));
+
     function renderService(key) {
       const service = services[key];
       if (!service) return;
@@ -2229,21 +2830,75 @@
       $('#fresh-state').className = service.freshness.includes('STALE') ? 'text-warn' : 'text-good';
       $('#incident-state').textContent = service.incident;
       $('#incident-state').className = service.incident.includes('NO ACTIVE') ? '' : service.badge === 'bad' ? 'text-bad' : 'text-warn';
-      $('#deployment-body').innerHTML = service.rows.map(row => `
-        <tr>
-          <td><strong>${row[0]}</strong><br><span class="mono">${row[1]}</span></td>
-          <td><strong>${row[2]}</strong><br><span class="mono">${row[3]}</span></td>
-          <td><span class="badge ${row[5]}">${row[4]}</span></td>
-          <td><span class="freshness ${row[5] === 'warn' ? 'stale' : ''}"><span class="status-dot"></span>${row[6]}</span></td>
-          <td class="mono">${row[7]}</td>
-          <td><button class="btn btn-small btn-quiet">${row[8]}</button></td>
-        </tr>`).join('');
+      const runbook = serviceRunbooks[key] || ['尚未配置 Runbook', '可以为该服务添加经过确认的安全操作流程。'];
+      $('#service-runbook-title').textContent = runbook[0];
+      $('#service-runbook-meta').textContent = runbook[1];
+      $('#deployment-body').innerHTML = service.rows.map(row => {
+        const resource = deploymentResourceSignals[row[0]] || (row[6] === 'now' ? '等待首个样本' : 'CPU — · MEM —');
+        const risk = hostRiskSignals[row[2]] || ['等待评估', 'info'];
+        return `
+          <tr>
+            <td><strong>${row[0]}</strong><br><span class="mono">${row[1]}</span></td>
+            <td><strong>${row[2]}</strong><br><span class="mono">${row[3]}</span></td>
+            <td><span class="badge ${row[5]}">${row[4]}</span></td>
+            <td><span class="freshness ${row[5] === 'warn' ? 'stale' : ''}"><span class="status-dot"></span>${row[6]}</span></td>
+            <td class="mono">${resource}</td>
+            <td><span class="badge ${risk[1]}">${risk[0]}</span></td>
+            <td><button class="btn btn-small btn-quiet" data-host-jump="${row[2]}">主机 →</button></td>
+          </tr>`;
+      }).join('');
     }
 
     $$('.service-row').forEach(row => row.addEventListener('click', () => renderService(row.dataset.service)));
     $('#service-search').addEventListener('input', event => {
       const query = event.target.value.trim().toLowerCase();
       $$('.service-row').forEach(row => { row.hidden = !row.textContent.toLowerCase().includes(query); });
+    });
+
+    $('#confirm-create-service').addEventListener('click', () => {
+      const host = chainHosts[activeChainHost];
+      const serviceTitle = $('#new-service-name').value.trim() || 'Discovered Service';
+      const hostIp = host.meta.split(' · ')[0];
+      services.discovered = {
+        title: serviceTitle,
+        id: `svc_${serviceTitle.toLowerCase().replace(/[^a-z0-9]+/g, '_')} · owner/unassigned · criticality/P2`,
+        health: '运行正常', badge: 'good', desired: 'ENABLED · 1', runtime: '1 RUNNING', runtimeClass: 'text-good', freshness: 'LIVE · NOW', incident: 'NO ACTIVE ALERT',
+        rows: [[selectedCandidateName.replace(/\.service$/, ''), `systemd/${selectedCandidateName}`, host.title, hostIp, 'running', 'good', 'now', 'just now · discovered', '详情']]
+      };
+      const existing = $('.service-row[data-service="discovered"]');
+      if (existing) existing.remove();
+      $('#service-list').insertAdjacentHTML('beforeend', `<button class="service-row" data-service="discovered"><span class="status-dot"></span><span><span class="service-name">${serviceTitle}</span><span class="service-meta">systemd · 1 deployment</span></span><span class="service-score">1/1</span></button>`);
+      $('.service-row[data-service="discovered"]').addEventListener('click', () => renderService('discovered'));
+      const candidate = host.candidates.find(item => item.name === selectedCandidateName);
+      if (candidate) candidate.action = 'managed';
+      if (!host.managed.some(item => item.key === 'discovered')) host.managed.push({ name: serviceTitle, meta: `${selectedCandidateName} · running`, key: 'discovered' });
+      host.stages = ['done','done','done','done','done','current'];
+      host.stageText[4] = `${host.managed.length} 个已纳管`;
+      host.stageText[5] = '可执行操作';
+      $('[data-maintenance-view="services"] .badge').textContent = '13 服务';
+      $('#environment-maintenance-count').textContent = '服务 13 · 主机 24';
+      $('#lifecycle-service-count').textContent = '13';
+      $('#lifecycle-deployment-note').textContent = '29 个部署实例';
+      $('#lifecycle-running-count').textContent = '27/29';
+      $('#service-ledger-count').textContent = '13';
+      $('#deployment-ledger-count').textContent = '29';
+      $('#service-directory-count').textContent = '13 services / 29 deployments';
+      $('#service-create-panel').classList.remove('is-open');
+      showMaintenanceView('services');
+      renderService('discovered');
+      showToast(`${serviceTitle} 已创建，部署已关联 ${host.title}`);
+    });
+
+    $('#deployment-body').addEventListener('click', event => {
+      const button = event.target.closest('[data-host-jump]');
+      if (!button) return;
+      const key = chainKeyByHostName[button.dataset.hostJump];
+      if (!key) {
+        showToast(`${button.dataset.hostJump} 的主机链路将在完整数据中定位`);
+        return;
+      }
+      showMaintenanceView('hosts');
+      renderChainHost(key);
     });
 
     $('#restart-service').addEventListener('click', () => showToast(`已创建 ${$('#service-title').textContent} 滚动重启任务`));
