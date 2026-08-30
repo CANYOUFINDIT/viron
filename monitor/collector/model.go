@@ -53,6 +53,7 @@ type ProcessSnapshot struct {
 type HostSnapshot struct {
 	Hostname                       string                `json:"hostname"`
 	MetricsVersion                 int                   `json:"metricsVersion"`
+	DiskCollectionStatus           string                `json:"diskCollectionStatus,omitempty"`
 	CollectorUser                  string                `json:"collectorUser,omitempty"`
 	OperatingSystem                string                `json:"operatingSystem,omitempty"`
 	Architecture                   string                `json:"architecture,omitempty"`

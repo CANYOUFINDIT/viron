@@ -4161,8 +4161,11 @@ const generatedEnMessages: Record<string, string> = {
 const enOverrides: Record<string, string> = {
   "监控升级 · {0}": "Monitor Escalated · {0}",
   "主机事件热力图": "Host Event Heatmap",
+  "每天一个方格，颜色表示最高严重级别，深浅表示事件负载": "One square per day; color shows peak severity and intensity shows event load",
   "过去 6 个月每天一个方格，颜色表示最高严重级别，深浅表示事件负载": "One square per day over the past 6 months; color shows peak severity and intensity shows event load",
   "过去 12 个月每天一个方格，颜色表示最高严重级别，深浅表示事件负载": "One square per day over the past 12 months; color shows peak severity and intensity shows event load",
+  "时间跨度": "Time span",
+  "拉拽调整时间轴跨度（1 ~ 12 个月）": "Drag to adjust timeline span (1 to 12 months)",
   "上一区间": "Previous period",
   "下一区间": "Next period",
   "上一年": "Previous year",

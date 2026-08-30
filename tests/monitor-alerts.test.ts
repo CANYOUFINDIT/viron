@@ -185,6 +185,52 @@ describe("monitor alerts", () => {
       expect(items.find((item) => item.ruleType === "disk_missing")?.notificationPhase).toBe("recovered");
       expect(items.find((item) => item.ruleType === "disk_missing")?.details.recovered).toBe(true);
 
+      const failedDiskCollection = (value: MonitorAlertSample): MonitorAlertSample => ({
+        ...withoutDisks(value),
+        host: { ...withoutDisks(value).host, diskCollectionStatus: "failed" },
+      });
+      const legacyFailedDiskCollection = (value: MonitorAlertSample): MonitorAlertSample => ({
+        ...withoutDisks(value),
+        errors: ["running monitor collector: signal: killed"],
+      });
+      await evaluate(failedDiskCollection(sample(at(185), { cpu: 20, dataDisk: true, deploymentStatus: "running" })));
+      await evaluate(legacyFailedDiskCollection(sample(at(190), { cpu: 20, dataDisk: true, deploymentStatus: "running" })));
+      const withDataDeviceAlias = (value: MonitorAlertSample): MonitorAlertSample => ({
+        ...value,
+        host: {
+          ...value.host,
+          disks: value.host.disks.map((disk) => disk.path === "/data" ? { ...disk, device: "/dev/disk/by-id/data-volume" } : disk),
+        },
+      });
+      await evaluate(withDataDeviceAlias(sample(at(195), { cpu: 20, dataDisk: true, deploymentStatus: "running" })));
+      await evaluate(withDataDeviceAlias(sample(at(200), { cpu: 20, dataDisk: true, deploymentStatus: "running" })));
+      listed = await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies });
+      const diskItemsAfterInvalidSamples = listed.json().items as Array<{ ruleType: string; status: string; details: Record<string, unknown> }>;
+      expect(diskItemsAfterInvalidSamples.some((item) => item.ruleType === "disk_missing" && item.status === "active")).toBe(false);
+      expect(diskItemsAfterInvalidSamples.some((item) => item.ruleType === "disk_added" && item.details.path === "/data")).toBe(false);
+
+      const withKubernetesBindMount = (value: MonitorAlertSample): MonitorAlertSample => ({
+        ...value,
+        host: {
+          ...value.host,
+          disks: [...value.host.disks, {
+            path: "/var/lib/kubelet/pods/pod-id/volumes/data",
+            device: "/dev/sdz1",
+            filesystem: "ext4",
+            totalBytes: 1000,
+            freeBytes: 500,
+            usedBytes: 500,
+            usedPercent: 50,
+          }],
+        },
+      });
+      await evaluate(withKubernetesBindMount(sample(at(202), { cpu: 20, dataDisk: true, deploymentStatus: "running" })));
+      await evaluate(withKubernetesBindMount(sample(at(204), { cpu: 20, dataDisk: true, deploymentStatus: "running" })));
+      listed = await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies });
+      expect((listed.json().items as Array<{ ruleType: string; details: Record<string, unknown> }>).some((item) => (
+        ["disk_added", "disk_missing"].includes(item.ruleType) && String(item.details.path ?? "").includes("/var/lib/kubelet/pods/")
+      ))).toBe(false);
+
       const withArchiveDisk = (value: MonitorAlertSample): MonitorAlertSample => ({
         ...value,
         host: {

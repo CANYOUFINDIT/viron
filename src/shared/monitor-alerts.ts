@@ -182,3 +182,57 @@ export function monitorAlertNavigationQuery(alert: Pick<MonitorAlertItem, "sshCo
 export function monitorDiskKey(disk: { path: string; device?: string }): string {
   return JSON.stringify([disk.device?.trim() ?? "", disk.path.trim()]);
 }
+
+const ignoredMonitorDiskFilesystems = new Set([
+  "9p", "autofs", "ceph", "cgroup", "cgroup2", "cifs", "configfs", "debugfs", "devfs", "devtmpfs",
+  "fuse.lxcfs", "fuse.portal", "fusectl", "glusterfs", "hugetlbfs", "mqueue", "nfs", "nfs4", "nsfs",
+  "overlay", "proc", "pstore", "securityfs", "smb3", "squashfs", "sysfs", "tmpfs", "tracefs",
+]);
+
+const ignoredMonitorDiskMountRoots = [
+  "/run/containerd",
+  "/run/credentials",
+  "/run/docker",
+  "/run/k3s/containerd",
+  "/run/systemd/unit-root",
+  "/var/lib/containers/storage/overlay",
+  "/var/lib/containers/storage/overlay-containers",
+  "/var/lib/containers/storage/volumes",
+  "/var/lib/docker/containers",
+  "/var/lib/docker/overlay2",
+  "/var/lib/docker/volumes",
+  "/var/lib/kubelet/plugins",
+  "/var/lib/kubelet/plugins_registry",
+  "/var/lib/kubelet/pods",
+  "/var/lib/rancher/k3s/agent/containerd",
+];
+
+export function monitorDiskIsEligible(disk: { path: string; device?: string; filesystem?: string }): boolean {
+  const path = disk.path.trim();
+  if (!path) return false;
+  const device = disk.device?.trim() ?? "";
+  if (device.startsWith("//") || device.includes(":/")) return false;
+  if (ignoredMonitorDiskFilesystems.has(disk.filesystem?.trim().toLowerCase() ?? "")) return false;
+  return !ignoredMonitorDiskMountRoots.some((root) => path === root || path.startsWith(`${root}/`));
+}
+
+function preferredMonitorDisk<T extends { path: string }>(left: T, right: T): T {
+  const depth = (path: string) => path === "/" ? -1 : path.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean).length;
+  const leftDepth = depth(left.path);
+  const rightDepth = depth(right.path);
+  if (leftDepth !== rightDepth) return leftDepth < rightDepth ? left : right;
+  if (left.path.length !== right.path.length) return left.path.length < right.path.length ? left : right;
+  return left.path <= right.path ? left : right;
+}
+
+export function stableMonitorDisks<T extends { path: string; device?: string; filesystem?: string }>(disks: T[]): T[] {
+  const byDevice = new Map<string, T>();
+  for (const disk of disks) {
+    if (!monitorDiskIsEligible(disk)) continue;
+    const normalizedDevice = disk.device?.trim().replace(/^\/dev\//, "") || "";
+    const key = normalizedDevice || `path:${disk.path.trim()}`;
+    const current = byDevice.get(key);
+    byDevice.set(key, current ? preferredMonitorDisk(current, disk) : disk);
+  }
+  return [...byDevice.values()].sort((left, right) => left.path.localeCompare(right.path) || String(left.device ?? "").localeCompare(String(right.device ?? "")));
+}

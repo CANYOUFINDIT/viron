@@ -49,6 +49,9 @@ func (c *Collector) Collect(interval time.Duration) CollectionSnapshot {
 	if snapshot.Host.CollectorUser == "" {
 		snapshot.Host.CollectorUser = processUser()
 	}
+	if snapshot.Host.DiskCollectionStatus == "" {
+		snapshot.Host.DiskCollectionStatus = "complete"
+	}
 	return snapshot
 }
 
@@ -57,7 +60,7 @@ func failedCollection(interval time.Duration, message string) CollectionSnapshot
 		CollectedAt:       time.Now().UTC().Format(time.RFC3339Nano),
 		ResolutionSeconds: max(1, int(interval.Round(time.Second)/time.Second)),
 		SampleCount:       1,
-		Host:              HostSnapshot{Hostname: hostname(), CollectorUser: processUser(), Disks: []DiskSnapshot{}, Temperatures: []TemperatureSnapshot{}},
+		Host:              HostSnapshot{Hostname: hostname(), DiskCollectionStatus: "failed", CollectorUser: processUser(), Disks: []DiskSnapshot{}, Temperatures: []TemperatureSnapshot{}},
 		Candidates:        []ServiceCandidate{},
 		KubernetesConfigs: []KubernetesConfigDiscovery{},
 		Errors:            []string{message},

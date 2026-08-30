@@ -84,6 +84,7 @@ const processSchema = z.object({
 const hostSchema = z.object({
   hostname: z.string(),
   metricsVersion: z.number().int().nonnegative().default(1),
+  diskCollectionStatus: z.enum(["complete", "partial", "failed"]).optional(),
   collectorUser: z.string().max(255).optional(),
   operatingSystem: z.string().optional(),
   architecture: z.string().optional(),

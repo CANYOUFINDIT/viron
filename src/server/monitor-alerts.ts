@@ -3,7 +3,9 @@ import type { FastifyInstance } from "fastify";
 import {
   defaultMonitorAlertSettings,
   monitorAlertSeverityRank,
+  monitorDiskIsEligible,
   monitorDiskKey,
+  stableMonitorDisks,
   type MonitorAlertRuleType,
   type MonitorAlertSeverity,
   type MonitorAlertSettings,
@@ -81,6 +83,7 @@ interface MonitorAlertStateRow {
   active_alert_id: string | null;
   last_recovered_alert_id: string | null;
   last_recovered_at: string | null;
+  last_value_json: string;
   last_evaluated_at: string;
 }
 
@@ -92,6 +95,7 @@ export interface MonitorAlertSample {
   collectedAt: string;
   host: MonitorHostSnapshot;
   candidates: MonitorCandidate[];
+  errors?: string[];
 }
 
 function parseExcludedDisks(value: string): string[] {
@@ -202,6 +206,29 @@ function missingDiskDetails(ruleKey: string): Record<string, unknown> {
   return { missing: true, diskKey: ruleKey };
 }
 
+function diskRuleKeyDetails(ruleKey: string): { device: string; path: string } | null {
+  try {
+    const parsed = JSON.parse(ruleKey);
+    if (Array.isArray(parsed) && parsed.length === 2) {
+      return { device: String(parsed[0] ?? ""), path: String(parsed[1] ?? "") };
+    }
+  } catch {
+    // Old opaque disk identities remain monitored conservatively.
+  }
+  return null;
+}
+
+function stateDiskDetails(state: MonitorAlertStateRow): { device: string; path: string; filesystem: string } | null {
+  const identity = diskRuleKeyDetails(state.rule_key);
+  if (!identity) return null;
+  try {
+    const details = JSON.parse(state.last_value_json) as Record<string, unknown>;
+    return { ...identity, filesystem: String(details?.filesystem ?? "") };
+  } catch {
+    return { ...identity, filesystem: "" };
+  }
+}
+
 async function monitoredEnvironments(
   app: FastifyInstance,
   agentId: string,
@@ -262,7 +289,12 @@ async function environmentDeployments(app: FastifyInstance, environmentId: strin
   }));
 }
 
-function hostObservations(environment: MonitorAlertEnvironment, agentId: string, host: MonitorHostSnapshot): MonitorAlertObservation[] {
+function hostObservations(
+  environment: MonitorAlertEnvironment,
+  agentId: string,
+  host: MonitorHostSnapshot,
+  diskCollectionComplete: boolean,
+): MonitorAlertObservation[] {
   const settings = environment.settings;
   const target = {
     targetType: "host" as const,
@@ -286,9 +318,20 @@ function hostObservations(environment: MonitorAlertEnvironment, agentId: string,
   }
   const excluded = new Set(settings.excludedDisks);
   if (settings.diskMissingEnabled) {
-    observations.push({ ...target, ruleType: "disk_missing", ruleKey: diskBaselineRuleKey, breached: false, details: { baseline: true } });
+    observations.push({
+      ...target,
+      ruleType: "disk_missing",
+      ruleKey: diskBaselineRuleKey,
+      breached: diskCollectionComplete ? false : null,
+      details: {
+        baseline: true,
+        diskCollectionStatus: host.diskCollectionStatus ?? "legacy_complete",
+        metricsVersion: host.metricsVersion,
+      },
+    });
   }
-  for (const disk of host.disks) {
+  if (!diskCollectionComplete) return observations;
+  for (const disk of stableMonitorDisks(host.disks)) {
     const key = monitorDiskKey(disk);
     if (excluded.has(key)) continue;
     if (settings.diskUsageEnabled) {
@@ -305,6 +348,14 @@ function hostObservations(environment: MonitorAlertEnvironment, agentId: string,
     }
   }
   return observations;
+}
+
+function sampleHasCompleteDiskCollection(sample: MonitorAlertSample): boolean {
+  if (sample.host.diskCollectionStatus) return sample.host.diskCollectionStatus === "complete";
+  return !(sample.errors ?? []).some((error) => {
+    const normalized = error.trim().toLowerCase();
+    return normalized.startsWith("disk:") || normalized.includes("monitor collector");
+  });
 }
 
 function deploymentObservations(
@@ -339,10 +390,12 @@ async function applyObservations(
   environment: MonitorAlertEnvironment,
   observations: MonitorAlertObservation[],
   evaluatedAt: string,
-  observedHostTargetIds: ReadonlySet<string>,
 ): Promise<void> {
   const stateRows = await app.db.prepare("SELECT * FROM monitor_alert_states WHERE environment_id = ?").all(environment.id) as MonitorAlertStateRow[];
   const states = new Map(stateRows.map((state) => [stateKey(state.target_type, state.target_id, state.rule_type, state.rule_key_hash), state]));
+  const validDiskTargetIds = new Set(observations
+    .filter((item) => item.ruleType === "disk_missing" && item.ruleKey === diskBaselineRuleKey && item.breached !== null)
+    .map((item) => item.targetId));
   const diskObservations = observations.filter((item) => item.ruleType === "disk_missing" && item.ruleKey !== diskBaselineRuleKey);
   const currentDiskStateKeys = new Set(diskObservations.map((item) => stateKey(
     item.targetType,
@@ -350,18 +403,52 @@ async function applyObservations(
     "disk_missing",
     ruleKeyHash(item.ruleKey),
   )));
+  const targetPathKey = (targetId: string, path: string) => `${targetId}\0${path}`;
+  const currentDiskPaths = new Set(diskObservations.map((item) => targetPathKey(item.targetId, String(item.details.path ?? ""))));
   const excludedDisks = new Set(environment.settings.excludedDisks);
+  const diskStateSuppressed = (state: MonitorAlertStateRow): boolean => {
+    if (excludedDisks.has(state.rule_key)) return true;
+    const disk = stateDiskDetails(state);
+    return Boolean(disk && !monitorDiskIsEligible(disk));
+  };
+  const knownDiskPaths = new Set(stateRows.flatMap((state) => {
+    if (state.rule_type !== "disk_missing" || state.rule_key === diskBaselineRuleKey || diskStateSuppressed(state)) return [];
+    const disk = stateDiskDetails(state);
+    return disk?.path ? [targetPathKey(state.target_id, disk.path)] : [];
+  }));
   const baselineTargets = new Set(stateRows.filter((state) => state.rule_type === "disk_missing" && state.rule_key === diskBaselineRuleKey).map((state) => state.target_id));
   const suppressedNewDiskStates = new Set<string>();
+  for (const state of stateRows) {
+    if (state.target_type !== "host" || !state.active_alert_id || !validDiskTargetIds.has(state.target_id)) continue;
+    if (!["disk_missing", "disk_usage"].includes(state.rule_type) || !diskStateSuppressed(state)) continue;
+    const details = stateDiskDetails(state) ?? { device: "", path: "", filesystem: "" };
+    observations.push({
+      targetType: "host",
+      targetId: state.target_id,
+      ruleType: state.rule_type,
+      ruleKey: state.rule_key,
+      sshConnectionId: state.ssh_connection_id,
+      serviceId: null,
+      deploymentId: null,
+      targetName: state.target_name,
+      connectionName: state.connection_name,
+      serviceName: "",
+      breached: false,
+      details: { ...details, ignored: true, reason: "non_persistent_mount" },
+    });
+  }
   for (const observation of diskObservations) {
     const missingKey = stateKey(observation.targetType, observation.targetId, "disk_missing", ruleKeyHash(observation.ruleKey));
     const addedKey = stateKey(observation.targetType, observation.targetId, "disk_added", ruleKeyHash(observation.ruleKey));
     const missingState = states.get(missingKey);
     const addedState = states.get(addedKey);
+    const pathKey = targetPathKey(observation.targetId, String(observation.details.path ?? ""));
+    const pathAlreadyKnown = knownDiskPaths.has(pathKey);
     if (baselineTargets.has(observation.targetId) && !missingState && !addedState?.active_alert_id) {
+      if (pathAlreadyKnown) continue;
       suppressedNewDiskStates.add(missingKey);
     }
-    if (!addedState && (!baselineTargets.has(observation.targetId) || missingState)) continue;
+    if (!addedState && (!baselineTargets.has(observation.targetId) || missingState || pathAlreadyKnown)) continue;
     observations.push({
       ...observation,
       ruleType: "disk_added",
@@ -371,9 +458,11 @@ async function applyObservations(
     });
   }
   for (const state of stateRows) {
-    if (state.target_type !== "host" || state.rule_type !== "disk_added" || !state.active_alert_id || !observedHostTargetIds.has(state.target_id)) continue;
+    if (state.target_type !== "host" || state.rule_type !== "disk_added" || !state.active_alert_id || !validDiskTargetIds.has(state.target_id)) continue;
     const missingKey = stateKey(state.target_type, state.target_id, "disk_missing", state.rule_key_hash);
-    if (currentDiskStateKeys.has(missingKey) || states.has(missingKey) || excludedDisks.has(state.rule_key)) continue;
+    const disk = stateDiskDetails(state);
+    if (currentDiskStateKeys.has(missingKey) || states.has(missingKey) || diskStateSuppressed(state)) continue;
+    if (disk?.path && currentDiskPaths.has(targetPathKey(state.target_id, disk.path))) continue;
     observations.push({
       targetType: "host",
       targetId: state.target_id,
@@ -386,14 +475,16 @@ async function applyObservations(
       connectionName: state.connection_name,
       serviceName: "",
       breached: true,
-      details: missingDiskDetails(state.rule_key),
+      details: { ...(stateDiskDetails(state) ?? {}), ...missingDiskDetails(state.rule_key) },
     });
   }
   for (const state of stateRows) {
     if (state.rule_key === diskBaselineRuleKey) continue;
     const currentKey = stateKey(state.target_type, state.target_id, "disk_missing", state.rule_key_hash);
-    if (state.target_type !== "host" || !observedHostTargetIds.has(state.target_id) || state.rule_type !== "disk_missing" || currentDiskStateKeys.has(currentKey)) continue;
-    if (excludedDisks.has(state.rule_key)) continue;
+    if (state.target_type !== "host" || !validDiskTargetIds.has(state.target_id) || state.rule_type !== "disk_missing" || currentDiskStateKeys.has(currentKey)) continue;
+    if (diskStateSuppressed(state)) continue;
+    const disk = stateDiskDetails(state);
+    if (disk?.path && currentDiskPaths.has(targetPathKey(state.target_id, disk.path))) continue;
     observations.push({
       targetType: "host",
       targetId: state.target_id,
@@ -406,7 +497,7 @@ async function applyObservations(
       connectionName: state.connection_name,
       serviceName: "",
       breached: true,
-      details: missingDiskDetails(state.rule_key),
+      details: { ...(stateDiskDetails(state) ?? {}), ...missingDiskDetails(state.rule_key) },
     });
   }
 
@@ -414,7 +505,7 @@ async function applyObservations(
   const forUpdate = app.db.dialect === "mysql" ? " FOR UPDATE" : "";
   await app.db.transaction(async () => {
     for (const staleState of stateRows) {
-      if (staleState.target_type !== "host" || staleState.rule_type !== "disk_added" || !observedHostTargetIds.has(staleState.target_id)) continue;
+      if (staleState.target_type !== "host" || staleState.rule_type !== "disk_added" || !validDiskTargetIds.has(staleState.target_id)) continue;
       const state = await app.db.prepare(`SELECT * FROM monitor_alert_states WHERE id = ?${forUpdate}`).get(staleState.id) as MonitorAlertStateRow | undefined;
       if (!state || state.active_alert_id) continue;
       const currentKey = stateKey(state.target_type, state.target_id, "disk_missing", state.rule_key_hash);
@@ -644,7 +735,7 @@ export async function evaluateMonitorHostAvailability(
         sampleResolutionSeconds: input.sampleResolutionSeconds ?? null,
       },
     };
-    await applyObservations(app, environment, [observation], input.checkedAt, new Set());
+    await applyObservations(app, environment, [observation], input.checkedAt);
   }
 }
 
@@ -663,10 +754,10 @@ export async function evaluateMonitorAlertSamples(
     const deployments = await environmentDeployments(app, environment.id, input.agentId);
     for (const sample of input.samples) {
       const observations = [
-        ...hostObservations(environment, input.agentId, sample.host),
+        ...hostObservations(environment, input.agentId, sample.host, sampleHasCompleteDiskCollection(sample)),
         ...deploymentObservations(environment, deployments, sample.candidates),
       ];
-      await applyObservations(app, environment, observations, sample.collectedAt, new Set([input.agentId]));
+      await applyObservations(app, environment, observations, sample.collectedAt);
     }
   }
 }
@@ -812,7 +903,7 @@ export async function evaluateTlsEndpointAlerts(app: FastifyInstance, environmen
     connectionName: "",
     settings,
   };
-  await applyObservations(app, environment, observations, now, new Set());
+  await applyObservations(app, environment, observations, now);
 }
 
 const TLS_ALERT_RULE_SQL = "('tls_expiring', 'tls_expired', 'tls_hostname_mismatch')";

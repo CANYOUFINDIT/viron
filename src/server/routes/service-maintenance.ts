@@ -121,7 +121,7 @@ function monitorUpdateAvailable(agentVersion: unknown, snapshot: Record<string, 
   const installed = String(agentVersion ?? "").trim();
   if (!installed && !installManaged) return false;
   if (snapshot?.collectorUser !== "root") return true;
-  if (Number(snapshot?.metricsVersion ?? 0) < 2) return true;
+  if (Number(snapshot?.metricsVersion ?? 0) < 3) return true;
   if (!installed || installed === PRODUCT_VERSION) return false;
   const parse = (value: string) => {
     const match = /^(\d+)\.(\d+)\.(\d+)(?:-([^+]+))?(?:\+.+)?$/.exec(value);

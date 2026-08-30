@@ -24,6 +24,7 @@ import (
 	inputsupervisor "github.com/influxdata/telegraf/plugins/inputs/supervisor"
 	inputsystem "github.com/influxdata/telegraf/plugins/inputs/system"
 	inputsystemd "github.com/influxdata/telegraf/plugins/inputs/systemd_units"
+	systemdisk "github.com/shirou/gopsutil/v4/disk"
 )
 
 type managedInput struct {
@@ -202,6 +203,7 @@ func (c *Collector) Collect(interval time.Duration) CollectionSnapshot {
 		errors = errors[:20]
 	}
 	snapshot := normalizeMetrics(metrics, errors, interval)
+	snapshot.Host.DiskCollectionStatus = diskCollectionStatusForMetrics(metrics)
 	kubernetesConfigs, kubernetesCandidates, kubernetesErrors := collectKubernetes()
 	snapshot.KubernetesConfigs = kubernetesConfigs
 	snapshot.Candidates = append(snapshot.Candidates, kubernetesCandidates...)
@@ -231,12 +233,13 @@ func normalizeMetrics(metrics []capturedMetric, errors []string, interval time.D
 		ResolutionSeconds: max(1, int(interval.Round(time.Second)/time.Second)),
 		SampleCount:       1,
 		Host: HostSnapshot{
-			Hostname:       hostname,
-			MetricsVersion: 2,
-			CollectorUser:  collectorUser(),
-			Disks:          []DiskSnapshot{},
-			Temperatures:   []TemperatureSnapshot{},
-			TopProcesses:   []ProcessSnapshot{},
+			Hostname:             hostname,
+			MetricsVersion:       3,
+			DiskCollectionStatus: diskCollectionComplete,
+			CollectorUser:        collectorUser(),
+			Disks:                []DiskSnapshot{},
+			Temperatures:         []TemperatureSnapshot{},
+			TopProcesses:         []ProcessSnapshot{},
 		},
 		Candidates:        []ServiceCandidate{},
 		KubernetesConfigs: []KubernetesConfigDiscovery{},
@@ -412,8 +415,43 @@ func normalizeMetrics(metrics []capturedMetric, errors []string, interval time.D
 		}
 		return snapshot.Candidates[left].Provider < snapshot.Candidates[right].Provider
 	})
-	sort.Slice(snapshot.Host.Disks, func(left, right int) bool { return snapshot.Host.Disks[left].Path < snapshot.Host.Disks[right].Path })
+	snapshot.Host.Disks = stableMonitorDisks(snapshot.Host.Disks)
 	return snapshot
+}
+
+func diskCollectionStatusForMetrics(metrics []capturedMetric) string {
+	collectedDevices := make(map[string]struct{})
+	for _, metric := range metrics {
+		if metric.Name != "disk" || !monitorDiskEligible(metric.Tags["path"], metric.Tags["fstype"], metric.Tags["device"]) {
+			continue
+		}
+		key := normalizedDiskDevice(metric.Tags["device"], metric.Tags["fstype"], metric.Tags["path"])
+		collectedDevices[key] = struct{}{}
+	}
+	if len(collectedDevices) == 0 {
+		return diskCollectionFailed
+	}
+	partitions, err := systemdisk.Partitions(true)
+	if err != nil {
+		return diskCollectionFailed
+	}
+	expectedDevices := make(map[string]struct{})
+	for _, partition := range partitions {
+		if !monitorDiskEligible(partition.Mountpoint, partition.Fstype, partition.Device) {
+			continue
+		}
+		key := normalizedDiskDevice(partition.Device, partition.Fstype, partition.Mountpoint)
+		expectedDevices[key] = struct{}{}
+	}
+	if len(expectedDevices) == 0 {
+		return diskCollectionFailed
+	}
+	for device := range expectedDevices {
+		if _, found := collectedDevices[device]; !found {
+			return diskCollectionPartial
+		}
+	}
+	return diskCollectionComplete
 }
 
 func collectorUser() string {
