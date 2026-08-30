@@ -11,6 +11,7 @@ import type {
 import { api } from "../../api";
 import { currentLocale, translate as tr } from "../../i18n";
 import { monitorHostEventDiskLabel, monitorHostEventDurationMinutes } from "../../monitor-host-event-display";
+import { monitorEventCalendarCacheKey, readMonitorUiCache, writeMonitorUiCache } from "../../monitor-ui-cache";
 import { monitorAlertRuleLabel } from "../../monitor-alert-copy";
 
 const props = defineProps<{ environmentId: string; hostId: string }>();
@@ -207,6 +208,9 @@ function eventMetric(event: MonitorHostEventItem) {
 }
 
 async function loadCalendar() {
+  const cacheKey = monitorEventCalendarCacheKey(props.environmentId, props.hostId, timezone, visibleMonths.value);
+  const cachedCalendars = readMonitorUiCache<MonitorHostEventCalendarResponse[]>(cacheKey);
+  calendars.value = cachedCalendars ?? [];
   calendarAbort?.abort();
   calendarAbort = new AbortController();
   const controller = calendarAbort;
@@ -220,10 +224,13 @@ async function loadCalendar() {
         { signal: controller.signal },
       );
     }));
-    if (!controller.signal.aborted) calendars.value = results;
+    if (!controller.signal.aborted) {
+      calendars.value = results;
+      writeMonitorUiCache(cacheKey, results);
+    }
   } catch (caught) {
     if ((caught as { name?: string }).name === "AbortError") return;
-    calendars.value = [];
+    if (!cachedCalendars) calendars.value = [];
     error.value = caught instanceof Error ? caught.message : tr("读取主机事件日历失败");
   } finally {
     if (calendarAbort === controller) loading.value = false;
@@ -325,7 +332,7 @@ onBeforeUnmount(() => {
     </header>
 
     <p v-if="error" class="event-calendar__error">{{ error }}</p>
-    <div class="event-calendar__graph-scroll" :class="{ 'is-loading': loading }" @scroll="handleCellMouseLeave">
+    <div class="event-calendar__graph-scroll" :class="{ 'is-loading': loading && !heatmapWeeks.length }" @scroll="handleCellMouseLeave">
       <div v-if="heatmapWeeks.length" class="event-calendar__graph" :style="{ '--week-count': heatmapWeeks.length }">
         <div class="event-calendar__months" aria-hidden="true">
           <span

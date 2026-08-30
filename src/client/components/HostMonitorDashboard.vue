@@ -16,6 +16,7 @@ import {
   QUICK_MONITOR_HISTORY_RANGE,
   type MonitorHistoryRange,
 } from "../monitor-history-loading";
+import { monitorHistoryCacheKey, readMonitorUiCache, writeMonitorUiCache } from "../monitor-ui-cache";
 import MonitorTimeSeriesChart, {
   type MonitorChartAnnotation,
   type MonitorChartSeries,
@@ -92,6 +93,18 @@ const emptySummary: MonitorPerformanceSummary = {
   cpu: { ...emptyMetric }, memory: { ...emptyMetric }, loadPerCpu: { ...emptyMetric },
   diskThroughput: { ...emptyMetric }, networkThroughput: { ...emptyMetric }, pressure: { ...emptyMetric },
 };
+function emptyHistory(): HistoryResponse {
+  return {
+    range: DEFAULT_MONITOR_HISTORY_RANGE,
+    from: "",
+    to: "",
+    sourceSampleCount: 0,
+    points: [],
+    diagnostics: [],
+    summary: emptySummary,
+    gaps: [],
+  };
+}
 const processColors = ["#14b8a6", "#3b82f6", "#f59e0b", "#8b5cf6", "#ec4899"];
 const otherProcessColor = "#64748b";
 
@@ -121,12 +134,11 @@ const networkView = ref<NetworkView>("throughput");
 const ioView = ref<IoView>("process");
 const swapView = ref<SwapView>("percent");
 const showAllMetrics = ref(false);
-const history = ref<HistoryResponse>({
-  range: DEFAULT_MONITOR_HISTORY_RANGE, from: "", to: "", sourceSampleCount: 0, points: [], diagnostics: [], summary: emptySummary, gaps: [],
-});
+const history = ref<HistoryResponse>(emptyHistory());
 const selectedDisk = ref("");
 let requestSequence = 0;
 let loadedContext = "";
+let loadedRange: HistoryRange | null = null;
 let historyAbort: AbortController | null = null;
 
 const ranges: Array<{ value: HistoryRange; label: string }> = [
@@ -165,16 +177,20 @@ watch(diskOptions, (options) => {
 async function loadHistory() {
   const sequence = ++requestSequence;
   const context = `${props.environmentId}:${props.hostId}`;
-  if (context !== loadedContext) {
-    loadedContext = context;
-    history.value = {
-      range: DEFAULT_MONITOR_HISTORY_RANGE, from: "", to: "", sourceSampleCount: 0, points: [], diagnostics: [], summary: emptySummary, gaps: [],
-    };
+  const targetRange = range.value;
+  const viewChanged = context !== loadedContext || targetRange !== loadedRange;
+  loadedContext = context;
+  loadedRange = targetRange;
+  if (viewChanged) {
+    const cachedHistory = readMonitorUiCache<HistoryResponse>(monitorHistoryCacheKey(props.environmentId, props.hostId, targetRange))
+      ?? (targetRange === QUICK_MONITOR_HISTORY_RANGE
+        ? null
+        : readMonitorUiCache<HistoryResponse>(monitorHistoryCacheKey(props.environmentId, props.hostId, QUICK_MONITOR_HISTORY_RANGE)));
+    history.value = cachedHistory ?? emptyHistory();
   }
   historyAbort?.abort();
   historyAbort = new AbortController();
   const signal = historyAbort.signal;
-  const targetRange = range.value;
   const loadPlan = monitorHistoryLoadPlan(targetRange, Boolean(history.value.from || history.value.to));
   loading.value = true;
   error.value = "";
@@ -185,6 +201,7 @@ async function loadHistory() {
     try {
       const response = await api<HistoryResponse>(`/api/v1/environments/${props.environmentId}/monitor-hosts/${props.hostId}/history?range=${requestedRange}`, { signal });
       if (sequence !== requestSequence) return;
+      writeMonitorUiCache(monitorHistoryCacheKey(props.environmentId, props.hostId, requestedRange), response);
       history.value = response;
       lastError = "";
     } catch (caught) {
@@ -1322,4 +1339,3 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
   }
 }
 </style>
-
