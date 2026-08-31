@@ -136,7 +136,6 @@ const memoryView = ref<MemoryView>("percent");
 const networkView = ref<NetworkView>("throughput");
 const ioView = ref<IoView>("process");
 const swapView = ref<SwapView>("percent");
-const showAllMetrics = ref(false);
 const history = ref<HistoryResponse>(emptyHistory());
 const selectedDisk = ref("");
 let requestSequence = 0;
@@ -228,7 +227,6 @@ async function loadHistory() {
 
 watch([() => props.environmentId, () => props.hostId, () => props.lastCollectedAt, () => (props.monitoredDiskTypes ?? []).join(","), () => (props.excludedDisks ?? []).join("|"), range], () => void loadHistory(), { immediate: true });
 watch(() => props.focusMetric, (value) => { if (value) selectedFocus.value = value; });
-watch(() => props.hostId, () => { showAllMetrics.value = false; });
 onBeforeUnmount(() => {
   requestSequence += 1;
   historyAbort?.abort();
@@ -649,8 +647,6 @@ function meaningfulChange(value: number | null): string {
   if (value == null || Math.abs(value) < 5) return "";
   return `${value > 0 ? "↑" : "↓"} ${Math.abs(value).toFixed(1)}%`;
 }
-const extraMetricsLabel = computed(() => showAllMetrics.value ? tr("收起其余指标") : tr("其余 {{0}} 项指标", [extraCharts.value.length]));
-
 function formatBytes(value: number): string {
   const units = ["B", "KiB", "MiB", "GiB", "TiB"];
   let scaled = Math.max(0, value);
@@ -862,8 +858,8 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
       </div>
 
       <!-- 区间趋势摘要卡片 -->
-      <details class="monitor-history__summary" :aria-label="$t('趋势摘要')">
-        <summary>{{ $t('区间多指标统计摘要') }}</summary>
+      <section class="monitor-history__summary" :aria-label="$t('趋势摘要')">
+        <h3>{{ $t('区间多指标统计摘要') }}</h3>
         <div class="summary-cards-grid">
           <article v-for="item in summaryCards" :key="item.key" class="summary-card-item">
             <span class="summary-card-label">{{ item.label }}</span>
@@ -873,12 +869,9 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
             </small>
           </article>
         </div>
-      </details>
+      </section>
 
-      <button v-if="extraCharts.length" class="monitor-history__more" type="button" :aria-expanded="showAllMetrics" @click="showAllMetrics = !showAllMetrics">
-        {{ extraMetricsLabel }}
-      </button>
-      <div v-if="showAllMetrics && extraCharts.length" class="monitor-chart-grid">
+      <div v-if="extraCharts.length" class="monitor-chart-grid">
         <MonitorTimeSeriesChart
           v-for="chart in extraCharts"
           :key="chart.id"
@@ -898,7 +891,7 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
           size="compact"
         />
       </div>
-      <div v-if="showAllMetrics && diskOptions.length && selectedFocus !== 'disk'" class="monitor-history__disk-more">
+      <div v-if="diskOptions.length && selectedFocus !== 'disk'" class="monitor-history__disk-more">
         <el-select v-model="selectedDisk" size="small">
           <el-option v-for="item in diskOptions" :key="item.value" :value="item.value" :label="item.label" />
         </el-select>
@@ -1276,11 +1269,11 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
   padding-top: 10px;
 }
 
-.monitor-history__summary summary {
+.monitor-history__summary h3 {
+  margin: 0;
   color: var(--ink-500);
   font-size: 12px;
   font-weight: 700;
-  cursor: pointer;
 }
 
 .summary-cards-grid {
@@ -1315,25 +1308,6 @@ function sampledPointLabel(count: number): string { return tr("图表已降采�
 .summary-card-detail {
   font-size: 10px;
   color: var(--ink-400);
-}
-
-.monitor-history__more {
-  width: fit-content;
-  height: 30px;
-  padding: 0 12px;
-  border: 1px solid var(--ink-100);
-  border-radius: var(--radius-control, 7px);
-  background: var(--surface);
-  color: var(--ink-700);
-  font-size: 11px;
-  font-weight: 650;
-  cursor: pointer;
-  transition: all .15s ease;
-}
-
-.monitor-history__more:hover {
-  border-color: var(--teal-500);
-  color: var(--teal-700);
 }
 
 .is-spinning {
