@@ -29,16 +29,22 @@ const selectedHeatDate = ref("");
 const eventEnvironmentId = ref("");
 const eventSeverity = ref<"all" | MonitorAlertSeverity>("all");
 const eventStatus = ref<"all" | "active" | "recovered" | "event">("all");
-const events = ref<MonitorPlatformEventItem[]>([]);
-const eventTotal = ref(0);
-const eventPage = ref(1);
-const eventPageSize = 100;
-const eventsLoading = ref(false);
-const eventsError = ref("");
+const topEvents = ref<MonitorPlatformEventItem[]>([]);
+const topEventTotal = ref(0);
+const topEventsLoading = ref(false);
+const topEventsError = ref("");
+const allEventsOpen = ref(false);
+const allEvents = ref<MonitorPlatformEventItem[]>([]);
+const allEventTotal = ref(0);
+const allEventPage = ref(1);
+const allEventPageSize = 50;
+const allEventsLoading = ref(false);
+const allEventsError = ref("");
 const serviceQuery = ref("");
 const todayKey = monitorAlertLocalDateKey(new Date().toISOString());
 const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 let eventsAbort: AbortController | null = null;
+let allEventsAbort: AbortController | null = null;
 
 function addDays(key: string, delta: number) {
   const [year, month, day] = key.split("-").map(Number) as [number, number, number];
@@ -58,37 +64,85 @@ function boundaryIso(key: string, dayOffset = 0) {
   return new Date(year, month - 1, day + dayOffset, 0, 0, 0, 0).toISOString();
 }
 
-async function loadEvents() {
+function eventQuery(options: {
+  page: number;
+  pageSize: number;
+  order: "recent" | "priority";
+  environmentId?: string;
+  severity?: "all" | MonitorAlertSeverity;
+  status?: "all" | "active" | "recovered" | "event";
+}) {
+  const query = new URLSearchParams({
+    timezone,
+    severity: options.severity ?? "all",
+    status: options.status ?? "all",
+    order: options.order,
+    page: String(options.page),
+    pageSize: String(options.pageSize),
+  });
+  if (selectedHeatDate.value) query.set("date", selectedHeatDate.value);
+  else {
+    query.set("from", boundaryIso(rangeStartKey.value));
+    query.set("to", boundaryIso(rangeEndKey.value, 1));
+  }
+  if (options.environmentId) query.set("environmentId", options.environmentId);
+  return query;
+}
+
+async function loadTopEvents() {
   eventsAbort?.abort();
   eventsAbort = new AbortController();
   const controller = eventsAbort;
-  eventsLoading.value = true;
-  eventsError.value = "";
+  topEventsLoading.value = true;
+  topEventsError.value = "";
   try {
-    const query = new URLSearchParams({
-      timezone,
-      severity: eventSeverity.value,
-      status: eventStatus.value,
-      page: String(eventPage.value),
-      pageSize: String(eventPageSize),
+    const query = eventQuery({
+      page: 1,
+      pageSize: 5,
+      order: "priority",
+      environmentId: props.environmentId,
     });
-    if (selectedHeatDate.value) query.set("date", selectedHeatDate.value);
-    else {
-      query.set("from", boundaryIso(rangeStartKey.value));
-      query.set("to", boundaryIso(rangeEndKey.value, 1));
-    }
-    if (effectiveEventEnvironmentId.value) query.set("environmentId", effectiveEventEnvironmentId.value);
     const response = await api<MonitorPlatformEventListResponse>(`/api/v1/monitoring/events?${query}`, { signal: controller.signal });
     if (controller.signal.aborted) return;
-    events.value = response.items;
-    eventTotal.value = response.total;
+    topEvents.value = response.items;
+    topEventTotal.value = response.total;
   } catch (caught) {
     if ((caught as { name?: string }).name === "AbortError") return;
-    events.value = [];
-    eventTotal.value = 0;
-    eventsError.value = caught instanceof Error ? caught.message : tr("读取系统告警事件失败");
+    topEvents.value = [];
+    topEventTotal.value = 0;
+    topEventsError.value = caught instanceof Error ? caught.message : tr("读取系统告警事件失败");
   } finally {
-    if (eventsAbort === controller) eventsLoading.value = false;
+    if (eventsAbort === controller) topEventsLoading.value = false;
+  }
+}
+
+async function loadAllEvents() {
+  if (!allEventsOpen.value) return;
+  allEventsAbort?.abort();
+  allEventsAbort = new AbortController();
+  const controller = allEventsAbort;
+  allEventsLoading.value = true;
+  allEventsError.value = "";
+  try {
+    const query = eventQuery({
+      page: allEventPage.value,
+      pageSize: allEventPageSize,
+      order: "recent",
+      environmentId: effectiveEventEnvironmentId.value,
+      severity: eventSeverity.value,
+      status: eventStatus.value,
+    });
+    const response = await api<MonitorPlatformEventListResponse>(`/api/v1/monitoring/events?${query}`, { signal: controller.signal });
+    if (controller.signal.aborted) return;
+    allEvents.value = response.items;
+    allEventTotal.value = response.total;
+  } catch (caught) {
+    if ((caught as { name?: string }).name === "AbortError") return;
+    allEvents.value = [];
+    allEventTotal.value = 0;
+    allEventsError.value = caught instanceof Error ? caught.message : tr("读取系统告警事件失败");
+  } finally {
+    if (allEventsAbort === controller) allEventsLoading.value = false;
   }
 }
 
@@ -119,6 +173,15 @@ function eventTime(event: MonitorPlatformEventItem) {
 
 function eventTarget(event: MonitorPlatformEventItem) {
   return event.serviceName || event.connectionName || event.targetName;
+}
+
+function openAllEvents() {
+  allEventsOpen.value = true;
+}
+
+function openDrawerEvent(event: MonitorPlatformEventItem) {
+  allEventsOpen.value = false;
+  emit("open-event", event);
 }
 
 const visibleServices = computed(() => {
@@ -162,21 +225,39 @@ watch(() => props.environmentId, (value) => {
 watch(
   () => [
     props.environmentId,
-    eventEnvironmentId.value,
     eventRangeDays.value,
     selectedHeatDate.value,
-    eventSeverity.value,
-    eventStatus.value,
     props.refreshKey,
   ],
   () => {
-    if (eventPage.value !== 1) eventPage.value = 1;
-    else void loadEvents();
+    void loadTopEvents();
+    if (!allEventsOpen.value) return;
+    if (allEventPage.value !== 1) allEventPage.value = 1;
+    else void loadAllEvents();
   },
   { immediate: true },
 );
-watch(eventPage, () => void loadEvents());
-onBeforeUnmount(() => eventsAbort?.abort());
+watch(
+  () => [eventEnvironmentId.value, eventSeverity.value, eventStatus.value],
+  () => {
+    if (!allEventsOpen.value) return;
+    if (allEventPage.value !== 1) allEventPage.value = 1;
+    else void loadAllEvents();
+  },
+);
+watch(allEventsOpen, (open) => {
+  if (!open) {
+    allEventsAbort?.abort();
+    return;
+  }
+  if (allEventPage.value !== 1) allEventPage.value = 1;
+  else void loadAllEvents();
+});
+watch(allEventPage, () => void loadAllEvents());
+onBeforeUnmount(() => {
+  eventsAbort?.abort();
+  allEventsAbort?.abort();
+});
 </script>
 
 <template>
@@ -189,12 +270,17 @@ onBeforeUnmount(() => eventsAbort?.abort());
       @select-date="selectHeatDate"
     />
 
-    <section class="observe-panel" v-loading="eventsLoading">
+    <section class="observe-panel priority-event-panel" v-loading="topEventsLoading">
       <header class="observe-panel__head">
         <div>
-          <h3>{{ $t('告警事件') }}</h3>
-          <small>{{ eventRangeLabel }} · {{ eventTotal }} · {{ $t('系统事件记录，不受个人通知清除影响') }}</small>
+          <h3>{{ $t('重点告警事件') }}</h3>
+          <small>{{ eventRangeLabel }} · {{ $t('按严重等级展示最需要关注的 5 条') }}</small>
         </div>
+        <button type="button" class="all-events-link" @click="openAllEvents">
+          <span>{{ $t('查看全部系统告警') }}</span>
+          <b>{{ topEventTotal }}</b>
+          <i>→</i>
+        </button>
       </header>
       <div class="event-filter-bar">
         <div class="event-range-tabs" role="group" :aria-label="$t('告警事件时间范围')">
@@ -204,30 +290,13 @@ onBeforeUnmount(() => eventsAbort?.abort());
           <button type="button" :class="{ 'is-active': !selectedHeatDate && eventRangeDays === 90 }" @click="chooseRange(90)">{{ $t('近 90 天') }}</button>
           <button type="button" :class="{ 'is-active': !selectedHeatDate && eventRangeDays === 365 }" @click="chooseRange(365)">{{ $t('近一年') }}</button>
         </div>
-        <div class="event-filter-controls">
-          <el-select v-model="eventEnvironmentId" clearable :disabled="Boolean(environmentId)" :placeholder="$t('全部环境')" class="filter-select">
-            <el-option v-for="item in environments" :key="item.id" :label="item.name" :value="item.id" />
-          </el-select>
-          <el-select v-model="eventSeverity" class="filter-select">
-            <el-option value="all" :label="$t('全部级别')" />
-            <el-option value="critical" label="Critical" />
-            <el-option value="major" label="Major" />
-            <el-option value="warning" label="Warning" />
-            <el-option value="info" label="Info" />
-          </el-select>
-          <el-select v-model="eventStatus" class="filter-select">
-            <el-option value="all" :label="$t('全部状态')" />
-            <el-option value="active" :label="$t('活动中')" />
-            <el-option value="recovered" :label="$t('已恢复')" />
-            <el-option value="event" :label="$t('事件')" />
-          </el-select>
-        </div>
+        <span class="priority-order-note">{{ $t('Critical → Major → Warning → Info') }}</span>
       </div>
-      <div v-if="eventsError" class="event-list-error">{{ eventsError }}</div>
-      <div v-else-if="!events.length && !eventsLoading" class="observe-empty">{{ $t('当前条件下没有告警事件') }}</div>
+      <div v-if="topEventsError" class="event-list-error">{{ topEventsError }}</div>
+      <div v-else-if="!topEvents.length && !topEventsLoading" class="observe-empty compact">{{ $t('当前时间范围没有告警事件') }}</div>
       <div v-else class="event-list">
         <button
-          v-for="event in events"
+          v-for="event in topEvents"
           :key="event.id"
           type="button"
           class="event-row"
@@ -246,15 +315,6 @@ onBeforeUnmount(() => eventsAbort?.abort());
           <span class="tone-badge" :class="event.status === 'active' ? 'is-critical' : event.status === 'recovered' ? 'is-healthy' : 'is-info'">{{ statusLabel(event.status) }}</span>
         </button>
       </div>
-      <footer v-if="eventTotal > eventPageSize" class="event-pagination">
-        <el-pagination
-          v-model:current-page="eventPage"
-          :page-size="eventPageSize"
-          :total="eventTotal"
-          layout="prev, pager, next"
-          background
-        />
-      </footer>
     </section>
 
     <section class="observe-panel service-section">
@@ -287,6 +347,84 @@ onBeforeUnmount(() => eventsAbort?.abort());
         </div>
       </div>
     </section>
+
+    <el-drawer
+      v-model="allEventsOpen"
+      :title="$t('全部系统告警')"
+      size="min(1080px, 96vw)"
+      append-to-body
+      destroy-on-close
+      class="system-event-drawer"
+    >
+      <div class="drawer-event-context">
+        <div>
+          <strong>{{ eventRangeLabel }}</strong>
+          <span>{{ allEventTotal }} {{ $t('条系统事件记录') }}</span>
+        </div>
+        <small>{{ $t('系统历史数据，不受个人通知读取或清除影响') }}</small>
+      </div>
+      <div class="drawer-event-filters">
+        <div class="event-range-tabs" role="group" :aria-label="$t('告警事件时间范围')">
+          <button type="button" :class="{ 'is-active': !selectedHeatDate && eventRangeDays === 1 }" @click="chooseRange(1)">{{ $t('今天') }}</button>
+          <button type="button" :class="{ 'is-active': !selectedHeatDate && eventRangeDays === 7 }" @click="chooseRange(7)">{{ $t('近 7 天') }}</button>
+          <button type="button" :class="{ 'is-active': !selectedHeatDate && eventRangeDays === 30 }" @click="chooseRange(30)">{{ $t('近 30 天') }}</button>
+          <button type="button" :class="{ 'is-active': !selectedHeatDate && eventRangeDays === 90 }" @click="chooseRange(90)">{{ $t('近 90 天') }}</button>
+          <button type="button" :class="{ 'is-active': !selectedHeatDate && eventRangeDays === 365 }" @click="chooseRange(365)">{{ $t('近一年') }}</button>
+        </div>
+        <div class="event-filter-controls">
+          <el-select v-model="eventEnvironmentId" clearable :disabled="Boolean(environmentId)" :placeholder="$t('全部环境')" class="filter-select">
+            <el-option v-for="item in environments" :key="item.id" :label="item.name" :value="item.id" />
+          </el-select>
+          <el-select v-model="eventSeverity" class="filter-select">
+            <el-option value="all" :label="$t('全部级别')" />
+            <el-option value="critical" label="Critical" />
+            <el-option value="major" label="Major" />
+            <el-option value="warning" label="Warning" />
+            <el-option value="info" label="Info" />
+          </el-select>
+          <el-select v-model="eventStatus" class="filter-select">
+            <el-option value="all" :label="$t('全部状态')" />
+            <el-option value="active" :label="$t('活动中')" />
+            <el-option value="recovered" :label="$t('已恢复')" />
+            <el-option value="event" :label="$t('事件')" />
+          </el-select>
+        </div>
+      </div>
+      <div class="drawer-event-list" v-loading="allEventsLoading">
+        <div v-if="allEventsError" class="event-list-error">{{ allEventsError }}</div>
+        <div v-else-if="!allEvents.length && !allEventsLoading" class="observe-empty">{{ $t('当前条件下没有告警事件') }}</div>
+        <div v-else class="event-list">
+          <button
+            v-for="event in allEvents"
+            :key="event.id"
+            type="button"
+            class="event-row"
+            @click="openDrawerEvent(event)"
+          >
+            <span class="tone-badge" :class="`is-${event.peakSeverity}`">{{ severityLabel(event.peakSeverity) }}</span>
+            <span class="event-time">{{ eventTime(event) }}</span>
+            <span>
+              <strong>{{ monitorAlertRuleLabel(event) }}</strong>
+              <small>{{ event.connectionName || event.targetName }}<template v-if="event.occurrenceCount > 1"> · {{ event.occurrenceCount }}</template></small>
+            </span>
+            <span>
+              <strong>{{ eventTarget(event) }}</strong>
+              <small>{{ event.environmentName }}</small>
+            </span>
+            <span class="tone-badge" :class="event.status === 'active' ? 'is-critical' : event.status === 'recovered' ? 'is-healthy' : 'is-info'">{{ statusLabel(event.status) }}</span>
+          </button>
+        </div>
+        <footer v-if="allEventTotal > allEventPageSize" class="event-pagination">
+          <el-pagination
+            v-model:current-page="allEventPage"
+            :page-size="allEventPageSize"
+            :total="allEventTotal"
+            layout="total, prev, pager, next"
+            background
+          />
+        </footer>
+      </div>
+    </el-drawer>
   </section>
 </template>
 
@@ -348,6 +486,33 @@ onBeforeUnmount(() => eventsAbort?.abort());
   color: var(--ink-400);
   font-size: 11px;
 }
+
+.all-events-link {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  border: 1px solid var(--teal-200, var(--ink-100));
+  border-radius: 7px;
+  background: var(--teal-50);
+  color: var(--teal-700);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.all-events-link b {
+  min-width: 22px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.all-events-link i { font-style: normal; }
+.all-events-link:hover { border-color: var(--teal-500); }
 
 .observe-panel__foot {
   min-height: 40px;
@@ -496,6 +661,12 @@ onBeforeUnmount(() => eventsAbort?.abort());
   flex-wrap: wrap;
 }
 
+.priority-order-note {
+  color: var(--ink-400);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
 .event-range-tabs button {
   height: 28px;
   padding: 0 9px;
@@ -530,6 +701,48 @@ onBeforeUnmount(() => eventsAbort?.abort());
   display: flex;
   align-items: center;
   justify-content: flex-end;
+}
+
+.drawer-event-context {
+  min-height: 54px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--ink-100);
+  border-radius: 8px;
+  background: var(--ink-50);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.drawer-event-context > div {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.drawer-event-context strong { font-size: 14px; }
+.drawer-event-context span,
+.drawer-event-context small { color: var(--ink-400); font-size: 11px; }
+
+.drawer-event-filters {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--ink-100);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.drawer-event-list {
+  min-height: 180px;
+  overflow: hidden;
+  border: 1px solid var(--ink-100);
+  border-radius: 8px;
 }
 
 .event-row,
@@ -604,6 +817,8 @@ onBeforeUnmount(() => eventsAbort?.abort());
   font-size: 13px;
 }
 
+.observe-empty.compact { padding: 22px 16px; }
+
 .service-section { overflow: hidden; }
 
 .service-table { min-width: 0; overflow-x: auto; }
@@ -637,6 +852,9 @@ onBeforeUnmount(() => eventsAbort?.abort());
 .row-action:hover { text-decoration: underline; }
 
 @media (max-width: 960px) {
+  .observe-panel__head,
+  .drawer-event-context { align-items: flex-start; flex-direction: column; }
+
   .event-row,
   .service-row,
   .service-row.is-head {

@@ -136,6 +136,23 @@ function formatFreshness(value: string | null | undefined) {
   return new Date(value).toLocaleTimeString();
 }
 
+function collectionLabel(host: MonitoringHostCard) {
+  if (host.missing) return tr("尚无监控数据");
+  const freshness = formatFreshness(host.lastCollectedAt);
+  return freshness === "—" ? tr("尚无采集时间") : tr("{{0}} 前采集", [freshness]);
+}
+
+function probeLabel(host: MonitoringHostCard) {
+  if (host.missing) return tr("探针未安装");
+  if (host.offline) return tr("探针离线");
+  if (host.stale) return tr("数据已陈旧");
+  return host.agentVersion ? tr("探针 v{{0}}", [host.agentVersion]) : tr("探针在线");
+}
+
+function activeAlertCount(alerts: MonitoringAlertCounts) {
+  return alerts.critical + alerts.major + alerts.warning;
+}
+
 function bottleneck(host: MonitoringHostCard, _state: MonitoringHostPriorityState, alerts: MonitoringAlertCounts) {
   if (host.offline) return tr("主机或监控探针离线");
   if (host.missing) return tr("未安装监控探针");
@@ -380,7 +397,10 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
             <el-option value="unmanaged" :label="$t('未安装探针')" />
           </el-select>
         </div>
-        <span class="host-count"><strong>{{ rankedHosts.length }}</strong> {{ $t('个节点') }}</span>
+        <div class="host-list-summary">
+          <span class="host-count"><strong>{{ rankedHosts.length }}</strong> {{ $t('个节点') }}</span>
+          <small>{{ $t('离线与严重告警优先，其次按资源压力排序') }}</small>
+        </div>
       </div>
 
       <div v-if="!detailMode && canOperate" class="bulk-probe-bar">
@@ -411,41 +431,65 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
           @click="openHost(item.host)"
           @keydown.enter="openHost(item.host)"
         >
-          <span class="host-rank">#{{ String(index + 1).padStart(2, '0') }}</span>
-          <span class="host-pressure-score">{{ item.score }}<small>/100</small></span>
-          <input
-            v-if="canOperate && !detailMode"
-            class="host-card-select"
-            type="checkbox"
-            :checked="selectedIds.has(item.host.sshConnectionId)"
-            :aria-label="item.host.connectionName"
-            @click.stop
-            @change="toggleSelect(item.host.sshConnectionId, ($event.target as HTMLInputElement).checked)"
-          />
-          <h3>{{ item.host.connectionName }}</h3>
-          <p>{{ item.host.host }} · {{ item.host.environmentName }}</p>
-          <div class="host-bottleneck">
-            <strong>{{ bottleneck(item.host, item.state, item.alertCounts) }}</strong>
-          </div>
-          <div v-if="!detailMode" class="host-resource-bars">
-            <span class="host-resource-line" :class="{ 'is-hot': resourceHot(item.host.cpuUsedPercent) }">
-              <b>CPU</b><i><span :style="{ width: `${Math.min(100, Math.max(0, item.host.cpuUsedPercent ?? 0))}%` }"></span></i>
-              <output>{{ formatPercent(item.host.cpuUsedPercent) }}</output>
-            </span>
-            <span class="host-resource-line" :class="{ 'is-hot': resourceHot(item.host.memoryUsedPercent) }">
-              <b>MEM</b><i><span :style="{ width: `${Math.min(100, Math.max(0, item.host.memoryUsedPercent ?? 0))}%` }"></span></i>
-              <output>{{ formatPercent(item.host.memoryUsedPercent) }}</output>
-            </span>
-            <span class="host-resource-line" :class="{ 'is-hot': resourceHot(item.host.diskUsedPercent) }">
-              <b>DSK</b><i><span :style="{ width: `${Math.min(100, Math.max(0, item.host.diskUsedPercent ?? 0))}%` }"></span></i>
-              <output>{{ formatPercent(item.host.diskUsedPercent) }}</output>
-            </span>
-          </div>
-          <div v-if="!detailMode" class="host-card-foot">
-            <span>{{ item.host.missing ? $t('未安装') : `v${item.host.agentVersion || '—'}` }}</span>
-            <span>{{ item.alertCounts.critical + item.alertCounts.major + item.alertCounts.warning ? `${item.alertCounts.critical + item.alertCounts.major + item.alertCounts.warning} ${$t('活动告警')}` : formatFreshness(item.host.lastCollectedAt) }}</span>
-            <strong>{{ $t('详情') }} →</strong>
-          </div>
+          <template v-if="detailMode">
+            <div class="compact-host-head">
+              <strong>{{ item.host.connectionName }}</strong>
+              <span class="tone-badge" :class="`is-${item.state}`">{{ stateLabel(item.state) }}</span>
+            </div>
+            <p>{{ item.host.host }} · {{ item.host.environmentName }}</p>
+            <span class="compact-host-reason">{{ bottleneck(item.host, item.state, item.alertCounts) }}</span>
+            <div class="compact-host-resources">
+              <span>CPU {{ formatPercent(item.host.cpuUsedPercent) }}</span>
+              <span>{{ $t('内存') }} {{ formatPercent(item.host.memoryUsedPercent) }}</span>
+              <span>{{ $t('磁盘') }} {{ formatPercent(item.host.diskUsedPercent) }}</span>
+            </div>
+          </template>
+          <template v-else>
+            <div class="host-card-head">
+              <div>
+                <span class="host-rank">{{ $t('优先级') }} {{ String(index + 1).padStart(2, '0') }}</span>
+                <span class="tone-badge" :class="`is-${item.state}`">{{ stateLabel(item.state) }}</span>
+              </div>
+              <input
+                v-if="canOperate"
+                class="host-card-select"
+                type="checkbox"
+                :checked="selectedIds.has(item.host.sshConnectionId)"
+                :aria-label="item.host.connectionName"
+                @click.stop
+                @change="toggleSelect(item.host.sshConnectionId, ($event.target as HTMLInputElement).checked)"
+              />
+            </div>
+            <h3>{{ item.host.connectionName }}</h3>
+            <p>{{ item.host.host }} · {{ item.host.environmentName }}</p>
+            <div class="host-bottleneck">
+              <span>{{ $t('优先处理原因') }}</span>
+              <strong>{{ bottleneck(item.host, item.state, item.alertCounts) }}</strong>
+            </div>
+            <div class="host-resource-bars">
+              <span class="host-resource-line" :class="{ 'is-hot': resourceHot(item.host.cpuUsedPercent) }">
+                <b>CPU</b><i><span :style="{ width: `${Math.min(100, Math.max(0, item.host.cpuUsedPercent ?? 0))}%` }"></span></i>
+                <output>{{ formatPercent(item.host.cpuUsedPercent) }}</output>
+              </span>
+              <span class="host-resource-line" :class="{ 'is-hot': resourceHot(item.host.memoryUsedPercent) }">
+                <b>{{ $t('内存') }}</b><i><span :style="{ width: `${Math.min(100, Math.max(0, item.host.memoryUsedPercent ?? 0))}%` }"></span></i>
+                <output>{{ formatPercent(item.host.memoryUsedPercent) }}</output>
+              </span>
+              <span class="host-resource-line" :class="{ 'is-hot': resourceHot(item.host.diskUsedPercent) }">
+                <b>{{ $t('磁盘') }}</b><i><span :style="{ width: `${Math.min(100, Math.max(0, item.host.diskUsedPercent ?? 0))}%` }"></span></i>
+                <output>{{ formatPercent(item.host.diskUsedPercent) }}</output>
+              </span>
+            </div>
+            <div class="host-card-meta">
+              <span>{{ probeLabel(item.host) }}</span>
+              <span>{{ collectionLabel(item.host) }}</span>
+              <span v-if="activeAlertCount(item.alertCounts)" class="is-alert">{{ activeAlertCount(item.alertCounts) }} {{ $t('条活动告警') }}</span>
+            </div>
+            <div class="host-card-foot">
+              <span>{{ $t('点击查看容量走势、磁盘与探针操作') }}</span>
+              <strong>{{ $t('查看监控') }} →</strong>
+            </div>
+          </template>
         </article>
       </div>
       <div v-else-if="!loadingMore" class="host-empty">
@@ -461,7 +505,10 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
     <div v-if="selected && selectedRank" class="host-resource-detail">
       <div class="detail-back-row">
         <el-button @click="closeDetail">← {{ $t('返回主机节点') }}</el-button>
-        <span>#{{ allRankedHosts.findIndex((item) => item.host.sshConnectionId === selected?.sshConnectionId) + 1 }} · {{ selectedRank.score }}</span>
+        <span>
+          {{ $t('排序位置') }} {{ allRankedHosts.findIndex((item) => item.host.sshConnectionId === selected?.sshConnectionId) + 1 }}/{{ allRankedHosts.length }}
+          · {{ $t('优先原因') }}：{{ bottleneck(selected, selectedRank.state, selectedRank.alertCounts) }}
+        </span>
       </div>
       <section class="host-detail-hero">
         <div>
@@ -612,6 +659,17 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
   font-size: 12px;
 }
 
+.host-list-summary {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+}
+
+.host-list-summary small {
+  color: var(--ink-400);
+  font-size: 10px;
+}
+
 .bulk-probe-bar {
   min-height: 44px;
   margin-bottom: 12px;
@@ -645,7 +703,7 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
 }
 
 .priority-host-card {
-  min-height: 176px;
+  min-height: 246px;
   position: relative;
   padding: 12px;
   border: 1px solid var(--ink-100);
@@ -662,7 +720,7 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
 .priority-host-card.is-selected { background: var(--teal-50); }
 
 .host-fleet.is-detail-mode .priority-host-card {
-  min-height: 84px;
+  min-height: 118px;
   border: 0;
   border-radius: 0;
   border-bottom: 1px solid var(--ink-100);
@@ -670,45 +728,32 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
 }
 
 .host-card-select {
-  position: absolute;
-  top: 10px;
-  right: 10px;
+  width: 15px;
+  height: 15px;
+  margin: 0;
 }
 
 .host-rank {
-  position: absolute;
-  top: 10px;
-  left: 12px;
   color: var(--ink-400);
   font-family: var(--font-mono);
   font-size: 10px;
-  font-weight: 800;
+  font-weight: 700;
 }
 
-.host-pressure-score {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 3px;
-  margin-left: 32px;
-  color: var(--red-600);
-  font-family: var(--font-mono);
-  font-size: 18px;
-  font-weight: 800;
+.host-card-head,
+.host-card-head > div,
+.compact-host-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
-.host-pressure-score small { color: var(--ink-400); font-size: 9px; }
-
-.host-fleet.is-detail-mode .host-pressure-score {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  margin: 0;
-  font-size: 14px;
-}
+.host-card-head > div { justify-content: flex-start; }
 
 .priority-host-card h3 {
-  margin: 14px 0 2px;
-  font-size: 13px;
+  margin: 12px 0 2px;
+  font-size: 15px;
 }
 
 .priority-host-card p,
@@ -721,12 +766,22 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
 }
 
 .host-bottleneck {
-  min-height: 20px;
-  margin: 8px 0;
+  min-height: 48px;
+  margin: 10px 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--amber-600);
+  background: var(--ink-50);
+}
+
+.host-bottleneck span {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--ink-400);
+  font-size: 10px;
 }
 
 .host-bottleneck strong {
-  color: var(--red-600);
+  color: var(--ink-800);
   font-size: 12px;
 }
 
@@ -734,7 +789,7 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
 
 .host-resource-line {
   display: grid;
-  grid-template-columns: 28px 1fr 36px;
+  grid-template-columns: 34px 1fr 36px;
   gap: 7px;
   align-items: center;
   color: var(--ink-400);
@@ -759,6 +814,29 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
 .is-hot { color: var(--red-600); }
 .host-resource-line.is-hot i span { background: var(--red-600); }
 
+.host-card-meta {
+  min-height: 24px;
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.host-card-meta span {
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: var(--ink-50);
+  color: var(--ink-500);
+  font-size: 10px;
+}
+
+.host-card-meta span.is-alert {
+  background: var(--red-100);
+  color: var(--red-600);
+  font-weight: 700;
+}
+
 .host-card-foot {
   display: flex;
   align-items: center;
@@ -767,8 +845,40 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
   margin-top: 10px;
   padding-top: 8px;
   border-top: 1px solid var(--ink-100);
-  font-family: var(--font-mono);
   font-size: 10px;
+}
+
+.host-card-foot strong {
+  color: var(--teal-700);
+  white-space: nowrap;
+}
+
+.compact-host-head strong {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-host-reason {
+  display: block;
+  margin-top: 7px;
+  overflow: hidden;
+  color: var(--red-600);
+  font-size: 11px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-host-resources {
+  margin-top: 7px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  color: var(--ink-400);
+  font-family: var(--font-mono);
+  font-size: 9px;
 }
 
 .host-empty,

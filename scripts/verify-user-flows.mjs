@@ -248,6 +248,23 @@ function seedMonitoringFixture(dataDirectory, { environmentId, connectionId, ser
       host: { cpuUsedPercent: 18 },
       candidates: [{ provider: "systemd", externalId: "flow.service", name: serviceName, cpuUsedPercent: 11, memoryBytes: 128 }],
     }), now);
+    const alertSeverities = ["info", "warning", "critical", "major", "warning", "critical", "info"];
+    const insertAlert = db.prepare(`
+      INSERT INTO monitor_alerts (
+        id, environment_id, target_type, target_id, rule_type, rule_key,
+        ssh_connection_id, environment_name, target_name, connection_name,
+        status, severity, peak_severity, details_json, triggered_at, last_seen_at,
+        created_at, updated_at
+      ) VALUES (?, ?, 'host', ?, 'cpu', ?, ?, '全流程测试环境', ?, 'flow-host-a',
+        'event', ?, ?, '{}', ?, ?, ?, ?)
+    `);
+    alertSeverities.forEach((severity, index) => {
+      const at = new Date(Date.now() - index * 60_000).toISOString();
+      insertAlert.run(
+        randomUUID(), environmentId, randomUUID(), `flow-priority-${index}`, connectionId,
+        `flow-alert-${index}`, severity, severity, at, at, at, at,
+      );
+    });
   } finally {
     db.close();
   }
@@ -394,11 +411,32 @@ async function verifyCredentialsAndMonitoring(page, { environmentId, serviceName
   await page.locator(".primary-menu").getByRole("button", { name: "监控大盘" }).click();
   await page.waitForURL((url) => url.pathname === "/monitoring", { timeout: 20_000 });
   await expectVisible(page.getByRole("heading", { name: "监控大盘" }), "监控大盘页");
+  await expectVisible(page.getByRole("heading", { name: "重点告警事件" }), "重点告警事件");
+  await page.waitForFunction(() => document.querySelectorAll(".priority-event-panel .event-row").length === 5);
+  assert.equal(await page.locator(".priority-event-panel .event-row").count(), 5, "重点告警未限制为 5 条");
+  assert.equal(await page.locator(".priority-event-panel .event-row .tone-badge").first().innerText(), "CRITICAL", "重点告警未按严重度排序");
+  await expectVisible(page.getByText(serviceName).first(), "重点告警下方的服务列表");
+  if (process.env.VIRON_CAPTURE_FLOW_SCREENSHOTS === "true") {
+    await page.screenshot({ path: resolve(artifactDirectory, "monitoring-top5-review.png"), fullPage: true });
+  }
+  await page.getByRole("button", { name: /查看全部系统告警/ }).click();
+  await expectVisible(page.getByRole("heading", { name: "全部系统告警" }), "全部系统告警抽屉");
+  await page.waitForFunction(() => document.querySelectorAll(".drawer-event-list .event-row").length >= 7);
+  await page.keyboard.press("Escape");
   await page.getByRole("tab", { name: "主机节点" }).click();
   await expectVisible(page.locator(".priority-host-grid"), "监控主机卡片列表");
+  await expectVisible(page.getByText("离线与严重告警优先，其次按资源压力排序"), "主机排序说明");
+  await expectVisible(page.getByText("优先处理原因").first(), "主机优先原因");
+  assert.equal(await page.locator(".host-pressure-score").count(), 0, "主机列表仍展示难以理解的压力裸分数");
+  if (process.env.VIRON_CAPTURE_FLOW_SCREENSHOTS === "true") {
+    await page.screenshot({ path: resolve(artifactDirectory, "monitoring-host-cards-review.png"), fullPage: true });
+  }
   await expectVisible(page.getByRole("heading", { name: "flow-host-a" }), "监控主机下钻");
   await page.getByRole("heading", { name: "flow-host-a" }).click();
   await expectVisible(page.locator(".host-resource-detail"), "监控主机详情");
+  if (process.env.VIRON_CAPTURE_FLOW_SCREENSHOTS === "true") {
+    await page.screenshot({ path: resolve(artifactDirectory, "monitoring-host-detail-review.png"), fullPage: true });
+  }
   await page.getByRole("tab", { name: "主机节点" }).click();
   await expectVisible(page.locator(".priority-host-grid"), "重新进入主机卡片列表");
   await page.getByRole("tab", { name: "告警与服务" }).click();

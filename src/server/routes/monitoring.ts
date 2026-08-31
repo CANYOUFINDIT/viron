@@ -50,6 +50,7 @@ const platformEventsQuerySchema = z.object({
   environmentId: z.string().uuid().optional(),
   severity: z.enum(["all", "info", "warning", "major", "critical"]).optional(),
   status: z.enum(["all", "active", "recovered", "event"]).optional(),
+  order: z.enum(["recent", "priority"]).default("recent"),
   page: z.coerce.number().int().min(1).max(100_000).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(100),
 });
@@ -189,6 +190,7 @@ export async function registerMonitoringRoutes(app: FastifyInstance): Promise<vo
       to,
       severity: query.data.severity ?? "all",
       status: query.data.status ?? "all",
+      order: query.data.order,
       limit: query.data.pageSize,
       offset: (query.data.page - 1) * query.data.pageSize,
     });

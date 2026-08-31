@@ -409,6 +409,7 @@ export interface PlatformMonitorAlertQuery {
   to: number;
   severity?: MonitorAlertSeverity | "all";
   status?: "active" | "recovered" | "event" | "all";
+  order?: "recent" | "priority";
   limit?: number | null;
   offset?: number;
 }
@@ -457,6 +458,17 @@ async function loadPlatformAlertRows(
   const limit = query.limit === null ? null : Math.min(Math.max(1, query.limit ?? 100), 500);
   const offset = Math.max(0, Math.trunc(query.offset ?? 0));
   const pagination = limit === null ? "" : `LIMIT ${limit} OFFSET ${offset}`;
+  const orderBy = query.order === "priority"
+    ? `CASE a.peak_severity
+         WHEN 'critical' THEN 4
+         WHEN 'major' THEN 3
+         WHEN 'warning' THEN 2
+         ELSE 1
+       END DESC,
+       CASE WHEN a.status = 'active' THEN 0 WHEN a.status = 'event' THEN 1 ELSE 2 END,
+       COALESCE(NULLIF(a.last_seen_at, ''), a.recovered_at, a.triggered_at) DESC,
+       a.triggered_at DESC`
+    : "CASE WHEN a.status = 'active' THEN 0 WHEN a.status = 'event' THEN 1 ELSE 2 END, a.triggered_at DESC";
   return app.db.prepare(`
     SELECT a.id, a.rule_type, a.rule_key, a.status, a.severity, a.peak_severity, a.occurrence_count,
       a.target_name, a.details_json, a.triggered_at, a.recovered_at, a.last_seen_at,
@@ -465,7 +477,7 @@ async function loadPlatformAlertRows(
     FROM monitor_alerts a
     JOIN environments e ON e.id = a.environment_id
     WHERE ${where.clauses.join(" AND ")}
-    ORDER BY CASE WHEN a.status = 'active' THEN 0 WHEN a.status = 'event' THEN 1 ELSE 2 END, a.triggered_at DESC
+    ORDER BY ${orderBy}
     ${pagination}
   `).all(...where.parameters) as Promise<PlatformStoredEventRow[]>;
 }

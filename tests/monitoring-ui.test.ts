@@ -39,10 +39,16 @@ describe("monitoring dashboard wiring", () => {
     expect(alertService).toContain("mode=\"platform\"");
     expect(alertService).toContain("HostEventCalendar");
     expect(alertService).toContain("/api/v1/monitoring/events?");
-    expect(alertService).toContain("系统事件记录，不受个人通知清除影响");
+    expect(alertService).toContain("系统历史数据，不受个人通知读取或清除影响");
+    expect(alertService).toContain('pageSize: 5');
+    expect(alertService).toContain('order: "priority"');
+    expect(alertService).toContain("查看全部系统告警");
     expect(alertService).not.toContain("/api/v1/monitor-alerts");
     expect(hostEventCalendar).toContain("系统历史告警统计，不受个人通知读取或清除影响");
     expect(hostFleet).toContain("priority-host-grid");
+    expect(hostFleet).toContain("优先处理原因");
+    expect(hostFleet).toContain("离线与严重告警优先，其次按资源压力排序");
+    expect(hostFleet).not.toContain("host-pressure-score");
     expect(maintenanceDiscovery).toContain("<HostEventCalendar");
     expect(maintenanceDiscovery).toContain(':host-id="selectedHost.sshConnectionId"');
     expect(hostEventCalendar).toContain("/event-calendar?");
@@ -63,7 +69,7 @@ describe("monitoring dashboard wiring", () => {
     expect(monitoringView).not.toContain("NOC 全屏");
     expect(monitoringView).toContain("$t('告警与服务')");
     expect(monitoringView).toContain("$t('主机节点')");
-    expect(alertService).toContain("$t('告警事件')");
+    expect(alertService).toContain("$t('重点告警事件')");
     expect(alertService).toContain("$t('服务')");
     expect(hostFleet).toContain("$t('返回主机节点')");
     expect(noc).toContain("<Teleport to=\"body\">");
