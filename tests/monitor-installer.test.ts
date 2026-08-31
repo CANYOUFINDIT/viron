@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildApp } from "../src/server/app.js";
 import type { AppConfig } from "../src/server/config.js";
 import { ensureAdmin, openDatabase } from "../src/server/database.js";
-import { MonitorInstallError, normalizeMonitorInstallPath, restartMonitorServiceCommand } from "../src/server/monitor-installer.js";
+import { MonitorInstallError, normalizeMonitorInstallPath, restartMonitorServiceCommand, uninstallMonitorCommand } from "../src/server/monitor-installer.js";
 import { monitorInstallTaskConcurrency, sanitizeMonitorInstallOutput } from "../src/server/monitor-install-task-manager.js";
 import { PRODUCT_VERSION } from "../src/server/product-info.js";
 
@@ -80,6 +80,7 @@ interface MonitorSshState {
   monitorInstalled: boolean;
   failInstall: boolean;
   installDelayMs: number;
+  uninstallExitCode: number;
   uploads: Map<string, Buffer>;
 }
 
@@ -191,6 +192,7 @@ async function startMonitorSshServer() {
     monitorInstalled: false,
     failInstall: false,
     installDelayMs: 0,
+    uninstallExitCode: 0,
     uploads: new Map(),
   };
   const server = new Server({ hostKeys: [privateKey] }, (client) => {
@@ -207,6 +209,20 @@ async function startMonitorSshServer() {
           const stream = acceptExec();
           if (info.command.includes("VIRON_MONITOR_PREFLIGHT_V1")) stream.write(preflightOutput(state));
           else if (info.command === "mktemp -d /tmp/viron-monitor-install.XXXXXX") stream.write("/tmp/viron-monitor-install.A1b2C3\n");
+          else if (info.command.includes("VIRON_MONITOR_UNINSTALL_V1")) {
+            if (state.uninstallExitCode) {
+              stream.stderr.write(state.uninstallExitCode === 126 ? "privilege required\n" : "uninstall rejected\n");
+              stream.exit(state.uninstallExitCode);
+              stream.end();
+              return;
+            }
+            state.monitorInstalled = false;
+            state.pathKind = "missing";
+            state.pathEmpty = true;
+            state.manifestBase64 = "";
+            state.monitorPath = "";
+            stream.write('{"ok":true,"localDataRemoved":true}\n');
+          }
           else if (info.command.includes("/install.sh")) {
             const finish = () => {
               if (state.failInstall) {
@@ -297,6 +313,19 @@ describe("monitor installer", () => {
     expect(command).toContain("exit 126");
   });
 
+  it("builds a fail-closed managed uninstall command", () => {
+    const command = uninstallMonitorCommand("/opt/viron/monitor", "operator");
+    expect(command).toContain("VIRON_MONITOR_UNINSTALL_V1");
+    expect(command).toContain(".viron-monitor-install.json");
+    expect(command).toContain("Description=Viron host and service monitor");
+    expect(command).toContain("ExecStart=/usr/local/bin/viron-monitor run");
+    expect(command).toContain("sudo -n /bin/sh -c");
+    expect(command).toContain("rm -rf --");
+    expect(command).toContain("exit 125");
+    expect(command).toContain("exit 124");
+    expect(command).toContain("exit 126");
+  });
+
   it("accepts only normalized installation directories below /opt", () => {
     expect(normalizeMonitorInstallPath(undefined)).toBe("/opt/viron/monitor");
     expect(normalizeMonitorInstallPath("/opt/viron/custom/")).toBe("/opt/viron/custom");
@@ -378,6 +407,95 @@ describe("monitor installer", () => {
       const audit = await context.app.db.prepare("SELECT action, details_json FROM audit_events WHERE resource_id = ? AND action = ?").get(context.connectionId, "monitor_host.installed") as { action: string; details_json: string };
       expect(audit.action).toBe("monitor_host.installed");
       expect(JSON.parse(audit.details_json)).toMatchObject({ installPath: "/opt/viron/monitor", architecture: "amd64", version: PRODUCT_VERSION, mode: "install" });
+    } finally {
+      await context.app.close();
+      await context.ssh.close();
+    }
+  });
+
+  it("uninstalls a managed probe, clears live state, and preserves central history", async () => {
+    const context = await createInstallationContext();
+    const base = `/api/v1/environments/${context.environmentId}/monitor-hosts/${context.connectionId}`;
+    try {
+      const unmanaged = await context.app.inject({ method: "DELETE", url: `${base}/uninstall`, cookies: context.cookies });
+      expect(unmanaged.statusCode).toBe(409);
+      expect(unmanaged.json()).toMatchObject({ error: "MONITOR_UNINSTALL_NOT_MANAGED" });
+
+      expect((await context.app.inject({
+        method: "POST",
+        url: `${base}/install`,
+        cookies: context.cookies,
+        payload: { installPath: "/opt/viron/monitor" },
+      })).statusCode).toBe(200);
+      const historyBefore = await context.app.db.prepare("SELECT COUNT(*) AS count FROM monitor_samples WHERE ssh_connection_id = ?").get(context.connectionId) as { count: number | string };
+      expect(Number(historyBefore.count)).toBeGreaterThan(0);
+
+      const removed = await context.app.inject({ method: "DELETE", url: `${base}/uninstall`, cookies: context.cookies });
+      expect(removed.statusCode).toBe(200);
+      expect(removed.json()).toMatchObject({
+        ok: true,
+        localDataRemoved: true,
+        preservedCentralHistory: true,
+        affectedConnections: 1,
+      });
+      expect(context.ssh.state.monitorInstalled).toBe(false);
+      expect(context.ssh.commands.some((command) => command.includes("VIRON_MONITOR_UNINSTALL_V1") && command.includes("sudo -n /bin/sh -c"))).toBe(true);
+
+      const host = await context.app.db.prepare(`
+        SELECT agent_id, agent_version, status, last_sequence, latest_host_json, last_collected_at,
+          install_path, install_architecture, install_managed, installed_at
+        FROM monitor_hosts WHERE ssh_connection_id = ?
+      `).get(context.connectionId) as Record<string, unknown>;
+      expect(host).toMatchObject({
+        agent_id: "",
+        agent_version: "",
+        status: "missing",
+        last_sequence: 0,
+        latest_host_json: "{}",
+        install_path: "",
+        install_architecture: "",
+        install_managed: 0,
+        installed_at: null,
+      });
+      expect(host.last_collected_at).toEqual(expect.any(String));
+      const historyAfter = await context.app.db.prepare("SELECT COUNT(*) AS count FROM monitor_samples WHERE ssh_connection_id = ?").get(context.connectionId) as { count: number | string };
+      expect(Number(historyAfter.count)).toBe(Number(historyBefore.count));
+      const audit = await context.app.db.prepare("SELECT details_json FROM audit_events WHERE resource_id = ? AND action = 'monitor_host.uninstalled'").get(context.connectionId) as { details_json: string };
+      expect(JSON.parse(audit.details_json)).toMatchObject({
+        installPath: "/opt/viron/monitor",
+        localDataRemoved: true,
+        preservedCentralHistory: true,
+      });
+    } finally {
+      await context.app.close();
+      await context.ssh.close();
+    }
+  });
+
+  it("keeps managed state when remote uninstall lacks privilege or fails validation", async () => {
+    const context = await createInstallationContext();
+    const base = `/api/v1/environments/${context.environmentId}/monitor-hosts/${context.connectionId}`;
+    try {
+      expect((await context.app.inject({
+        method: "POST",
+        url: `${base}/install`,
+        cookies: context.cookies,
+        payload: { installPath: "/opt/viron/monitor" },
+      })).statusCode).toBe(200);
+
+      context.ssh.state.uninstallExitCode = 126;
+      const privilege = await context.app.inject({ method: "DELETE", url: `${base}/uninstall`, cookies: context.cookies });
+      expect(privilege.statusCode).toBe(422);
+      expect(privilege.json()).toMatchObject({ error: "MONITOR_UNINSTALL_PRIVILEGE_REQUIRED" });
+
+      context.ssh.state.uninstallExitCode = 125;
+      const manifest = await context.app.inject({ method: "DELETE", url: `${base}/uninstall`, cookies: context.cookies });
+      expect(manifest.statusCode).toBe(409);
+      expect(manifest.json()).toMatchObject({ error: "MONITOR_UNINSTALL_NOT_MANAGED" });
+
+      const host = await context.app.db.prepare("SELECT status, install_managed, install_path FROM monitor_hosts WHERE ssh_connection_id = ?").get(context.connectionId);
+      expect(host).toMatchObject({ status: "ready", install_managed: 1, install_path: "/opt/viron/monitor" });
+      expect(context.ssh.state.monitorInstalled).toBe(true);
     } finally {
       await context.app.close();
       await context.ssh.close();
@@ -568,6 +686,9 @@ describe("monitor installer", () => {
         expect(response.statusCode, path).toBe(403);
         expect(response.json().error).toBe("WORKSPACE_ADMIN_REQUIRED");
       }
+      const uninstall = await context.app.inject({ method: "DELETE", url: `${base}/uninstall`, cookies: member });
+      expect(uninstall.statusCode).toBe(403);
+      expect(uninstall.json().error).toBe("WORKSPACE_ADMIN_REQUIRED");
     } finally {
       await context.app.close();
       await context.ssh.close();

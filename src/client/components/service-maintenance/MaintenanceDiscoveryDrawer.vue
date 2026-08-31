@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { unref } from "vue";
-import { Activity, CircleAlert, Clock3, Download, EllipsisVertical, Power, RotateCw, ScanSearch } from "@lucide/vue";
+import { Activity, CircleAlert, Clock3, Download, EllipsisVertical, Power, RotateCw, ScanSearch, Trash2 } from "@lucide/vue";
 import { localizeMessage } from "../../i18n";
 import HostMonitorDashboard from "../HostMonitorDashboard.vue";
 import HostEventCalendar from "../monitoring/HostEventCalendar.vue";
@@ -18,6 +18,7 @@ const {
   refreshingHosts,
   clearingHosts,
   restartingHosts,
+  uninstallingHosts,
   selectedUnmanagedCount,
   selectedWorstDisk,
   selectedDiskCount,
@@ -43,6 +44,7 @@ const {
   restartMonitorOnHost,
   refreshHost,
   clearMonitorData,
+  uninstallMonitorOnHost,
   beginCandidateEnrollment,
   assignDiscoveryTarget,
   openServiceCreate,
@@ -60,6 +62,7 @@ function onMonitorHostCommand(command: string | number | object) {
     if (command === "restart") void restartMonitorOnHost(host);
     else if (command === "reinstall") void reinstallMonitorOnHost(host);
     else if (command === "clear") void clearMonitorData(host);
+    else if (command === "uninstall") void uninstallMonitorOnHost(host);
   }, 50);
 }
 </script>
@@ -74,16 +77,17 @@ function onMonitorHostCommand(command: string | number | object) {
       </div>
       <div v-if="payload.canOperate" class="host-observatory__actions">
         <el-button v-if="selectedInstallTask && (isInstallTaskActive(selectedInstallTask) || selectedInstallTask.status === 'error')" :disabled="installingHosts.has(selectedHost.sshConnectionId)" :type="selectedInstallTask.status === 'error' ? 'danger' : 'primary'" plain @click="openInstallProgress(selectedHost)"><Clock3 v-if="isInstallTaskActive(selectedInstallTask)" :size="15" /><CircleAlert v-else :size="15" />{{ isInstallTaskActive(selectedInstallTask) ? $t('查看安装进度') : $t('查看安装失败详情') }}</el-button>
-        <el-button v-else-if="selectedHost.monitorUpdateAvailable || !isMonitorInstalled(selectedHost)" :loading="installingHosts.has(selectedHost.sshConnectionId)" :disabled="refreshingHosts.has(selectedHost.sshConnectionId) || clearingHosts.has(selectedHost.sshConnectionId) || restartingHosts.has(selectedHost.sshConnectionId)" type="primary" @click="installMonitorOnHost(selectedHost)"><Download :size="15" />{{ isMonitorInstalled(selectedHost) ? $t('一键升级') : $t('一键安装监控服务') }}</el-button>
-        <el-button :loading="refreshingHosts.has(selectedHost.sshConnectionId)" :disabled="installingHosts.has(selectedHost.sshConnectionId) || clearingHosts.has(selectedHost.sshConnectionId) || restartingHosts.has(selectedHost.sshConnectionId) || isInstallTaskActive(selectedInstallTask)" @click="refreshHost(selectedHost)"><ScanSearch :size="15" />{{ $t('扫描并拉取') }}</el-button>
+        <el-button v-else-if="selectedHost.monitorUpdateAvailable || !isMonitorInstalled(selectedHost)" :loading="installingHosts.has(selectedHost.sshConnectionId)" :disabled="refreshingHosts.has(selectedHost.sshConnectionId) || clearingHosts.has(selectedHost.sshConnectionId) || restartingHosts.has(selectedHost.sshConnectionId) || uninstallingHosts.has(selectedHost.sshConnectionId)" type="primary" @click="installMonitorOnHost(selectedHost)"><Download :size="15" />{{ isMonitorInstalled(selectedHost) ? $t('一键升级') : $t('一键安装监控服务') }}</el-button>
+        <el-button :loading="refreshingHosts.has(selectedHost.sshConnectionId)" :disabled="installingHosts.has(selectedHost.sshConnectionId) || clearingHosts.has(selectedHost.sshConnectionId) || restartingHosts.has(selectedHost.sshConnectionId) || uninstallingHosts.has(selectedHost.sshConnectionId) || isInstallTaskActive(selectedInstallTask)" @click="refreshHost(selectedHost)"><ScanSearch :size="15" />{{ $t('扫描并拉取') }}</el-button>
         <el-dropdown v-if="isMonitorInstalled(selectedHost) || selectedHost.installPath" trigger="click" placement="bottom-end" @command="onMonitorHostCommand">
           <button class="host-observatory__more" type="button" :aria-label="$t('更多操作')"><EllipsisVertical :size="16" /></button>
           <template #dropdown>
             <el-dropdown-menu>
               <el-dropdown-item v-if="selectedHost.installPath" disabled>{{ selectedHost.installManaged ? $t('Viron 托管') : $t('手工安装') }} · {{ selectedHost.installPath }}</el-dropdown-item>
-              <el-dropdown-item v-if="isMonitorInstalled(selectedHost)" command="restart" :disabled="installingHosts.has(selectedHost.sshConnectionId) || refreshingHosts.has(selectedHost.sshConnectionId) || clearingHosts.has(selectedHost.sshConnectionId) || restartingHosts.has(selectedHost.sshConnectionId) || isInstallTaskActive(selectedInstallTask)"><RotateCw :size="14" />{{ $t('重启监控服务') }}</el-dropdown-item>
-              <el-dropdown-item v-if="isMonitorInstalled(selectedHost)" command="reinstall" :disabled="installingHosts.has(selectedHost.sshConnectionId) || refreshingHosts.has(selectedHost.sshConnectionId) || clearingHosts.has(selectedHost.sshConnectionId) || restartingHosts.has(selectedHost.sshConnectionId) || isInstallTaskActive(selectedInstallTask)"><Download :size="14" />{{ $t('重装监控服务') }}</el-dropdown-item>
-              <el-dropdown-item v-if="isMonitorInstalled(selectedHost)" command="clear" divided :disabled="installingHosts.has(selectedHost.sshConnectionId) || refreshingHosts.has(selectedHost.sshConnectionId) || restartingHosts.has(selectedHost.sshConnectionId) || isInstallTaskActive(selectedInstallTask)">{{ $t('清理监控数据') }}</el-dropdown-item>
+              <el-dropdown-item v-if="isMonitorInstalled(selectedHost)" command="restart" :disabled="installingHosts.has(selectedHost.sshConnectionId) || refreshingHosts.has(selectedHost.sshConnectionId) || clearingHosts.has(selectedHost.sshConnectionId) || restartingHosts.has(selectedHost.sshConnectionId) || uninstallingHosts.has(selectedHost.sshConnectionId) || isInstallTaskActive(selectedInstallTask)"><RotateCw :size="14" />{{ $t('重启监控服务') }}</el-dropdown-item>
+              <el-dropdown-item v-if="isMonitorInstalled(selectedHost)" command="reinstall" :disabled="installingHosts.has(selectedHost.sshConnectionId) || refreshingHosts.has(selectedHost.sshConnectionId) || clearingHosts.has(selectedHost.sshConnectionId) || restartingHosts.has(selectedHost.sshConnectionId) || uninstallingHosts.has(selectedHost.sshConnectionId) || isInstallTaskActive(selectedInstallTask)"><Download :size="14" />{{ $t('重装监控服务') }}</el-dropdown-item>
+              <el-dropdown-item v-if="isMonitorInstalled(selectedHost)" command="clear" :disabled="installingHosts.has(selectedHost.sshConnectionId) || refreshingHosts.has(selectedHost.sshConnectionId) || restartingHosts.has(selectedHost.sshConnectionId) || uninstallingHosts.has(selectedHost.sshConnectionId) || isInstallTaskActive(selectedInstallTask)">{{ $t('清理监控数据') }}</el-dropdown-item>
+              <el-dropdown-item v-if="selectedHost.installManaged" command="uninstall" divided :disabled="installingHosts.has(selectedHost.sshConnectionId) || refreshingHosts.has(selectedHost.sshConnectionId) || clearingHosts.has(selectedHost.sshConnectionId) || restartingHosts.has(selectedHost.sshConnectionId) || uninstallingHosts.has(selectedHost.sshConnectionId) || isInstallTaskActive(selectedInstallTask)"><Trash2 :size="14" />{{ $t('卸载监控探针') }}</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -102,12 +106,12 @@ function onMonitorHostCommand(command: string | number | object) {
         <div class="host-metric-uptime"><span>{{ $t('运行时间') }}</span><strong>{{ formatDuration(selectedHost.snapshot.uptimeSeconds) }}</strong></div>
       </div>
       <HostEventCalendar
-        v-if="selectedHost.snapshot || isMonitorInstalled(selectedHost)"
+        v-if="selectedHost.snapshot || isMonitorInstalled(selectedHost) || selectedHost.lastCollectedAt"
         :environment-id="environmentId"
         :host-id="selectedHost.sshConnectionId"
       />
       <HostMonitorDashboard
-        v-if="selectedHost.snapshot || isMonitorInstalled(selectedHost)"
+        v-if="selectedHost.snapshot || isMonitorInstalled(selectedHost) || selectedHost.lastCollectedAt"
         v-model:focus-metric="hostFocusMetric"
         :environment-id="environmentId"
         :host-id="selectedHost.sshConnectionId"
