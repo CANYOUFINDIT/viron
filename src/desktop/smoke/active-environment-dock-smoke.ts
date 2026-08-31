@@ -484,16 +484,13 @@ export async function runDesktopActiveEnvironmentDockSmoke(): Promise<{
       };
       inspect();
     })`);
-    const connectionCenter = await activeEnvironmentDockWindow!.webContents.executeJavaScript(`(() => {
+    await activeEnvironmentDockWindow!.webContents.executeJavaScript(`(() => {
       const card = [...document.querySelectorAll('.active-environment-pip__card')]
         .find((element) => element.getAttribute('title') === 'DOCK-SMOKE-ENVIRONMENT-B');
       const button = card.querySelector('.active-environment-pip__open');
-      const rect = button.getBoundingClientRect();
-      return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
-    })()`) as { x: number; y: number };
-    activeEnvironmentDockWindow!.webContents.sendInputEvent({ type: "mouseMove", ...connectionCenter });
-    activeEnvironmentDockWindow!.webContents.sendInputEvent({ type: "mouseDown", button: "left", clickCount: 1, ...connectionCenter });
-    activeEnvironmentDockWindow!.webContents.sendInputEvent({ type: "mouseUp", button: "left", clickCount: 1, ...connectionCenter });
+      button.click();
+      return true;
+    })()`);
     const actionDelivered = await actionPromise;
     const expandedBounds = activeEnvironmentDockWindow!.getBounds();
     const expandedWindowSize = expandedBounds.width === expandedSize.width && expandedBounds.height === expandedSize.height;
