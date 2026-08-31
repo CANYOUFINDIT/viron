@@ -55,8 +55,14 @@ describe("monitoring dashboard wiring", () => {
     expect(hostFleet).toContain("SSH 连接失败，无法确认是否安装探针");
     expect(hostFleet).toContain("查看该分类全部 {0} 个节点");
     expect(hostFleet).toContain("重新检测探针状态");
+    expect(hostFleet).toContain("卸载监控探针");
+    expect(hostFleet).toContain('probePath(host, "uninstall")');
+    expect(hostFleet).toContain('method: "DELETE"');
     expect(hostFleet).not.toContain("host-pressure-score");
     expect(maintenanceDiscovery).toContain("<HostEventCalendar");
+    expect(maintenanceDiscovery).toContain('command="uninstall"');
+    expect(maintenanceDiscovery).toContain("uninstallMonitorOnHost");
+    expect(maintenanceDiscovery).toContain("selectedHost.lastCollectedAt");
     expect(maintenanceDiscovery).toContain(':host-id="selectedHost.sshConnectionId"');
     expect(hostEventCalendar).toContain("/event-calendar?");
     expect(hostEventCalendar).toContain("/events?");

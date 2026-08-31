@@ -15,6 +15,7 @@ import {
   normalizeMonitorInstallPath,
   preflightMonitorInstallation,
   restartMonitorServiceCommand,
+  uninstallMonitor,
 } from "../monitor-installer.js";
 import { MonitorInstallTaskConflictError, sanitizeMonitorInstallOutput, type MonitorInstallTaskReporter } from "../monitor-install-task-manager.js";
 import { parseBody } from "../validation.js";
@@ -299,6 +300,55 @@ async function recordMonitorInstallFailure(
     request,
   });
   return { code, message };
+}
+
+async function clearUninstalledMonitorState(
+  app: FastifyInstance,
+  input: { connectionId: string; agentId: string; workspaceType: string; workspaceId: string },
+) {
+  const aliases = input.agentId
+    ? await app.db.prepare(`
+        SELECT h.ssh_connection_id
+        FROM monitor_hosts h
+        JOIN ssh_connections c ON c.id = h.ssh_connection_id
+        WHERE h.agent_id = ? AND c.workspace_type = ? AND c.workspace_id = ?
+        ORDER BY h.ssh_connection_id
+      `).all(input.agentId, input.workspaceType, input.workspaceId) as Array<{ ssh_connection_id: string }>
+    : [];
+  const connectionIds = [...new Set([input.connectionId, ...aliases.map((row) => row.ssh_connection_id)])];
+  const placeholders = connectionIds.map(() => "?").join(", ");
+  const now = new Date().toISOString();
+  let recoveredAlerts = 0;
+  await app.db.transaction(async () => {
+    const recovered = await app.db.prepare(`
+      UPDATE monitor_alerts
+      SET status = 'recovered', recovered_at = ?, last_seen_at = ?, updated_at = ?
+      WHERE status = 'active'
+        AND rule_type NOT IN ('tls_expiring', 'tls_expired', 'tls_hostname_mismatch')
+        AND ssh_connection_id IN (${placeholders})
+    `).run(now, now, now, ...connectionIds);
+    recoveredAlerts = recovered.changes;
+    await app.db.prepare(`
+      DELETE FROM monitor_alert_states
+      WHERE rule_type NOT IN ('tls_expiring', 'tls_expired', 'tls_hostname_mismatch')
+        AND ssh_connection_id IN (${placeholders})
+    `).run(...connectionIds);
+    await app.db.prepare(`
+      UPDATE monitor_hosts SET
+        agent_id = '', agent_version = '', protocol_version = 0, status = 'missing', last_sequence = 0,
+        latest_host_json = '{}', latest_candidates_json = '[]', latest_kubernetes_configs_json = '[]',
+        last_error = '监控探针已由 Viron 卸载', last_pulled_at = ?,
+        install_path = '', install_architecture = '', install_managed = 0, installed_at = NULL, updated_at = ?
+      WHERE ssh_connection_id IN (${placeholders})
+    `).run(now, now, ...connectionIds);
+    await app.db.prepare(`
+      UPDATE service_deployments SET
+        status = 'unknown', state_detail = 'monitor_uninstalled', latest_metrics_json = '{}',
+        last_checked_at = NULL, updated_at = ?
+      WHERE ssh_connection_id IN (${placeholders})
+    `).run(now, ...connectionIds);
+  })();
+  return { connectionIds, recoveredAlerts, updatedAt: now };
 }
 
 function parseMetrics(value: unknown): Record<string, unknown> {
@@ -1385,6 +1435,100 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
           request,
         });
         return reply.code(502).send({ error: "MONITOR_CLEAR_FAILED", message });
+      }
+    },
+  );
+
+  app.delete<{ Params: { environmentId: string; connectionId: string } }>(
+    "/api/v1/environments/:environmentId/monitor-hosts/:connectionId/uninstall",
+    { preHandler: requireAdmin },
+    async (request, reply) => {
+      if (!requireManager(request, reply)) return;
+      if (!await canAccessEnvironment(app.db, request.admin!, request.params.environmentId)) {
+        return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
+      }
+      const connection = await connectionBelongsToEnvironment(app, request.params.connectionId, request.params.environmentId);
+      if (!connection || !await canAccessConnection(app.db, request.admin!, "ssh", connection.id)) {
+        return reply.code(404).send({ error: "SSH_CONNECTION_NOT_FOUND", message: "SSH 连接不存在" });
+      }
+      const installation = await app.db.prepare(`
+        SELECT h.agent_id, h.install_path, h.install_managed, c.workspace_type, c.workspace_id
+        FROM ssh_connections c
+        LEFT JOIN monitor_hosts h ON h.ssh_connection_id = c.id
+        WHERE c.id = ?
+      `).get(connection.id) as {
+        agent_id?: string;
+        install_path?: string;
+        install_managed?: number | string;
+        workspace_type: string;
+        workspace_id: string;
+      } | undefined;
+      if (!installation || !Number(installation.install_managed ?? 0) || !installation.install_path) {
+        return reply.code(409).send({
+          error: "MONITOR_UNINSTALL_NOT_MANAGED",
+          message: "只有 Viron 托管安装的监控探针可以一键卸载",
+        });
+      }
+      const activeInstallTask = await app.monitorInstallTasks.latest(connection.id);
+      if (activeInstallTask && ["pending", "running"].includes(activeInstallTask.status)) {
+        return reply.code(409).send({
+          error: "MONITOR_INSTALL_RUNNING",
+          message: "当前主机有监控安装任务正在执行，完成后再卸载",
+          item: activeInstallTask,
+        });
+      }
+      const started = Date.now();
+      try {
+        const removed = await uninstallMonitor(app, connection.id, connection.username, installation.install_path);
+        await closeSshConnectionPool(app, connection.id);
+        const cleared = await clearUninstalledMonitorState(app, {
+          connectionId: connection.id,
+          agentId: String(installation.agent_id ?? ""),
+          workspaceType: installation.workspace_type,
+          workspaceId: installation.workspace_id,
+        });
+        await writeAudit(app.db, {
+          action: "monitor_host.uninstalled",
+          resourceType: "ssh_connection",
+          resourceId: connection.id,
+          summary: `卸载监控探针 ${connection.name}`,
+          details: {
+            installPath: removed.installPath,
+            localDataRemoved: removed.localDataRemoved,
+            preservedCentralHistory: true,
+            affectedConnections: cleared.connectionIds,
+            recoveredAlerts: cleared.recoveredAlerts,
+            durationMs: Date.now() - started,
+          },
+          request,
+        });
+        return {
+          ok: true,
+          localDataRemoved: true,
+          preservedCentralHistory: true,
+          affectedConnections: cleared.connectionIds.length,
+          recoveredAlerts: cleared.recoveredAlerts,
+        };
+      } catch (error) {
+        const code = error instanceof MonitorInstallError ? error.code : "MONITOR_UNINSTALL_FAILED";
+        const message = sanitizeMonitorInstallOutput(error instanceof Error ? error.message : "监控探针卸载失败");
+        await writeAudit(app.db, {
+          action: "monitor_host.uninstall_failed",
+          resourceType: "ssh_connection",
+          resourceId: connection.id,
+          summary: `卸载监控探针 ${connection.name} 失败`,
+          details: {
+            installPath: installation.install_path,
+            code,
+            message: message.slice(0, 1000),
+            durationMs: Date.now() - started,
+          },
+          request,
+        });
+        if (error instanceof MonitorInstallError) {
+          return reply.code(error.statusCode).send({ error: error.code, message });
+        }
+        return reply.code(502).send({ error: code, message });
       }
     },
   );

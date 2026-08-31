@@ -125,6 +125,7 @@ export interface MaintenanceApi {
   "installingHosts": Ref<Set<string> & Omit<Set<string>, keyof Set<any>>, Set<string> | (Set<string> & Omit<Set<string>, keyof Set<any>>)>;
   "restartingHosts": Ref<Set<string> & Omit<Set<string>, keyof Set<any>>, Set<string> | (Set<string> & Omit<Set<string>, keyof Set<any>>)>;
   "clearingHosts": Ref<Set<string> & Omit<Set<string>, keyof Set<any>>, Set<string> | (Set<string> & Omit<Set<string>, keyof Set<any>>)>;
+  "uninstallingHosts": Ref<Set<string> & Omit<Set<string>, keyof Set<any>>, Set<string> | (Set<string> & Omit<Set<string>, keyof Set<any>>)>;
   "installTask": Ref<{ id: string; environmentId: string; connectionId: string; connectionName: string; installPath: string; status: MonitorInstallTaskStatus; phase: MonitorInstallTaskPhase; progress: number; currentMessage: string; logs: { at: string; kind: "progress" | "output"; message: string; }[]; error: string; result: { monitorWarning?: string | undefined; }; createdAt: string; startedAt: string | null; completedAt: string | null; updatedAt: string; } | null, MonitorInstallTask | { id: string; environmentId: string; connectionId: string; connectionName: string; installPath: string; status: MonitorInstallTaskStatus; phase: MonitorInstallTaskPhase; progress: number; currentMessage: string; logs: { at: string; kind: "progress" | "output"; message: string; }[]; error: string; result: { monitorWarning?: string | undefined; }; createdAt: string; startedAt: string | null; completedAt: string | null; updatedAt: string; } | null>;
   "installTaskConnectionId": Ref<string, string>;
   "installProgressDialog": Ref<boolean, boolean>;
@@ -149,6 +150,7 @@ export interface MaintenanceApi {
   "reinstallMonitorOnHost": (host: MonitorHost) => Promise<void>;
   "restartMonitorOnHost": (host: MonitorHost) => Promise<void>;
   "clearMonitorData": (host: MonitorHost) => Promise<void>;
+  "uninstallMonitorOnHost": (host: MonitorHost) => Promise<void>;
   "scriptActionIconComponents": Record<ScriptActionIcon, Component>;
   "scriptActionIconOptions": ScriptActionIcon[];
   "runningScriptActionId": Ref<string, string>;
@@ -181,4 +183,3 @@ export interface MaintenanceApi {
   "openAlertSettings": () => void;
   "saveAlertSettings": () => Promise<void>;
 }
-

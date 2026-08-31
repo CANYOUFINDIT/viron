@@ -49,6 +49,70 @@ export function restartMonitorServiceCommand(): string {
   ].join("; ");
 }
 
+const monitorUninstallMarker = "VIRON_MONITOR_UNINSTALL_V1";
+
+export function uninstallMonitorCommand(installPathValue: unknown, sshUsername: string): string {
+  const installPath = normalizeMonitorInstallPath(installPathValue);
+  const script = [
+    "set -eu",
+    `INSTALL_DIR=${quotePosixShellArg(installPath)}`,
+    `SSH_USER=${quotePosixShellArg(sshUsername)}`,
+    'INSTALL_MARKER="$INSTALL_DIR/.viron-monitor-install.json"',
+    'SYSTEMD_UNIT="/etc/systemd/system/viron-monitor.service"',
+    `printf '%s\\n' ${quotePosixShellArg(monitorUninstallMarker)}`,
+    'if [ -L "$INSTALL_DIR" ] || [ ! -d "$INSTALL_DIR" ] || [ -L "$INSTALL_MARKER" ] || [ ! -f "$INSTALL_MARKER" ]; then echo "目标机安装清单已缺失或不匹配，拒绝自动卸载" >&2; exit 125; fi',
+    'MARKER_CONTENT="$(tr -d \'[:space:]\' < "$INSTALL_MARKER")"',
+    'case "$MARKER_CONTENT" in *\'"product":"viron-monitor"\'*) ;; *) echo "目标机安装清单已缺失或不匹配，拒绝自动卸载" >&2; exit 125 ;; esac',
+    'case "$MARKER_CONTENT" in *\'"installPath":"\'"$INSTALL_DIR"\'"\'*) ;; *) echo "目标机安装清单已缺失或不匹配，拒绝自动卸载" >&2; exit 125 ;; esac',
+    'if [ -e "$SYSTEMD_UNIT" ] || [ -L "$SYSTEMD_UNIT" ]; then if [ -L "$SYSTEMD_UNIT" ] || ! grep -Fq "Description=Viron host and service monitor" "$SYSTEMD_UNIT" || ! grep -Fq "ExecStart=/usr/local/bin/viron-monitor run" "$SYSTEMD_UNIT"; then echo "目标机监控文件已被其他内容占用，拒绝自动卸载" >&2; exit 124; fi; fi',
+    'for ENTRY in viron-monitor viron-monitor-collector; do STABLE="/usr/local/bin/$ENTRY"; EXPECTED="$INSTALL_DIR/$ENTRY"; if [ -e "$STABLE" ] || [ -L "$STABLE" ]; then if [ ! -L "$STABLE" ] || [ "$(readlink -f "$STABLE" 2>/dev/null || true)" != "$EXPECTED" ]; then echo "目标机监控文件已被其他内容占用，拒绝自动卸载" >&2; exit 124; fi; fi; done',
+    'if command -v systemctl >/dev/null 2>&1; then systemctl disable --now viron-monitor >/dev/null 2>&1 || systemctl stop viron-monitor >/dev/null 2>&1 || true; fi',
+    'rm -f -- "$SYSTEMD_UNIT"',
+    'for ENTRY in viron-monitor viron-monitor-collector; do rm -f -- "/usr/local/bin/$ENTRY"; done',
+    'rm -rf -- "$INSTALL_DIR" /etc/viron-monitor /var/lib/viron-monitor /run/viron-monitor',
+    'if id viron-monitor >/dev/null 2>&1; then userdel viron-monitor >/dev/null 2>&1 || true; fi',
+    'if getent group viron-monitor >/dev/null 2>&1; then if id "$SSH_USER" >/dev/null 2>&1 && command -v gpasswd >/dev/null 2>&1; then gpasswd -d "$SSH_USER" viron-monitor >/dev/null 2>&1 || true; fi; GROUP_MEMBERS="$(getent group viron-monitor | cut -d: -f4)"; if [ -z "$GROUP_MEMBERS" ]; then groupdel viron-monitor >/dev/null 2>&1 || true; fi; fi',
+    'if command -v systemctl >/dev/null 2>&1; then systemctl daemon-reload; systemctl reset-failed viron-monitor >/dev/null 2>&1 || true; fi',
+    'printf \'%s\\n\' \'{"ok":true,"localDataRemoved":true}\'',
+  ].join("\n");
+  const quotedScript = quotePosixShellArg(script);
+  return [
+    `if [ "$(id -u)" = 0 ]; then /bin/sh -c ${quotedScript}`,
+    `elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then sudo -n /bin/sh -c ${quotedScript}`,
+    "else exit 126",
+    "fi",
+  ].join("; ");
+}
+
+export async function uninstallMonitor(
+  app: FastifyInstance,
+  connectionId: string,
+  sshUsername: string,
+  installPathValue: unknown,
+): Promise<{ installPath: string; localDataRemoved: true; stdout: string }> {
+  const installPath = normalizeMonitorInstallPath(installPathValue);
+  const result = await executeSshCommand(app, connectionId, uninstallMonitorCommand(installPath, sshUsername), {
+    timeoutMs: 120_000,
+    maxBytes: 128 * 1024,
+  });
+  if (result.exitCode === 126) {
+    throw new MonitorInstallError("MONITOR_UNINSTALL_PRIVILEGE_REQUIRED", "SSH 用户必须是 root 或具有免密 sudo 才能卸载监控探针", 422);
+  }
+  if (result.exitCode === 125) {
+    throw new MonitorInstallError("MONITOR_UNINSTALL_NOT_MANAGED", "目标机安装清单已缺失或不匹配，拒绝自动卸载", 409);
+  }
+  if (result.exitCode === 124) {
+    throw new MonitorInstallError("MONITOR_UNINSTALL_CONFLICT", "目标机监控文件已被其他内容占用，拒绝自动卸载", 409);
+  }
+  if (result.exitCode !== 0 || result.truncated) {
+    throw new MonitorInstallError(
+      "MONITOR_UNINSTALL_FAILED",
+      (result.stderr.trim() || result.stdout.trim() || "监控探针卸载失败").slice(0, 1000),
+    );
+  }
+  return { installPath, localDataRemoved: true, stdout: result.stdout.slice(0, 20_000) };
+}
+
 export type MonitorArchitecture = "amd64" | "arm64";
 export type MonitorInstallPrivilege = "root" | "passwordless_sudo" | "unavailable";
 export type MonitorInstallPathState = "available" | "upgrade" | "conflict" | "legacy";

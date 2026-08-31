@@ -23,6 +23,8 @@ export function useMonitorInstall(ctx: MaintenanceContext, props: Readonly<Maint
 
   const restartingHosts = ref(new Set<string>());
 
+  const uninstallingHosts = ref(new Set<string>());
+
   const installTask = ref<MonitorInstallTask | null>(null);
 
   const installTaskConnectionId = ref("");
@@ -326,10 +328,48 @@ export function useMonitorInstall(ctx: MaintenanceContext, props: Readonly<Maint
       }
   }
 
+  async function uninstallMonitorOnHost(host: MonitorHost) {
+      if (!host.installManaged || !host.installPath) {
+          ElMessage.warning(tr("只有 Viron 托管安装的监控探针可以一键卸载"));
+          return;
+      }
+      try {
+          await ElMessageBox.confirm(
+              tr("确定卸载目标主机“{{0}}”上的 viron-monitor 吗？将停止并删除目标机上的服务、程序、配置和本地缓冲；Viron 中心已入库的历史监控数据会保留。确定继续吗？", [host.connectionName || host.host]),
+              tr("确认卸载监控探针"),
+              dangerConfirmOptions(tr("卸载并删除本地数据")),
+          );
+      }
+      catch {
+          return;
+      }
+      const next = new Set(uninstallingHosts.value);
+      next.add(host.sshConnectionId);
+      uninstallingHosts.value = next;
+      try {
+          await api<{
+              ok: boolean;
+              localDataRemoved: boolean;
+              preservedCentralHistory: boolean;
+          }>(`/api/v1/environments/${props.environmentId}/monitor-hosts/${host.sshConnectionId}/uninstall`, { method: "DELETE" });
+          await $payload.reload(true);
+          ElMessage.success(tr("监控探针已卸载，中心历史数据已保留"));
+      }
+      catch (error) {
+          ElMessage.error(error instanceof ApiError || error instanceof Error ? error.message : tr("监控探针卸载失败"));
+      }
+      finally {
+          const updated = new Set(uninstallingHosts.value);
+          updated.delete(host.sshConnectionId);
+          uninstallingHosts.value = updated;
+      }
+  }
+
   return {
     installingHosts,
     clearingHosts,
     restartingHosts,
+    uninstallingHosts,
     installTask,
     installTaskConnectionId,
     installProgressDialog,
@@ -354,6 +394,6 @@ export function useMonitorInstall(ctx: MaintenanceContext, props: Readonly<Maint
     reinstallMonitorOnHost,
     restartMonitorOnHost,
     clearMonitorData,
+    uninstallMonitorOnHost,
   };
 }
-

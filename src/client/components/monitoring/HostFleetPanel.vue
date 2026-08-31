@@ -61,7 +61,7 @@ export interface MonitoringHostCard {
   disks?: MonitoringHostDisk[];
 }
 
-type ProbeAction = "refresh" | "install" | "update" | "reinstall" | "restart" | "clear";
+type ProbeAction = "refresh" | "install" | "update" | "reinstall" | "restart" | "clear" | "uninstall";
 
 const props = defineProps<{
   hosts: MonitoringHostCard[];
@@ -311,7 +311,7 @@ function closeDetail() {
   emit("select", null);
 }
 
-function probePath(host: MonitoringHostCard, action: "refresh" | "install/preflight" | "install-tasks" | "restart" | "clear") {
+function probePath(host: MonitoringHostCard, action: "refresh" | "install/preflight" | "install-tasks" | "restart" | "clear" | "uninstall") {
   return `/api/v1/environments/${host.environmentId}/monitor-hosts/${host.sshConnectionId}/${action}`;
 }
 
@@ -323,6 +323,7 @@ function probeActionLabel(action: ProbeAction) {
     reinstall: tr("重装探针"),
     restart: tr("重启探针"),
     clear: tr("清理节点监控数据"),
+    uninstall: tr("卸载监控探针"),
   })[action];
 }
 
@@ -373,6 +374,9 @@ async function executeProbe(host: MonitoringHostCard, action: ProbeAction, allow
   if ((action === "update" || action === "reinstall" || action === "restart" || action === "clear") && !probeIsInstalled(host)) {
     return { status: "skipped" as const, message: tr("尚未确认已安装探针") };
   }
+  if (action === "uninstall" && !host.installManaged) {
+    return { status: "skipped" as const, message: tr("只有 Viron 托管安装的监控探针可以一键卸载") };
+  }
   if (action === "install" || action === "update" || action === "reinstall") {
     const preflight = await preflightInstall(host, action, allowPathPrompt);
     const response = await api<{ item: MonitorInstallTask }>(probePath(host, "install-tasks"), {
@@ -388,6 +392,10 @@ async function executeProbe(host: MonitoringHostCard, action: ProbeAction, allow
   if (action === "restart") {
     await api(probePath(host, "restart"), { method: "POST" });
     return { status: "success" as const, message: tr("监控探针已重启") };
+  }
+  if (action === "uninstall") {
+    await api(probePath(host, "uninstall"), { method: "DELETE" });
+    return { status: "success" as const, message: tr("监控探针已卸载，中心历史数据已保留") };
   }
   await api(probePath(host, "clear"), { method: "POST" });
   return { status: "success" as const, message: tr("节点本地监控缓冲已清理") };
@@ -410,6 +418,8 @@ async function confirmProbe(hosts: MonitoringHostCard[], action: ProbeAction) {
   const target = hosts.length === 1 ? hosts[0]!.connectionName : tr("{{0}} 台主机", [hosts.length]);
   const detail = action === "clear"
     ? tr("此操作只清理目标节点上的 viron-monitor 本地缓冲；不会删除 Viron 数据库中的历史采样、系统告警或个人通知。")
+    : action === "uninstall"
+      ? tr("此操作将停止并删除目标节点上的 viron-monitor 服务、程序、配置和本地缓冲；Viron 数据库中的历史采样会保留。")
     : action === "reinstall"
       ? tr("将覆盖现有 Viron 监控探针程序，安装任务会在后台按队列执行。")
       : action === "install" || action === "update"
@@ -421,7 +431,7 @@ async function confirmProbe(hosts: MonitoringHostCard[], action: ProbeAction) {
     `${tr("确认对 {{0}} 执行“{{1}}”？", [target, probeActionLabel(action)])}\n${detail}`,
     probeActionLabel(action),
     {
-      type: action === "clear" || action === "reinstall" ? "warning" : "info",
+      type: action === "clear" || action === "reinstall" || action === "uninstall" ? "warning" : "info",
       confirmButtonText: tr("确认执行"),
       cancelButtonText: tr("取消"),
     },
@@ -542,6 +552,7 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
             <el-option value="reinstall" :label="$t('重装探针')" />
             <el-option value="restart" :label="$t('重启探针')" />
             <el-option value="clear" :label="$t('清理节点监控数据')" />
+            <el-option value="uninstall" :label="$t('卸载监控探针')" />
           </el-select>
           <el-button type="primary" :disabled="!selectedCount || !bulkAction" :loading="probeBusy" @click="applyBulk">{{ $t('执行') }}</el-button>
         </div>
@@ -683,6 +694,7 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
             <el-button size="small" :disabled="probeBusy" @click="probeSelected('reinstall')">{{ $t('重装探针') }}</el-button>
             <el-button size="small" :disabled="probeBusy" @click="probeSelected('restart')">{{ $t('重启探针') }}</el-button>
             <el-button size="small" type="danger" plain :disabled="probeBusy" @click="probeSelected('clear')">{{ $t('清理监控数据') }}</el-button>
+            <el-button v-if="selected.installManaged" size="small" type="danger" :disabled="probeBusy" @click="probeSelected('uninstall')">{{ $t('卸载探针') }}</el-button>
           </template>
         </div>
       </section>
@@ -731,7 +743,7 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
         </table>
       </section>
       <HostMonitorDashboard
-        v-if="probeIsInstalled(selected)"
+        v-if="probeIsInstalled(selected) || selected.lastCollectedAt"
         :environment-id="selected.environmentId"
         :host-id="selected.sshConnectionId"
         :last-collected-at="selected.lastCollectedAt"

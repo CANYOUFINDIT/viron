@@ -127,6 +127,7 @@ export type MonitorInstallApi = MaintenancePart<
   | "installingHosts"
   | "clearingHosts"
   | "restartingHosts"
+  | "uninstallingHosts"
   | "installTask"
   | "installTaskConnectionId"
   | "installProgressDialog"
@@ -151,6 +152,7 @@ export type MonitorInstallApi = MaintenancePart<
   | "reinstallMonitorOnHost"
   | "restartMonitorOnHost"
   | "clearMonitorData"
+  | "uninstallMonitorOnHost"
 >;
 
 export type ScriptActionsApi = MaintenancePart<
