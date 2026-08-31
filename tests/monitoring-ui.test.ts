@@ -70,6 +70,10 @@ describe("monitoring dashboard wiring", () => {
     expect(hostEventCalendar).toContain("告警数据读取失败");
     expect(hostDashboard).toContain("monitorHistoryCacheKey");
     expect(hostDashboard).toContain("cachedHistory ?? emptyHistory()");
+    expect(hostDashboard).toContain('<section class="monitor-history__summary"');
+    expect(hostDashboard).toContain('<div v-if="extraCharts.length" class="monitor-chart-grid">');
+    expect(hostDashboard).not.toContain("showAllMetrics");
+    expect(hostDashboard).not.toContain("monitor-history__more");
   });
 
   it("keeps the dashboard to two pages and shows empty-state copy for monitoring panels", () => {
