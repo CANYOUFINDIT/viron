@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { RefreshCw, Server, ShieldAlert } from "@lucide/vue";
+import { Radio, RefreshCw, Server, ShieldAlert } from "@lucide/vue";
 import { ElMessage } from "element-plus";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
@@ -15,6 +15,7 @@ import { api } from "../api";
 import PageHeader from "../components/PageHeader.vue";
 import AlertServicePanel from "../components/monitoring/AlertServicePanel.vue";
 import HostFleetPanel, { type MonitoringHostCard } from "../components/monitoring/HostFleetPanel.vue";
+import NocScreen from "../components/monitoring/NocScreen.vue";
 import type { MonitoringProblemNode, MonitoringServiceCard } from "../components/monitoring/ServiceApmPanel.vue";
 import { translate as tr } from "../i18n";
 import { session } from "../session";
@@ -45,7 +46,7 @@ interface OverviewPayload {
 
 interface EnvironmentOption { id: string; name: string }
 
-type MonitoringView = "overview" | "hosts";
+type MonitoringView = "overview" | "hosts" | "noc";
 
 const route = useRoute();
 const router = useRouter();
@@ -61,7 +62,7 @@ let refreshTimer: number | undefined;
 
 const view = computed<MonitoringView>(() => {
   const value = String(route.query.view ?? "overview");
-  if (value === "hosts") return value;
+  if (value === "hosts" || value === "noc") return value;
   return "overview";
 });
 const environmentId = computed(() => String(route.query.environmentId ?? ""));
@@ -304,6 +305,10 @@ const summary = computed(() => overview.value?.summary ?? {
           <el-option value="60" :label="$t('60 秒')" />
           <el-option value="0" :label="$t('暂停刷新')" />
         </el-select>
+        <el-button class="noc-launch-button" :disabled="!overview" @click="switchView('noc')">
+          <Radio :size="14" />
+          {{ $t('NOC 大屏') }}
+        </el-button>
         <el-button type="primary" plain :loading="refreshing" @click="loadOverview(true)">
           <RefreshCw :size="14" :class="{ 'is-spinning': refreshing }" />
           {{ $t('刷新') }}
@@ -359,6 +364,15 @@ const summary = computed(() => overview.value?.summary ?? {
         @refresh="loadOverview(true)"
         @open-maintenance="openHostMaintenance"
       />
+      <NocScreen
+        v-else-if="view === 'noc' && overview"
+        :environment-id="environmentId"
+        :generated-at="overview.generatedAt"
+        :refresh-seconds="refreshSeconds"
+        :summary="summary"
+        :hosts="overview.hosts"
+        @exit="switchView('overview')"
+      />
     </main>
   </section>
 </template>
@@ -375,6 +389,18 @@ const summary = computed(() => overview.value?.summary ?? {
   color: var(--ink-400);
   font-family: var(--font-mono);
   font-size: 12px;
+}
+
+.noc-launch-button {
+  border-color: color-mix(in srgb, var(--teal-500) 45%, var(--ink-100));
+  color: var(--teal-700);
+}
+
+.noc-launch-button:hover,
+.noc-launch-button:focus-visible {
+  border-color: var(--teal-500);
+  background: var(--teal-50);
+  color: var(--teal-800);
 }
 
 .is-spinning { animation: spin 1s linear infinite; }

@@ -1,22 +1,22 @@
 <script setup lang="ts">
 import {
-  Activity,
   AlertTriangle,
   CheckCircle2,
   Cpu,
   HardDrive,
   Minimize,
   Radio,
-  Server,
   ShieldAlert,
-  Zap,
 } from "@lucide/vue";
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import type { MonitorPlatformEventItem, MonitorPlatformEventListResponse } from "../../../shared/monitor-alerts";
+import { api } from "../../api";
 import type { MonitoringHostCard } from "./HostFleetPanel.vue";
-import type { MonitoringProblemNode, MonitoringServiceCard } from "./ServiceApmPanel.vue";
 
 const props = defineProps<{
+  environmentId: string;
   generatedAt: string;
+  refreshSeconds: number;
   summary: {
     hostTotal: number;
     hostOnline: number;
@@ -28,14 +28,16 @@ const props = defineProps<{
     diskAlerts: number;
   };
   hosts: MonitoringHostCard[];
-  problemNodes: MonitoringProblemNode[];
-  ranking: MonitoringServiceCard[];
-  alerts: Array<{ id: string; status: string; targetName: string; environmentName?: string; triggeredAt?: string }>;
 }>();
 
 const emit = defineEmits<{ exit: [] }>();
 const root = ref<HTMLElement | null>(null);
 const reducedMotion = ref(false);
+const alerts = ref<MonitorPlatformEventItem[]>([]);
+const alertsLoading = ref(true);
+const alertsFailed = ref(false);
+let alertsAbort: AbortController | null = null;
+let alertsTimer: number | undefined;
 
 const heatHosts = computed(() => props.hosts.filter((host) => !host.missing).slice(0, 48));
 const networkRanking = computed(() => props.hosts
@@ -69,13 +71,70 @@ function formatRate(value: number) {
 }
 
 function heatClass(host: MonitoringHostCard) {
-  if (host.offline || host.missing) return "is-down";
-  if (host.stale) return "is-unknown";
+  if (host.probeState === "offline") return "is-down";
+  if (["missing", "stale", "unreachable", "unchecked"].includes(host.probeState)) return "is-unknown";
   const cpu = host.cpuUsedPercent;
   if (cpu === null) return "is-unknown";
   if (cpu >= 85) return "is-critical";
   if (cpu >= 70) return "is-warn";
   return "is-ok";
+}
+
+function alertTarget(alert: MonitorPlatformEventItem) {
+  return alert.serviceName || alert.connectionName || alert.targetName;
+}
+
+function alertTime(alert: MonitorPlatformEventItem) {
+  return new Date(alert.lastSeenAt || alert.triggeredAt).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+async function loadAlertEvents() {
+  alertsAbort?.abort();
+  alertsAbort = new AbortController();
+  const controller = alertsAbort;
+  alertsLoading.value = true;
+  alertsFailed.value = false;
+  const now = Date.now();
+  const query = new URLSearchParams({
+    from: new Date(now - 24 * 60 * 60 * 1000).toISOString(),
+    to: new Date(now).toISOString(),
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    status: "all",
+    order: "recent",
+    page: "1",
+    pageSize: "12",
+  });
+  if (props.environmentId) query.set("environmentId", props.environmentId);
+  try {
+    const response = await api<MonitorPlatformEventListResponse>(`/api/v1/monitoring/events?${query}`, {
+      signal: controller.signal,
+    });
+    if (controller.signal.aborted) return;
+    alerts.value = response.items;
+  } catch (caught) {
+    if ((caught as { name?: string }).name === "AbortError") return;
+    alertsFailed.value = alerts.value.length === 0;
+  } finally {
+    if (alertsAbort === controller) alertsLoading.value = false;
+  }
+}
+
+function stopAlertRefresh() {
+  if (alertsTimer === undefined) return;
+  window.clearInterval(alertsTimer);
+  alertsTimer = undefined;
+}
+
+function startAlertRefresh() {
+  stopAlertRefresh();
+  if (!props.refreshSeconds) return;
+  alertsTimer = window.setInterval(() => {
+    if (!document.hidden) void loadAlertEvents();
+  }, props.refreshSeconds * 1000);
 }
 
 async function enterFullscreen() {
@@ -95,9 +154,15 @@ onMounted(() => {
   reducedMotion.value = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   document.addEventListener("fullscreenchange", onFullscreenChange);
   document.addEventListener("keydown", onKeydown);
+  void loadAlertEvents();
+  startAlertRefresh();
   void enterFullscreen();
 });
+watch(() => props.environmentId, () => void loadAlertEvents());
+watch(() => props.refreshSeconds, () => startAlertRefresh());
 onBeforeUnmount(() => {
+  stopAlertRefresh();
+  alertsAbort?.abort();
   document.removeEventListener("fullscreenchange", onFullscreenChange);
   document.removeEventListener("keydown", onKeydown);
   if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
@@ -145,13 +210,15 @@ onBeforeUnmount(() => {
           <header class="noc-panel__head mt-16">
             <h3>{{ $t('实时告警事件流') }}</h3>
           </header>
-          <ol v-if="alerts.length" class="noc-alert-stream">
-            <li v-for="alert in alerts.slice(0, 12)" :key="alert.id">
-              <AlertTriangle :size="12" class="text-amber" />
-              <span class="alert-name">{{ alert.targetName }}</span>
-              <span class="alert-status">{{ alert.status }}</span>
+          <ol v-if="alerts.length" class="noc-alert-stream" aria-live="polite">
+            <li v-for="alert in alerts" :key="alert.id" :class="`is-${alert.severity}`">
+              <AlertTriangle :size="12" />
+              <span class="alert-name">{{ alertTarget(alert) }}</span>
+              <span class="alert-status">{{ alert.severity.toUpperCase() }} · {{ alertTime(alert) }}</span>
             </li>
           </ol>
+          <p v-else-if="alertsLoading" class="noc-empty">{{ $t('正在读取告警事件') }}</p>
+          <p v-else-if="alertsFailed" class="noc-empty is-error">{{ $t('读取系统告警事件失败') }}</p>
           <p v-else class="noc-empty">
             <CheckCircle2 :size="16" class="text-teal" />
             <span>{{ $t('暂无活动告警') }}</span>
@@ -438,8 +505,13 @@ onBeforeUnmount(() => {
   font-size: 11px;
 }
 
+.noc-alert-stream li.is-critical { border-left-color: #ef4444; color: #fecaca; }
+.noc-alert-stream li.is-major { border-left-color: #f97316; color: #fed7aa; }
+.noc-alert-stream li.is-warning { border-left-color: #f59e0b; color: #fde68a; }
+.noc-alert-stream li.is-info { border-left-color: #38bdf8; color: #bae6fd; }
+
 .alert-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.alert-status { font-family: var(--font-mono); font-size: 10px; color: #f59e0b; }
+.alert-status { font-family: var(--font-mono); font-size: 10px; color: currentColor; }
 
 /* 核心仪表卡片 */
 .noc-gauges {
@@ -601,6 +673,8 @@ onBeforeUnmount(() => {
   gap: 6px;
 }
 
+.noc-empty.is-error { color: #fca5a5; }
+
 .text-teal { color: #10b981; }
 .text-purple { color: #a855f7; }
 .text-amber { color: #f59e0b; }
@@ -612,4 +686,3 @@ onBeforeUnmount(() => {
   }
 }
 </style>
-
