@@ -43,7 +43,7 @@ export interface MonitoringSeverityHost {
   diskUsedPercent?: number | null;
 }
 
-export const MONITORING_PROBE_STATES = ["offline", "unreachable", "stale", "missing", "unchecked", "online"] as const;
+export const MONITORING_PROBE_STATES = ["offline", "unreachable", "stale", "online", "unchecked", "missing"] as const;
 export type MonitoringProbeState = (typeof MONITORING_PROBE_STATES)[number];
 
 export interface MonitoringProbeEvidence {
