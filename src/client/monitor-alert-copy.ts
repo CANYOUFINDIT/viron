@@ -1,6 +1,11 @@
 import { translate as tr } from "./i18n";
 import type { MonitorAlertItem, MonitorAlertNotificationPhase } from "../shared/monitor-alerts";
 
+type MonitorAlertBodySource = Pick<
+  MonitorAlertItem,
+  "connectionName" | "details" | "ruleKey" | "ruleType" | "serviceName" | "targetName"
+>;
+
 function number(details: Record<string, unknown>, key: string): number | null {
   const value = Number(details[key]);
   return Number.isFinite(value) ? value : null;
@@ -14,7 +19,7 @@ function temperature(value: number | null): string {
   return value == null ? tr("未知") : `${value.toFixed(1)}°C`;
 }
 
-function diskLabel(alert: MonitorAlertItem): string {
+function diskLabel(alert: Pick<MonitorAlertBodySource, "details" | "ruleKey">): string {
   const device = String(alert.details.device ?? "").trim();
   const path = String(alert.details.path ?? "").trim();
   if (device && path) return `${device} · ${path}`;
@@ -30,7 +35,7 @@ export function monitorAlertTitle(alert: MonitorAlertItem, phase: MonitorAlertNo
     : tr("监控已恢复 · {0}", [location]);
 }
 
-export function monitorAlertBody(alert: MonitorAlertItem, phase: MonitorAlertNotificationPhase): string {
+export function monitorAlertBody(alert: MonitorAlertBodySource, phase: MonitorAlertNotificationPhase): string {
   const target = alert.targetName || alert.connectionName;
   const recovered = phase === "recovered";
   if (alert.ruleType === "host_offline") {
