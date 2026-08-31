@@ -445,6 +445,30 @@ describe("monitor alerts", () => {
         cookies,
       });
       expect(systemCalendarAfterClear.json().summary.totalEvents).toBeGreaterThanOrEqual(1);
+
+      for (const severity of ["info", "warning", "major"] as const) {
+        await app.db.prepare(`
+          INSERT INTO monitor_alerts (
+            id, environment_id, target_type, target_id, rule_type, rule_key,
+            ssh_connection_id, environment_name, target_name, connection_name,
+            status, severity, peak_severity, details_json, triggered_at, last_seen_at,
+            created_at, updated_at
+          ) VALUES (?, ?, 'host', ?, 'cpu', ?, ?, '离线告警环境', ?, '离线主机',
+            'event', ?, ?, '{}', ?, ?, ?, ?)
+        `).run(
+          randomUUID(), environmentId, randomUUID(), `priority-${severity}`, connectionId,
+          `${severity}-node`, severity, severity, now, now, now, now,
+        );
+      }
+      const priorityEvents = await app.inject({
+        method: "GET",
+        url: `/api/v1/monitoring/events?date=${now.slice(0, 10)}&timezone=UTC&order=priority&pageSize=4`,
+        cookies,
+      });
+      expect(priorityEvents.statusCode).toBe(200);
+      expect(priorityEvents.json().items.map((item: { peakSeverity: string }) => item.peakSeverity)).toEqual([
+        "critical", "major", "warning", "info",
+      ]);
       expect((await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/service-deployments`, cookies })).json().discovery.hosts[0].sshConnectionId).toBe(connectionId);
     } finally {
       await app.close();
