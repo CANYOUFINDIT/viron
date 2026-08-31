@@ -455,6 +455,18 @@ export async function runDesktopActiveEnvironmentDockSmoke(): Promise<{
       inspect();
     })`) as boolean;
     await updateActiveEnvironmentDockWindow(expandedState);
+    await activeEnvironmentDockWindow!.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+      const deadline = Date.now() + 3000;
+      const inspect = () => {
+        const card = [...document.querySelectorAll('.active-environment-pip__card')]
+          .find((element) => element.getAttribute('title') === 'DOCK-SMOKE-ENVIRONMENT-B');
+        const button = card?.querySelector('.active-environment-pip__open');
+        if (document.querySelectorAll('.active-environment-pip__card').length === 2 && button) return resolve(true);
+        if (Date.now() >= deadline) return reject(new Error('画中画关闭后卡片恢复未完成'));
+        setTimeout(inspect, 20);
+      };
+      inspect();
+    })`);
 
     const actionPromise = mainWindow.webContents.executeJavaScript(`new Promise((resolve, reject) => {
       const timeout = setTimeout(() => { stop(); reject(new Error('画中画打开环境动作未回传')); }, 3000);
@@ -473,7 +485,9 @@ export async function runDesktopActiveEnvironmentDockSmoke(): Promise<{
       inspect();
     })`);
     const connectionCenter = await activeEnvironmentDockWindow!.webContents.executeJavaScript(`(() => {
-      const button = document.querySelectorAll('.active-environment-pip__card')[1];
+      const card = [...document.querySelectorAll('.active-environment-pip__card')]
+        .find((element) => element.getAttribute('title') === 'DOCK-SMOKE-ENVIRONMENT-B');
+      const button = card.querySelector('.active-environment-pip__open');
       const rect = button.getBoundingClientRect();
       return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
     })()`) as { x: number; y: number };

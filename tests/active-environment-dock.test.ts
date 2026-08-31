@@ -385,6 +385,8 @@ describe("active environment picture-in-picture", () => {
     expect(desktopDockSmoke).toContain("closeActionDelivered");
     expect(desktopDockSmoke).toContain("closeStateRemoved");
     expect(desktopDockSmoke).toContain("画中画关闭后卡片未移除");
+    expect(desktopDockSmoke).toContain("画中画关闭后卡片恢复未完成");
+    expect(desktopDockSmoke).toContain("DOCK-SMOKE-ENVIRONMENT-B");
     expect(desktopDockSmoke).toContain("nativeAboveWebView");
     expect(desktopDockSmoke).toContain("passiveHoverFocusStable");
     expect(desktopDockSmoke).toContain("offscreen: true");
