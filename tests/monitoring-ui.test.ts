@@ -47,7 +47,9 @@ describe("monitoring dashboard wiring", () => {
     expect(hostEventCalendar).toContain("系统历史告警统计，不受个人通知读取或清除影响");
     expect(hostFleet).toContain("priority-host-grid");
     expect(hostFleet).toContain("probe-state-groups");
-    expect(hostFleet).toContain("按探针状态分组，组内按资源压力排序");
+    expect(hostFleet).toContain("优先展示异常和高风险节点，未安装探针置底");
+    expect(hostFleet).toContain("采集正常");
+    expect(hostFleet).not.toContain("在线上报");
     expect(hostFleet).toContain("连接异常 · 待确认");
     expect(hostFleet).toContain("SSH 连接失败，无法确认是否安装探针");
     expect(hostFleet).toContain("查看该分类全部 {0} 个节点");

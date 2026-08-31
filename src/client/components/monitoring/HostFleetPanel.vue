@@ -196,7 +196,7 @@ function probeLabel(host: MonitoringHostCard) {
   if (state === "unreachable") return tr("SSH 连接失败，探针状态待确认");
   if (state === "stale") return tr("探针数据已中断");
   if (state === "unchecked") return tr("尚未检测探针");
-  return host.agentVersion ? tr("探针 v{{0}} 在线", [host.agentVersion]) : tr("探针在线");
+  return host.agentVersion ? tr("探针 v{{0}} · 最近采集成功", [host.agentVersion]) : tr("最近采集成功");
 }
 
 function activeAlertCount(alerts: MonitoringAlertCounts) {
@@ -236,7 +236,7 @@ function probeStateLabel(state: MonitoringProbeState) {
   if (state === "stale") return tr("采集中断");
   if (state === "missing") return tr("确认未安装");
   if (state === "unchecked") return tr("尚未检测");
-  return tr("在线上报");
+  return tr("采集正常");
 }
 
 function probeStateDescription(state: MonitoringProbeState) {
@@ -245,7 +245,7 @@ function probeStateDescription(state: MonitoringProbeState) {
   if (state === "stale") return tr("探针曾正常上报，但采集数据已超过刷新窗口");
   if (state === "missing") return tr("已连接目标机器并确认 viron-monitor 不存在");
   if (state === "unchecked") return tr("尚未完成首次探针检测");
-  return tr("探针持续上报，按资源压力在组内排序");
+  return tr("最近一次采集成功且数据未过期，按告警和资源压力排序");
 }
 
 function probeStateTone(state: MonitoringProbeState) {
@@ -509,7 +509,7 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
         </div>
         <div class="host-list-summary">
           <span class="host-count"><strong>{{ rankedHosts.length }}</strong> {{ $t('个节点') }}</span>
-          <small>{{ $t('按探针状态分组，组内按资源压力排序') }}</small>
+          <small>{{ $t('优先展示异常和高风险节点，未安装探针置底') }}</small>
         </div>
       </div>
 

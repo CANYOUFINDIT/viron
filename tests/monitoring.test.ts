@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildApp } from "../src/server/app.js";
 import { ensureAdmin, openDatabase } from "../src/server/database.js";
-import { capSeriesPoints, compareMonitoringHosts, hostPressureScore, hostPriorityState, isMonitorStale, monitoringProbeState, monitoringSeverityRank } from "../src/shared/monitoring.js";
+import { MONITORING_PROBE_STATES, capSeriesPoints, compareMonitoringHosts, hostPressureScore, hostPriorityState, isMonitorStale, monitoringProbeState, monitoringSeverityRank } from "../src/shared/monitoring.js";
 import { clearMonitoringOverviewCache } from "../src/server/monitoring-overview.js";
 import { monitoringTestConfig, runMonitoringContractSuite } from "./helpers/monitoring-harness.js";
 
@@ -46,6 +46,10 @@ describe("monitoring downsample helpers", () => {
 });
 
 describe("monitoring severity ranking", () => {
+  it("shows actionable probe states first and confirmed missing probes last", () => {
+    expect(MONITORING_PROBE_STATES).toEqual(["offline", "unreachable", "stale", "online", "unchecked", "missing"]);
+  });
+
   it("distinguishes confirmed missing probes from offline and unreachable hosts", () => {
     expect(monitoringProbeState({ status: "missing" })).toBe("missing");
     expect(monitoringProbeState({ status: "error" })).toBe("unreachable");
