@@ -7,7 +7,7 @@ import type {
 } from "../../../shared/monitor-alerts";
 import { api } from "../../api";
 import { currentLocale, translate as tr } from "../../i18n";
-import { monitorAlertRuleLabel } from "../../monitor-alert-copy";
+import { monitorAlertBody, monitorAlertRuleLabel } from "../../monitor-alert-copy";
 import { monitorAlertLocalDateKey } from "../../monitor-host-event-display";
 import HostEventCalendar from "./HostEventCalendar.vue";
 import type { MonitoringServiceCard } from "./ServiceApmPanel.vue";
@@ -175,6 +175,10 @@ function eventTarget(event: MonitorPlatformEventItem) {
   return event.serviceName || event.connectionName || event.targetName;
 }
 
+function eventBody(event: MonitorPlatformEventItem) {
+  return monitorAlertBody(event, event.status === "recovered" ? "recovered" : "active");
+}
+
 function openAllEvents() {
   allEventsOpen.value = true;
 }
@@ -306,7 +310,9 @@ onBeforeUnmount(() => {
           <span class="event-time">{{ eventTime(event) }}</span>
           <span>
             <strong>{{ monitorAlertRuleLabel(event) }}</strong>
-            <small>{{ event.connectionName || event.targetName }}<template v-if="event.occurrenceCount > 1"> · {{ event.occurrenceCount }}</template></small>
+            <small class="event-message">
+              {{ eventBody(event) }}<template v-if="event.occurrenceCount > 1"> · {{ $t('合并 {0} 次短时复发', [event.occurrenceCount - 1]) }}</template>
+            </small>
           </span>
           <span>
             <strong>{{ eventTarget(event) }}</strong>
@@ -405,7 +411,9 @@ onBeforeUnmount(() => {
             <span class="event-time">{{ eventTime(event) }}</span>
             <span>
               <strong>{{ monitorAlertRuleLabel(event) }}</strong>
-              <small>{{ event.connectionName || event.targetName }}<template v-if="event.occurrenceCount > 1"> · {{ event.occurrenceCount }}</template></small>
+              <small class="event-message">
+                {{ eventBody(event) }}<template v-if="event.occurrenceCount > 1"> · {{ $t('合并 {0} 次短时复发', [event.occurrenceCount - 1]) }}</template>
+              </small>
             </span>
             <span>
               <strong>{{ eventTarget(event) }}</strong>
@@ -778,6 +786,12 @@ onBeforeUnmount(() => {
   margin-top: 3px;
   color: var(--ink-400);
   font-size: 11px;
+}
+
+.event-row .event-message {
+  color: var(--ink-500);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .event-time {
