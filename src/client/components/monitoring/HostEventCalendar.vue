@@ -47,6 +47,8 @@ const events = ref<MonitorHostEventItem[]>([]);
 const eventsLoading = ref(false);
 const isDragging = ref(false);
 const weeksWrapperRef = ref<HTMLElement | null>(null);
+const loadingMonthKeys = ref<string[]>([]);
+const failedMonthKeys = ref<string[]>([]);
 
 let calendarAbort: AbortController | null = null;
 let eventsAbort: AbortController | null = null;
@@ -127,6 +129,26 @@ const allDays = computed(() => {
     return loaded ? loaded.days : placeholderMonthDays(monthKey);
   });
 });
+
+const loadedMonthKeys = computed(() => new Set(calendars.value.map((item) => item.month)));
+const loadingMonths = computed(() => new Set(loadingMonthKeys.value));
+const failedMonths = computed(() => new Set(failedMonthKeys.value));
+
+function monthForDay(day: MonitorHostEventCalendarDay) {
+  return day.date.slice(0, 7);
+}
+
+function isDayLoaded(day: MonitorHostEventCalendarDay) {
+  return loadedMonthKeys.value.has(monthForDay(day));
+}
+
+function isDayLoading(day: MonitorHostEventCalendarDay) {
+  return loadingMonths.value.has(monthForDay(day));
+}
+
+function didDayFail(day: MonitorHostEventCalendarDay) {
+  return failedMonths.value.has(monthForDay(day));
+}
 
 const heatmapWeeks = computed<Array<Array<MonitorHostEventCalendarDay | null>>>(() => {
   if (!allDays.value.length) return [];
@@ -231,6 +253,7 @@ function severityLabel(value: MonitorAlertSeverity) {
 
 function dayTone(day: MonitorHostEventCalendarDay) {
   if (day.future) return "is-future";
+  if (!isDayLoaded(day)) return isDayLoading(day) ? "is-loading-data" : "is-no-data";
   if (day.peakSeverity) return `is-${day.peakSeverity}`;
   if (isPlatform.value) return "is-healthy";
   if (day.date === todayKey && day.coverageRatio < 0.8) return "is-detecting";
@@ -250,6 +273,11 @@ function dayTitle(day: MonitorHostEventCalendarDay) {
     return tr("{0} · 未在当前时间范围 (近 {1} 个月) · 点击或向左拖动竖线展开", [day.date, rangeMonths.value]);
   }
   if (day.future) return day.date;
+  if (!isDayLoaded(day)) {
+    return isDayLoading(day)
+      ? tr("{0} · 告警数据加载中", [day.date])
+      : tr("{0} · 告警数据不可用", [day.date]);
+  }
   if (day.peakSeverity) {
     return tr("{0} · {1} · {2} 个事件 · 影响 {3} 分钟", [
       day.date,
@@ -269,7 +297,7 @@ function dayTitle(day: MonitorHostEventCalendarDay) {
 }
 
 function isInteractiveDay(day: MonitorHostEventCalendarDay) {
-  if (isPlatform.value) return !day.future;
+  if (isPlatform.value) return !day.future && isDayLoaded(day);
   return !day.future && (day.activeEventCount > 0 || day.coverageRatio < 0.8 || day.date === todayKey);
 }
 
@@ -327,39 +355,62 @@ function eventMetric(event: MonitorHostEventItem) {
 async function loadCalendar() {
   if (!isPlatform.value && (!props.environmentId || !props.hostId)) return;
   const neededMonths = activeMonths.value;
-  const cacheKey = isPlatform.value
-    ? platformEventCalendarCacheKey(props.environmentId, timezone, neededMonths)
-    : monitorEventCalendarCacheKey(props.environmentId, props.hostId, timezone, neededMonths);
-  const cachedCalendars = readMonitorUiCache<MonitorHostEventCalendarResponse[]>(cacheKey);
-  calendars.value = cachedCalendars ?? [];
+  const cacheKeyForMonth = (monthKey: string) => isPlatform.value
+    ? platformEventCalendarCacheKey(props.environmentId, timezone, [monthKey])
+    : monitorEventCalendarCacheKey(props.environmentId, props.hostId, timezone, [monthKey]);
+  const visibleMonths = new Set(fullYearMonths.value);
+  const availableCalendars = new Map(
+    calendars.value
+      .filter((calendar) => visibleMonths.has(calendar.month))
+      .map((calendar) => [calendar.month, calendar]),
+  );
+  for (const monthKey of neededMonths) {
+    const cached = readMonitorUiCache<MonitorHostEventCalendarResponse[]>(cacheKeyForMonth(monthKey));
+    for (const calendar of cached ?? []) availableCalendars.set(calendar.month, calendar);
+  }
+  calendars.value = [...availableCalendars.values()];
   calendarAbort?.abort();
   calendarAbort = new AbortController();
   const controller = calendarAbort;
+  loadingMonthKeys.value = [...neededMonths];
+  failedMonthKeys.value = [];
   loading.value = true;
   error.value = "";
+  let firstError = "";
   try {
-    const results = await Promise.all(neededMonths.map((monthKey) => {
+    await Promise.all(neededMonths.map(async (monthKey) => {
       const query = new URLSearchParams({ month: monthKey, timezone });
       if (isPlatform.value && props.environmentId) query.set("environmentId", props.environmentId);
       const path = isPlatform.value
         ? `/api/v1/monitoring/event-calendar?${query}`
         : `/api/v1/environments/${props.environmentId}/monitor-hosts/${props.hostId}/event-calendar?${query}`;
-      return api<MonitorHostEventCalendarResponse>(path, { signal: controller.signal });
+      try {
+        const calendar = await api<MonitorHostEventCalendarResponse>(path, { signal: controller.signal });
+        if (controller.signal.aborted) return;
+        const next = new Map(calendars.value.map((item) => [item.month, item]));
+        next.set(calendar.month, calendar);
+        calendars.value = [...next.values()];
+        writeMonitorUiCache(cacheKeyForMonth(monthKey), [calendar]);
+      } catch (caught) {
+        if (controller.signal.aborted || (caught as { name?: string }).name === "AbortError") return;
+        failedMonthKeys.value = [...new Set([...failedMonthKeys.value, monthKey])];
+        if (!firstError) {
+          firstError = caught instanceof Error
+            ? caught.message
+            : isPlatform.value ? tr("读取告警事件热力图失败") : tr("读取主机事件日历失败");
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          loadingMonthKeys.value = loadingMonthKeys.value.filter((item) => item !== monthKey);
+        }
+      }
     }));
-    if (!controller.signal.aborted) {
-      // 严格基于当前 host 缓存与新结果建立 map，避免旧主机数据残留
-      const existingMap = new Map((cachedCalendars ?? []).map((c) => [c.month, c]));
-      results.forEach((c) => existingMap.set(c.month, c));
-      const combined = [...existingMap.values()];
-      calendars.value = combined;
-      writeMonitorUiCache(cacheKey, combined);
-    }
-  } catch (caught) {
-    if ((caught as { name?: string }).name === "AbortError") return;
-    if (!cachedCalendars) calendars.value = [];
-    error.value = caught instanceof Error ? caught.message : tr("读取主机事件日历失败");
+    if (!controller.signal.aborted && firstError) error.value = firstError;
   } finally {
-    if (calendarAbort === controller) loading.value = false;
+    if (calendarAbort === controller) {
+      loading.value = false;
+      loadingMonthKeys.value = [];
+    }
   }
 }
 
@@ -391,6 +442,8 @@ async function openDay(day: MonitorHostEventCalendarDay) {
 
 watch(() => [props.environmentId, props.hostId, props.mode], () => {
   calendars.value = [];
+  loadingMonthKeys.value = [];
+  failedMonthKeys.value = [];
 });
 watch(() => [props.environmentId, props.hostId, props.mode, props.refreshKey, anchorMonth.value, rangeMonths.value], loadCalendar, { immediate: true });
 onBeforeUnmount(() => {
@@ -513,7 +566,7 @@ onBeforeUnmount(() => {
                       }
                     ]"
                     :aria-label="dayTitle(day)"
-                    :aria-disabled="!isDayActive(day) && !isInteractiveDay(day)"
+                    :aria-disabled="isDayActive(day) && !isInteractiveDay(day)"
                     :tabindex="isDayActive(day) && isInteractiveDay(day) ? 0 : -1"
                     @mouseenter="handleCellMouseEnter(day, $event)"
                     @mouseleave="handleCellMouseLeave"
@@ -564,15 +617,17 @@ onBeforeUnmount(() => {
                 ? $t('未选范围')
                 : hoveredDay.day.future
                   ? $t('未来')
-                  : hoveredDay.day.peakSeverity
-                    ? severityLabel(hoveredDay.day.peakSeverity)
-                    : isPlatform
-                      ? $t('无告警')
-                    : hoveredDay.day.date === todayKey && hoveredDay.day.coverageRatio < 0.8
-                      ? $t('检测中')
-                      : hoveredDay.day.coverageRatio < 0.8
-                        ? $t('无数据')
-                        : $t('健康')
+                  : !isDayLoaded(hoveredDay.day)
+                    ? isDayLoading(hoveredDay.day) ? $t('加载中') : $t('未加载')
+                    : hoveredDay.day.peakSeverity
+                      ? severityLabel(hoveredDay.day.peakSeverity)
+                      : isPlatform
+                        ? $t('无告警')
+                      : hoveredDay.day.date === todayKey && hoveredDay.day.coverageRatio < 0.8
+                        ? $t('检测中')
+                        : hoveredDay.day.coverageRatio < 0.8
+                          ? $t('无数据')
+                          : $t('健康')
             }}
           </span>
         </div>
@@ -583,6 +638,15 @@ onBeforeUnmount(() => {
           </template>
           <template v-else-if="hoveredDay.day.future">
             <span class="tooltip-text is-dim">{{ $t('暂无数据') }}</span>
+          </template>
+          <template v-else-if="!isDayLoaded(hoveredDay.day)">
+            <div v-if="isDayLoading(hoveredDay.day)" class="tooltip-stat is-detecting-stat">
+              <span class="detecting-pulse-dot"></span>
+              {{ $t('告警数据加载中') }}
+            </div>
+            <div v-else class="tooltip-stat is-no-data-stat">
+              {{ didDayFail(hoveredDay.day) ? $t('告警数据读取失败') : $t('当天告警数据尚未加载') }}
+            </div>
           </template>
           <template v-else-if="hoveredDay.day.activeEventCount">
             <div class="tooltip-stat">
@@ -633,8 +697,8 @@ onBeforeUnmount(() => {
           <span class="pill-label">{{ $t('累计影响') }}</span>
           <strong>{{ formatDuration(summary.affectedMinutes) }}</strong>
         </span>
-        <span v-if="!isPlatform && summary.noDataDays" class="totals-pill is-faint">
-          <strong>{{ summary.noDataDays }}</strong> {{ $t('天无数据') }}
+        <span v-if="summary.noDataDays" class="totals-pill is-faint">
+          <strong>{{ summary.noDataDays }}</strong> {{ isPlatform ? $t('天未加载') : $t('天无数据') }}
         </span>
       </div>
       <div class="event-calendar__legend-group">
@@ -646,11 +710,9 @@ onBeforeUnmount(() => {
           <i class="is-major" :title="$t('高危')"></i>
           <i class="is-critical" :title="$t('严重')"></i>
           <span class="legend-label">{{ $t('严重') }}</span>
-          <template v-if="!isPlatform">
-            <span class="legend-sep"></span>
-            <i class="is-no-data" :title="$t('无数据')"></i>
-            <span class="legend-label">{{ $t('无数据') }}</span>
-          </template>
+          <span class="legend-sep"></span>
+          <i class="is-no-data" :title="isPlatform ? $t('未加载') : $t('无数据')"></i>
+          <span class="legend-label">{{ isPlatform ? $t('未加载') : $t('无数据') }}</span>
         </div>
         <small class="event-calendar__timezone">{{ timezone }}</small>
       </div>
@@ -931,6 +993,7 @@ onBeforeUnmount(() => {
 .tooltip-dot.is-major { background: #f97316; box-shadow: 0 0 6px #f97316; }
 .tooltip-dot.is-critical { background: #ef4444; box-shadow: 0 0 6px #ef4444; }
 .tooltip-dot.is-no-data { background: #64748b; }
+.tooltip-dot.is-loading-data { background: #2dd4bf; box-shadow: 0 0 6px #2dd4bf; }
 .tooltip-dot.is-inactive { background: #94a3b8; }
 .tooltip-dot.is-detecting { background: #2dd4bf; box-shadow: 0 0 6px #2dd4bf; }
 
@@ -956,6 +1019,7 @@ onBeforeUnmount(() => {
 .tooltip-badge.is-major { background: rgba(249, 115, 22, 0.25); color: #fb923c; }
 .tooltip-badge.is-critical { background: rgba(239, 68, 68, 0.3); color: #f87171; }
 .tooltip-badge.is-no-data { background: rgba(148, 163, 184, 0.2); color: #cbd5e1; }
+.tooltip-badge.is-loading-data { background: rgba(20, 184, 166, 0.25); color: #2dd4bf; }
 .tooltip-badge.is-inactive { background: rgba(148, 163, 184, 0.18); color: #94a3b8; }
 .tooltip-badge.is-detecting { background: rgba(20, 184, 166, 0.25); color: #2dd4bf; }
 
@@ -1252,6 +1316,17 @@ onBeforeUnmount(() => {
 .event-calendar__cell.is-no-data {
   background: color-mix(in srgb, var(--ink-100) 45%, var(--surface));
   border-color: color-mix(in srgb, var(--ink-200) 35%, transparent);
+}
+
+.event-calendar__cell.is-loading-data {
+  background: color-mix(in srgb, var(--teal-400) 15%, var(--surface));
+  border-color: color-mix(in srgb, var(--teal-500) 50%, transparent);
+  animation: cell-data-loading 1.4s infinite ease-in-out;
+}
+
+@keyframes cell-data-loading {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 0.9; }
 }
 
 /* 当日采集中/检测中状态：柔和青绿呼吸微光 */

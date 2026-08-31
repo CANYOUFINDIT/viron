@@ -63,7 +63,9 @@ describe("monitoring dashboard wiring", () => {
     expect(hostEventCalendar).toContain("day.coverageRatio < 0.8");
     expect(hostEventCalendar).toContain("event.occurrenceCount > 1");
     expect(hostEventCalendar).toContain("monitorEventCalendarCacheKey");
-    expect(hostEventCalendar).toContain("cachedCalendars ?? []");
+    expect(hostEventCalendar).toContain("cacheKeyForMonth");
+    expect(hostEventCalendar).toContain("is-loading-data");
+    expect(hostEventCalendar).toContain("告警数据读取失败");
     expect(hostDashboard).toContain("monitorHistoryCacheKey");
     expect(hostDashboard).toContain("cachedHistory ?? emptyHistory()");
   });
