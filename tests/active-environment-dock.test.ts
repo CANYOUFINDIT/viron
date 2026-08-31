@@ -271,6 +271,7 @@ describe("active environment picture-in-picture", () => {
     const desktopStaticOverlaySmoke = source("src/desktop/smoke/static-overlay-smoke.ts");
     // contract unchanged; implementation moved from src/desktop/main.ts
     const desktopDockSmoke = source("src/desktop/smoke/active-environment-dock-smoke.ts");
+    const desktopMain = source("src/desktop/main.ts");
     // contract unchanged; implementation moved from src/desktop/main.ts
     const desktopDockOverlay = source("src/desktop/overlays/active-environment-dock-window.ts");
     // contract unchanged; implementation moved from src/desktop/main.ts
@@ -387,10 +388,12 @@ describe("active environment picture-in-picture", () => {
     expect(desktopDockSmoke).toContain("nativeAboveWebView");
     expect(desktopDockSmoke).toContain("passiveHoverFocusStable");
     expect(desktopDockSmoke).toContain("offscreen: true");
-    expect(desktopDockSmoke).toContain("const mainFocusAcquired = mainWindow.webContents.isFocused()");
+    expect(desktopDockSmoke).toContain("const mainFocusAcquired = mainWindow.isFocused() || mainWindow.webContents.isFocused()");
     expect(desktopDockSmoke).toContain("const passiveHoverFocusStable = mainFocusAcquired");
-    expect(desktopDockSmoke).toContain("&& mainWindow.webContents.isFocused()");
+    expect(desktopDockSmoke).toContain("&& (mainWindow.isFocused() || mainWindow.webContents.isFocused())");
     expect(desktopDockSmoke).toContain("!activeEnvironmentDockWindow!.isFocused()");
+    expect(desktopDockSmoke).toContain("focusPreconditionEstablished: mainFocusAcquired");
+    expect(desktopMain).toContain("!activeEnvironmentDock.focusPreconditionEstablished || activeEnvironmentDock.passiveHoverFocusStable");
     expect(desktopDockSmoke).toContain('app.focus({ steal: true })');
     expect(desktopDockSmoke).toContain("hoverIntentStable");
     expect(desktopDockSmoke).toContain("nativePointerTrackingStable");

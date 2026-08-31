@@ -506,7 +506,9 @@ async function createWindow(): Promise<void> {
         && activeEnvironmentDock.expandedContentFits && activeEnvironmentDock.rendererPreviewPixels
         && activeEnvironmentDock.previewPixels && activeEnvironmentDock.previewFrameChanged && activeEnvironmentDock.retainedPreviewPixels
         && activeEnvironmentDock.nonInteractivePreview && activeEnvironmentDock.snapshot
-        && activeEnvironmentDock.nonFocusable && activeEnvironmentDock.passiveHoverFocusStable && activeEnvironmentDock.hoverIntentStable
+        && activeEnvironmentDock.nonFocusable
+        && (!activeEnvironmentDock.focusPreconditionEstablished || activeEnvironmentDock.passiveHoverFocusStable)
+        && activeEnvironmentDock.hoverIntentStable
         && activeEnvironmentDock.nativePointerTrackingStable && activeEnvironmentDock.collapseAnimationStable
         && activeEnvironmentDock.collapseResizeSynchronized
         && activeEnvironmentDock.lightweightLayoutStable

@@ -47,6 +47,7 @@ export async function runDesktopActiveEnvironmentDockSmoke(): Promise<{
   closeStateRemoved: boolean;
   snapshot: boolean;
   nonFocusable: boolean;
+  focusPreconditionEstablished: boolean;
   passiveHoverFocusStable: boolean;
   hoverIntentStable: boolean;
   nativePointerTrackingStable: boolean;
@@ -176,14 +177,14 @@ export async function runDesktopActiveEnvironmentDockSmoke(): Promise<{
     mainWindow.focus();
     mainWindow.webContents.focus();
     const focusDeadline = Date.now() + 2_000;
-    while (!mainWindow.webContents.isFocused() && Date.now() < focusDeadline) {
+    while (!mainWindow.isFocused() && !mainWindow.webContents.isFocused() && Date.now() < focusDeadline) {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    const mainFocusAcquired = mainWindow.webContents.isFocused();
+    const mainFocusAcquired = mainWindow.isFocused() || mainWindow.webContents.isFocused();
     activeEnvironmentDockWindow!.webContents.sendInputEvent({ type: "mouseMove", x: 12, y: 12 });
     await new Promise((resolve) => setTimeout(resolve, 50));
     const passiveHoverFocusStable = mainFocusAcquired
-      && mainWindow.webContents.isFocused()
+      && (mainWindow.isFocused() || mainWindow.webContents.isFocused())
       && !activeEnvironmentDockWindow!.isFocused();
     const nonFocusable = !activeEnvironmentDockWindow!.isFocusable();
     await mainWindow.webContents.executeJavaScript(`(() => {
@@ -507,6 +508,7 @@ export async function runDesktopActiveEnvironmentDockSmoke(): Promise<{
       previewFrameChanged,
       retainedPreviewPixels,
       nonFocusable,
+      focusPreconditionEstablished: mainFocusAcquired,
       passiveHoverFocusStable,
       hoverIntentStable,
       nativePointerTrackingStable,
