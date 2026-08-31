@@ -3,11 +3,14 @@ import { RefreshCw, Server } from "@lucide/vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { computed, ref } from "vue";
 import {
+  MONITORING_PROBE_STATES,
   compareMonitoringHosts,
   hostPressureScore,
   hostPriorityState,
+  monitoringProbeState,
   type MonitoringAlertCounts,
   type MonitoringHostPriorityState,
+  type MonitoringProbeState,
 } from "../../../shared/monitoring";
 import { api } from "../../api";
 import { translate as tr } from "../../i18n";
@@ -31,9 +34,13 @@ export interface MonitoringHostCard {
   environmentId: string;
   environmentName: string;
   status: string;
+  probeState: MonitoringProbeState;
+  probeInstalled: boolean;
   offline: boolean;
   missing: boolean;
   stale: boolean;
+  lastError?: string;
+  installedAt?: string | null;
   agentVersion: string;
   lastCollectedAt: string | null;
   lastPulledAt?: string | null;
@@ -54,7 +61,7 @@ export interface MonitoringHostCard {
   disks?: MonitoringHostDisk[];
 }
 
-type ProbeAction = "install" | "update" | "reinstall" | "restart" | "clear";
+type ProbeAction = "refresh" | "install" | "update" | "reinstall" | "restart" | "clear";
 
 const props = defineProps<{
   hosts: MonitoringHostCard[];
@@ -72,7 +79,8 @@ const emit = defineEmits<{
 }>();
 
 const hostQuery = ref("");
-const stateFilter = ref<"all" | MonitoringHostPriorityState>("all");
+const stateFilter = ref<"all" | MonitoringProbeState>("all");
+const expandedProbeStates = ref(new Set<MonitoringProbeState>());
 const selectedIds = ref(new Set<string>());
 const bulkAction = ref<ProbeAction | "">("");
 const probeBusy = ref(false);
@@ -87,31 +95,70 @@ const probeResults = ref<Array<{
 }>>([]);
 const probeOperationConcurrency = 4;
 const maxBulkHosts = 50;
+const probeStateOrder = new Map(MONITORING_PROBE_STATES.map((state, index) => [state, index]));
+
+function effectiveProbeState(host: MonitoringHostCard): MonitoringProbeState {
+  return host.probeState ?? monitoringProbeState({
+    status: host.status,
+    agentVersion: host.agentVersion,
+    installManaged: host.installManaged,
+    installedAt: host.installedAt,
+    lastCollectedAt: host.lastCollectedAt,
+    stale: host.stale,
+  });
+}
 
 const allRankedHosts = computed(() => {
   return [...props.hosts]
     .map((host) => {
       const alertCounts = host.alertCounts ?? { critical: 0, major: 0, warning: 0 };
-      const score = hostPressureScore({ ...host, alertCounts });
-      const state = hostPriorityState({ ...host, alertCounts }, score);
-      return { host, score, state, alertCounts };
+      const probeState = effectiveProbeState(host);
+      const score = hostPressureScore({ ...host, probeState, alertCounts });
+      const state = hostPriorityState({ ...host, probeState, alertCounts }, score);
+      return { host, score, state, probeState, alertCounts };
     })
-    .sort((left, right) => right.score - left.score || compareMonitoringHosts(left.host, right.host));
+    .sort((left, right) => (probeStateOrder.get(left.probeState) ?? 99) - (probeStateOrder.get(right.probeState) ?? 99)
+      || right.score - left.score
+      || compareMonitoringHosts(left.host, right.host));
 });
 
 const rankedHosts = computed(() => {
   const query = hostQuery.value.trim().toLowerCase();
   return allRankedHosts.value.filter((item) => {
     const matchesQuery = !query || `${item.host.connectionName} ${item.host.host} ${item.host.environmentName}`.toLowerCase().includes(query);
-    const matchesState = stateFilter.value === "all" || item.state === stateFilter.value;
+    const matchesState = stateFilter.value === "all" || item.probeState === stateFilter.value;
     return matchesQuery && matchesState;
   });
 });
 
+const probeStateCounts = computed(() => {
+  const counts = Object.fromEntries(MONITORING_PROBE_STATES.map((state) => [state, 0])) as Record<MonitoringProbeState, number>;
+  for (const item of allRankedHosts.value) counts[item.probeState] += 1;
+  return counts;
+});
+
+const visibleProbeGroups = computed(() => MONITORING_PROBE_STATES
+  .filter((probeState) => stateFilter.value === "all" || stateFilter.value === probeState)
+  .map((probeState) => ({ probeState, items: rankedHosts.value.filter((item) => item.probeState === probeState) }))
+  .filter((group) => group.items.length));
+
 const selected = computed(() => props.hosts.find((host) => host.sshConnectionId === props.selectedHostId) ?? null);
 const selectedRank = computed(() => allRankedHosts.value.find((item) => item.host.sshConnectionId === props.selectedHostId) ?? null);
 const detailMode = computed(() => Boolean(selected.value));
-const visibleIds = computed(() => rankedHosts.value.map((item) => item.host.sshConnectionId));
+const renderGroups = computed(() => {
+  if (detailMode.value) return [{ probeState: null, items: rankedHosts.value, visibleItems: rankedHosts.value }];
+  const searching = Boolean(hostQuery.value.trim()) || stateFilter.value !== "all";
+  return visibleProbeGroups.value.map((group) => ({
+    ...group,
+    visibleItems: searching || expandedProbeStates.value.has(group.probeState) ? group.items : group.items.slice(0, 6),
+  }));
+});
+const selectedGroupRank = computed(() => {
+  if (!selectedRank.value) return 0;
+  return allRankedHosts.value.filter((item) => item.probeState === selectedRank.value!.probeState)
+    .findIndex((item) => item.host.sshConnectionId === props.selectedHostId) + 1;
+});
+const visibleIds = computed(() => renderGroups.value.flatMap((group) => group.visibleItems.map((item) => item.host.sshConnectionId)));
 const selectedCount = computed(() => visibleIds.value.filter((id) => selectedIds.value.has(id)).length);
 const allVisibleSelected = computed(() => visibleIds.value.length > 0 && visibleIds.value.every((id) => selectedIds.value.has(id)));
 
@@ -137,16 +184,19 @@ function formatFreshness(value: string | null | undefined) {
 }
 
 function collectionLabel(host: MonitoringHostCard) {
-  if (host.missing) return tr("尚无监控数据");
+  if (["missing", "unreachable", "unchecked"].includes(effectiveProbeState(host))) return tr("尚无监控数据");
   const freshness = formatFreshness(host.lastCollectedAt);
   return freshness === "—" ? tr("尚无采集时间") : tr("{{0}} 前采集", [freshness]);
 }
 
 function probeLabel(host: MonitoringHostCard) {
-  if (host.missing) return tr("探针未安装");
-  if (host.offline) return tr("探针离线");
-  if (host.stale) return tr("数据已陈旧");
-  return host.agentVersion ? tr("探针 v{{0}}", [host.agentVersion]) : tr("探针在线");
+  const state = effectiveProbeState(host);
+  if (state === "missing") return tr("已确认未安装探针");
+  if (state === "offline") return tr("已安装探针当前离线");
+  if (state === "unreachable") return tr("SSH 连接失败，探针状态待确认");
+  if (state === "stale") return tr("探针数据已中断");
+  if (state === "unchecked") return tr("尚未检测探针");
+  return host.agentVersion ? tr("探针 v{{0}} 在线", [host.agentVersion]) : tr("探针在线");
 }
 
 function activeAlertCount(alerts: MonitoringAlertCounts) {
@@ -154,10 +204,13 @@ function activeAlertCount(alerts: MonitoringAlertCounts) {
 }
 
 function bottleneck(host: MonitoringHostCard, _state: MonitoringHostPriorityState, alerts: MonitoringAlertCounts) {
-  if (host.offline) return tr("主机或监控探针离线");
-  if (host.missing) return tr("未安装监控探针");
+  const probeState = effectiveProbeState(host);
+  if (probeState === "offline") return tr("已安装探针当前无法连接");
+  if (probeState === "unreachable") return tr("SSH 连接失败，无法确认是否安装探针");
+  if (probeState === "missing") return tr("已通过 SSH 确认未安装探针");
+  if (probeState === "unchecked") return tr("尚未执行探针检测");
   if ((host.diskUsedPercent ?? 0) >= 90 && host.worstDisk?.path) return `${host.worstDisk.path} ${formatPercent(host.diskUsedPercent)}`;
-  if (host.stale) return tr("监控数据陈旧");
+  if (probeState === "stale") return tr("探针采集数据已超过刷新窗口");
   if (alerts.critical) return tr("存在 Critical 告警");
   const resources: Array<[string, number | null]> = [
     ["CPU", host.cpuUsedPercent],
@@ -175,6 +228,63 @@ function stateLabel(state: MonitoringHostPriorityState) {
   if (state === "warning") return tr("需要关注");
   if (state === "unmanaged") return tr("未安装探针");
   return tr("运行正常");
+}
+
+function probeStateLabel(state: MonitoringProbeState) {
+  if (state === "offline") return tr("探针离线");
+  if (state === "unreachable") return tr("连接异常 · 待确认");
+  if (state === "stale") return tr("采集中断");
+  if (state === "missing") return tr("确认未安装");
+  if (state === "unchecked") return tr("尚未检测");
+  return tr("在线上报");
+}
+
+function probeStateDescription(state: MonitoringProbeState) {
+  if (state === "offline") return tr("存在安装或历史采集凭据，但当前无法拉取探针数据");
+  if (state === "unreachable") return tr("SSH 认证或网络连接失败，当前不能判断探针是否安装");
+  if (state === "stale") return tr("探针曾正常上报，但采集数据已超过刷新窗口");
+  if (state === "missing") return tr("已连接目标机器并确认 viron-monitor 不存在");
+  if (state === "unchecked") return tr("尚未完成首次探针检测");
+  return tr("探针持续上报，按资源压力在组内排序");
+}
+
+function probeStateTone(state: MonitoringProbeState) {
+  if (state === "offline") return "critical";
+  if (state === "unreachable" || state === "stale") return "warning";
+  if (state === "online") return "healthy";
+  return "unmanaged";
+}
+
+function probeHasMetrics(host: MonitoringHostCard) {
+  return host.cpuUsedPercent != null || host.memoryUsedPercent != null || host.diskUsedPercent != null;
+}
+
+function probeIsInstalled(host: MonitoringHostCard) {
+  return host.probeInstalled ?? ["online", "offline", "stale"].includes(effectiveProbeState(host));
+}
+
+function probeEvidenceDetail(host: MonitoringHostCard) {
+  const state = effectiveProbeState(host);
+  if (state === "missing") return tr("SSH 检测已完成：目标机器未找到 viron-monitor 命令");
+  if (state === "unreachable") return host.lastError || tr("SSH 连接失败，请先检查地址、网络或认证信息");
+  if (state === "offline") return host.lastError || tr("探针曾经上报过数据，但本次拉取失败");
+  if (state === "stale") return tr("最后采集于 {{0}} 前，请刷新或检查探针进程", [formatFreshness(host.lastCollectedAt)]);
+  if (state === "unchecked") return tr("执行“重新检测”后才能判断是否已安装探针");
+  return tr("最近 {{0}} 前完成采集", [formatFreshness(host.lastCollectedAt)]);
+}
+
+function cardActionLabel(host: MonitoringHostCard) {
+  const state = effectiveProbeState(host);
+  if (state === "missing") return tr("安装探针");
+  if (state === "unreachable" || state === "unchecked") return tr("查看连接诊断");
+  return tr("查看监控");
+}
+
+function toggleProbeGroup(state: MonitoringProbeState) {
+  const next = new Set(expandedProbeStates.value);
+  if (next.has(state)) next.delete(state);
+  else next.add(state);
+  expandedProbeStates.value = next;
 }
 
 function toggleSelectAll(checked: boolean) {
@@ -201,12 +311,13 @@ function closeDetail() {
   emit("select", null);
 }
 
-function probePath(host: MonitoringHostCard, action: "install/preflight" | "install-tasks" | "restart" | "clear") {
+function probePath(host: MonitoringHostCard, action: "refresh" | "install/preflight" | "install-tasks" | "restart" | "clear") {
   return `/api/v1/environments/${host.environmentId}/monitor-hosts/${host.sshConnectionId}/${action}`;
 }
 
 function probeActionLabel(action: ProbeAction) {
   return ({
+    refresh: tr("重新检测探针状态"),
     install: tr("安装探针"),
     update: tr("更新探针"),
     reinstall: tr("重装探针"),
@@ -252,11 +363,15 @@ async function preflightInstall(host: MonitoringHostCard, action: ProbeAction, a
 }
 
 async function executeProbe(host: MonitoringHostCard, action: ProbeAction, allowPathPrompt: boolean) {
-  if (action === "install" && !host.missing) {
-    return { status: "skipped" as const, message: tr("已安装探针，未重复安装") };
+  if (action === "refresh") {
+    await api(probePath(host, "refresh"), { method: "POST" });
+    return { status: "success" as const, message: tr("探针状态已重新检测") };
   }
-  if ((action === "update" || action === "reinstall" || action === "restart" || action === "clear") && host.missing) {
-    return { status: "skipped" as const, message: tr("尚未安装探针") };
+  if (action === "install" && effectiveProbeState(host) !== "missing") {
+    return { status: "skipped" as const, message: tr("当前未确认探针缺失，请先重新检测") };
+  }
+  if ((action === "update" || action === "reinstall" || action === "restart" || action === "clear") && !probeIsInstalled(host)) {
+    return { status: "skipped" as const, message: tr("尚未确认已安装探针") };
   }
   if (action === "install" || action === "update" || action === "reinstall") {
     const preflight = await preflightInstall(host, action, allowPathPrompt);
@@ -299,7 +414,9 @@ async function confirmProbe(hosts: MonitoringHostCard[], action: ProbeAction) {
       ? tr("将覆盖现有 Viron 监控探针程序，安装任务会在后台按队列执行。")
       : action === "install" || action === "update"
         ? tr("安装任务会先逐台预检，再在后台按队列执行。")
-        : tr("操作将按最多 {{0}} 台并发执行。", [probeOperationConcurrency]);
+        : action === "refresh"
+          ? tr("将通过现有 SSH 连接重新判断探针是否安装以及当前是否在线。")
+          : tr("操作将按最多 {{0}} 台并发执行。", [probeOperationConcurrency]);
   await ElMessageBox.confirm(
     `${tr("确认对 {{0}} 执行“{{1}}”？", [target, probeActionLabel(action)])}\n${detail}`,
     probeActionLabel(action),
@@ -389,19 +506,27 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
       <div v-else class="view-toolbar">
         <div class="toolbar-filters">
           <el-input v-model="hostQuery" clearable :placeholder="$t('按主机名、IP 或环境搜索')" class="host-search" />
-          <el-select v-model="stateFilter" class="state-filter">
-            <el-option value="all" :label="$t('全部状态')" />
-            <el-option value="offline" :label="$t('离线')" />
-            <el-option value="critical" :label="$t('资源紧张')" />
-            <el-option value="warning" :label="$t('需要关注')" />
-            <el-option value="unmanaged" :label="$t('未安装探针')" />
-          </el-select>
         </div>
         <div class="host-list-summary">
           <span class="host-count"><strong>{{ rankedHosts.length }}</strong> {{ $t('个节点') }}</span>
-          <small>{{ $t('离线与严重告警优先，其次按资源压力排序') }}</small>
+          <small>{{ $t('按探针状态分组，组内按资源压力排序') }}</small>
         </div>
       </div>
+
+      <nav v-if="!detailMode" class="probe-state-tabs" :aria-label="$t('探针状态分类')">
+        <button type="button" :class="{ 'is-active': stateFilter === 'all' }" @click="stateFilter = 'all'">
+          <span>{{ $t('全部分类') }}</span><strong>{{ allRankedHosts.length }}</strong>
+        </button>
+        <button
+          v-for="probeState in MONITORING_PROBE_STATES"
+          :key="probeState"
+          type="button"
+          :class="[`is-${probeStateTone(probeState)}`, { 'is-active': stateFilter === probeState }]"
+          @click="stateFilter = probeState"
+        >
+          <span>{{ probeStateLabel(probeState) }}</span><strong>{{ probeStateCounts[probeState] }}</strong>
+        </button>
+      </nav>
 
       <div v-if="!detailMode && canOperate" class="bulk-probe-bar">
         <label class="bulk-selection">
@@ -411,6 +536,7 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
         </label>
         <div class="bulk-actions">
           <el-select v-model="bulkAction" class="bulk-action-select" :placeholder="$t('选择批量操作')">
+            <el-option value="refresh" :label="$t('重新检测探针状态')" />
             <el-option value="install" :label="$t('安装探针')" />
             <el-option value="update" :label="$t('更新探针')" />
             <el-option value="reinstall" :label="$t('重装探针')" />
@@ -421,76 +547,106 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
         </div>
       </div>
 
-      <div v-if="rankedHosts.length" class="priority-host-grid">
-        <article
-          v-for="(item, index) in rankedHosts"
-          :key="item.host.sshConnectionId"
-          class="priority-host-card"
-          :class="[`is-${item.state}`, { 'is-selected': selected?.sshConnectionId === item.host.sshConnectionId }]"
-          tabindex="0"
-          @click="openHost(item.host)"
-          @keydown.enter="openHost(item.host)"
+      <div v-if="rankedHosts.length" class="probe-state-groups">
+        <section
+          v-for="group in renderGroups"
+          :key="group.probeState ?? 'detail-list'"
+          class="probe-state-group"
+          :class="group.probeState ? `is-${group.probeState}` : ''"
+          :data-probe-state="group.probeState"
         >
-          <template v-if="detailMode">
-            <div class="compact-host-head">
-              <strong>{{ item.host.connectionName }}</strong>
-              <span class="tone-badge" :class="`is-${item.state}`">{{ stateLabel(item.state) }}</span>
+          <header v-if="!detailMode && group.probeState" class="probe-state-group__head">
+            <div>
+              <span class="probe-state-dot" :class="`is-${probeStateTone(group.probeState)}`"></span>
+              <strong>{{ probeStateLabel(group.probeState) }}</strong>
+              <b>{{ group.items.length }}</b>
             </div>
-            <p>{{ item.host.host }} · {{ item.host.environmentName }}</p>
-            <span class="compact-host-reason">{{ bottleneck(item.host, item.state, item.alertCounts) }}</span>
-            <div class="compact-host-resources">
-              <span>CPU {{ formatPercent(item.host.cpuUsedPercent) }}</span>
-              <span>{{ $t('内存') }} {{ formatPercent(item.host.memoryUsedPercent) }}</span>
-              <span>{{ $t('磁盘') }} {{ formatPercent(item.host.diskUsedPercent) }}</span>
-            </div>
-          </template>
-          <template v-else>
-            <div class="host-card-head">
-              <div>
-                <span class="host-rank">{{ $t('优先级') }} {{ String(index + 1).padStart(2, '0') }}</span>
-                <span class="tone-badge" :class="`is-${item.state}`">{{ stateLabel(item.state) }}</span>
-              </div>
-              <input
-                v-if="canOperate"
-                class="host-card-select"
-                type="checkbox"
-                :checked="selectedIds.has(item.host.sshConnectionId)"
-                :aria-label="item.host.connectionName"
-                @click.stop
-                @change="toggleSelect(item.host.sshConnectionId, ($event.target as HTMLInputElement).checked)"
-              />
-            </div>
-            <h3>{{ item.host.connectionName }}</h3>
-            <p>{{ item.host.host }} · {{ item.host.environmentName }}</p>
-            <div class="host-bottleneck">
-              <span>{{ $t('优先处理原因') }}</span>
-              <strong>{{ bottleneck(item.host, item.state, item.alertCounts) }}</strong>
-            </div>
-            <div class="host-resource-bars">
-              <span class="host-resource-line" :class="{ 'is-hot': resourceHot(item.host.cpuUsedPercent) }">
-                <b>CPU</b><i><span :style="{ width: `${Math.min(100, Math.max(0, item.host.cpuUsedPercent ?? 0))}%` }"></span></i>
-                <output>{{ formatPercent(item.host.cpuUsedPercent) }}</output>
-              </span>
-              <span class="host-resource-line" :class="{ 'is-hot': resourceHot(item.host.memoryUsedPercent) }">
-                <b>{{ $t('内存') }}</b><i><span :style="{ width: `${Math.min(100, Math.max(0, item.host.memoryUsedPercent ?? 0))}%` }"></span></i>
-                <output>{{ formatPercent(item.host.memoryUsedPercent) }}</output>
-              </span>
-              <span class="host-resource-line" :class="{ 'is-hot': resourceHot(item.host.diskUsedPercent) }">
-                <b>{{ $t('磁盘') }}</b><i><span :style="{ width: `${Math.min(100, Math.max(0, item.host.diskUsedPercent ?? 0))}%` }"></span></i>
-                <output>{{ formatPercent(item.host.diskUsedPercent) }}</output>
-              </span>
-            </div>
-            <div class="host-card-meta">
-              <span>{{ probeLabel(item.host) }}</span>
-              <span>{{ collectionLabel(item.host) }}</span>
-              <span v-if="activeAlertCount(item.alertCounts)" class="is-alert">{{ activeAlertCount(item.alertCounts) }} {{ $t('条活动告警') }}</span>
-            </div>
-            <div class="host-card-foot">
-              <span>{{ $t('点击查看容量走势、磁盘与探针操作') }}</span>
-              <strong>{{ $t('查看监控') }} →</strong>
-            </div>
-          </template>
-        </article>
+            <small>{{ probeStateDescription(group.probeState) }}</small>
+          </header>
+          <div class="priority-host-grid">
+            <article
+              v-for="(item, index) in group.visibleItems"
+              :key="item.host.sshConnectionId"
+              class="priority-host-card"
+              :class="[`is-${item.state}`, `is-probe-${item.probeState}`, { 'is-selected': selected?.sshConnectionId === item.host.sshConnectionId }]"
+              tabindex="0"
+              @click="openHost(item.host)"
+              @keydown.enter="openHost(item.host)"
+            >
+              <template v-if="detailMode">
+                <div class="compact-host-head">
+                  <strong>{{ item.host.connectionName }}</strong>
+                  <span class="tone-badge" :class="`is-${probeStateTone(item.probeState)}`">{{ probeStateLabel(item.probeState) }}</span>
+                </div>
+                <p>{{ item.host.host }} · {{ item.host.environmentName }}</p>
+                <span class="compact-host-reason">{{ bottleneck(item.host, item.state, item.alertCounts) }}</span>
+                <div v-if="probeHasMetrics(item.host)" class="compact-host-resources">
+                  <span>CPU {{ formatPercent(item.host.cpuUsedPercent) }}</span>
+                  <span>{{ $t('内存') }} {{ formatPercent(item.host.memoryUsedPercent) }}</span>
+                  <span>{{ $t('磁盘') }} {{ formatPercent(item.host.diskUsedPercent) }}</span>
+                </div>
+              </template>
+              <template v-else>
+                <div class="host-card-head">
+                  <div>
+                    <span class="host-rank">{{ $t('组内顺序') }} {{ String(index + 1).padStart(2, '0') }}</span>
+                    <span class="tone-badge" :class="`is-${probeStateTone(item.probeState)}`">{{ probeStateLabel(item.probeState) }}</span>
+                    <span v-if="item.probeState === 'online' && ['critical', 'warning'].includes(item.state)" class="tone-badge" :class="`is-${item.state}`">{{ stateLabel(item.state) }}</span>
+                  </div>
+                  <input
+                    v-if="canOperate"
+                    class="host-card-select"
+                    type="checkbox"
+                    :checked="selectedIds.has(item.host.sshConnectionId)"
+                    :aria-label="item.host.connectionName"
+                    @click.stop
+                    @change="toggleSelect(item.host.sshConnectionId, ($event.target as HTMLInputElement).checked)"
+                  />
+                </div>
+                <h3>{{ item.host.connectionName }}</h3>
+                <p>{{ item.host.host }} · {{ item.host.environmentName }}</p>
+                <div class="host-bottleneck">
+                  <span>{{ item.probeState === 'online' ? $t('优先处理原因') : $t('状态判定依据') }}</span>
+                  <strong>{{ bottleneck(item.host, item.state, item.alertCounts) }}</strong>
+                  <small v-if="item.probeState !== 'online'">{{ probeEvidenceDetail(item.host) }}</small>
+                </div>
+                <div v-if="probeHasMetrics(item.host)" class="host-resource-bars">
+                  <span class="host-resource-line" :class="{ 'is-hot': resourceHot(item.host.cpuUsedPercent) }">
+                    <b>CPU</b><i><span :style="{ width: `${Math.min(100, Math.max(0, item.host.cpuUsedPercent ?? 0))}%` }"></span></i>
+                    <output>{{ formatPercent(item.host.cpuUsedPercent) }}</output>
+                  </span>
+                  <span class="host-resource-line" :class="{ 'is-hot': resourceHot(item.host.memoryUsedPercent) }">
+                    <b>{{ $t('内存') }}</b><i><span :style="{ width: `${Math.min(100, Math.max(0, item.host.memoryUsedPercent ?? 0))}%` }"></span></i>
+                    <output>{{ formatPercent(item.host.memoryUsedPercent) }}</output>
+                  </span>
+                  <span class="host-resource-line" :class="{ 'is-hot': resourceHot(item.host.diskUsedPercent) }">
+                    <b>{{ $t('磁盘') }}</b><i><span :style="{ width: `${Math.min(100, Math.max(0, item.host.diskUsedPercent ?? 0))}%` }"></span></i>
+                    <output>{{ formatPercent(item.host.diskUsedPercent) }}</output>
+                  </span>
+                </div>
+                <div class="host-card-meta">
+                  <span>{{ probeLabel(item.host) }}</span>
+                  <span>{{ collectionLabel(item.host) }}</span>
+                  <span v-if="activeAlertCount(item.alertCounts)" class="is-alert">{{ activeAlertCount(item.alertCounts) }} {{ $t('条活动告警') }}</span>
+                </div>
+                <div class="host-card-foot">
+                  <span>{{ item.probeState === 'online' ? $t('点击查看容量走势、磁盘与探针操作') : probeStateDescription(item.probeState) }}</span>
+                  <strong>{{ cardActionLabel(item.host) }} →</strong>
+                </div>
+              </template>
+            </article>
+          </div>
+          <button
+            v-if="!detailMode && group.probeState && group.items.length > 6 && stateFilter === 'all' && !hostQuery.trim()"
+            type="button"
+            class="probe-group-toggle"
+            @click="toggleProbeGroup(group.probeState)"
+          >
+            {{ expandedProbeStates.has(group.probeState)
+              ? $t('收起分类')
+              : $t('查看该分类全部 {0} 个节点', [group.items.length]) }}
+          </button>
+        </section>
       </div>
       <div v-else-if="!loadingMore" class="host-empty">
         <Server :size="28" />
@@ -506,36 +662,46 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
       <div class="detail-back-row">
         <el-button @click="closeDetail">← {{ $t('返回主机节点') }}</el-button>
         <span>
-          {{ $t('排序位置') }} {{ allRankedHosts.findIndex((item) => item.host.sshConnectionId === selected?.sshConnectionId) + 1 }}/{{ allRankedHosts.length }}
-          · {{ $t('优先原因') }}：{{ bottleneck(selected, selectedRank.state, selectedRank.alertCounts) }}
+          {{ probeStateLabel(selectedRank.probeState) }} · {{ $t('组内顺序') }} {{ selectedGroupRank }}/{{ probeStateCounts[selectedRank.probeState] }}
+          · {{ $t('判定依据') }}：{{ bottleneck(selected, selectedRank.state, selectedRank.alertCounts) }}
         </span>
       </div>
       <section class="host-detail-hero">
         <div>
           <div class="hero-badges">
-            <span class="tone-badge" :class="`is-${selectedRank.state}`">{{ stateLabel(selectedRank.state) }}</span>
-            <span class="tone-badge" :class="selected.offline ? 'is-critical' : selected.missing || selected.stale ? 'is-warning' : 'is-healthy'">
-              {{ selected.offline ? $t('探针离线') : selected.missing ? $t('未安装探针') : selected.stale ? $t('数据陈旧') : $t('探针在线') }}
-            </span>
+            <span class="tone-badge" :class="`is-${probeStateTone(selectedRank.probeState)}`">{{ probeStateLabel(selectedRank.probeState) }}</span>
+            <span v-if="selectedRank.probeState === 'online' && selectedRank.state !== 'healthy'" class="tone-badge" :class="`is-${selectedRank.state}`">{{ stateLabel(selectedRank.state) }}</span>
           </div>
           <h2>{{ selected.connectionName }}</h2>
           <p>{{ selected.host }} · {{ selected.operatingSystem }} {{ selected.architecture }} · {{ selected.environmentName }}</p>
         </div>
         <div v-if="canOperate" class="probe-operations">
-          <el-button size="small" :disabled="probeBusy" @click="probeSelected(selected.missing ? 'install' : 'update')">{{ selected.missing ? $t('安装探针') : $t('更新探针') }}</el-button>
-          <el-button size="small" :disabled="probeBusy || selected.missing" @click="probeSelected('reinstall')">{{ $t('重装探针') }}</el-button>
-          <el-button size="small" :disabled="probeBusy || selected.missing" @click="probeSelected('restart')">{{ $t('重启探针') }}</el-button>
-          <el-button size="small" type="danger" plain :disabled="probeBusy || selected.missing" @click="probeSelected('clear')">{{ $t('清理监控数据') }}</el-button>
+          <el-button size="small" :disabled="probeBusy" @click="probeSelected('refresh')">{{ $t('重新检测') }}</el-button>
+          <el-button v-if="selectedRank.probeState === 'missing'" size="small" type="primary" :disabled="probeBusy" @click="probeSelected('install')">{{ $t('安装探针') }}</el-button>
+          <template v-if="probeIsInstalled(selected)">
+            <el-button size="small" :disabled="probeBusy" @click="probeSelected('update')">{{ $t('更新探针') }}</el-button>
+            <el-button size="small" :disabled="probeBusy" @click="probeSelected('reinstall')">{{ $t('重装探针') }}</el-button>
+            <el-button size="small" :disabled="probeBusy" @click="probeSelected('restart')">{{ $t('重启探针') }}</el-button>
+            <el-button size="small" type="danger" plain :disabled="probeBusy" @click="probeSelected('clear')">{{ $t('清理监控数据') }}</el-button>
+          </template>
         </div>
       </section>
-      <div class="host-detail-metrics">
+      <section v-if="selectedRank.probeState !== 'online'" class="host-detail-diagnostic" :class="`is-${selectedRank.probeState}`">
+        <div>
+          <span>{{ $t('探针状态诊断') }}</span>
+          <strong>{{ probeStateLabel(selectedRank.probeState) }}</strong>
+          <p>{{ probeEvidenceDetail(selected) }}</p>
+        </div>
+        <el-button size="small" @click="emit('open-maintenance', selected)">{{ $t('前往服务维护') }} →</el-button>
+      </section>
+      <div v-if="probeIsInstalled(selected)" class="host-detail-metrics">
         <div><span>CPU</span><strong>{{ formatPercent(selected.cpuUsedPercent) }}</strong><small>{{ selected.cpuCount ? `${selected.cpuCount} cores` : "—" }} · load {{ selected.load5 ?? "—" }}</small></div>
         <div><span>{{ $t('内存') }}</span><strong>{{ formatPercent(selected.memoryUsedPercent) }}</strong></div>
         <div><span>{{ $t('磁盘') }} MAX</span><strong :class="{ 'is-hot': resourceHot(selected.diskUsedPercent) }">{{ formatPercent(selected.diskUsedPercent) }}</strong><small>{{ selected.worstDisk?.path || "—" }}</small></div>
         <div><span>LOAD 5M</span><strong>{{ selected.load5 ?? "—" }}</strong><small>{{ formatFreshness(selected.lastCollectedAt) }}</small></div>
         <div><span>{{ $t('温度') }}</span><strong>{{ selected.temperatureCelsius == null ? "—" : `${selected.temperatureCelsius.toFixed(0)}°C` }}</strong></div>
       </div>
-      <section class="host-disk-table">
+      <section v-if="probeIsInstalled(selected)" class="host-disk-table">
         <header>
           <strong>{{ $t('挂载点') }}</strong>
           <el-button size="small" @click="emit('open-maintenance', selected)">{{ $t('服务维护') }} →</el-button>
@@ -552,7 +718,7 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
           </thead>
           <tbody>
             <tr v-if="!selected.disks?.length">
-              <td colspan="5">{{ selected.missing ? $t('尚无监控数据，请先安装探针。') : $t('暂无磁盘数据') }}</td>
+              <td colspan="5">{{ $t('暂无磁盘数据') }}</td>
             </tr>
             <tr v-for="disk in selected.disks ?? []" :key="`${disk.device}:${disk.path}`">
               <td><strong>{{ disk.path }}</strong></td>
@@ -565,7 +731,7 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
         </table>
       </section>
       <HostMonitorDashboard
-        v-if="!selected.missing"
+        v-if="probeIsInstalled(selected)"
         :environment-id="selected.environmentId"
         :host-id="selected.sshConnectionId"
         :last-collected-at="selected.lastCollectedAt"
@@ -640,6 +806,40 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
   margin-bottom: 10px;
 }
 
+.probe-state-tabs {
+  margin-bottom: 10px;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--ink-100);
+  border-radius: var(--radius-card, 8px);
+  background: var(--surface);
+}
+
+.probe-state-tabs button {
+  min-width: 0;
+  min-height: 52px;
+  padding: 8px 10px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  border: 0;
+  border-right: 1px solid var(--ink-100);
+  background: transparent;
+  color: var(--ink-500);
+  cursor: pointer;
+  text-align: left;
+}
+
+.probe-state-tabs button:last-child { border-right: 0; }
+.probe-state-tabs button:hover { background: var(--ink-50); }
+.probe-state-tabs button.is-active { box-shadow: inset 0 -3px 0 var(--teal-600); background: var(--teal-50); color: var(--teal-800); }
+.probe-state-tabs button.is-critical.is-active { box-shadow: inset 0 -3px 0 var(--red-600); background: var(--red-100); color: var(--red-700); }
+.probe-state-tabs button.is-warning.is-active { box-shadow: inset 0 -3px 0 var(--amber-600); background: var(--amber-100); color: var(--amber-700); }
+.probe-state-tabs span { overflow: hidden; font-size: 10px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.probe-state-tabs strong { font-family: var(--font-mono); font-size: 16px; }
+
 .toolbar-filters,
 .bulk-actions,
 .hero-badges,
@@ -651,7 +851,6 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
 }
 
 .host-search { width: 260px; }
-.state-filter,
 .bulk-action-select { width: 160px; }
 
 .host-count {
@@ -688,6 +887,51 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
 
 .bulk-selection strong { font-family: var(--font-mono); font-size: 11px; }
 
+.probe-state-groups { display: grid; gap: 18px; }
+.probe-state-group { min-width: 0; }
+
+.probe-state-group__head {
+  min-height: 42px;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--ink-100);
+}
+
+.probe-state-group__head > div {
+  min-width: 190px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.probe-state-group__head strong { font-size: 14px; }
+.probe-state-group__head b { color: var(--ink-400); font-family: var(--font-mono); font-size: 12px; }
+.probe-state-group__head small { color: var(--ink-400); font-size: 10px; text-align: right; }
+
+.probe-state-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-300); }
+.probe-state-dot.is-critical { background: var(--red-600); }
+.probe-state-dot.is-warning { background: var(--amber-600); }
+.probe-state-dot.is-healthy { background: var(--teal-600); }
+
+.probe-group-toggle {
+  width: 100%;
+  margin-top: 8px;
+  padding: 9px 12px;
+  border: 1px dashed var(--ink-200);
+  border-radius: var(--radius-card, 8px);
+  background: var(--ink-50);
+  color: var(--teal-700);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.probe-group-toggle:hover { border-color: var(--teal-500); background: var(--teal-50); }
+
 .priority-host-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -717,6 +961,12 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
 .priority-host-card.is-offline { border-top-color: var(--red-600); background: color-mix(in srgb, var(--red-100) 30%, var(--surface)); }
 .priority-host-card.is-warning { border-top-color: var(--amber-600); }
 .priority-host-card.is-unmanaged { border-top-color: var(--ink-300); }
+.priority-host-card.is-probe-offline { border-top-color: var(--red-600); background: color-mix(in srgb, var(--red-100) 22%, var(--surface)); }
+.priority-host-card.is-probe-unreachable,
+.priority-host-card.is-probe-stale { border-top-color: var(--amber-600); background: color-mix(in srgb, var(--amber-100) 16%, var(--surface)); }
+.priority-host-card.is-probe-missing,
+.priority-host-card.is-probe-unchecked { border-top-color: var(--ink-300); background: color-mix(in srgb, var(--ink-50) 55%, var(--surface)); }
+.priority-host-card.is-probe-online { border-top-color: var(--teal-500); background: var(--surface); }
 .priority-host-card.is-selected { background: var(--teal-50); }
 
 .host-fleet.is-detail-mode .priority-host-card {
@@ -785,6 +1035,17 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
   font-size: 12px;
 }
 
+.host-bottleneck small {
+  margin-top: 3px;
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--ink-400);
+  font-size: 10px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
 .host-resource-bars { display: grid; gap: 6px; }
 
 .host-resource-line {
@@ -848,6 +1109,12 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
   font-size: 10px;
 }
 
+.host-card-foot span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .host-card-foot strong {
   color: var(--teal-700);
   white-space: nowrap;
@@ -901,6 +1168,7 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
 .detail-back-row span { color: var(--ink-400); font-size: 12px; }
 
 .host-detail-hero,
+.host-detail-diagnostic,
 .host-detail-metrics,
 .host-disk-table {
   border: 1px solid var(--ink-100);
@@ -909,6 +1177,22 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
 }
 
 .host-detail-hero { padding: 16px; }
+
+.host-detail-diagnostic {
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-left: 4px solid var(--amber-600);
+}
+
+.host-detail-diagnostic.is-offline { border-left-color: var(--red-600); }
+.host-detail-diagnostic.is-missing,
+.host-detail-diagnostic.is-unchecked { border-left-color: var(--ink-300); }
+.host-detail-diagnostic span { color: var(--ink-400); font-size: 10px; }
+.host-detail-diagnostic strong { display: block; margin: 3px 0; font-size: 14px; }
+.host-detail-diagnostic p { margin: 0; color: var(--ink-500); font-size: 11px; overflow-wrap: anywhere; }
 
 .host-detail-hero h2 {
   margin: 8px 0 4px;
@@ -998,12 +1282,18 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
 .probe-result-list b.is-failed { color: var(--red-600); }
 
 @media (max-width: 1100px) {
+  .probe-state-tabs { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .probe-state-tabs button { border-bottom: 1px solid var(--ink-100); }
   .priority-host-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .host-fleet.is-detail-mode { grid-template-columns: minmax(0, 1fr); }
   .host-detail-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 720px) {
+  .probe-state-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .probe-state-group__head { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .probe-state-group__head small { text-align: left; }
+  .host-detail-diagnostic { align-items: flex-start; flex-direction: column; }
   .priority-host-grid { grid-template-columns: minmax(0, 1fr); }
   .probe-result-list article { grid-template-columns: 1fr auto; }
 }

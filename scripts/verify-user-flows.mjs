@@ -424,9 +424,12 @@ async function verifyCredentialsAndMonitoring(page, { environmentId, serviceName
   await page.waitForFunction(() => document.querySelectorAll(".drawer-event-list .event-row").length >= 7);
   await page.keyboard.press("Escape");
   await page.getByRole("tab", { name: "主机节点" }).click();
-  await expectVisible(page.locator(".priority-host-grid"), "监控主机卡片列表");
-  await expectVisible(page.getByText("离线与严重告警优先，其次按资源压力排序"), "主机排序说明");
-  await expectVisible(page.getByText("优先处理原因").first(), "主机优先原因");
+  await expectVisible(page.locator(".priority-host-grid").first(), "监控主机卡片列表");
+  await expectVisible(page.locator(".probe-state-tabs"), "探针状态分类");
+  await expectVisible(page.getByText("按探针状态分组，组内按资源压力排序"), "主机分类说明");
+  await expectVisible(page.locator('[data-probe-state="unreachable"]'), "连接异常探针分类");
+  await expectVisible(page.locator('[data-probe-state="unchecked"]'), "尚未检测探针分类");
+  await expectVisible(page.getByText("状态判定依据").or(page.getByText("优先处理原因")).first(), "主机状态判定依据");
   assert.equal(await page.locator(".host-pressure-score").count(), 0, "主机列表仍展示难以理解的压力裸分数");
   if (process.env.VIRON_CAPTURE_FLOW_SCREENSHOTS === "true") {
     await page.screenshot({ path: resolve(artifactDirectory, "monitoring-host-cards-review.png"), fullPage: true });
@@ -438,7 +441,7 @@ async function verifyCredentialsAndMonitoring(page, { environmentId, serviceName
     await page.screenshot({ path: resolve(artifactDirectory, "monitoring-host-detail-review.png"), fullPage: true });
   }
   await page.getByRole("tab", { name: "主机节点" }).click();
-  await expectVisible(page.locator(".priority-host-grid"), "重新进入主机卡片列表");
+  await expectVisible(page.locator(".priority-host-grid").first(), "重新进入主机卡片列表");
   await page.getByRole("tab", { name: "告警与服务" }).click();
   await expectVisible(page.getByText(serviceName).first(), "服务时序下钻");
   process.stdout.write("Given/When/Then 监控双页与主机下钻: pass\n");

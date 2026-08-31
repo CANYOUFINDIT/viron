@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildApp } from "../src/server/app.js";
 import { ensureAdmin, openDatabase } from "../src/server/database.js";
-import { capSeriesPoints, compareMonitoringHosts, hostPressureScore, hostPriorityState, isMonitorStale, monitoringSeverityRank } from "../src/shared/monitoring.js";
+import { capSeriesPoints, compareMonitoringHosts, hostPressureScore, hostPriorityState, isMonitorStale, monitoringProbeState, monitoringSeverityRank } from "../src/shared/monitoring.js";
 import { clearMonitoringOverviewCache } from "../src/server/monitoring-overview.js";
 import { monitoringTestConfig, runMonitoringContractSuite } from "./helpers/monitoring-harness.js";
 
@@ -46,6 +46,15 @@ describe("monitoring downsample helpers", () => {
 });
 
 describe("monitoring severity ranking", () => {
+  it("distinguishes confirmed missing probes from offline and unreachable hosts", () => {
+    expect(monitoringProbeState({ status: "missing" })).toBe("missing");
+    expect(monitoringProbeState({ status: "error" })).toBe("unreachable");
+    expect(monitoringProbeState({ status: "error", agentId: "agent-1", lastCollectedAt: "2026-08-30T16:00:00.000Z" })).toBe("offline");
+    expect(monitoringProbeState({ status: "ready", stale: true, agentId: "agent-1" })).toBe("stale");
+    expect(monitoringProbeState({ status: "ready", agentId: "agent-1" })).toBe("online");
+    expect(monitoringProbeState({ status: "unknown" })).toBe("unchecked");
+  });
+
   it("puts offline and critical hosts ahead of stale and healthy ones", () => {
     const hosts = [
       { connectionName: "healthy", status: "ready", cpuUsedPercent: 12, memoryUsedPercent: 20, diskUsedPercent: 30 },
@@ -146,6 +155,8 @@ describe("monitoring overview and service timeseries", () => {
       const healthy = await app.inject({ method: "POST", url: "/api/v1/ssh-connections", cookies, payload: sshPayload(prod.json().id, "prod-healthy") });
       const hot = await app.inject({ method: "POST", url: "/api/v1/ssh-connections", cookies, payload: sshPayload(dev.json().id, "dev-hot") });
       const offline = await app.inject({ method: "POST", url: "/api/v1/ssh-connections", cookies, payload: sshPayload(dev.json().id, "dev-offline") });
+      const unreachable = await app.inject({ method: "POST", url: "/api/v1/ssh-connections", cookies, payload: sshPayload(dev.json().id, "dev-unreachable") });
+      const unchecked = await app.inject({ method: "POST", url: "/api/v1/ssh-connections", cookies, payload: sshPayload(dev.json().id, "dev-unchecked") });
       const now = new Date().toISOString();
       await db.prepare(`
         INSERT INTO monitor_hosts (
@@ -168,13 +179,28 @@ describe("monitoring overview and service timeseries", () => {
           last_collected_at, last_pulled_at, install_managed, updated_at
         ) VALUES (?, ?, '0.1.6', 1, 'error', 1, ?, '[]', '[]', 'offline', ?, ?, 1, ?)
       `).run(offline.json().id, randomUUID(), JSON.stringify({ cpuUsedPercent: 1, memoryUsedPercent: 1, disks: [{ path: "/", usedPercent: 1 }], resolutionSeconds: 30 }), now, now, now);
+      await db.prepare(`
+        INSERT INTO monitor_hosts (
+          ssh_connection_id, agent_id, agent_version, protocol_version, status, last_sequence,
+          latest_host_json, latest_candidates_json, latest_kubernetes_configs_json, last_error,
+          last_collected_at, last_pulled_at, install_managed, updated_at
+        ) VALUES (?, '', '', 0, 'error', 0, '{}', '[]', '[]', 'All configured authentication methods failed', NULL, ?, 0, ?)
+      `).run(unreachable.json().id, now, now);
 
       clearMonitoringOverviewCache();
       const overview = await app.inject({ method: "GET", url: "/api/v1/monitoring/overview", cookies });
       expect(overview.statusCode).toBe(200);
       const names = overview.json().hosts.map((host: { connectionName: string }) => host.connectionName);
       expect(new Set(overview.json().hosts.map((host: { environmentName: string }) => host.environmentName))).toEqual(new Set(["生产环境", "开发环境"]));
-      expect(names.slice(0, 3)).toEqual(["dev-offline", "dev-hot", "prod-healthy"]);
+      expect(names.slice(0, 5)).toEqual(["dev-offline", "dev-hot", "dev-unreachable", "dev-unchecked", "prod-healthy"]);
+      const probeStates = Object.fromEntries(overview.json().hosts.map((host: { connectionName: string; probeState: string }) => [host.connectionName, host.probeState]));
+      expect(probeStates).toMatchObject({
+        "dev-offline": "offline",
+        "dev-unreachable": "unreachable",
+        "dev-unchecked": "unchecked",
+        "prod-healthy": "online",
+      });
+      expect(overview.json().summary).toMatchObject({ hostOffline: 1, hostUnreachable: 1, hostUnchecked: 1 });
       clearMonitoringOverviewCache();
       const firstPage = await app.inject({ method: "GET", url: "/api/v1/monitoring/overview?hostLimit=1&hostOffset=0", cookies });
       const secondPage = await app.inject({ method: "GET", url: "/api/v1/monitoring/overview?hostLimit=1&hostOffset=1&hostsOnly=1", cookies });

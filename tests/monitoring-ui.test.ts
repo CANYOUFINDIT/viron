@@ -46,8 +46,12 @@ describe("monitoring dashboard wiring", () => {
     expect(alertService).not.toContain("/api/v1/monitor-alerts");
     expect(hostEventCalendar).toContain("系统历史告警统计，不受个人通知读取或清除影响");
     expect(hostFleet).toContain("priority-host-grid");
-    expect(hostFleet).toContain("优先处理原因");
-    expect(hostFleet).toContain("离线与严重告警优先，其次按资源压力排序");
+    expect(hostFleet).toContain("probe-state-groups");
+    expect(hostFleet).toContain("按探针状态分组，组内按资源压力排序");
+    expect(hostFleet).toContain("连接异常 · 待确认");
+    expect(hostFleet).toContain("SSH 连接失败，无法确认是否安装探针");
+    expect(hostFleet).toContain("查看该分类全部 {0} 个节点");
+    expect(hostFleet).toContain("重新检测探针状态");
     expect(hostFleet).not.toContain("host-pressure-score");
     expect(maintenanceDiscovery).toContain("<HostEventCalendar");
     expect(maintenanceDiscovery).toContain(':host-id="selectedHost.sshConnectionId"');
