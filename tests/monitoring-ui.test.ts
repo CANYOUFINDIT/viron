@@ -16,7 +16,8 @@ describe("monitoring dashboard wiring", () => {
   it("registers the global monitoring route and cancels overlapping overview requests", () => {
     expect(router).toContain('path: "/monitoring"');
     expect(monitoringView).toContain("overviewAbort?.abort()");
-    expect(noc).toContain("host.stale");
+    expect(noc).toContain("host.probeState");
+    expect(noc).toContain('"stale"');
     expect(noc).toContain("is-unknown");
     expect(monitoringView).toContain("document.hidden");
     expect(monitoringView).not.toContain("EnvironmentMonitoringDashboard");
@@ -76,15 +77,21 @@ describe("monitoring dashboard wiring", () => {
     expect(hostDashboard).not.toContain("monitor-history__more");
   });
 
-  it("keeps the dashboard to two pages and shows empty-state copy for monitoring panels", () => {
+  it("keeps the operational pages focused and exposes the NOC wallboard", () => {
     expect(monitoringView).not.toContain("loadAlerts");
-    expect(monitoringView).not.toContain("NOC 全屏");
+    expect(monitoringView).toContain("NOC 大屏");
+    expect(monitoringView).toContain("<NocScreen");
+    expect(monitoringView).toContain(':environment-id="environmentId"');
+    expect(monitoringView).toContain(':refresh-seconds="refreshSeconds"');
+    expect(monitoringView).toContain("@exit=\"switchView('overview')\"");
     expect(monitoringView).toContain("$t('告警与服务')");
     expect(monitoringView).toContain("$t('主机节点')");
     expect(alertService).toContain("$t('重点告警事件')");
     expect(alertService).toContain("$t('服务')");
     expect(hostFleet).toContain("$t('返回主机节点')");
     expect(noc).toContain("<Teleport to=\"body\">");
+    expect(noc).toContain("/api/v1/monitoring/events?");
+    expect(noc).not.toContain("/api/v1/monitor-alerts");
     expect(noc).toContain("$t('暂无活动告警')");
     expect(noc).toContain("$t('暂无主机矩阵')");
     expect(noc).toContain("$t('网络吞吐排行')");
