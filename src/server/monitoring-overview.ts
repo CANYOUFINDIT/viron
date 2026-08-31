@@ -15,6 +15,7 @@ import {
   compareMonitoringHosts,
   finiteMetric,
   isMonitorStale,
+  monitoringProbeState,
 } from "../shared/monitoring.js";
 
 function parseJson<T>(value: unknown, fallback: T): T {
@@ -74,7 +75,7 @@ export async function loadMonitoringOverview(
     SELECT e.id AS environment_id, e.name AS environment_name,
       c.id AS ssh_connection_id, c.name AS connection_name, c.host, c.source_deleted,
       h.status, h.agent_id, h.agent_version, h.latest_host_json, h.last_collected_at, h.last_pulled_at,
-      h.last_error, h.install_managed, h.install_path
+      h.last_error, h.install_managed, h.install_path, h.installed_at
     FROM environments e
     JOIN ssh_connection_environments ce ON ce.environment_id = e.id
     JOIN ssh_connections c ON c.id = ce.connection_id
@@ -181,8 +182,18 @@ export async function loadMonitoringOverview(
     const collectedAt = row.last_collected_at ? String(row.last_collected_at) : null;
     const resolution = finiteMetric(snapshot.resolutionSeconds) ?? 30;
     const stale = status === "ready" && isMonitorStale(collectedAt, resolution);
-    const offline = status === "error";
-    const missing = status === "missing" || (!row.agent_id && !row.install_managed);
+    const probeState = monitoringProbeState({
+      status,
+      agentId: row.agent_id,
+      agentVersion: row.agent_version,
+      installManaged: Boolean(row.install_managed),
+      installedAt: row.installed_at,
+      lastCollectedAt: collectedAt,
+      stale,
+    });
+    const offline = probeState === "offline";
+    const missing = probeState === "missing";
+    const probeInstalled = ["online", "offline", "stale"].includes(probeState);
     return {
       sshConnectionId: row.ssh_connection_id,
       connectionName: row.connection_name,
@@ -190,6 +201,8 @@ export async function loadMonitoringOverview(
       environmentId: row.environment_id,
       environmentName: row.environment_name,
       status,
+      probeState,
+      probeInstalled,
       offline,
       missing,
       stale,
@@ -200,6 +213,7 @@ export async function loadMonitoringOverview(
       lastError: String(row.last_error ?? ""),
       installManaged: Boolean(row.install_managed),
       installPath: String(row.install_path ?? ""),
+      installedAt: row.installed_at ? String(row.installed_at) : null,
       alertCounts: hostAlertCounts.get(String(row.ssh_connection_id)) ?? { critical: 0, major: 0, warning: 0 },
       cpuUsedPercent: missing ? null : finiteMetric(snapshot.cpuUsedPercent),
       memoryUsedPercent: missing ? null : finiteMetric(snapshot.memoryUsedPercent),
@@ -239,7 +253,7 @@ export async function loadMonitoringOverview(
   const hostsOnly = query.hostsOnly === "1";
 
   if (hostsOnly) {
-    const healthyHosts = mappedHosts.filter((host) => !host.missing && !host.offline && !host.stale);
+    const healthyHosts = mappedHosts.filter((host) => host.probeState === "online");
     const payload = {
       generatedAt: new Date().toISOString(),
       truncated: hostsTruncated,
@@ -248,14 +262,16 @@ export async function loadMonitoringOverview(
       partialFailures,
       summary: {
         hostTotal: mappedHosts.length,
-        hostOnline: mappedHosts.filter((host) => host.status === "ready" && !host.stale && !host.offline && !host.missing).length,
-        hostOffline: mappedHosts.filter((host) => host.offline).length,
-        hostMissing: mappedHosts.filter((host) => host.missing).length,
-        hostStale: mappedHosts.filter((host) => host.stale).length,
+        hostOnline: mappedHosts.filter((host) => host.probeState === "online").length,
+        hostOffline: mappedHosts.filter((host) => host.probeState === "offline").length,
+        hostMissing: mappedHosts.filter((host) => host.probeState === "missing").length,
+        hostStale: mappedHosts.filter((host) => host.probeState === "stale").length,
+        hostUnreachable: mappedHosts.filter((host) => host.probeState === "unreachable").length,
+        hostUnchecked: mappedHosts.filter((host) => host.probeState === "unchecked").length,
         serviceTotal: 0,
         avgCpuPercent: average(healthyHosts.map((host) => host.cpuUsedPercent)),
         avgMemoryPercent: average(healthyHosts.map((host) => host.memoryUsedPercent)),
-        diskAlerts: mappedHosts.filter((host) => !host.stale && !host.missing && !host.offline && (host.diskUsedPercent ?? 0) >= 90 && host.diskUsedPercent !== null).length,
+        diskAlerts: mappedHosts.filter((host) => host.probeState === "online" && (host.diskUsedPercent ?? 0) >= 90 && host.diskUsedPercent !== null).length,
       },
       hosts,
       services: [],
@@ -363,7 +379,7 @@ export async function loadMonitoringOverview(
     .sort((left, right) => (finiteMetric(right.cpuUsedPercent) ?? -1) - (finiteMetric(left.cpuUsedPercent) ?? -1))
     .slice(0, 10);
 
-  const healthyHosts = mappedHosts.filter((host) => !host.missing && !host.offline && !host.stale);
+  const healthyHosts = mappedHosts.filter((host) => host.probeState === "online");
   const payload = {
     generatedAt: new Date().toISOString(),
     truncated: hostsTruncated || servicesTruncated,
@@ -372,14 +388,16 @@ export async function loadMonitoringOverview(
     partialFailures,
     summary: {
       hostTotal: mappedHosts.length,
-      hostOnline: mappedHosts.filter((host) => host.status === "ready" && !host.stale && !host.offline && !host.missing).length,
-      hostOffline: mappedHosts.filter((host) => host.offline).length,
-      hostMissing: mappedHosts.filter((host) => host.missing).length,
-      hostStale: mappedHosts.filter((host) => host.stale).length,
+      hostOnline: mappedHosts.filter((host) => host.probeState === "online").length,
+      hostOffline: mappedHosts.filter((host) => host.probeState === "offline").length,
+      hostMissing: mappedHosts.filter((host) => host.probeState === "missing").length,
+      hostStale: mappedHosts.filter((host) => host.probeState === "stale").length,
+      hostUnreachable: mappedHosts.filter((host) => host.probeState === "unreachable").length,
+      hostUnchecked: mappedHosts.filter((host) => host.probeState === "unchecked").length,
       serviceTotal: allServices.length,
       avgCpuPercent: average(healthyHosts.map((host) => host.cpuUsedPercent)),
       avgMemoryPercent: average(healthyHosts.map((host) => host.memoryUsedPercent)),
-      diskAlerts: mappedHosts.filter((host) => !host.stale && !host.missing && !host.offline && (host.diskUsedPercent ?? 0) >= 90 && host.diskUsedPercent !== null).length,
+      diskAlerts: mappedHosts.filter((host) => host.probeState === "online" && (host.diskUsedPercent ?? 0) >= 90 && host.diskUsedPercent !== null).length,
     },
     hosts,
     services,

@@ -33,6 +33,7 @@ export function finiteMetric(value: unknown): number | null {
 export interface MonitoringSeverityHost {
   connectionName?: unknown;
   name?: unknown;
+  probeState?: MonitoringProbeState;
   offline?: boolean;
   missing?: boolean;
   stale?: boolean;
@@ -40,6 +41,37 @@ export interface MonitoringSeverityHost {
   cpuUsedPercent?: number | null;
   memoryUsedPercent?: number | null;
   diskUsedPercent?: number | null;
+}
+
+export const MONITORING_PROBE_STATES = ["offline", "unreachable", "stale", "missing", "unchecked", "online"] as const;
+export type MonitoringProbeState = (typeof MONITORING_PROBE_STATES)[number];
+
+export interface MonitoringProbeEvidence {
+  status?: unknown;
+  agentId?: unknown;
+  agentVersion?: unknown;
+  installManaged?: boolean;
+  installedAt?: unknown;
+  lastCollectedAt?: unknown;
+  stale?: boolean;
+}
+
+export function hasMonitoringProbeEvidence(host: MonitoringProbeEvidence): boolean {
+  return Boolean(
+    String(host.agentId ?? "").trim()
+    || String(host.agentVersion ?? "").trim()
+    || host.installManaged
+    || host.installedAt
+    || host.lastCollectedAt,
+  );
+}
+
+export function monitoringProbeState(host: MonitoringProbeEvidence): MonitoringProbeState {
+  const status = String(host.status ?? "unknown");
+  if (status === "missing") return "missing";
+  if (status === "error") return hasMonitoringProbeEvidence(host) ? "offline" : "unreachable";
+  if (status === "ready") return host.stale ? "stale" : "online";
+  return "unchecked";
 }
 
 export function monitoringPressure(host: MonitoringSeverityHost): number {
@@ -50,13 +82,15 @@ export function monitoringSeverityRank(host: MonitoringSeverityHost): number {
   const cpu = finiteMetric(host.cpuUsedPercent) ?? 0;
   const memory = finiteMetric(host.memoryUsedPercent) ?? 0;
   const disk = finiteMetric(host.diskUsedPercent) ?? 0;
-  if (host.offline) return 0;
+  if (host.probeState === "offline" || host.offline) return 0;
   if (disk >= 90 || cpu >= 85 || memory >= 90) return 1;
-  if (host.stale) return 2;
-  if (disk >= 80 || cpu >= 70 || memory >= 75) return 3;
-  if (host.missing) return 4;
-  if (host.status && host.status !== "ready") return 5;
-  return 6;
+  if (host.probeState === "unreachable") return 2;
+  if (host.probeState === "stale" || host.stale) return 3;
+  if (disk >= 80 || cpu >= 70 || memory >= 75) return 4;
+  if (host.probeState === "missing" || host.missing) return 5;
+  if (host.probeState === "unchecked") return 6;
+  if (host.status && host.status !== "ready") return 7;
+  return 8;
 }
 
 export function compareMonitoringHosts(left: MonitoringSeverityHost, right: MonitoringSeverityHost): number {
@@ -76,8 +110,10 @@ export interface MonitoringAlertCounts {
 export type MonitoringHostPriorityState = "offline" | "unmanaged" | "critical" | "warning" | "healthy";
 
 export function hostPressureScore(host: MonitoringSeverityHost & { alertCounts?: MonitoringAlertCounts }): number {
-  if (host.offline) return 100;
-  if (host.missing) return 8;
+  if (host.probeState === "offline" || host.offline) return 100;
+  if (host.probeState === "unreachable") return 92;
+  if (host.probeState === "missing" || host.missing) return 8;
+  if (host.probeState === "unchecked") return 4;
   const cpu = finiteMetric(host.cpuUsedPercent) ?? 0;
   const memory = finiteMetric(host.memoryUsedPercent) ?? 0;
   const disk = finiteMetric(host.diskUsedPercent) ?? 0;
@@ -95,8 +131,9 @@ export function hostPriorityState(
   score = hostPressureScore(host),
 ): MonitoringHostPriorityState {
   const alerts = host.alertCounts ?? { critical: 0, major: 0, warning: 0 };
-  if (host.offline) return "offline";
-  if (host.missing) return "unmanaged";
+  if (host.probeState === "offline" || host.offline) return "offline";
+  if (host.probeState === "missing" || host.probeState === "unchecked" || host.missing) return "unmanaged";
+  if (host.probeState === "unreachable") return "warning";
   if (score >= 80 || alerts.critical > 0) return "critical";
   if (score >= 55 || alerts.major > 0 || alerts.warning > 0 || host.stale) return "warning";
   return "healthy";

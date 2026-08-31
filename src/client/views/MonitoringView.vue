@@ -30,6 +30,8 @@ interface OverviewPayload {
     hostOffline: number;
     hostMissing: number;
     hostStale: number;
+    hostUnreachable?: number;
+    hostUnchecked?: number;
     serviceTotal: number;
     avgCpuPercent: number | null;
     avgMemoryPercent: number | null;
