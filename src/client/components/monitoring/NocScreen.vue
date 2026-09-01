@@ -14,7 +14,7 @@ import {
 } from "@lucide/vue";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { MonitorPlatformEventItem, MonitorPlatformEventListResponse } from "../../../shared/monitor-alerts";
-import { hostPressureScore, hostPriorityState } from "../../../shared/monitoring";
+import { hostPressureScore, hostPriorityState, monitoringPressure } from "../../../shared/monitoring";
 import { api } from "../../api";
 import type { MonitoringHostCard } from "./HostFleetPanel.vue";
 import type { MonitoringProblemNode, MonitoringServiceCard } from "./ServiceApmPanel.vue";
@@ -104,13 +104,15 @@ const hostStates = computed(() => [
 const rankedHosts = computed(() => props.hosts
   .map((host) => {
     const score = hostPressureScore(host);
-    return { host, score, state: hostPriorityState(host, score) };
+    return { host, score, pressure: monitoringPressure(host), state: hostPriorityState(host, score) };
   })
   .sort((left, right) => right.score - left.score
     || left.host.connectionName.localeCompare(right.host.connectionName, "zh")));
-const fleetHosts = computed(() => rankedHosts.value.slice(0, 48));
-const pressureHosts = computed(() => rankedHosts.value
-  .filter(({ host }) => !["missing", "unchecked"].includes(host.probeState))
+const telemetryHosts = computed(() => rankedHosts.value.filter(({ host }) => hasHostTelemetry(host)));
+const fleetHosts = computed(() => telemetryHosts.value.slice(0, 48));
+const pressureHosts = computed(() => [...telemetryHosts.value]
+  .sort((left, right) => right.pressure - left.pressure
+    || left.host.connectionName.localeCompare(right.host.connectionName, "zh"))
   .slice(0, 5));
 const networkRanking = computed(() => props.hosts
   .filter((host) => !host.missing)
@@ -120,12 +122,14 @@ const networkRanking = computed(() => props.hosts
     transmit: Number(host.networkTransmitBytesPerSecond ?? 0),
     total: Number(host.networkReceiveBytesPerSecond ?? 0) + Number(host.networkTransmitBytesPerSecond ?? 0),
   }))
+  .filter((item) => item.total > 0)
   .sort((left, right) => right.total - left.total)
   .slice(0, 3));
 const storageRanking = computed(() => props.hosts
   .filter((host) => !host.missing && host.worstDisk?.usedPercent != null)
   .sort((left, right) => Number(right.worstDisk?.usedPercent ?? 0) - Number(left.worstDisk?.usedPercent ?? 0))
   .slice(0, 3));
+const dataPlaneAvailable = computed(() => networkRanking.value.length > 0 || storageRanking.value.length > 0);
 const serviceRiskRanking = computed(() => {
   const source = props.serviceRanking.length ? props.serviceRanking : props.services;
   return [...source].sort((left, right) => serviceRiskScore(right) - serviceRiskScore(left)
@@ -140,6 +144,11 @@ function ratio(value: number, total: number) {
 
 function clampPercent(value: number | null | undefined) {
   return Math.min(100, Math.max(0, Number(value ?? 0)));
+}
+
+function hasHostTelemetry(host: MonitoringHostCard) {
+  return [host.cpuUsedPercent, host.memoryUsedPercent, host.diskUsedPercent]
+    .some((value) => value != null && Number.isFinite(Number(value)));
 }
 
 function formatPercent(value: number | null | undefined, digits = 0) {
@@ -312,27 +321,27 @@ onBeforeUnmount(() => {
       <section class="noc-kpi-rail" aria-label="关键运行指标">
         <article class="noc-kpi is-primary">
           <span class="noc-kpi__icon"><CircleGauge :size="19" /></span>
-          <div><small>HOST READINESS / 主机在线率</small><strong>{{ onlineRate == null ? '—' : `${onlineRate}%` }}</strong></div>
+          <div><small>HOST ONLINE / 主机在线率</small><strong>{{ onlineRate == null ? '—' : `${onlineRate}%` }}</strong></div>
           <em>{{ summary.hostOnline }} / {{ summary.hostTotal }} ONLINE</em>
         </article>
         <article class="noc-kpi">
           <span class="noc-kpi__icon"><Radio :size="19" /></span>
-          <div><small>PROBE COVERAGE / 探针覆盖</small><strong>{{ probeCoverageRate == null ? '—' : `${probeCoverageRate}%` }}</strong></div>
+          <div><small>PROBE COVERAGE / 探针覆盖率</small><strong>{{ probeCoverageRate == null ? '—' : `${probeCoverageRate}%` }}</strong></div>
           <em>{{ summary.hostMissing + uncheckedCount }} HOSTS UNMANAGED</em>
         </article>
         <article class="noc-kpi">
           <span class="noc-kpi__icon"><Boxes :size="19" /></span>
-          <div><small>DEPLOYMENT READY / 部署就绪</small><strong>{{ deploymentRate == null ? '—' : `${deploymentRate}%` }}</strong></div>
+          <div><small>SERVICE READY / 服务部署就绪</small><strong>{{ deploymentRate == null ? '—' : `${deploymentRate}%` }}</strong></div>
           <em>{{ runningTotal }} / {{ deploymentTotal }} RUNNING</em>
         </article>
         <article class="noc-kpi" :class="{ 'is-danger': eventTotals.critical > 0 }">
           <span class="noc-kpi__icon"><ShieldAlert :size="19" /></span>
-          <div><small>ACTIVE INCIDENTS / 活动告警</small><strong>{{ eventTotals.active }}</strong></div>
+          <div><small>ACTIVE ALERTS / 活动告警</small><strong>{{ eventTotals.active }}</strong></div>
           <em>{{ eventTotals.critical }} CRITICAL · {{ eventTotals.major }} MAJOR</em>
         </article>
         <article class="noc-kpi">
           <span class="noc-kpi__icon"><Activity :size="19" /></span>
-          <div><small>EVENTS / 24H 系统事件</small><strong>{{ eventTotals.last24Hours }}</strong></div>
+          <div><small>SYSTEM EVENTS / 24H 事件</small><strong>{{ eventTotals.last24Hours }}</strong></div>
           <em>SYSTEM HISTORY · NOT PERSONAL INBOX</em>
         </article>
       </section>
@@ -340,7 +349,7 @@ onBeforeUnmount(() => {
       <div class="noc-operations-grid">
         <aside class="noc-column noc-column--situation">
           <section class="noc-module noc-readiness-module">
-            <header class="noc-module__header"><span><Server :size="15" /> FLEET READINESS</span><code>01 / HOSTS</code></header>
+            <header class="noc-module__header"><span><Server :size="15" /> CONNECTIVITY & PROBE</span><code>01 / HOSTS</code></header>
             <div class="noc-readiness">
               <div class="noc-readiness__dial"><div><strong>{{ onlineRate == null ? '—' : onlineRate }}</strong><small>% ONLINE</small></div></div>
               <div class="noc-readiness__copy">
@@ -375,8 +384,8 @@ onBeforeUnmount(() => {
         <main class="noc-column noc-column--fleet">
           <section class="noc-module noc-fleet-module">
             <header class="noc-module__header noc-module__header--large">
-              <div><span><Activity :size="16" /> LIVE HOST MATRIX</span><small>颜色表示风险状态；数值均为最新采集快照，不代表历史趋势</small></div>
-              <code>{{ fleetHosts.length }} VISIBLE / {{ summary.hostTotal }} TOTAL</code>
+              <div><span><Activity :size="16" /> TELEMETRY HOST MATRIX</span><small>仅展示至少包含一项有效 CPU / MEM / DSK 指标的最新采集快照</small></div>
+              <code>{{ fleetHosts.length }} VISIBLE / {{ telemetryHosts.length }} WITH METRICS</code>
             </header>
             <div v-if="fleetHosts.length" class="noc-host-matrix">
               <article v-for="item in fleetHosts" :key="item.host.sshConnectionId" class="noc-host-tile" :class="`is-${item.state}`" :title="`${item.host.connectionName} · ${item.host.host}`">
@@ -387,12 +396,17 @@ onBeforeUnmount(() => {
                   <div><dt>MEM</dt><dd>{{ formatPercent(item.host.memoryUsedPercent) }}</dd></div>
                   <div><dt>DSK</dt><dd>{{ formatPercent(item.host.diskUsedPercent) }}</dd></div>
                 </dl>
-                <div class="noc-pressure-meter"><i :style="{ width: `${item.score}%` }"></i></div>
+                <div class="noc-pressure-meter"><i :style="{ width: `${item.pressure}%` }"></i></div>
               </article>
             </div>
             <div v-else class="noc-empty-state noc-empty-state--hero">
-              <Radio :size="28" /><strong>NO TELEMETRY LINK</strong>
-              <span>当前环境尚无主机监控快照。安装并运行 viron-monitor 后，这里会显示实时舰队矩阵。</span>
+              <Radio :size="28" /><strong>NO VALID TELEMETRY</strong>
+              <span>当前范围没有包含 CPU、内存或磁盘指标的主机快照，不使用连接异常数据填充资源矩阵。</span>
+              <div class="noc-empty-counters">
+                <b>{{ unreachableCount }}<small>连接异常</small></b>
+                <b>{{ summary.hostMissing + uncheckedCount }}<small>未纳管</small></b>
+                <b>{{ summary.hostOffline }}<small>探针离线</small></b>
+              </div>
             </div>
           </section>
 
@@ -405,10 +419,10 @@ onBeforeUnmount(() => {
                 <div class="noc-pressure-bar is-cpu"><span>CPU</span><i><b :style="{ width: `${clampPercent(item.host.cpuUsedPercent)}%` }"></b></i><em>{{ formatPercent(item.host.cpuUsedPercent) }}</em></div>
                 <div class="noc-pressure-bar is-memory"><span>MEM</span><i><b :style="{ width: `${clampPercent(item.host.memoryUsedPercent)}%` }"></b></i><em>{{ formatPercent(item.host.memoryUsedPercent) }}</em></div>
                 <div class="noc-pressure-bar is-disk"><span>DSK</span><i><b :style="{ width: `${clampPercent(item.host.diskUsedPercent)}%` }"></b></i><em>{{ formatPercent(item.host.diskUsedPercent) }}</em></div>
-                <strong class="noc-pressure-score">{{ item.score }}</strong>
+                <strong class="noc-pressure-score">{{ Math.round(item.pressure) }}</strong>
               </article>
             </div>
-            <div v-else class="noc-empty-state is-compact"><CircleGauge :size="18" /><span>暂无可计算资源压力的主机快照</span></div>
+            <div v-else class="noc-empty-state is-compact"><CircleGauge :size="18" /><span>暂无有效 CPU / MEM / DSK 采样，无法计算资源压力</span></div>
           </section>
         </main>
 
@@ -432,20 +446,26 @@ onBeforeUnmount(() => {
           </section>
 
           <section class="noc-module noc-io-module">
-            <header class="noc-module__header"><span><Network :size="15" /> DATA PLANE</span><code>{{ formatRate(totalNetworkRate) }}</code></header>
-            <div class="noc-io-section">
-              <h4>NETWORK THROUGHPUT <span>RX + TX</span></h4>
-              <ol v-if="networkRanking.length" class="noc-io-list">
-                <li v-for="(item, index) in networkRanking" :key="`network-${item.host.sshConnectionId}`"><b>0{{ index + 1 }}</b><span>{{ item.host.connectionName }}</span><em>{{ formatRate(item.total) }}</em></li>
-              </ol>
-              <p v-else>暂无网络吞吐采样</p>
-            </div>
-            <div class="noc-io-section">
-              <h4>STORAGE WATERLINE <span>HIGHEST USED</span></h4>
-              <ol v-if="storageRanking.length" class="noc-io-list">
-                <li v-for="(host, index) in storageRanking" :key="`storage-${host.sshConnectionId}`"><b>0{{ index + 1 }}</b><span>{{ host.connectionName }} · {{ host.worstDisk?.path }}</span><em :class="{ 'is-alert': Number(host.worstDisk?.usedPercent ?? 0) >= 85 }">{{ formatPercent(host.worstDisk?.usedPercent) }}</em></li>
-              </ol>
-              <p v-else>暂无存储水位采样</p>
+            <header class="noc-module__header"><span><Network :size="15" /> DATA PLANE</span><code>{{ networkRanking.length ? formatRate(totalNetworkRate) : 'NO LIVE SAMPLE' }}</code></header>
+            <template v-if="dataPlaneAvailable">
+              <div class="noc-io-section">
+                <h4>NETWORK THROUGHPUT <span>RX + TX · NON-ZERO</span></h4>
+                <ol v-if="networkRanking.length" class="noc-io-list">
+                  <li v-for="(item, index) in networkRanking" :key="`network-${item.host.sshConnectionId}`"><b>0{{ index + 1 }}</b><span>{{ item.host.connectionName }}</span><em>{{ formatRate(item.total) }}</em></li>
+                </ol>
+                <p v-else>暂无非零网络吞吐采样</p>
+              </div>
+              <div class="noc-io-section">
+                <h4>STORAGE WATERLINE <span>HIGHEST USED</span></h4>
+                <ol v-if="storageRanking.length" class="noc-io-list">
+                  <li v-for="(host, index) in storageRanking" :key="`storage-${host.sshConnectionId}`"><b>0{{ index + 1 }}</b><span>{{ host.connectionName }} · {{ host.worstDisk?.path }}</span><em :class="{ 'is-alert': Number(host.worstDisk?.usedPercent ?? 0) >= 85 }">{{ formatPercent(host.worstDisk?.usedPercent) }}</em></li>
+                </ol>
+                <p v-else>暂无存储水位采样</p>
+              </div>
+            </template>
+            <div v-else class="noc-empty-state noc-data-plane-empty">
+              <Network :size="24" /><strong>NO DATA PLANE SAMPLE</strong>
+              <span>当前没有非零网络吞吐或有效磁盘水位，不展示零值排行。</span>
             </div>
           </section>
         </aside>
@@ -516,22 +536,22 @@ onBeforeUnmount(() => {
 .noc-clock button:hover { border-color: var(--noc-mint); color: var(--noc-mint); }
 
 .noc-kpi-rail { min-width: 0; padding: 13px 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
-.noc-kpi { min-width: 0; padding: 10px 12px; border: 1px solid var(--noc-line); border-top: 2px solid #2f4a52; background: var(--noc-panel); display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+.noc-kpi { min-width: 0; padding: 10px 12px; border: 1px solid var(--noc-line); border-top: 2px solid #2f4a52; background: var(--noc-panel); display: grid; grid-template-columns: 30px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; align-items: center; column-gap: 10px; row-gap: 3px; }
 .noc-kpi.is-primary { border-top-color: var(--noc-mint); }
 .noc-kpi.is-danger { border-top-color: var(--noc-red); }
-.noc-kpi__icon { color: var(--noc-cyan); }
+.noc-kpi__icon { grid-row: 1 / -1; color: var(--noc-cyan); }
 .noc-kpi.is-primary .noc-kpi__icon { color: var(--noc-mint); }
 .noc-kpi.is-danger .noc-kpi__icon { color: var(--noc-red); }
 .noc-kpi > div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .noc-kpi small { overflow: hidden; color: var(--noc-muted); font-family: var(--font-mono); font-size: 8px; letter-spacing: .08em; text-overflow: ellipsis; white-space: nowrap; }
 .noc-kpi strong { color: #eaf6f3; font-family: var(--font-mono); font-size: clamp(21px, 1.8vw, 30px); line-height: 1; }
-.noc-kpi em { align-self: end; color: #5f7478; font-family: var(--font-mono); font-size: 7px; font-style: normal; letter-spacing: .08em; white-space: nowrap; }
+.noc-kpi em { grid-column: 2; min-width: 0; overflow: hidden; color: #5f7478; font-family: var(--font-mono); font-size: 7px; font-style: normal; letter-spacing: .08em; text-overflow: ellipsis; white-space: nowrap; }
 
 .noc-operations-grid { min-height: 0; padding-bottom: 10px; display: grid; grid-template-columns: minmax(260px, .78fr) minmax(500px, 1.65fr) minmax(290px, .92fr); gap: 8px; }
 .noc-column { min-width: 0; min-height: 0; display: grid; gap: 8px; }
 .noc-column--situation { grid-template-rows: minmax(240px, .88fr) minmax(250px, 1.12fr); }
 .noc-column--fleet { grid-template-rows: minmax(350px, 1.45fr) minmax(190px, .55fr); }
-.noc-column--services { grid-template-rows: minmax(330px, 1.2fr) minmax(220px, .8fr); }
+.noc-column--services { grid-template-rows: auto minmax(220px, 1fr); }
 .noc-module { min-width: 0; min-height: 0; border: 1px solid var(--noc-line); background: var(--noc-panel); overflow: hidden; display: flex; flex-direction: column; }
 .noc-module__header { min-height: 38px; padding: 0 12px; border-bottom: 1px solid var(--noc-line); background: var(--noc-panel-strong); display: flex; align-items: center; justify-content: space-between; gap: 10px; flex: none; }
 .noc-module__header > span, .noc-module__header > div > span { display: flex; align-items: center; gap: 7px; color: #b7cdca; font-family: var(--font-mono); font-size: 9px; font-weight: 800; letter-spacing: .12em; }
@@ -655,6 +675,10 @@ onBeforeUnmount(() => {
 .noc-empty-state.is-success { color: var(--noc-mint); }
 .noc-empty-state.is-error { color: var(--noc-red); }
 .noc-empty-state--hero { border: 1px dashed #1f343b; margin: 12px; }
+.noc-empty-counters { width: min(420px, 90%); margin-top: 8px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--noc-line); }
+.noc-empty-counters b { padding: 10px 8px; background: #081318; color: var(--noc-amber); display: flex; flex-direction: column; gap: 4px; font-family: var(--font-mono); font-size: 18px; }
+.noc-empty-counters small { color: #60777a; font-family: var(--font-ui); font-size: 8px; font-weight: 500; }
+.noc-data-plane-empty { min-height: 180px; }
 
 .noc-status-line { min-width: 0; border-top: 1px solid var(--noc-line); color: #536a6d; display: flex; align-items: center; justify-content: space-between; gap: 16px; font-family: var(--font-mono); font-size: 7px; letter-spacing: .08em; }
 .noc-status-line span { white-space: nowrap; }
@@ -681,7 +705,7 @@ onBeforeUnmount(() => {
   .noc-kpi-rail { padding: 9px 0; }
   .noc-column--situation { grid-template-rows: minmax(210px, .9fr) minmax(190px, 1.1fr); }
   .noc-column--fleet { grid-template-rows: minmax(300px, 1.5fr) minmax(150px, .5fr); }
-  .noc-column--services { grid-template-rows: minmax(280px, 1.2fr) minmax(170px, .8fr); }
+  .noc-column--services { grid-template-rows: auto minmax(170px, 1fr); }
   .noc-readiness { padding: 8px 12px; }
   .noc-readiness__dial { width: 70px; height: 70px; }
   .noc-readiness__dial strong { font-size: 20px; }
