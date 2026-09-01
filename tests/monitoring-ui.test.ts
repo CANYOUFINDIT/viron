@@ -100,10 +100,14 @@ describe("monitoring dashboard wiring", () => {
     expect(noc).toContain("/api/v1/monitoring/events?");
     expect(noc).not.toContain("/api/v1/monitor-alerts");
     expect(noc).toContain("SYSTEM HISTORY · NOT PERSONAL INBOX");
-    expect(noc).toContain("LIVE HOST MATRIX");
+    expect(noc).toContain("TELEMETRY HOST MATRIX");
     expect(noc).toContain("NETWORK THROUGHPUT");
     expect(noc).toContain("STORAGE WATERLINE");
     expect(noc).toContain("RESOURCE PRESSURE / LATEST SNAPSHOT");
+    expect(noc).toContain("hasHostTelemetry");
+    expect(noc).toContain(".filter((item) => item.total > 0)");
+    expect(noc).toContain("不使用连接异常数据填充资源矩阵");
+    expect(noc).toContain("不展示零值排行");
     expect(noc).toContain('request({ status: "active", severity: "critical", pageSize: 1 })');
     expect(noc).toContain('request({ status: "active", severity: "major", pageSize: 1 })');
     expect(noc).not.toContain("noc-wave");
