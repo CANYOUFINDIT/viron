@@ -329,10 +329,6 @@ export function useMonitorInstall(ctx: MaintenanceContext, props: Readonly<Maint
   }
 
   async function uninstallMonitorOnHost(host: MonitorHost) {
-      if (!host.installManaged || !host.installPath) {
-          ElMessage.warning(tr("只有 Viron 托管安装的监控探针可以一键卸载"));
-          return;
-      }
       try {
           await ElMessageBox.confirm(
               tr("确定卸载目标主机“{{0}}”上的 viron-monitor 吗？将停止并删除目标机上的服务、程序、配置和本地缓冲；Viron 中心已入库的历史监控数据会保留。确定继续吗？", [host.connectionName || host.host]),

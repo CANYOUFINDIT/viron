@@ -232,6 +232,16 @@ async function startMonitorSshServer() {
                 return;
               }
               state.monitorInstalled = true;
+              state.pathKind = "directory";
+              state.pathEmpty = false;
+              state.monitorPath = "/opt/viron/monitor/viron-monitor";
+              state.manifestBase64 = Buffer.from(JSON.stringify({
+                product: "viron-monitor",
+                version: PRODUCT_VERSION,
+                architecture: "amd64",
+                installPath: "/opt/viron/monitor",
+                installedAt: "2026-08-31T00:00:00Z",
+              })).toString("base64");
               stream.write("installed\n");
               stream.exit(0);
               stream.end();
@@ -413,7 +423,7 @@ describe("monitor installer", () => {
     }
   });
 
-  it("uninstalls a managed probe, clears live state, and preserves central history", async () => {
+  it("discovers and uninstalls a historical automatic probe without central install metadata", async () => {
     const context = await createInstallationContext();
     const base = `/api/v1/environments/${context.environmentId}/monitor-hosts/${context.connectionId}`;
     try {
@@ -429,6 +439,10 @@ describe("monitor installer", () => {
       })).statusCode).toBe(200);
       const historyBefore = await context.app.db.prepare("SELECT COUNT(*) AS count FROM monitor_samples WHERE ssh_connection_id = ?").get(context.connectionId) as { count: number | string };
       expect(Number(historyBefore.count)).toBeGreaterThan(0);
+      await context.app.db.prepare(`
+        UPDATE monitor_hosts SET install_path = '', install_architecture = '', install_managed = 0, installed_at = NULL
+        WHERE ssh_connection_id = ?
+      `).run(context.connectionId);
 
       const removed = await context.app.inject({ method: "DELETE", url: `${base}/uninstall`, cookies: context.cookies });
       expect(removed.statusCode).toBe(200);
