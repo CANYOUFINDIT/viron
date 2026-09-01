@@ -374,8 +374,8 @@ async function executeProbe(host: MonitoringHostCard, action: ProbeAction, allow
   if ((action === "update" || action === "reinstall" || action === "restart" || action === "clear") && !probeIsInstalled(host)) {
     return { status: "skipped" as const, message: tr("尚未确认已安装探针") };
   }
-  if (action === "uninstall" && !host.installManaged) {
-    return { status: "skipped" as const, message: tr("只有 Viron 托管安装的监控探针可以一键卸载") };
+  if (action === "uninstall" && !probeIsInstalled(host) && !host.installManaged) {
+    return { status: "skipped" as const, message: tr("尚未确认已安装探针") };
   }
   if (action === "install" || action === "update" || action === "reinstall") {
     const preflight = await preflightInstall(host, action, allowPathPrompt);
@@ -694,7 +694,7 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
             <el-button size="small" :disabled="probeBusy" @click="probeSelected('reinstall')">{{ $t('重装探针') }}</el-button>
             <el-button size="small" :disabled="probeBusy" @click="probeSelected('restart')">{{ $t('重启探针') }}</el-button>
             <el-button size="small" type="danger" plain :disabled="probeBusy" @click="probeSelected('clear')">{{ $t('清理监控数据') }}</el-button>
-            <el-button v-if="selected.installManaged" size="small" type="danger" :disabled="probeBusy" @click="probeSelected('uninstall')">{{ $t('卸载探针') }}</el-button>
+            <el-button size="small" type="danger" :disabled="probeBusy" @click="probeSelected('uninstall')">{{ $t('卸载探针') }}</el-button>
           </template>
         </div>
       </section>

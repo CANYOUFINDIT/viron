@@ -14,6 +14,7 @@ import {
   MonitorInstallError,
   normalizeMonitorInstallPath,
   preflightMonitorInstallation,
+  resolveMonitorUninstallPath,
   restartMonitorServiceCommand,
   uninstallMonitor,
 } from "../monitor-installer.js";
@@ -1463,12 +1464,7 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
         workspace_type: string;
         workspace_id: string;
       } | undefined;
-      if (!installation || !Number(installation.install_managed ?? 0) || !installation.install_path) {
-        return reply.code(409).send({
-          error: "MONITOR_UNINSTALL_NOT_MANAGED",
-          message: "只有 Viron 托管安装的监控探针可以一键卸载",
-        });
-      }
+      if (!installation) return reply.code(404).send({ error: "SSH_CONNECTION_NOT_FOUND", message: "SSH 连接不存在" });
       const activeInstallTask = await app.monitorInstallTasks.latest(connection.id);
       if (activeInstallTask && ["pending", "running"].includes(activeInstallTask.status)) {
         return reply.code(409).send({
@@ -1478,8 +1474,10 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
         });
       }
       const started = Date.now();
+      let resolvedInstallPath = String(installation.install_path ?? "");
       try {
-        const removed = await uninstallMonitor(app, connection.id, connection.username, installation.install_path);
+        resolvedInstallPath = await resolveMonitorUninstallPath(app, connection.id, installation.install_path);
+        const removed = await uninstallMonitor(app, connection.id, connection.username, resolvedInstallPath);
         await closeSshConnectionPool(app, connection.id);
         const cleared = await clearUninstalledMonitorState(app, {
           connectionId: connection.id,
@@ -1518,7 +1516,7 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
           resourceId: connection.id,
           summary: `卸载监控探针 ${connection.name} 失败`,
           details: {
-            installPath: installation.install_path,
+            installPath: resolvedInstallPath || installation.install_path,
             code,
             message: message.slice(0, 1000),
             durationMs: Date.now() - started,

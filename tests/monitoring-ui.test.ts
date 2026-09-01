@@ -62,6 +62,7 @@ describe("monitoring dashboard wiring", () => {
     expect(maintenanceDiscovery).toContain("<HostEventCalendar");
     expect(maintenanceDiscovery).toContain('command="uninstall"');
     expect(maintenanceDiscovery).toContain("uninstallMonitorOnHost");
+    expect(maintenanceDiscovery).toContain("isMonitorInstalled(selectedHost) || selectedHost.installManaged");
     expect(maintenanceDiscovery).toContain("selectedHost.lastCollectedAt");
     expect(maintenanceDiscovery).toContain(':host-id="selectedHost.sshConnectionId"');
     expect(hostEventCalendar).toContain("/event-calendar?");

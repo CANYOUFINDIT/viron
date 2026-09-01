@@ -113,6 +113,53 @@ export async function uninstallMonitor(
   return { installPath, localDataRemoved: true, stdout: result.stdout.slice(0, 20_000) };
 }
 
+export async function resolveMonitorUninstallPath(
+  app: FastifyInstance,
+  connectionId: string,
+  recordedInstallPath: unknown,
+): Promise<string> {
+  const candidates: string[] = [];
+  const inspected = new Set<string>();
+  const appendCandidate = (value: unknown) => {
+    try {
+      const candidate = normalizeMonitorInstallPath(value);
+      if (!candidates.includes(candidate)) candidates.push(candidate);
+    } catch {
+      // Ignore stale central metadata and continue with remote discovery.
+    }
+  };
+  if (typeof recordedInstallPath === "string" && recordedInstallPath.trim()) appendCandidate(recordedInstallPath);
+  appendCandidate(DEFAULT_MONITOR_INSTALL_PATH);
+
+  let lastPreflightError: unknown;
+  while (candidates.length) {
+    const candidate = candidates.shift()!;
+    if (inspected.has(candidate)) continue;
+    inspected.add(candidate);
+    let preflight: MonitorInstallPreflight;
+    try {
+      preflight = await preflightMonitorInstallation(app, connectionId, candidate);
+    } catch (error) {
+      lastPreflightError = error;
+      continue;
+    }
+    if (preflight.pathState === "upgrade"
+      && preflight.existingInstallation?.product === "viron-monitor"
+      && preflight.existingInstallation.installPath === preflight.installPath) {
+      return preflight.installPath;
+    }
+    if (posix.basename(preflight.existingMonitorPath) === "viron-monitor") {
+      appendCandidate(posix.dirname(preflight.existingMonitorPath));
+    }
+  }
+  if (lastPreflightError) throw lastPreflightError;
+  throw new MonitorInstallError(
+    "MONITOR_UNINSTALL_NOT_MANAGED",
+    "目标机安装清单已缺失或不匹配，拒绝自动卸载",
+    409,
+  );
+}
+
 export type MonitorArchitecture = "amd64" | "arm64";
 export type MonitorInstallPrivilege = "root" | "passwordless_sudo" | "unavailable";
 export type MonitorInstallPathState = "available" | "upgrade" | "conflict" | "legacy";
