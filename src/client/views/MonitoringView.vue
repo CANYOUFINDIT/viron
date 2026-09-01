@@ -371,6 +371,9 @@ const summary = computed(() => overview.value?.summary ?? {
         :refresh-seconds="refreshSeconds"
         :summary="summary"
         :hosts="overview.hosts"
+        :services="overview.services"
+        :service-ranking="overview.serviceRanking"
+        :problem-nodes="overview.problemNodes"
         @exit="switchView('overview')"
       />
     </main>
