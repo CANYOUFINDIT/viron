@@ -21,6 +21,10 @@ versioned documentation before building.
 Docker layers use a project-local BuildKit cache under .tmp by default.
 Use --refresh-docker-cache to ignore cached layers once and refresh that cache.
 
+If pulling golang/node from docker.io fails with TLS handshake timeout,
+set a Hub mirror before retrying, for example:
+  VIRON_DOCKER_REGISTRY_MIRROR=docker.m.daocloud.io ./scripts/package-release.sh
+
 Examples:
   ./scripts/package-release.sh
   ./scripts/package-release.sh 0.1.6
@@ -98,6 +102,88 @@ fi
 APT_MIRROR="${VIRON_APT_MIRROR:-http://mirrors.aliyun.com/debian}"
 APT_SECURITY_MIRROR="${VIRON_APT_SECURITY_MIRROR:-http://mirrors.aliyun.com/debian-security}"
 DOCKER_REGISTRY_MIRROR="${VIRON_DOCKER_REGISTRY_MIRROR:-docker.io}"
+GOLANG_IMAGE_PATH="library/golang:1.26-bookworm"
+NODE_IMAGE_PATH="library/node:22-bookworm-slim"
+# Skip SBOM/provenance attestation fetches; those extra registry round-trips
+# are a common source of Docker Hub TLS handshake timeouts.
+export BUILDX_NO_DEFAULT_ATTESTATIONS=1
+
+retry_transient() {
+  local max_attempts="${VIRON_DOCKER_RETRY_ATTEMPTS:-4}"
+  local delay_seconds="${VIRON_DOCKER_RETRY_DELAY:-8}"
+  local attempt=1
+  local exit_code=0
+
+  while (( attempt <= max_attempts )); do
+    if "$@"; then
+      return 0
+    fi
+    exit_code=$?
+    if (( attempt == max_attempts )); then
+      return "$exit_code"
+    fi
+    echo "操作失败（退出码 ${exit_code}），${delay_seconds}s 后重试（${attempt}/${max_attempts}）。" >&2
+    sleep "$delay_seconds"
+    delay_seconds=$((delay_seconds * 2))
+    attempt=$((attempt + 1))
+  done
+  return "$exit_code"
+}
+
+builder_linux_architecture() {
+  local machine
+  machine="$(uname -m)"
+  case "$machine" in
+    arm64|aarch64) echo arm64 ;;
+    x86_64|amd64) echo amd64 ;;
+    *) echo "$machine" ;;
+  esac
+}
+
+pull_release_base_image() {
+  local platform="$1"
+  local image_path="$2"
+  local candidates=("$DOCKER_REGISTRY_MIRROR")
+  local mirror image
+
+  if [[ "$DOCKER_REGISTRY_MIRROR" == "docker.io" ]]; then
+    candidates+=("docker.m.daocloud.io" "docker.1ms.run")
+  fi
+
+  for mirror in "${candidates[@]}"; do
+    image="$mirror/$image_path"
+    echo "拉取 $image ($platform)..."
+    if retry_transient docker pull --platform "$platform" "$image"; then
+      if [[ "$mirror" != "$DOCKER_REGISTRY_MIRROR" ]]; then
+        echo "已改用容器镜像源 $mirror（docker.io 连续失败）。后续构建将走该源。" >&2
+        DOCKER_REGISTRY_MIRROR="$mirror"
+      fi
+      return 0
+    fi
+    if docker image inspect "$image" >/dev/null 2>&1 \
+      || { [[ "$mirror" == "docker.io" ]] && docker image inspect "${image_path#library/}" >/dev/null 2>&1; }; then
+      echo "仓库拉取失败，改用本地已有的 $image。" >&2
+      if [[ "$mirror" != "$DOCKER_REGISTRY_MIRROR" ]]; then
+        DOCKER_REGISTRY_MIRROR="$mirror"
+      fi
+      return 0
+    fi
+    echo "从 $mirror 拉取 $image_path 失败。" >&2
+  done
+
+  echo "无法拉取 $image_path ($platform)。可设置 VIRON_DOCKER_REGISTRY_MIRROR=docker.m.daocloud.io 后重试。" >&2
+  return 1
+}
+
+pre_pull_release_base_images() {
+  local target_architecture="$1"
+  local builder_architecture
+  builder_architecture="$(builder_linux_architecture)"
+
+  echo "预先拉取基础镜像，避免 BuildKit 计算缓存键时回源 Docker Hub 超时。"
+  pull_release_base_image "linux/$builder_architecture" "$GOLANG_IMAGE_PATH"
+  pull_release_base_image "linux/$target_architecture" "$NODE_IMAGE_PATH"
+}
 
 cleanup_temporary_files() {
   rm -f "$RELEASE_DIR"/*.tmp
@@ -165,10 +251,12 @@ build_server_image() {
     --target "$target"
     --tag "$image"
     --load
+    --provenance=false
+    --sbom=false
     --build-arg "APT_MIRROR=$APT_MIRROR"
     --build-arg "APT_SECURITY_MIRROR=$APT_SECURITY_MIRROR"
-    --build-context "golang:1.26-bookworm=docker-image://$DOCKER_REGISTRY_MIRROR/library/golang:1.26-bookworm"
-    --build-context "node:22-bookworm-slim=docker-image://$DOCKER_REGISTRY_MIRROR/library/node:22-bookworm-slim"
+    --build-context "golang:1.26-bookworm=docker-image://$DOCKER_REGISTRY_MIRROR/$GOLANG_IMAGE_PATH"
+    --build-context "node:22-bookworm-slim=docker-image://$DOCKER_REGISTRY_MIRROR/$NODE_IMAGE_PATH"
   )
 
   if [[ "$REFRESH_DOCKER_CACHE" == true ]]; then
@@ -178,7 +266,7 @@ build_server_image() {
   fi
   build_args+=(--cache-to "type=local,dest=$cache_directory,mode=max" "$ROOT_DIR")
 
-  "${build_args[@]}"
+  retry_transient "${build_args[@]}"
 }
 
 build_server_bundle() {
@@ -199,6 +287,7 @@ build_server_bundle() {
 
   echo "正在构建 $platform 三种服务镜像..."
   echo "BuildKit 持久缓存：$DOCKER_CACHE_ROOT/release/$architecture"
+  pre_pull_release_base_images "$architecture"
   build_server_image "$architecture" full "viron-server-full:$VERSION"
   build_server_image "$architecture" lite "viron-server-lite:$VERSION"
   build_server_image "$architecture" script-runner "viron-script-runner:$VERSION"
