@@ -350,7 +350,7 @@ onBeforeUnmount(() => {
       </main>
     </div>
 
-    <el-dialog v-model="scriptActionManagerDialog" align-center class="envman-dialog script-action-manager-dialog" :title="$t('{{0}} · 功能按钮', [scriptActionScope.label])" width="760px">
+    <el-dialog append-to-body v-model="scriptActionManagerDialog" align-center class="envman-dialog script-action-manager-dialog" :title="$t('{{0}} · 功能按钮', [scriptActionScope.label])" width="760px">
       <section class="script-action-manager">
         <header>
           <div><strong>{{ scriptActionScope.deploymentId ? $t('节点功能按钮') : $t('服务功能按钮') }}</strong><p>{{ scriptActionScope.deploymentId ? $t('点击后只在当前部署节点的 SSH 连接上执行。') : $t('点击后在当前服务的全部部署节点上执行。') }}</p></div>
@@ -385,7 +385,7 @@ onBeforeUnmount(() => {
       <template #footer><el-button @click="scriptActionManagerDialog = false">{{ $t('关闭') }}</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="scriptActionResultDialog" align-center class="envman-dialog script-action-result-dialog" :title="$t('功能脚本执行结果')" width="780px">
+    <el-dialog append-to-body v-model="scriptActionResultDialog" align-center class="envman-dialog script-action-result-dialog" :title="$t('功能脚本执行结果')" width="780px">
       <section v-if="scriptActionExecution" class="script-action-results">
         <header :class="scriptActionExecution.ok ? 'is-success' : 'is-warning'">
           <span><Check v-if="scriptActionExecution.ok" :size="18" /><CircleAlert v-else :size="18" /></span>
@@ -404,7 +404,7 @@ onBeforeUnmount(() => {
       <template #footer><el-button type="primary" @click="scriptActionResultDialog = false">{{ $t('关闭') }}</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="installProgressDialog" align-center class="envman-dialog monitor-install-progress-dialog" :close-on-click-modal="false" :title="$t('监控服务安装进度')" width="720px">
+    <el-dialog append-to-body v-model="installProgressDialog" align-center class="envman-dialog monitor-install-progress-dialog" :close-on-click-modal="false" :title="$t('监控服务安装进度')" width="720px">
       <section v-if="selectedInstallTask" class="monitor-install-progress">
         <header class="monitor-install-progress__summary" :class="`is-${selectedInstallTask.status}`">
           <span class="monitor-install-progress__status"><Check v-if="selectedInstallTask.status === 'success'" :size="19" /><CircleAlert v-else-if="selectedInstallTask.status === 'error'" :size="19" /><RefreshCw v-else :size="18" class="is-spinning" /></span>
@@ -442,7 +442,7 @@ onBeforeUnmount(() => {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="servicePickerDialog" align-center class="envman-dialog discovery-service-picker-dialog" :title="$t('选择要纳管到的服务')" width="520px" @closed="onServicePickerClosed">
+    <el-dialog append-to-body v-model="servicePickerDialog" align-center class="envman-dialog discovery-service-picker-dialog" :title="$t('选择要纳管到的服务')" width="520px" @closed="onServicePickerClosed">
       <p class="log-dialog-intro">{{ discoveryPickerIntro() }}</p>
       <div class="discovery-service-picker">
         <button v-for="service in payload.services" :key="service.id" type="button" @click="pickServiceForDiscovery(service.id)">
@@ -456,7 +456,7 @@ onBeforeUnmount(() => {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="serviceDialog" align-center class="envman-dialog" :title="editingServiceId ? $t('编辑服务') : $t('录入服务')" width="560px">
+    <el-dialog append-to-body v-model="serviceDialog" align-center class="envman-dialog" :title="editingServiceId ? $t('编辑服务') : $t('录入服务')" width="560px">
       <el-form label-position="top">
         <el-form-item :label="$t('服务名称')" required><el-input v-model="serviceForm.name" :placeholder="$t('例如：订单 API')" /></el-form-item>
         <el-form-item :label="$t('服务说明')"><el-input v-model="serviceForm.description" type="textarea" :rows="3" :placeholder="$t('说明服务职责、依赖或维护注意事项')" /></el-form-item>
@@ -465,7 +465,7 @@ onBeforeUnmount(() => {
       <template #footer><el-button @click="serviceDialog = false">{{ $t('取消') }}</el-button><el-button type="primary" :loading="saving" @click="saveService">{{ $t('保存服务') }}</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="deploymentDialog" align-center class="envman-dialog" :title="editingDeploymentId ? $t('编辑部署节点') : $t('纳管部署节点')" width="640px">
+    <el-dialog append-to-body v-model="deploymentDialog" align-center class="envman-dialog" :title="editingDeploymentId ? $t('编辑部署节点') : $t('纳管部署节点')" width="640px">
       <el-form label-position="top">
         <el-form-item :label="$t('SSH 连接')" required><el-select v-model="deploymentForm.sshConnectionId" style="width:100%" @change="Object.assign(deploymentForm, { candidateKey: '', externalId: '', displayName: '', origin: 'manual' })"><el-option v-for="host in payload.hosts" :key="host.sshConnectionId" :value="host.sshConnectionId" :label="`${host.connectionName} · ${host.username}@${host.host}`" /></el-select></el-form-item>
         <el-form-item><el-switch v-model="manualDeployment" :active-text="$t('手动录入')" /></el-form-item>
@@ -483,7 +483,7 @@ onBeforeUnmount(() => {
       <template #footer><el-button @click="deploymentDialog = false">{{ $t('取消') }}</el-button><el-button type="primary" :loading="saving" @click="saveDeployment">{{ $t('保存部署节点') }}</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="kubernetesDialog" align-center class="envman-dialog kubernetes-dialog" :title="$t('选择 Kubernetes 扫描范围')" width="680px">
+    <el-dialog append-to-body v-model="kubernetesDialog" align-center class="envman-dialog kubernetes-dialog" :title="$t('选择 Kubernetes 扫描范围')" width="680px">
       <p class="kubernetes-dialog__intro">{{ $t('Viron 只保存 kubeconfig 路径、集群和 context 等非敏感元数据；证书、Token 和私钥始终留在目标 SSH 主机。只有选中的 context 才会连接 Kubernetes API。') }}</p>
       <el-checkbox-group v-model="selectedKubernetesContextKeys" class="kubernetes-context-options">
         <el-checkbox v-for="item in selectableKubernetesConfigs" :key="kubernetesContextKey(item)" :value="kubernetesContextKey(item)">
@@ -494,7 +494,7 @@ onBeforeUnmount(() => {
       <template #footer><el-button @click="kubernetesDialog = false">{{ $t('取消') }}</el-button><el-button type="primary" :loading="savingKubernetes" @click="saveKubernetesConfiguration">{{ $t('保存并立即扫描') }}</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="logDialog" align-center class="envman-dialog" :title="$t('关联服务日志')" width="600px">
+    <el-dialog append-to-body v-model="logDialog" align-center class="envman-dialog" :title="$t('关联服务日志')" width="600px">
       <p class="log-dialog-intro">{{ $t('日志仍由环境日志模块统一配置，这里只建立快捷关联。') }}</p>
       <el-checkbox-group v-model="selectedLogIds" class="service-log-options">
         <el-checkbox v-for="log in payload.logs" :key="log.id" :value="log.id"><span><strong>{{ log.name }}</strong><small>{{ log.connectionName }} · {{ log.filePaths.join(', ') }}</small></span></el-checkbox>
@@ -503,7 +503,7 @@ onBeforeUnmount(() => {
       <template #footer><el-button @click="logDialog = false">{{ $t('取消') }}</el-button><el-button type="primary" :loading="saving" @click="saveLogLinks">{{ $t('保存关联') }}</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="alertSettingsDialog" align-center class="envman-dialog monitor-alert-settings-dialog" :title="$t('监控告警设置')" width="720px">
+    <el-dialog append-to-body v-model="alertSettingsDialog" align-center class="envman-dialog monitor-alert-settings-dialog" :title="$t('监控告警设置')" width="720px">
       <section class="monitor-alert-settings">
         <header>
           <div><strong>{{ $t('启用当前环境的监控告警') }}</strong><p>{{ $t('连续两次采集达到条件后触发，连续两次恢复正常后解除。') }}</p></div>

@@ -72,6 +72,32 @@ describe("unified dialog presentation", () => {
     expect(dialogs.every((dialog) => dialog.includes("#footer"))).toBe(true);
   });
 
+  it("keeps the main sidebar below overlays and does not trap them in the page surface", () => {
+    expect(styles).toContain("--z-app-sidebar:");
+    expect(styles).toContain("--z-app-sidebar-scrim:");
+    expect(styles).toContain("--z-app-window-header:");
+    expect(styles).toMatch(/\.app-sidebar \{[^}]*z-index:\s*var\(--z-app-sidebar\)/);
+    expect(styles).not.toMatch(/\.app-surface \{[^}]*z-index\s*:/);
+    const sidebar = Number(styles.match(/--z-app-sidebar:\s*(\d+)/)?.[1]);
+    const scrim = Number(styles.match(/--z-app-sidebar-scrim:\s*(\d+)/)?.[1]);
+    const header = Number(styles.match(/--z-app-window-header:\s*(\d+)/)?.[1]);
+    expect(sidebar).toBeGreaterThan(scrim);
+    expect(scrim).toBeGreaterThan(header);
+    expect(sidebar).toBeLessThan(2000);
+  });
+
+  it("teleports every Element Plus dialog and drawer above the app shell", () => {
+    const clientRoot = resolve(process.cwd(), "src/client");
+    const files = vueFiles(clientRoot).map((file) => readFileSync(file, "utf8"));
+    const dialogs = files.flatMap((content) => dialogBlocks(content));
+    const drawers = files.flatMap((content) => content.match(/<el-drawer\b[^>]*>/gs) ?? []);
+
+    expect(dialogs.length).toBeGreaterThan(50);
+    expect(dialogs.every((dialog) => /\bappend-to-body\b/.test(dialog))).toBe(true);
+    expect(drawers.length).toBeGreaterThan(0);
+    expect(drawers.every((drawer) => /\bappend-to-body\b/.test(drawer))).toBe(true);
+  });
+
   it("keeps exceptional multi-action footers cancel-first", () => {
     expect(source("src/client/components/DatabaseDataGeneratorDialog.vue")).toContain('<template #footer><el-button @click="emit(\'close\')">{{ $t(\'取消\') }}');
     expect(source("src/client/components/DatabaseQueryBuilderDialog.vue")).toContain('<template #footer><el-button @click="emit(\'close\')">{{ $t(\'取消\') }}');

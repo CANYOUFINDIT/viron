@@ -406,7 +406,7 @@ defineExpose({ openCreate, probeAll, retryFailed, batchBusy, certificateCount })
       <p>{{ $t('从 HTTPS Web 入口自动发现，或手动录入探测端点。') }}</p>
     </div>
 
-    <el-dialog v-model="createDialog" align-center class="envman-dialog" :title="$t('手动录入端点探测')" width="560px">
+    <el-dialog append-to-body v-model="createDialog" align-center class="envman-dialog" :title="$t('手动录入端点探测')" width="560px">
       <el-form label-position="top">
         <el-form-item :label="$t('环境')" required>
           <el-select v-model="createForm.environmentId" style="width:100%">
@@ -428,7 +428,7 @@ defineExpose({ openCreate, probeAll, retryFailed, batchBusy, certificateCount })
       </template>
     </el-dialog>
 
-    <el-dialog v-model="editDialog" align-center class="envman-dialog" :title="$t('编辑/绑定证书探测端点')" width="600px">
+    <el-dialog append-to-body v-model="editDialog" align-center class="envman-dialog" :title="$t('编辑/绑定证书探测端点')" width="600px">
       <el-form label-position="top" class="dialog-form-grid">
         <el-form-item v-if="(editingAsset?.endpoints.length || 0) > 1" :label="$t('探测端点')" class="form-span-2">
           <el-select v-model="editingEndpointId" style="width:100%" @change="loadEditForm">

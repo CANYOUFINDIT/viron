@@ -211,7 +211,7 @@ onMounted(loadKeys);
       </div>
     </article>
 
-    <el-dialog :model-value="Boolean(revealedKey)" :title='$t("请立即保存 API Key")' width="min(560px, 92vw)" :close-on-click-modal="false" @close="revealedKey = null">
+    <el-dialog append-to-body :model-value="Boolean(revealedKey)" :title='$t("请立即保存 API Key")' width="min(560px, 92vw)" :close-on-click-modal="false" @close="revealedKey = null">
       <el-alert :title='$t("该 Key 只展示一次。关闭后无法再次查看，只能重新轮换。")' type="warning" :closable="false" show-icon />
       <div v-if="revealedKey" class="revealed-key"><code>{{ revealedKey.apiKey }}</code><el-button @click="copyRevealedKey"><Copy :size="15" />{{ $t("复制") }}</el-button></div>
       <template #footer><el-button @click="revealedKey = null">{{ $t("关闭") }}</el-button></template>

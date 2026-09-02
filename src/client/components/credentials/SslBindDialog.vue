@@ -149,7 +149,7 @@ watch(() => props.modelValue, (visible) => {
 </script>
 
 <template>
-  <el-dialog v-model="open" align-center class="envman-dialog" :title="$t('绑定 SSL 配置')" width="560px">
+  <el-dialog append-to-body v-model="open" align-center class="envman-dialog" :title="$t('绑定 SSL 配置')" width="560px">
     <el-form label-position="top" v-loading="loading">
       <el-alert class="ssl-config-alert" type="info" :closable="false" show-icon :title="$t('将此 Web 入口绑定到证书探测配置')" :description="$t('选择当前环境中已有的 SSL 探测端点，或新建一个。绑定只关联证书观察，不会改写入口的访问地址。')" />
       <p class="ssl-bind-entry"><strong>{{ entryName }}</strong><span>{{ entryUrl }}</span></p>

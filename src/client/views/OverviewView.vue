@@ -742,7 +742,7 @@ onMounted(load);
       </main>
     </div>
 
-    <el-dialog v-model="environmentDialog" align-center class="envman-dialog" :title="$t('新建环境')" width="620px">
+    <el-dialog append-to-body v-model="environmentDialog" align-center class="envman-dialog" :title="$t('新建环境')" width="620px">
       <el-form label-position="top" class="dialog-form-grid">
         <el-form-item :label="$t('环境名称')" required><el-input v-model="environmentForm.name" :placeholder="$t('例如：生产环境')" /></el-form-item>
         <el-form-item :label="$t('环境组')"><el-select v-model="environmentForm.groupId" clearable :placeholder="$t('未分组')" style="width:100%"><el-option v-for="group in groups" :key="group.id" :label="group.name" :value="group.id" /></el-select></el-form-item>
@@ -752,7 +752,7 @@ onMounted(load);
       <template #footer><el-button @click="environmentDialog = false">{{ $t('取消') }}</el-button><el-button type="primary" :loading="saving" @click="createEnvironment">{{ $t('创建环境') }}</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="groupDialog" align-center class="envman-dialog compact-dialog" :title="editingGroupId ? $t('编辑环境组') : $t('新建环境组')" width="520px">
+    <el-dialog append-to-body v-model="groupDialog" align-center class="envman-dialog compact-dialog" :title="editingGroupId ? $t('编辑环境组') : $t('新建环境组')" width="520px">
       <el-form label-position="top">
         <el-form-item :label="$t('环境组名称')" required><el-input v-model="groupForm.name" /></el-form-item>
         <el-form-item :label="$t('说明')"><el-input v-model="groupForm.description" type="textarea" :rows="3" /></el-form-item>

@@ -249,7 +249,7 @@ onMounted(load);
       <button v-if="!sources.length" class="source-empty" @click="openCreate"><Server :size="30" /><h3>{{ $t('还没有连接来源') }}</h3><span><Plus :size="15" />{{ $t('创建同步源') }}</span></button>
     </section>
 
-    <el-dialog v-model="sourceDialog" align-center class="envman-dialog" :title="editingId ? $t('编辑{0}同步源', [form.sourceType === 'script_sync' ? $t('脚本') : ' SecureCRT']) : $t('新建同步源')" width="760px">
+    <el-dialog append-to-body v-model="sourceDialog" align-center class="envman-dialog" :title="editingId ? $t('编辑{0}同步源', [form.sourceType === 'script_sync' ? $t('脚本') : ' SecureCRT']) : $t('新建同步源')" width="760px">
       <el-form label-position="top" class="connection-form">
         <el-form-item v-if="!editingId" :label="$t('同步类型')" class="form-span-2"><el-radio-group v-model="form.sourceType"><el-radio-button label="script_sync">{{ $t('脚本同步') }}</el-radio-button><el-radio-button label="securecrt_sync">SecureCRT</el-radio-button></el-radio-group></el-form-item>
         <el-form-item :label="$t('来源名称')" required :class="{ 'form-span-2': form.sourceType === 'script_sync' }"><el-input v-model="form.name" /></el-form-item>
@@ -272,7 +272,7 @@ onMounted(load);
       <template #footer><el-button @click="sourceDialog = false">{{ $t('取消') }}</el-button><el-button type="primary" :loading="saving" @click="saveSource">{{ $t('保存同步源') }}</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="reportDialog" align-center class="envman-dialog" :title="$t('同步报告 · {0}', [reportSource?.name || ''])" width="1040px">
+    <el-dialog append-to-body v-model="reportDialog" align-center class="envman-dialog" :title="$t('同步报告 · {0}', [reportSource?.name || ''])" width="1040px">
       <div class="sync-report-layout" v-loading="reportLoading">
         <aside class="sync-run-list"><button v-for="run in reportRuns" :key="run.id" :class="{ active: selectedRun?.id === run.id }" @click="selectRun(run)"><span><strong>{{ new Date(run.startedAt).toLocaleString($locale()) }}</strong><small>{{ run.triggerType === 'schedule' ? $t('定时执行') : $t('手动执行') }} · {{ run.conflictStrategy === 'overwrite' ? $t('覆盖') : $t('忽略') }}</small></span><el-tag size="small" :type="run.status === 'success' ? 'success' : run.status === 'failed' ? 'danger' : 'warning'">{{ run.status === 'success' ? $t('成功') : run.status === 'failed' ? $t('失败') : $t('执行中') }}</el-tag></button><div v-if="!reportRuns.length" class="panel-empty"><FileClock :size="24" /><p>{{ $t('还没有同步报告') }}</p></div></aside>
         <section class="sync-report-detail">
@@ -288,7 +288,7 @@ onMounted(load);
       <template #footer><el-button @click="reportDialog = false">{{ $t('关闭') }}</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="mappingDialog" align-center class="envman-dialog" :title="$t('目录映射 · {0}', [mappingSource?.name || ''])" width="680px">
+    <el-dialog append-to-body v-model="mappingDialog" align-center class="envman-dialog" :title="$t('目录映射 · {0}', [mappingSource?.name || ''])" width="680px">
       <div class="dialog-tip-row"><span>{{ $t('映射规则') }}</span><TipIcon :content="$t('路径前缀匹配的新连接会进入指定环境；已有明确归属不会被覆盖。')" placement="right" /></div>
       <div class="mapping-create"><el-input v-model="mappingForm.sourcePathPrefix" :placeholder="$t('来源目录前缀，例如 /Sessions/生产/app')" /><el-select v-model="mappingForm.environmentId" filterable :placeholder="$t('目标环境')"><el-option v-for="environment in environments" :key="environment.id" :label="environment.name" :value="environment.id" /></el-select><el-button type="primary" :loading="saving" @click="addMapping"><Plus :size="14" />{{ $t('添加') }}</el-button></div>
       <div class="mapping-list"><article v-for="mapping in mappings" :key="mapping.id"><span><FolderTree :size="15" /><code>{{ mapping.sourcePathPrefix }}</code></span><ChevronRight :size="15" /><strong>{{ mapping.environmentName }}</strong><button :title="$t('删除映射')" @click="deleteMapping(mapping)"><Trash2 :size="14" /></button></article><div v-if="!mappings.length" class="panel-empty"><Unplug :size="24" /><p>{{ $t('还没有目录映射') }}</p></div></div>

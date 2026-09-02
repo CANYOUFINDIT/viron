@@ -659,7 +659,7 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <el-dialog v-model="pickerOpen" align-center width="min(620px, calc(100vw - 28px))" class="envman-dialog sftp-host-picker" :title="$t('为{0}栏选择主机', [pickerSide === 'left' ? $t('来源') : $t('目标')])">
+    <el-dialog append-to-body v-model="pickerOpen" align-center width="min(620px, calc(100vw - 28px))" class="envman-dialog sftp-host-picker" :title="$t('为{0}栏选择主机', [pickerSide === 'left' ? $t('来源') : $t('目标')])">
       <el-input v-model="pickerKeyword" clearable :placeholder="$t('搜索连接名称、主机、用户或分组')"><template #prefix><Search :size="15" /></template></el-input>
       <div class="sftp-host-picker__list">
         <section v-if="groupedConnections.recommended.length">
@@ -675,7 +675,7 @@ onBeforeUnmount(() => {
       <template #footer><el-button @click="pickerOpen = false">{{ $t('取消') }}</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="transferDialogOpen" align-center width="min(520px, calc(100vw - 28px))" class="envman-dialog sftp-transfer-dialog sftp-conflict-dialog" :title="$t('文件已存在')" :close-on-click-modal="false" @closed="pendingTransfer && cancelPendingTransfer()">
+    <el-dialog append-to-body v-model="transferDialogOpen" align-center width="min(520px, calc(100vw - 28px))" class="envman-dialog sftp-transfer-dialog sftp-conflict-dialog" :title="$t('文件已存在')" :close-on-click-modal="false" @closed="pendingTransfer && cancelPendingTransfer()">
       <template v-if="pendingTransfer && currentConflict">
         <div class="sftp-conflict-message">
           <CircleAlert :size="20" />
