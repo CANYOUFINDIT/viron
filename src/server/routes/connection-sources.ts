@@ -34,6 +34,11 @@ const scriptSourceConfigSchema = z.object({
   scheduleExpression: z.string().trim().max(120).default(""),
 });
 
+const scheduleOnlySchema = z.object({
+  scheduleEnabled: z.boolean(),
+  scheduleExpression: z.string().trim().max(120).default(""),
+});
+
 const mappingSchema = z.object({
   sourcePathPrefix: z.string().trim().min(1).max(4096),
   environmentId: z.string().uuid(),
@@ -170,6 +175,27 @@ export async function registerConnectionSourceRoutes(app: FastifyInstance): Prom
     await app.connectionSourceScheduler.refresh(request.params.id);
     await writeAudit(app.db, { action: "connection_source.updated", resourceType: "connection_source", resourceId: request.params.id, summary: `更新脚本同步源 ${body.name}`, details: { conflictStrategy: body.conflictStrategy }, request });
     return { ok: true };
+  });
+
+  app.put<{ Params: { id: string } }>("/api/v1/connection-sources/:id/schedule", async (request, reply) => {
+    const body = parseBody(scheduleOnlySchema, request.body, reply);
+    if (!body) return;
+    const scheduleError = body.scheduleEnabled ? cronExpressionError(body.scheduleExpression) : null;
+    if (scheduleError) return reply.code(400).send({ error: "INVALID_SCHEDULE", message: scheduleError });
+    const existing = await app.db.prepare(`SELECT id, name, type FROM connection_sources WHERE id = ? AND type IN ('securecrt_sync', 'script_sync') AND ${workspaceWhere()}`).get(request.params.id, ...workspaceParams(request)) as { id: string; name: string; type: string } | undefined;
+    if (!existing) return reply.code(404).send({ error: "NOT_FOUND", message: "同步源不存在" });
+    await app.db.prepare("UPDATE connection_sources SET schedule_enabled = ?, schedule_expression = ?, updated_at = ? WHERE id = ?")
+      .run(body.scheduleEnabled ? 1 : 0, body.scheduleExpression || null, new Date().toISOString(), request.params.id);
+    await app.connectionSourceScheduler.refresh(request.params.id);
+    await writeAudit(app.db, {
+      action: "connection_source.updated",
+      resourceType: "connection_source",
+      resourceId: request.params.id,
+      summary: body.scheduleEnabled ? `启用定时同步 ${existing.name}` : `关闭定时同步 ${existing.name}`,
+      details: { scheduleEnabled: body.scheduleEnabled, scheduleExpression: body.scheduleExpression || null },
+      request,
+    });
+    return { ok: true, nextSyncAt: app.connectionSourceScheduler.nextRun(request.params.id)?.toISOString() ?? null };
   });
 
   app.delete<{ Params: { id: string } }>("/api/v1/connection-sources/:id", async (request, reply) => {

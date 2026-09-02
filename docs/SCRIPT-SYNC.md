@@ -10,6 +10,8 @@
 - 单次执行限制为 60 秒、1 CPU、256 MiB 内存、128 个进程和 5 MiB 标准输出；标准错误最多在内存读取 1 MiB，且不会保存到报告。
 - 脚本文本随同步源使用平台主密钥加密。原始标准输出、标准错误和明文凭据均不写入同步报告、审计详情或服务日志。
 
+可在同步源上启用定时自动执行。常用间隔（每 15/30 分钟、每小时、每 6/12 小时、每天 02:00）会写成五段 Cron；也可直接填写五段或六段 Cron。调度按服务运行时区执行。同一同步源仍禁止并发；服务重启后，若上一轮成功时间已超过下一计划点，会补跑一轮。定时执行写入同步报告，触发类型为 `schedule`。
+
 正式部署的 `docker-compose.full.yml` 与 `docker-compose.lite.yml` 会自动启动 `script-runner`，并通过 Docker named volume 共享 Unix Socket。源码开发服务在 Docker 可用时使用同一镜像为每轮同步创建一次性受限容器；如使用独立 Runner，可用 `SCRIPT_RUNNER_SOCKET` 指定 Unix Socket 路径，用 `SCRIPT_RUNNER_IMAGE` 覆盖源码模式的一次性容器镜像。
 
 ## 自动处理规则

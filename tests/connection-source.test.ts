@@ -6,7 +6,8 @@ import { once } from "node:events";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildApp } from "../src/server/app.js";
 import type { AppConfig } from "../src/server/config.js";
-import { cronExpressionError } from "../src/server/connection-sources/scheduler.js";
+import { cronExpressionError, isConnectionSourceScheduleOverdue } from "../src/server/connection-sources/scheduler.js";
+import { matchConnectionSourceSchedulePreset } from "../src/shared/connection-source-schedule.js";
 import { reconcileSecureCrtPayloads } from "../src/server/connection-sources/sync.js";
 import { applyScriptSyncPayload, parseScriptSyncOutput, syncScriptSource } from "../src/server/connection-sources/script-sync.js";
 import { refreshPendingExistingConnections } from "../src/server/connection-existing.js";
@@ -38,8 +39,14 @@ function configFor(directory: string): AppConfig {
 describe("SecureCRT connection source", () => {
   it("validates Cron schedules", () => {
     expect(cronExpressionError("0 */6 * * *")).toBeNull();
+    expect(cronExpressionError("* * * * * *")).toBeNull();
     expect(cronExpressionError("not-a-cron")).toBe("Cron 表达式无效");
     expect(cronExpressionError("")).toBe("启用定时同步时必须填写 Cron 表达式");
+    expect(matchConnectionSourceSchedulePreset("0 */6 * * *")).toBe("every-6h");
+    expect(matchConnectionSourceSchedulePreset("5 4 * * *")).toBe("custom");
+    expect(isConnectionSourceScheduleOverdue("0 * * * *", null)).toBe(false);
+    expect(isConnectionSourceScheduleOverdue("0 * * * *", new Date(Date.now() - 90 * 60 * 1000).toISOString())).toBe(true);
+    expect(isConnectionSourceScheduleOverdue("* * * * * *", new Date().toISOString())).toBe(false);
   });
 
   it("queues cross-source duplicates for an explicit conflict decision", async () => {
@@ -350,6 +357,105 @@ describe("script connection source", () => {
     const report = await db.prepare("SELECT status, summary_json, items_json FROM connection_source_runs WHERE id = ?").get(result.runId) as { status: string; summary_json: string; items_json: string };
     expect(report.status).toBe("success");
     expect(`${report.summary_json}${report.items_json}`).not.toContain("runner-secret");
+    await app.close();
+    runner.close();
+    await once(runner, "close");
+  });
+
+  it("persists a schedule, exposes the next run, and can update schedule independently", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "viron-script-schedule-api-"));
+    directories.push(directory);
+    const config = configFor(directory);
+    const db = await openDatabase(config);
+    await ensureAdmin(db, config);
+    const app = await buildApp({ config, db, logger: false });
+    const login = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { username: "admin", password: "test-password-123" } });
+    const cookies = { envman_session: login.cookies.find((item) => item.name === "envman_session")!.value };
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/connection-sources/script",
+      cookies,
+      payload: { name: "Nightly", script: "printf '%s\\n' '{\"schemaVersion\":1}'", conflictStrategy: "ignore", scheduleEnabled: true, scheduleExpression: "0 */6 * * *" },
+    });
+    expect(created.statusCode).toBe(201);
+    const sourceId = created.json().id as string;
+    const listed = await app.inject({ method: "GET", url: "/api/v1/connection-sources", cookies });
+    expect(listed.json().items[0]).toMatchObject({ id: sourceId, scheduleEnabled: true, scheduleExpression: "0 */6 * * *" });
+    expect(listed.json().items[0].nextSyncAt).toBeTruthy();
+
+    const invalid = await app.inject({
+      method: "PUT",
+      url: `/api/v1/connection-sources/${sourceId}/schedule`,
+      cookies,
+      payload: { scheduleEnabled: true, scheduleExpression: "not-a-cron" },
+    });
+    expect(invalid.statusCode).toBe(400);
+
+    const disabled = await app.inject({
+      method: "PUT",
+      url: `/api/v1/connection-sources/${sourceId}/schedule`,
+      cookies,
+      payload: { scheduleEnabled: false, scheduleExpression: "0 */6 * * *" },
+    });
+    expect(disabled.statusCode).toBe(200);
+    expect(disabled.json().nextSyncAt).toBeNull();
+    const afterDisable = await app.inject({ method: "GET", url: "/api/v1/connection-sources", cookies });
+    expect(afterDisable.json().items[0]).toMatchObject({ scheduleEnabled: false, nextSyncAt: null });
+    await app.close();
+  });
+
+  it("runs a scheduled script sync and catch-up after a missed interval", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "viron-script-schedule-run-"));
+    directories.push(directory);
+    const config = configFor(directory);
+    config.scriptRunnerSocket = join(directory, "runner.sock");
+    const runner = createServer((request, response) => {
+      request.resume();
+      request.on("end", () => {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ exitCode: 0, stdout: JSON.stringify({ schemaVersion: 1, environments: [{ name: "Scheduled environment" }] }), stderr: "" }));
+      });
+    });
+    runner.listen(config.scriptRunnerSocket);
+    await once(runner, "listening");
+    const db = await openDatabase(config);
+    await ensureAdmin(db, config);
+    const app = await buildApp({ config, db, logger: false });
+    const actor = await db.prepare("SELECT id FROM admin_users WHERE is_platform_admin = 1").get() as { id: string };
+    const login = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { username: "admin", password: "test-password-123" } });
+    const cookies = { envman_session: login.cookies.find((item) => item.name === "envman_session")!.value };
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/connection-sources/script",
+      cookies,
+      payload: { name: "Ticker", script: "printf json", conflictStrategy: "ignore", scheduleEnabled: true, scheduleExpression: "* * * * * *" },
+    });
+    expect(created.statusCode).toBe(201);
+    const sourceId = created.json().id as string;
+    const deadline = Date.now() + 4000;
+    let scheduledRun: { trigger_type: string; status: string } | undefined;
+    while (Date.now() < deadline) {
+      scheduledRun = await db.prepare("SELECT trigger_type, status FROM connection_source_runs WHERE source_id = ? AND trigger_type = 'schedule' ORDER BY started_at DESC LIMIT 1").get(sourceId) as { trigger_type: string; status: string } | undefined;
+      if (scheduledRun?.status === "success") break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(scheduledRun).toMatchObject({ trigger_type: "schedule", status: "success" });
+
+    const catchUpId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    await db.prepare(`INSERT INTO connection_sources (id, workspace_type, workspace_id, type, name, config_ciphertext, schedule_enabled, schedule_expression, last_synced_at, created_at, updated_at) VALUES (?, 'personal', ?, 'script_sync', 'Catch up', ?, 1, '0 * * * *', ?, ?, ?)`)
+      .run(catchUpId, actor.id, app.secrets.encrypt(JSON.stringify({ script: "printf json", conflictStrategy: "ignore" })), new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), now, now);
+    await app.connectionSourceScheduler.start();
+    const catchDeadline = Date.now() + 4000;
+    let catchUpRun: { trigger_type: string; status: string } | undefined;
+    while (Date.now() < catchDeadline) {
+      catchUpRun = await db.prepare("SELECT trigger_type, status FROM connection_source_runs WHERE source_id = ? ORDER BY started_at DESC LIMIT 1").get(catchUpId) as { trigger_type: string; status: string } | undefined;
+      if (catchUpRun?.status === "success") break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(catchUpRun).toMatchObject({ trigger_type: "schedule", status: "success" });
     await app.close();
     runner.close();
     await once(runner, "close");
