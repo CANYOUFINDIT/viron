@@ -1,9 +1,18 @@
-<script setup lang="ts">import { translate as tr } from "../i18n";
+<script setup lang="ts">import { currentLocale, translate as tr } from "../i18n";
 
 import { AlertTriangle, ArrowLeft, CalendarClock, ChevronRight, Code2, FileClock, FolderTree, KeyRound, Pencil, Plus, RefreshCw, Server, ShieldCheck, Trash2, Unplug } from "@lucide/vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { onMounted, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
+import {
+  CONNECTION_SOURCE_SCHEDULE_PRESETS,
+  DEFAULT_CONNECTION_SOURCE_SCHEDULE_EXPRESSION,
+  connectionSourceScheduleExpressionForPreset,
+  cronExpressionError,
+  matchConnectionSourceSchedulePreset,
+  nextCronRun,
+  type ConnectionSourceSchedulePresetId,
+} from "../../shared/connection-source-schedule";
 import { api } from "../api";
 import TipIcon from "../components/TipIcon.vue";
 
@@ -53,7 +62,10 @@ const mappingDialog = ref(false);
 const mappingSource = ref<ConnectionSource | null>(null);
 const mappings = ref<MappingItem[]>([]);
 const mappingForm = reactive({ sourcePathPrefix: "", environmentId: "" });
-const form = reactive({ sourceType: "script_sync" as "script_sync" | "securecrt_sync", name: tr("自动资源同步"), script: "#!/bin/sh\n# 在标准输出中返回 Viron schemaVersion 1 JSON\nprintf '%s\\n' '{\"schemaVersion\":1}'", conflictStrategy: "ignore" as "overwrite" | "ignore", host: "", port: 22, username: "", authType: "password" as "password" | "privateKey", password: "", privateKey: "", passphrase: "", configPassphrase: "", remotePaths: "", scheduleEnabled: false, scheduleExpression: "" });
+const form = reactive({ sourceType: "script_sync" as "script_sync" | "securecrt_sync", name: tr("自动资源同步"), script: "#!/bin/sh\n# 在标准输出中返回 Viron schemaVersion 1 JSON\nprintf '%s\\n' '{\"schemaVersion\":1}'", conflictStrategy: "ignore" as "overwrite" | "ignore", host: "", port: 22, username: "", authType: "password" as "password" | "privateKey", password: "", privateKey: "", passphrase: "", configPassphrase: "", remotePaths: "", scheduleEnabled: false, scheduleExpression: DEFAULT_CONNECTION_SOURCE_SCHEDULE_EXPRESSION, schedulePreset: "every-6h" as ConnectionSourceSchedulePresetId });
+const scheduleDialog = ref(false);
+const scheduleSource = ref<ConnectionSource | null>(null);
+const scheduleForm = reactive({ enabled: false, preset: "every-6h" as ConnectionSourceSchedulePresetId, expression: DEFAULT_CONNECTION_SOURCE_SCHEDULE_EXPRESSION });
 const reportDialog = ref(false);
 const reportSource = ref<ConnectionSource | null>(null);
 const reportRuns = ref<SyncRun[]>([]);
@@ -74,22 +86,92 @@ async function load() {
   }
 }
 
+function emptySourceForm() {
+  return { sourceType: "script_sync" as const, name: tr("自动资源同步"), script: "#!/bin/sh\n# 在标准输出中返回 Viron schemaVersion 1 JSON\nprintf '%s\\n' '{\"schemaVersion\":1}'", conflictStrategy: "ignore" as const, host: "", port: 22, username: "", authType: "password" as const, password: "", privateKey: "", passphrase: "", configPassphrase: "", remotePaths: "", scheduleEnabled: false, scheduleExpression: DEFAULT_CONNECTION_SOURCE_SCHEDULE_EXPRESSION, schedulePreset: "every-6h" as ConnectionSourceSchedulePresetId };
+}
+
+function assignScheduleFields(expression: string | null | undefined, enabled: boolean) {
+  const schedulePreset = matchConnectionSourceSchedulePreset(expression);
+  const scheduleExpression = schedulePreset === "custom"
+    ? (expression?.trim() || "")
+    : connectionSourceScheduleExpressionForPreset(schedulePreset);
+  return { scheduleEnabled: enabled, scheduleExpression, schedulePreset };
+}
+
+function onFormPresetChange(preset: string) {
+  const value = preset as ConnectionSourceSchedulePresetId;
+  form.schedulePreset = value;
+  if (value !== "custom") form.scheduleExpression = connectionSourceScheduleExpressionForPreset(value);
+}
+
+function onSchedulePresetChange(preset: string) {
+  const value = preset as ConnectionSourceSchedulePresetId;
+  scheduleForm.preset = value;
+  if (value !== "custom") scheduleForm.expression = connectionSourceScheduleExpressionForPreset(value);
+}
+
+function scheduleLabel(source: ConnectionSource): string {
+  if (!source.scheduleEnabled) return tr("未启用");
+  const preset = matchConnectionSourceSchedulePreset(source.scheduleExpression);
+  if (preset === "custom") return source.scheduleExpression?.trim() || tr("自定义 Cron");
+  return tr(CONNECTION_SOURCE_SCHEDULE_PRESETS.find((item) => item.id === preset)!.label);
+}
+
+function formatDateTime(value: string): string {
+  return new Date(value).toLocaleString(currentLocale());
+}
+
+function previewNextRun(expression: string): string {
+  const next = nextCronRun(expression);
+  return next ? formatDateTime(next.toISOString()) : "";
+}
+
+function openSchedule(source: ConnectionSource) {
+  const fields = assignScheduleFields(source.scheduleExpression, source.scheduleEnabled);
+  scheduleSource.value = source;
+  Object.assign(scheduleForm, { enabled: source.scheduleEnabled, preset: fields.schedulePreset, expression: fields.scheduleExpression });
+  scheduleDialog.value = true;
+}
+
 function openCreate() {
   editingId.value = "";
-  Object.assign(form, { sourceType: "script_sync", name: tr("自动资源同步"), script: "#!/bin/sh\n# 在标准输出中返回 Viron schemaVersion 1 JSON\nprintf '%s\\n' '{\"schemaVersion\":1}'", conflictStrategy: "ignore", host: "", port: 22, username: "", authType: "password", password: "", privateKey: "", passphrase: "", configPassphrase: "", remotePaths: "", scheduleEnabled: false, scheduleExpression: "" });
+  Object.assign(form, emptySourceForm());
   sourceDialog.value = true;
 }
 
 function openEdit(source: ConnectionSource) {
   editingId.value = source.id;
-  Object.assign(form, { sourceType: source.type, name: source.name, script: source.script, conflictStrategy: source.conflictStrategy, host: source.host, port: source.port, username: source.username, authType: source.authType, password: "", privateKey: "", passphrase: "", configPassphrase: "", remotePaths: source.remotePaths.join("\n"), scheduleEnabled: source.scheduleEnabled, scheduleExpression: source.scheduleExpression ?? "" });
+  Object.assign(form, { sourceType: source.type, name: source.name, script: source.script, conflictStrategy: source.conflictStrategy, host: source.host, port: source.port, username: source.username, authType: source.authType, password: "", privateKey: "", passphrase: "", configPassphrase: "", remotePaths: source.remotePaths.join("\n"), ...assignScheduleFields(source.scheduleExpression, source.scheduleEnabled) });
   sourceDialog.value = true;
+}
+
+async function saveSchedule() {
+  if (!scheduleSource.value) return;
+  if (scheduleForm.enabled) {
+    const message = cronExpressionError(scheduleForm.expression);
+    if (message) return ElMessage.warning(tr(message));
+  }
+  saving.value = true;
+  try {
+    await api(`/api/v1/connection-sources/${scheduleSource.value.id}/schedule`, { method: "PUT", body: JSON.stringify({ scheduleEnabled: scheduleForm.enabled, scheduleExpression: scheduleForm.expression }) });
+    scheduleDialog.value = false;
+    ElMessage.success(tr("定时同步已更新"));
+    await load();
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : tr("保存同步源失败"));
+  } finally {
+    saving.value = false;
+  }
 }
 
 async function saveSource() {
   if (!form.name.trim()) return ElMessage.warning(tr("请填写来源名称"));
   if (form.sourceType === "script_sync" && !form.script.trim()) return ElMessage.warning(tr("请填写同步脚本"));
   if (form.sourceType === "securecrt_sync" && (!form.host.trim() || !form.username.trim() || !form.remotePaths.trim())) return ElMessage.warning(tr("请填写来源名称、主机、用户名和远端目录"));
+  if (form.scheduleEnabled) {
+    const message = cronExpressionError(form.scheduleExpression);
+    if (message) return ElMessage.warning(tr(message));
+  }
   saving.value = true;
   try {
     const payload = form.sourceType === "script_sync"
@@ -225,24 +307,24 @@ onMounted(load);
           <section class="source-config-panel">
             <div class="source-config-row"><span>{{ $t('同步服务器') }}</span><code>{{ source.username }}@{{ source.host }}:{{ source.port }}</code></div>
             <div class="source-config-row is-paths"><span>{{ $t('会话目录') }}</span><div class="source-paths"><span v-for="path in source.remotePaths" :key="path"><FolderTree :size="13" />{{ path }}</span></div></div>
+            <div class="source-config-row is-schedule"><span>{{ $t('定时同步') }}</span><button type="button" class="source-schedule-value" :class="{ 'is-enabled': source.scheduleEnabled }" @click="openSchedule(source)"><strong>{{ scheduleLabel(source) }}</strong><small v-if="source.scheduleEnabled">{{ source.nextSyncAt ? $t('下次执行 {0}', [formatDateTime(source.nextSyncAt)]) : $t('等待调度') }}</small><small v-else>{{ $t('点击配置自动执行') }}</small></button></div>
             <div class="source-security"><span><ShieldCheck :size="15" />{{ source.hasPassword || source.hasPrivateKey ? $t('同步凭据已加密') : $t('缺少同步凭据') }}</span><span><KeyRound :size="15" />{{ source.hasConfigPassphrase ? $t('配置口令已保存') : $t('未配置口令') }}</span></div>
-            <div v-if="source.scheduleEnabled" class="source-schedule"><CalendarClock :size="15" /><span><strong>{{ $t('定时同步') }} {{ source.scheduleExpression }}</strong><small>{{ source.nextSyncAt ? $t('下次执行 {0}', [new Date(source.nextSyncAt).toLocaleString($locale())]) : $t('等待调度') }}</small></span></div>
           </section>
           <aside class="source-result-panel"><header><span>{{ $t('最近同步结果') }}</span><small>{{ source.lastSyncedAt ? new Date(source.lastSyncedAt).toLocaleString($locale()) : $t('尚未同步') }}</small></header><div class="source-counts"><span><strong>{{ source.sshCount }}</strong><small>{{ $t('SSH 连接') }}</small></span><span><strong>{{ source.databaseCount }}</strong><small>{{ $t('数据库') }}</small></span><span><strong>{{ source.mappingCount }}</strong><small>{{ $t('目录映射') }}</small></span></div><button v-if="source.conflictBatchId && source.conflictCount" class="source-existing" @click="router.push({ path: '/connections', query: { importBatch: source.conflictBatchId } })"><span><AlertTriangle :size="16" /><strong>{{ source.conflictCount }} {{ $t('个连接已存在') }}</strong><small>{{ $t('查看已有连接并批量处理') }}</small></span><ChevronRight :size="17" /></button><div v-else class="source-result-ready"><ShieldCheck :size="16" /><span><strong>{{ $t('无需处理') }}</strong><small>{{ $t('没有待确认的已存在连接') }}</small></span></div></aside>
         </div>
-        <footer class="source-card__footer"><div class="source-secondary-actions"><button @click="openMappings(source)"><FolderTree :size="15" />{{ $t('目录映射') }}</button><button @click="openEdit(source)"><Pencil :size="15" />{{ $t('编辑配置') }}</button></div><button class="source-delete" :title="$t('删除同步源')" @click="removeSource(source)"><Trash2 :size="15" /></button></footer>
+        <footer class="source-card__footer"><div class="source-secondary-actions"><button @click="openMappings(source)"><FolderTree :size="15" />{{ $t('目录映射') }}</button><button @click="openSchedule(source)"><CalendarClock :size="15" />{{ $t('定时同步') }}</button><button @click="openEdit(source)"><Pencil :size="15" />{{ $t('编辑配置') }}</button></div><button class="source-delete" :title="$t('删除同步源')" @click="removeSource(source)"><Trash2 :size="15" /></button></footer>
         </template>
         <template v-else-if="source.type === 'script_sync'">
           <div class="source-card__body">
             <section class="source-config-panel">
               <div class="source-config-row"><span>{{ $t('执行方式') }}</span><code>{{ $t('/bin/sh · 隔离 Runner') }}</code></div>
               <div class="source-config-row"><span>{{ $t('冲突策略') }}</span><strong>{{ source.conflictStrategy === 'overwrite' ? $t('无条件覆盖') : $t('直接忽略') }}</strong></div>
+              <div class="source-config-row is-schedule"><span>{{ $t('定时同步') }}</span><button type="button" class="source-schedule-value" :class="{ 'is-enabled': source.scheduleEnabled }" @click="openSchedule(source)"><strong>{{ scheduleLabel(source) }}</strong><small v-if="source.scheduleEnabled">{{ source.nextSyncAt ? $t('下次执行 {0}', [formatDateTime(source.nextSyncAt)]) : $t('等待调度') }}</small><small v-else>{{ $t('点击配置自动执行') }}</small></button></div>
               <div class="source-security"><span><ShieldCheck :size="15" />{{ $t('脚本与凭据加密保存') }}</span><span><Code2 :size="15" />{{ source.script.split('\n').length }} {{ $t('行脚本') }}</span></div>
-              <div v-if="source.scheduleEnabled" class="source-schedule"><CalendarClock :size="15" /><span><strong>{{ $t('定时同步') }} {{ source.scheduleExpression }}</strong><small>{{ source.nextSyncAt ? $t('下次执行 {0}', [new Date(source.nextSyncAt).toLocaleString($locale())]) : $t('等待调度') }}</small></span></div>
             </section>
             <aside class="source-result-panel"><header><span>{{ $t('空间中的同步连接') }}</span><small>{{ source.lastSyncedAt ? new Date(source.lastSyncedAt).toLocaleString($locale()) : $t('尚未同步') }}</small></header><div class="source-counts"><span><strong>{{ source.sshCount }}</strong><small>SSH</small></span><span><strong>{{ source.databaseCount }}</strong><small>{{ $t('数据库') }}</small></span><span><strong>{{ source.redisCount }}</strong><small>Redis</small></span></div><button class="source-existing source-report-button" @click="openReports(source)"><span><FileClock :size="16" /><strong>{{ $t('查看同步报告') }}</strong><small>{{ $t('Review 每轮新增、覆盖、忽略和空间额外资源') }}</small></span><ChevronRight :size="17" /></button></aside>
           </div>
-          <footer class="source-card__footer"><div class="source-secondary-actions"><button @click="openReports(source)"><FileClock :size="15" />{{ $t('同步报告') }}</button><button @click="openEdit(source)"><Pencil :size="15" />{{ $t('编辑配置') }}</button></div><button class="source-delete" :title="$t('删除同步源')" @click="removeSource(source)"><Trash2 :size="15" /></button></footer>
+          <footer class="source-card__footer"><div class="source-secondary-actions"><button @click="openReports(source)"><FileClock :size="15" />{{ $t('同步报告') }}</button><button @click="openSchedule(source)"><CalendarClock :size="15" />{{ $t('定时同步') }}</button><button @click="openEdit(source)"><Pencil :size="15" />{{ $t('编辑配置') }}</button></div><button class="source-delete" :title="$t('删除同步源')" @click="removeSource(source)"><Trash2 :size="15" /></button></footer>
         </template>
         <div v-else class="source-upload-summary"><span><strong>{{ source.sshCount + source.databaseCount + source.redisCount }}</strong> {{ $t('个已导入连接') }}</span><small>{{ source.lastSyncedAt ? new Date(source.lastSyncedAt).toLocaleString($locale()) : $t('文件导入来源') }}</small></div>
       </article>
@@ -266,10 +348,27 @@ onMounted(load);
           <el-form-item :label="$t('同名资源策略')"><el-select v-model="form.conflictStrategy" style="width:100%"><el-option :label="$t('直接忽略（推荐）')" value="ignore" /><el-option :label="$t('无条件覆盖')" value="overwrite" /></el-select></el-form-item>
         </template>
         <el-form-item :label="$t('定时同步')"><el-switch v-model="form.scheduleEnabled" inline-prompt :active-text='$t("开")' :inactive-text='$t("关")' /></el-form-item>
-        <el-form-item v-if="form.scheduleEnabled"><template #label><span class="form-label-with-tip">{{ $t('Cron 表达式') }}<TipIcon :content="$t('支持五段或六段 Cron，按服务运行时区执行。')" placement="right" /></span></template><el-input v-model="form.scheduleExpression" placeholder="0 */6 * * *" /></el-form-item>
+        <template v-if="form.scheduleEnabled">
+          <el-form-item :label="$t('执行频率')" class="form-span-2"><el-select v-model="form.schedulePreset" style="width:100%" @change="onFormPresetChange"><el-option v-for="preset in CONNECTION_SOURCE_SCHEDULE_PRESETS" :key="preset.id" :label="$t(preset.label)" :value="preset.id" /><el-option :label="$t('自定义 Cron')" value="custom" /></el-select></el-form-item>
+          <el-form-item v-if="form.schedulePreset === 'custom'" class="form-span-2"><template #label><span class="form-label-with-tip">{{ $t('Cron 表达式') }}<TipIcon :content="$t('支持五段或六段 Cron，按服务运行时区执行。')" placement="right" /></span></template><el-input v-model="form.scheduleExpression" placeholder="0 */6 * * *" /></el-form-item>
+          <p v-if="previewNextRun(form.scheduleExpression)" class="source-schedule-preview">{{ $t('下次执行 {0}', [previewNextRun(form.scheduleExpression)]) }}</p>
+        </template>
       </el-form>
       <div class="dialog-tip-row"><span>{{ $t('安全存储') }}</span><TipIcon :content="form.sourceType === 'script_sync' ? $t('脚本文本使用平台主密钥加密；原始输出与明文凭据不会进入同步报告或日志。') : $t('同步密码、私钥和 SecureCRT 配置口令使用平台主密钥加密，不会拼入命令行。')" placement="right" /></div>
       <template #footer><el-button @click="sourceDialog = false">{{ $t('取消') }}</el-button><el-button type="primary" :loading="saving" @click="saveSource">{{ $t('保存同步源') }}</el-button></template>
+    </el-dialog>
+
+    <el-dialog append-to-body v-model="scheduleDialog" align-center class="envman-dialog" :title="$t('定时自动同步 · {0}', [scheduleSource?.name || ''])" width="560px">
+      <el-form label-position="top" class="connection-form">
+        <el-form-item :label="$t('启用定时自动执行')"><el-switch v-model="scheduleForm.enabled" inline-prompt :active-text='$t("开")' :inactive-text='$t("关")' /></el-form-item>
+        <template v-if="scheduleForm.enabled">
+          <el-form-item :label="$t('执行频率')"><el-select v-model="scheduleForm.preset" style="width:100%" @change="onSchedulePresetChange"><el-option v-for="preset in CONNECTION_SOURCE_SCHEDULE_PRESETS" :key="preset.id" :label="$t(preset.label)" :value="preset.id" /><el-option :label="$t('自定义 Cron')" value="custom" /></el-select></el-form-item>
+          <el-form-item v-if="scheduleForm.preset === 'custom'"><template #label><span class="form-label-with-tip">{{ $t('Cron 表达式') }}<TipIcon :content="$t('支持五段或六段 Cron，按服务运行时区执行。')" placement="right" /></span></template><el-input v-model="scheduleForm.expression" placeholder="0 */6 * * *" /></el-form-item>
+          <p v-if="previewNextRun(scheduleForm.expression)" class="source-schedule-preview">{{ $t('下次执行 {0}', [previewNextRun(scheduleForm.expression)]) }}</p>
+        </template>
+      </el-form>
+      <div class="dialog-tip-row"><span>{{ $t('服务运行期间按服务时区执行。服务重启后，错过的周期会补跑一轮。') }}</span></div>
+      <template #footer><el-button @click="scheduleDialog = false">{{ $t('取消') }}</el-button><el-button type="primary" :loading="saving" @click="saveSchedule">{{ $t('保存') }}</el-button></template>
     </el-dialog>
 
     <el-dialog append-to-body v-model="reportDialog" align-center class="envman-dialog" :title="$t('同步报告 · {0}', [reportSource?.name || ''])" width="1040px">
