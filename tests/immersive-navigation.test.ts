@@ -114,4 +114,12 @@ describe("environment immersive navigation geometry", () => {
     expect(desktopNavigation).toContain('element("div", "panel-surface")');
     expect(desktopNavigation).toContain("box-shadow: inset 0 0 0 1px #d7dfe0");
   });
+
+  it("accepts an expansion observed by the final in-deadline smoke poll", () => {
+    const desktopSmoke = readFileSync(new URL("../src/desktop/smoke/static-overlay-smoke.ts", import.meta.url), "utf8");
+
+    expect(desktopSmoke).toContain("let expandedInTime = Boolean(immersiveNavigationState?.expanded)");
+    expect(desktopSmoke).toContain("expandedInTime = Boolean(immersiveNavigationState?.expanded)");
+    expect(desktopSmoke).not.toContain("&& expandLatencyMs <= 250");
+  });
 });

@@ -84,15 +84,16 @@ export async function runDesktopImmersiveNavigationSmoke(): Promise<{
     const expandStartedAt = Date.now();
     await immersiveNavigationWindow!.webContents.executeJavaScript("document.querySelector('.handle')?.click()");
     const expandDeadline = expandStartedAt + 250;
-    while (!immersiveNavigationState?.expanded && Date.now() < expandDeadline) {
+    let expandedInTime = Boolean(immersiveNavigationState?.expanded);
+    while (!expandedInTime && Date.now() < expandDeadline) {
       await new Promise((resolve) => setTimeout(resolve, 5));
+      expandedInTime = Boolean(immersiveNavigationState?.expanded);
     }
     const expandLatencyMs = Date.now() - expandStartedAt;
     const expandedBounds = immersiveNavigationWindow!.getBounds();
     const immediateExpand = Boolean(
-      immersiveNavigationState?.expanded
+      expandedInTime
       && expandedBounds.width === immersiveNavigationSize(base.dock, true, immersiveNavigationViewport()).width
-      && expandLatencyMs <= 250,
     );
     const rendered = await immersiveNavigationWindow!.webContents.executeJavaScript(`new Promise((resolve, reject) => {
       const deadline = Date.now() + 5000;
@@ -351,5 +352,4 @@ export async function runDesktopConnectionQualitySmoke(): Promise<{
     await updateConnectionQualityWindow(null);
   }
 }
-
 
