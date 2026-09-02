@@ -68,7 +68,7 @@ describe("alert service panel", () => {
 
     await flushPromises();
 
-    const row = wrapper.get(".priority-event-panel .event-row");
+    const row = wrapper.get(".priority-event-panel button.event-row");
     expect(row.get("strong").text()).toBe("掉盘");
     expect(row.get(".event-message").text()).toBe("192.168.5.146 的磁盘 sda1 · /data 已重新出现");
   });
