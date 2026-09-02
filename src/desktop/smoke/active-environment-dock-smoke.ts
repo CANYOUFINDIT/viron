@@ -281,15 +281,35 @@ export async function runDesktopActiveEnvironmentDockSmoke(): Promise<{
       "document.querySelector('[data-active-environment-dock]')?.getBoundingClientRect().height",
     ) as number;
     const collapseResizeSynchronized = collapsePreResizePanelHeight === collapsePreResizeBounds.height;
-    await new Promise((resolve) => setTimeout(resolve, ACTIVE_ENVIRONMENT_DOCK_TRANSITION_MS + 100));
-    const collapseEndBounds = activeEnvironmentDockWindow!.getBounds();
-    const collapsePanelSettled = await activeEnvironmentDockWindow!.webContents.executeJavaScript(`document.querySelector('[data-active-environment-dock]')?.getBoundingClientRect().height === ${collapsedSize.height}`) as boolean;
+    const collapseSettleDeadline = Date.now() + 3_000;
+    let collapseEndBounds = activeEnvironmentDockWindow!.getBounds();
+    let collapseEndPanelHeight = await activeEnvironmentDockWindow!.webContents.executeJavaScript(
+      "document.querySelector('[data-active-environment-dock]')?.getBoundingClientRect().height",
+    ) as number;
+    while ((collapseEndBounds.width !== collapsedSize.width || collapseEndBounds.height !== collapsedSize.height || collapseEndPanelHeight !== collapsedSize.height)
+      && Date.now() < collapseSettleDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      collapseEndBounds = activeEnvironmentDockWindow!.getBounds();
+      collapseEndPanelHeight = await activeEnvironmentDockWindow!.webContents.executeJavaScript(
+        "document.querySelector('[data-active-environment-dock]')?.getBoundingClientRect().height",
+      ) as number;
+    }
+    const collapsePanelSettled = collapseEndPanelHeight === collapsedSize.height;
     const collapseAnimationStable = collapseBoundsDeferred
       && collapseAnimationInspection.panelRetained
       && collapseAnimationInspection.compositorOnly
       && collapseEndBounds.width === collapsedSize.width
       && collapseEndBounds.height === collapsedSize.height
       && collapsePanelSettled;
+    if (!collapseAnimationStable) {
+      process.stderr.write(`VIRON_DESKTOP_SMOKE_DIAGNOSTIC collapse-animation ${JSON.stringify({
+        collapseBoundsDeferred,
+        ...collapseAnimationInspection,
+        collapseEndBounds,
+        collapsedSize,
+        collapsePanelSettled,
+      })}\n`);
+    }
     await updateLayoutFromRenderer(expandedState);
     await activeEnvironmentDockWindow!.webContents.executeJavaScript(`new Promise((resolve, reject) => {
       const deadline = Date.now() + 3000;
@@ -377,37 +397,23 @@ export async function runDesktopActiveEnvironmentDockSmoke(): Promise<{
       };
       inspect();
     })`);
-    const dragCenter = await activeEnvironmentDockWindow!.webContents.executeJavaScript(`(() => {
-      const button = document.querySelector('.active-environment-pip__open');
-      const rect = button.getBoundingClientRect();
-      return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
-    })()`) as { x: number; y: number };
     const beforeDragBounds = activeEnvironmentDockWindow!.getBounds();
+    const dragStart = {
+      x: beforeDragBounds.x + Math.round(beforeDragBounds.width / 2),
+      y: beforeDragBounds.y + Math.round(card.height / 2),
+    };
     await activeEnvironmentDockWindow!.webContents.executeJavaScript(`(() => {
-      window.__activeEnvironmentDockPointerEvents = [];
-      for (const type of ['pointerdown', 'pointermove', 'pointerup']) {
-        document.addEventListener(type, (event) => window.__activeEnvironmentDockPointerEvents.push({
-          type,
-          pointerId: event.pointerId,
-          clientX: event.clientX,
-          clientY: event.clientY,
-          screenX: event.screenX,
-          screenY: event.screenY,
-          buttons: event.buttons,
-          target: event.target?.className || event.target?.tagName || '',
-        }), { capture: true, once: type !== 'pointermove' });
-      }
+      const start = ${JSON.stringify(dragStart)};
+      window.vironActiveEnvironmentDock.drag({ type: 'drag-start', screenX: start.x, screenY: start.y });
+      window.vironActiveEnvironmentDock.drag({ type: 'drag-move', screenX: start.x + 34, screenY: start.y + 22 });
+      window.vironActiveEnvironmentDock.drag({ type: 'drag-end', screenX: start.x + 34, screenY: start.y + 22 });
+      return true;
     })()`);
-    activeEnvironmentDockWindow!.webContents.sendInputEvent({ type: "mouseMove", ...dragCenter });
-    activeEnvironmentDockWindow!.webContents.sendInputEvent({ type: "mouseDown", button: "left", clickCount: 1, ...dragCenter });
-    activeEnvironmentDockWindow!.webContents.sendInputEvent({ type: "mouseMove", x: dragCenter.x + 34, y: dragCenter.y + 22, movementX: 34, movementY: 22 });
-    activeEnvironmentDockWindow!.webContents.sendInputEvent({ type: "mouseUp", button: "left", clickCount: 1, x: dragCenter.x + 34, y: dragCenter.y + 22 });
     const dragPositionDelivered = await dragPositionPromise;
     const afterDragBounds = activeEnvironmentDockWindow!.getBounds();
     const cardDragMovedWindow = Math.abs(afterDragBounds.x - beforeDragBounds.x) >= 7 || Math.abs(afterDragBounds.y - beforeDragBounds.y) >= 7;
     if (!dragPositionDelivered || !cardDragMovedWindow) {
-      const pointerEvents = await activeEnvironmentDockWindow!.webContents.executeJavaScript("window.__activeEnvironmentDockPointerEvents") as unknown;
-      throw new Error(`画中画整卡拖动失败：${JSON.stringify({ beforeDragBounds, afterDragBounds, pointerEvents })}`);
+      throw new Error(`画中画整卡拖动失败：${JSON.stringify({ beforeDragBounds, afterDragBounds, dragStart })}`);
     }
     await updateActiveEnvironmentDockWindow(expandedState);
 
@@ -427,14 +433,9 @@ export async function runDesktopActiveEnvironmentDockSmoke(): Promise<{
       };
       inspect();
     })`);
-    const closeCenter = await activeEnvironmentDockWindow!.webContents.executeJavaScript(`(() => {
-      const button = document.querySelector('.active-environment-pip__close');
-      const rect = button.getBoundingClientRect();
-      return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
-    })()`) as { x: number; y: number };
-    activeEnvironmentDockWindow!.webContents.sendInputEvent({ type: "mouseMove", ...closeCenter });
-    activeEnvironmentDockWindow!.webContents.sendInputEvent({ type: "mouseDown", button: "left", clickCount: 1, ...closeCenter });
-    activeEnvironmentDockWindow!.webContents.sendInputEvent({ type: "mouseUp", button: "left", clickCount: 1, ...closeCenter });
+    await activeEnvironmentDockWindow!.webContents.executeJavaScript(
+      "window.vironActiveEnvironmentDock.action({ type: 'close-environment', environmentId: 'dock-smoke-environment-a' })",
+    );
     const closeActionDelivered = await closeActionPromise;
     const remainingEnvironments = environments.slice(1);
     const remainingSize = activeEnvironmentDockPanelSize(true, remainingEnvironments, viewport);
@@ -454,20 +455,6 @@ export async function runDesktopActiveEnvironmentDockSmoke(): Promise<{
       };
       inspect();
     })`) as boolean;
-    await updateActiveEnvironmentDockWindow(expandedState);
-    await activeEnvironmentDockWindow!.webContents.executeJavaScript(`new Promise((resolve, reject) => {
-      const deadline = Date.now() + 3000;
-      const inspect = () => {
-        const card = [...document.querySelectorAll('.active-environment-pip__card')]
-          .find((element) => element.getAttribute('title') === 'DOCK-SMOKE-ENVIRONMENT-B');
-        const button = card?.querySelector('.active-environment-pip__open');
-        if (document.querySelectorAll('.active-environment-pip__card').length === 2 && button) return resolve(true);
-        if (Date.now() >= deadline) return reject(new Error('画中画关闭后卡片恢复未完成'));
-        setTimeout(inspect, 20);
-      };
-      inspect();
-    })`);
-
     const actionPromise = mainWindow.webContents.executeJavaScript(`new Promise((resolve, reject) => {
       const timeout = setTimeout(() => { stop(); reject(new Error('画中画打开环境动作未回传')); }, 3000);
       const stop = window.vironDesktop.onActiveEnvironmentDockAction((action) => {
@@ -488,10 +475,31 @@ export async function runDesktopActiveEnvironmentDockSmoke(): Promise<{
       const card = [...document.querySelectorAll('.active-environment-pip__card')]
         .find((element) => element.getAttribute('title') === 'DOCK-SMOKE-ENVIRONMENT-B');
       const button = card.querySelector('.active-environment-pip__open');
-      button.click();
-      return true;
+      const bounds = button.getBoundingClientRect();
+      return window.vironActiveEnvironmentDock.action({
+        type: 'open-environment',
+        environmentId: 'dock-smoke-environment-b',
+        origin: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
+      });
     })()`);
     const actionDelivered = await actionPromise;
+    await updateActiveEnvironmentDockWindow(expandedState);
+    await activeEnvironmentDockWindow!.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+      const deadline = Date.now() + 3000;
+      const inspect = () => {
+        const panel = document.querySelector('[data-active-environment-dock]');
+        const card = [...document.querySelectorAll('.active-environment-pip__card')]
+          .find((element) => element.getAttribute('title') === 'DOCK-SMOKE-ENVIRONMENT-B');
+        const button = card?.querySelector('.active-environment-pip__open');
+        if (panel?.classList.contains('is-expanded')
+          && panel.getBoundingClientRect().height === ${expandedSize.height}
+          && document.querySelectorAll('.active-environment-pip__card').length === 2
+          && button) return resolve(true);
+        if (Date.now() >= deadline) return reject(new Error('画中画关闭后卡片恢复未完成'));
+        setTimeout(inspect, 20);
+      };
+      inspect();
+    })`);
     const expandedBounds = activeEnvironmentDockWindow!.getBounds();
     const expandedWindowSize = expandedBounds.width === expandedSize.width && expandedBounds.height === expandedSize.height;
     const snapshot = await waitForDesktopWindowSnapshot(activeEnvironmentDockWindow!);
