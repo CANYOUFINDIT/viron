@@ -513,7 +513,8 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
         <el-input v-model="hostQuery" clearable :placeholder="$t('筛选节点')" />
       </div>
 
-      <div v-else class="view-toolbar">
+      <div v-else class="host-workbench">
+      <div class="view-toolbar">
         <div class="toolbar-filters">
           <el-input v-model="hostQuery" clearable :placeholder="$t('按主机名、IP 或环境搜索')" class="host-search" />
         </div>
@@ -523,7 +524,7 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
         </div>
       </div>
 
-      <nav v-if="!detailMode" class="probe-state-tabs" :aria-label="$t('探针状态分类')">
+      <nav class="probe-state-tabs" :aria-label="$t('探针状态分类')">
         <button type="button" :class="{ 'is-active': stateFilter === 'all' }" @click="stateFilter = 'all'">
           <span>{{ $t('全部分类') }}</span><strong>{{ allRankedHosts.length }}</strong>
         </button>
@@ -538,7 +539,7 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
         </button>
       </nav>
 
-      <div v-if="!detailMode && canOperate" class="bulk-probe-bar">
+      <div v-if="canOperate" class="bulk-probe-bar">
         <label class="bulk-selection">
           <input type="checkbox" :checked="allVisibleSelected" @change="toggleSelectAll(($event.target as HTMLInputElement).checked)" />
           <span>{{ $t('选择当前列表') }}</span>
@@ -559,6 +560,14 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
       </div>
 
       <div v-if="rankedHosts.length" class="probe-state-groups">
+        <div class="host-table-head" :class="{ 'has-select': canOperate }">
+          <span v-if="canOperate"></span>
+          <span>{{ $t('主机') }}</span>
+          <span>{{ $t('状态') }}</span>
+          <span>{{ $t('判定依据') }}</span>
+          <span>{{ $t('资源') }}</span>
+          <span></span>
+        </div>
         <section
           v-for="group in renderGroups"
           :key="group.probeState ?? 'detail-list'"
@@ -576,7 +585,7 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
           </header>
           <div class="priority-host-grid">
             <article
-              v-for="(item, index) in group.visibleItems"
+              v-for="item in group.visibleItems"
               :key="item.host.sshConnectionId"
               class="priority-host-card"
               :class="[`is-${item.state}`, `is-probe-${item.probeState}`, { 'is-selected': selected?.sshConnectionId === item.host.sshConnectionId }]"
@@ -598,65 +607,58 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
                 </div>
               </template>
               <template v-else>
-                <div class="host-card-head">
-                  <div>
-                    <span class="host-rank">{{ $t('组内顺序') }} {{ String(index + 1).padStart(2, '0') }}</span>
-                    <span class="tone-badge" :class="`is-${probeStateTone(item.probeState)}`">{{ probeStateLabel(item.probeState) }}</span>
-                    <span v-if="item.probeState === 'online' && ['critical', 'warning'].includes(item.state)" class="tone-badge" :class="`is-${item.state}`">{{ stateLabel(item.state) }}</span>
-                  </div>
-                  <input
-                    v-if="canOperate"
-                    class="host-card-select"
-                    type="checkbox"
-                    :checked="selectedIds.has(item.host.sshConnectionId)"
-                    :aria-label="item.host.connectionName"
-                    @click.stop
-                    @change="toggleSelect(item.host.sshConnectionId, ($event.target as HTMLInputElement).checked)"
-                  />
+                <input
+                  v-if="canOperate"
+                  class="host-card-select"
+                  type="checkbox"
+                  :checked="selectedIds.has(item.host.sshConnectionId)"
+                  :aria-label="item.host.connectionName"
+                  @click.stop
+                  @change="toggleSelect(item.host.sshConnectionId, ($event.target as HTMLInputElement).checked)"
+                />
+                <div class="host-card-identity">
+                  <h3>{{ item.host.connectionName }}</h3>
+                  <p>{{ item.host.host }} · {{ item.host.environmentName }}</p>
                 </div>
-                <h3>{{ item.host.connectionName }}</h3>
-                <p>{{ item.host.host }} · {{ item.host.environmentName }}</p>
+                <div class="host-status-cell">
+                  <span class="tone-badge" :class="`is-${probeStateTone(item.probeState)}`">{{ probeStateLabel(item.probeState) }}</span>
+                  <span v-if="item.probeState === 'online' && ['critical', 'warning'].includes(item.state)" class="tone-badge" :class="`is-${item.state}`">{{ stateLabel(item.state) }}</span>
+                </div>
                 <div class="host-bottleneck">
-                  <span>{{ item.probeState === 'online' ? $t('优先处理原因') : $t('状态判定依据') }}</span>
                   <strong>{{ bottleneck(item.host, item.state, item.alertCounts) }}</strong>
-                  <small v-if="item.probeState !== 'online'">{{ probeEvidenceDetail(item.host) }}</small>
+                  <small v-if="activeAlertCount(item.alertCounts)">{{ activeAlertCount(item.alertCounts) }} {{ $t('条活动告警') }}</small>
                 </div>
-                <div v-if="probeHasMetrics(item.host)" class="host-resource-bars">
-                  <span class="host-resource-line" :class="{ 'is-hot': resourceHot(item.host.cpuUsedPercent) }">
-                    <b>CPU</b><i><span :style="{ width: `${Math.min(100, Math.max(0, item.host.cpuUsedPercent ?? 0))}%` }"></span></i>
-                    <output>{{ formatPercent(item.host.cpuUsedPercent) }}</output>
-                  </span>
-                  <span class="host-resource-line" :class="{ 'is-hot': resourceHot(item.host.memoryUsedPercent) }">
-                    <b>{{ $t('内存') }}</b><i><span :style="{ width: `${Math.min(100, Math.max(0, item.host.memoryUsedPercent ?? 0))}%` }"></span></i>
-                    <output>{{ formatPercent(item.host.memoryUsedPercent) }}</output>
-                  </span>
-                  <span class="host-resource-line" :class="{ 'is-hot': resourceHot(item.host.diskUsedPercent) }">
-                    <b>{{ $t('磁盘') }}</b><i><span :style="{ width: `${Math.min(100, Math.max(0, item.host.diskUsedPercent ?? 0))}%` }"></span></i>
-                    <output>{{ formatPercent(item.host.diskUsedPercent) }}</output>
-                  </span>
+                <div class="host-resource-bars">
+                  <template v-if="probeHasMetrics(item.host)">
+                    <span class="host-resource-line" :class="{ 'is-hot': resourceHot(item.host.cpuUsedPercent) }">
+                      <b>CPU</b><i><span :style="{ width: `${Math.min(100, Math.max(0, item.host.cpuUsedPercent ?? 0))}%` }"></span></i>
+                      <output>{{ formatPercent(item.host.cpuUsedPercent) }}</output>
+                    </span>
+                    <span class="host-resource-line" :class="{ 'is-hot': resourceHot(item.host.memoryUsedPercent) }">
+                      <b>{{ $t('内存') }}</b><i><span :style="{ width: `${Math.min(100, Math.max(0, item.host.memoryUsedPercent ?? 0))}%` }"></span></i>
+                      <output>{{ formatPercent(item.host.memoryUsedPercent) }}</output>
+                    </span>
+                    <span class="host-resource-line" :class="{ 'is-hot': resourceHot(item.host.diskUsedPercent) }">
+                      <b>{{ $t('磁盘') }}</b><i><span :style="{ width: `${Math.min(100, Math.max(0, item.host.diskUsedPercent ?? 0))}%` }"></span></i>
+                      <output>{{ formatPercent(item.host.diskUsedPercent) }}</output>
+                    </span>
+                  </template>
+                  <span v-else class="host-resource-empty">—</span>
                 </div>
-                <div class="host-card-meta">
-                  <span>{{ probeLabel(item.host) }}</span>
-                  <span>{{ collectionLabel(item.host) }}</span>
-                  <span v-if="activeAlertCount(item.alertCounts)" class="is-alert">{{ activeAlertCount(item.alertCounts) }} {{ $t('条活动告警') }}</span>
-                </div>
-                <div class="host-card-foot">
-                  <span>{{ item.probeState === 'online' ? $t('点击查看容量走势、磁盘与探针操作') : probeStateDescription(item.probeState) }}</span>
-                  <strong>{{ cardActionLabel(item.host) }} →</strong>
-                </div>
+                <strong class="host-card-action">{{ cardActionLabel(item.host) }} →</strong>
               </template>
             </article>
+            <button
+              v-if="!detailMode && group.probeState && group.items.length > 6 && stateFilter === 'all' && !hostQuery.trim()"
+              type="button"
+              class="probe-group-toggle"
+              @click="toggleProbeGroup(group.probeState)"
+            >
+              {{ expandedProbeStates.has(group.probeState)
+                ? $t('收起分类')
+                : $t('查看该分类全部 {0} 个节点', [group.items.length]) }}
+            </button>
           </div>
-          <button
-            v-if="!detailMode && group.probeState && group.items.length > 6 && stateFilter === 'all' && !hostQuery.trim()"
-            type="button"
-            class="probe-group-toggle"
-            @click="toggleProbeGroup(group.probeState)"
-          >
-            {{ expandedProbeStates.has(group.probeState)
-              ? $t('收起分类')
-              : $t('查看该分类全部 {0} 个节点', [group.items.length]) }}
-          </button>
         </section>
       </div>
       <div v-else-if="!loadingMore" class="host-empty">
@@ -667,6 +669,7 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
         <RefreshCw :size="14" class="is-spinning" />
         <span>{{ $t('正在加载其余主机') }}<template v-if="hostTotal"> · {{ loadedCount ?? hosts.length }}/{{ hostTotal }}</template></span>
       </p>
+      </div>
     </div>
 
     <div v-if="selected && selectedRank" class="host-resource-detail">
@@ -779,7 +782,7 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
 .host-fleet.is-detail-mode {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
-  gap: 14px;
+  gap: var(--space-md, 16px);
   align-items: start;
 }
 
@@ -788,9 +791,10 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
 .host-fleet.is-detail-mode .host-list-page {
   position: sticky;
   top: 0;
-  border: 1px solid var(--ink-100);
-  border-radius: var(--radius-card, 8px);
-  background: var(--surface);
+  border: 1px solid var(--color-rule, var(--ink-100));
+  border-radius: var(--radius-panel, 8px);
+  background: var(--color-paper-raised, var(--surface));
+  overflow: hidden;
 }
 
 .host-compact-head,
@@ -808,49 +812,68 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
 .host-compact-head {
   display: grid;
   gap: 8px;
-  padding: 12px;
-  border-bottom: 1px solid var(--ink-100);
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--color-rule, var(--ink-100));
 }
 
-.host-compact-head strong { margin: 0; }
+.host-compact-head strong { margin: 0; font-size: 13px; font-weight: 650; }
+
+.host-workbench {
+  min-width: 0;
+  border: 1px solid var(--color-rule, var(--ink-100));
+  border-radius: 12px;
+  background: var(--color-paper-raised, var(--surface));
+  overflow: hidden;
+}
 
 .view-toolbar {
-  margin-bottom: 10px;
+  margin: 0;
+  padding: 14px 16px 12px;
 }
 
 .probe-state-tabs {
-  margin-bottom: 10px;
+  margin: 0;
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  overflow: hidden;
-  border: 1px solid var(--ink-100);
-  border-radius: var(--radius-card, 8px);
-  background: var(--surface);
+  gap: 0;
+  padding: 0;
+  border: 0;
+  border-top: 1px solid var(--color-rule, var(--ink-100));
+  border-bottom: 1px solid var(--color-rule, var(--ink-100));
+  border-radius: 0;
+  background: var(--color-paper-muted, var(--ink-50));
 }
 
 .probe-state-tabs button {
   min-width: 0;
-  min-height: 52px;
+  min-height: 58px;
   padding: 8px 10px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 6px;
-  align-items: center;
+  gap: 2px;
+  align-content: center;
   border: 0;
-  border-right: 1px solid var(--ink-100);
+  border-right: 1px solid var(--color-rule, var(--ink-100));
+  border-radius: 0;
   background: transparent;
   color: var(--ink-500);
   cursor: pointer;
   text-align: left;
+  transition: background var(--dur-micro, 120ms) var(--ease-out, ease), color var(--dur-micro, 120ms) var(--ease-out, ease);
 }
 
 .probe-state-tabs button:last-child { border-right: 0; }
-.probe-state-tabs button:hover { background: var(--ink-50); }
-.probe-state-tabs button.is-active { box-shadow: inset 0 -3px 0 var(--teal-600); background: var(--teal-50); color: var(--teal-800); }
-.probe-state-tabs button.is-critical.is-active { box-shadow: inset 0 -3px 0 var(--red-600); background: var(--red-100); color: var(--red-700); }
-.probe-state-tabs button.is-warning.is-active { box-shadow: inset 0 -3px 0 var(--amber-600); background: var(--amber-100); color: var(--amber-700); }
-.probe-state-tabs span { overflow: hidden; font-size: 10px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-.probe-state-tabs strong { font-family: var(--font-mono); font-size: 16px; }
+.probe-state-tabs button:hover { color: var(--ink-800); background: var(--surface); }
+.probe-state-tabs button.is-active {
+  background: var(--surface);
+  color: var(--ink-900);
+  box-shadow: inset 0 -2px 0 var(--ink-900);
+}
+.probe-state-tabs button:focus-visible {
+  outline: 2px solid var(--teal-500);
+  outline-offset: 1px;
+}
+.probe-state-tabs span { overflow: hidden; font-size: 10px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; order: 2; }
+.probe-state-tabs strong { font-family: var(--font-display); font-size: 22px; font-weight: 800; letter-spacing: -0.03em; color: inherit; order: 1; }
 
 .toolbar-filters,
 .bulk-actions,
@@ -866,8 +889,16 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
 .bulk-action-select { width: 160px; }
 
 .host-count {
-  color: var(--ink-400);
-  font-size: 12px;
+  color: var(--ink-700);
+  font-size: 13px;
+}
+
+.host-count strong {
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1;
 }
 
 .host-list-summary {
@@ -883,10 +914,11 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
 
 .bulk-probe-bar {
   min-height: 44px;
-  margin-bottom: 12px;
-  padding: 7px 10px;
-  border: 1px solid var(--ink-100);
-  border-radius: var(--radius-card, 8px);
+  margin: 0;
+  padding: 8px 16px;
+  border: 0;
+  border-bottom: 1px solid var(--color-rule, var(--ink-100));
+  border-radius: 0;
   background: var(--surface);
 }
 
@@ -899,18 +931,48 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
 
 .bulk-selection strong { font-family: var(--font-mono); font-size: 11px; }
 
-.probe-state-groups { display: grid; gap: 18px; }
+.probe-state-groups { display: grid; gap: 0; }
 .probe-state-group { min-width: 0; }
+.probe-state-group + .probe-state-group { border-top: 1px solid var(--color-rule, var(--ink-100)); }
+
+.host-table-head,
+.host-table-head.has-select,
+.priority-host-card,
+.priority-host-card:has(.host-card-select),
+.priority-host-card:has(.host-resource-line),
+.priority-host-card:has(.host-card-select):has(.host-resource-line) {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) 148px minmax(0, 1.2fr) 150px auto;
+  gap: 12px 16px;
+  align-items: center;
+}
+
+.host-table-head.has-select,
+.priority-host-card:has(.host-card-select),
+.priority-host-card:has(.host-card-select):has(.host-resource-line) {
+  grid-template-columns: 18px minmax(0, 1.4fr) 148px minmax(0, 1.2fr) 150px auto;
+}
+
+.host-table-head {
+  min-height: 34px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--color-rule, var(--ink-100));
+  background: var(--color-paper-muted, var(--ink-50));
+  color: var(--ink-400);
+  font-size: 11px;
+  font-weight: 600;
+}
 
 .probe-state-group__head {
-  min-height: 42px;
-  margin-bottom: 8px;
-  padding: 8px 10px;
+  min-height: 0;
+  margin: 0;
+  padding: 10px 16px;
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
   gap: 16px;
-  border-bottom: 1px solid var(--ink-100);
+  border: 0;
+  background: color-mix(in srgb, var(--color-paper-muted, var(--ink-50)) 70%, var(--surface));
 }
 
 .probe-state-group__head > div {
@@ -920,73 +982,96 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
   gap: 8px;
 }
 
-.probe-state-group__head strong { font-size: 14px; }
-.probe-state-group__head b { color: var(--ink-400); font-family: var(--font-mono); font-size: 12px; }
-.probe-state-group__head small { color: var(--ink-400); font-size: 10px; text-align: right; }
+.probe-state-group__head strong { font-size: 13px; font-weight: 650; }
+.probe-state-group__head b { color: var(--ink-400); font-family: var(--font-mono); font-size: 12px; font-weight: 500; }
+.probe-state-group__head small { color: var(--ink-400); font-size: 11px; text-align: right; }
 
-.probe-state-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-300); }
+.probe-state-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-300); }
 .probe-state-dot.is-critical { background: var(--red-600); }
 .probe-state-dot.is-warning { background: var(--amber-600); }
 .probe-state-dot.is-healthy { background: var(--teal-600); }
 
 .probe-group-toggle {
   width: 100%;
-  margin-top: 8px;
-  padding: 9px 12px;
-  border: 1px dashed var(--ink-200);
-  border-radius: var(--radius-card, 8px);
-  background: var(--ink-50);
-  color: var(--teal-700);
+  margin-top: 0;
+  padding: 10px 12px;
+  border: 0;
+  border-top: 1px solid var(--color-rule, var(--ink-100));
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink-600);
   cursor: pointer;
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 600;
 }
 
-.probe-group-toggle:hover { border-color: var(--teal-500); background: var(--teal-50); }
+.probe-group-toggle:hover { color: var(--ink-900); background: var(--ink-50); }
+.probe-group-toggle:focus-visible { outline: 2px solid var(--teal-500); outline-offset: -2px; }
 
 .priority-host-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.host-fleet.is-detail-mode .priority-host-grid {
   display: flex;
   flex-direction: column;
   gap: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+.host-fleet.is-detail-mode .priority-host-grid {
+  border: 0;
+  border-radius: 0;
   max-height: calc(100vh - 180px);
   overflow-y: auto;
 }
 
 .priority-host-card {
-  min-height: 246px;
+  min-height: 64px;
   position: relative;
-  padding: 12px;
-  border: 1px solid var(--ink-100);
-  border-top: 3px solid var(--teal-500);
-  border-radius: var(--radius-card, 8px);
-  background: var(--surface);
+  padding: 10px 16px;
+  border: 0;
+  border-bottom: 1px solid var(--color-rule, var(--ink-100));
+  border-radius: 0;
+  background: transparent;
   cursor: pointer;
+  transition: background var(--dur-micro, 120ms) var(--ease-out, ease);
 }
 
-.priority-host-card.is-critical { border-top-color: var(--red-600); }
-.priority-host-card.is-offline { border-top-color: var(--red-600); background: color-mix(in srgb, var(--red-100) 30%, var(--surface)); }
-.priority-host-card.is-warning { border-top-color: var(--amber-600); }
-.priority-host-card.is-unmanaged { border-top-color: var(--ink-300); }
-.priority-host-card.is-probe-offline { border-top-color: var(--red-600); background: color-mix(in srgb, var(--red-100) 22%, var(--surface)); }
-.priority-host-card.is-probe-unreachable,
-.priority-host-card.is-probe-stale { border-top-color: var(--amber-600); background: color-mix(in srgb, var(--amber-100) 16%, var(--surface)); }
-.priority-host-card.is-probe-missing,
-.priority-host-card.is-probe-unchecked { border-top-color: var(--ink-300); background: color-mix(in srgb, var(--ink-50) 55%, var(--surface)); }
-.priority-host-card.is-probe-online { border-top-color: var(--teal-500); background: var(--surface); }
-.priority-host-card.is-selected { background: var(--teal-50); }
+.priority-host-card:last-child { border-bottom: 0; }
+.priority-host-card:hover { background: var(--ink-50); }
+.priority-host-card.is-selected { background: color-mix(in srgb, var(--teal-50) 70%, var(--surface)); }
+.priority-host-card:focus-visible {
+  outline: 2px solid var(--teal-500);
+  outline-offset: -2px;
+}
+
+.host-fleet.is-detail-mode .priority-host-card,
+.host-fleet.is-detail-mode .priority-host-card:has(.host-card-select),
+.host-fleet.is-detail-mode .priority-host-card:has(.host-resource-line),
+.host-fleet.is-detail-mode .priority-host-card:has(.host-card-select):has(.host-resource-line) {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  grid-template-columns: none;
+  padding: 8px 12px;
+}
+
+.host-fleet.is-detail-mode .tone-badge {
+  font-size: 0;
+  gap: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.host-fleet.is-detail-mode .priority-host-card p,
+.host-fleet.is-detail-mode .compact-host-reason,
+.host-fleet.is-detail-mode .compact-host-resources {
+  display: none;
+}
 
 .host-fleet.is-detail-mode .priority-host-card {
-  min-height: 118px;
-  border: 0;
-  border-radius: 0;
-  border-bottom: 1px solid var(--ink-100);
-  border-top: 0;
+  overflow: hidden;
 }
 
 .host-card-select {
@@ -995,31 +1080,46 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
   margin: 0;
 }
 
-.host-rank {
-  color: var(--ink-400);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 700;
+.host-status-cell {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
 }
 
-.host-card-head,
-.host-card-head > div,
+.host-status-cell .tone-badge {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .compact-host-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
 }
 
-.host-card-head > div { justify-content: flex-start; }
+.host-card-identity { min-width: 0; }
+
+.host-card-flags {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
 
 .priority-host-card h3 {
-  margin: 12px 0 2px;
-  font-size: 15px;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
 }
 
 .priority-host-card p,
-.host-card-foot,
 .host-detail-hero p,
 .host-detail-metrics small {
   margin: 0;
@@ -1027,12 +1127,15 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
   font-size: 11px;
 }
 
+.priority-host-card p { margin-top: 3px; }
+
 .host-bottleneck {
-  min-height: 48px;
-  margin: 10px 0;
-  padding: 8px 10px;
-  border-left: 3px solid var(--amber-600);
-  background: var(--ink-50);
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 
 .host-bottleneck span {
@@ -1045,6 +1148,7 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
 .host-bottleneck strong {
   color: var(--ink-800);
   font-size: 12px;
+  font-weight: 600;
 }
 
 .host-bottleneck small {
@@ -1058,7 +1162,12 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
   -webkit-line-clamp: 2;
 }
 
-.host-resource-bars { display: grid; gap: 6px; }
+.host-resource-bars { display: grid; gap: 4px; align-content: center; }
+.host-resource-empty {
+  color: var(--ink-300);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
 
 .host-resource-line {
   display: grid;
@@ -1071,68 +1180,64 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
 }
 
 .host-resource-line i {
-  height: 4px;
+  height: 3px;
   overflow: hidden;
-  border-radius: 2px;
+  border-radius: 99px;
   background: var(--ink-100);
 }
 
 .host-resource-line i span {
   display: block;
   height: 100%;
-  background: var(--teal-500);
+  background: var(--ink-400);
 }
 
-.host-resource-line.is-hot i span,
-.is-hot { color: var(--red-600); }
+.host-resource-line.is-hot { color: var(--red-600); }
 .host-resource-line.is-hot i span { background: var(--red-600); }
+.is-hot { color: var(--red-600); }
+
+.host-card-aside {
+  min-width: 0;
+  display: grid;
+  justify-items: end;
+  align-content: start;
+  gap: 6px;
+}
 
 .host-card-meta {
-  min-height: 24px;
-  margin-top: 10px;
+  min-height: 0;
+  margin: 0;
   display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
 }
 
 .host-card-meta span {
-  padding: 3px 6px;
-  border-radius: 4px;
-  background: var(--ink-50);
-  color: var(--ink-500);
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink-400);
   font-size: 10px;
 }
 
 .host-card-meta span.is-alert {
-  background: var(--red-100);
+  background: transparent;
   color: var(--red-600);
-  font-weight: 700;
+  font-weight: 650;
 }
 
-.host-card-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 10px;
-  padding-top: 8px;
-  border-top: 1px solid var(--ink-100);
-  font-size: 10px;
-}
-
-.host-card-foot span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.host-card-foot strong {
-  color: var(--teal-700);
+.host-card-action {
+  justify-self: end;
+  color: var(--ink-700);
+  font-size: 12px;
+  font-weight: 600;
   white-space: nowrap;
 }
 
 .compact-host-head strong {
+  min-width: 0;
+  flex: 1;
   overflow: hidden;
   font-size: 13px;
   text-overflow: ellipsis;
@@ -1143,9 +1248,9 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
   display: block;
   margin-top: 7px;
   overflow: hidden;
-  color: var(--red-600);
+  color: var(--ink-600);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1183,12 +1288,12 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
 .host-detail-diagnostic,
 .host-detail-metrics,
 .host-disk-table {
-  border: 1px solid var(--ink-100);
-  border-radius: var(--radius-card, 8px);
-  background: var(--surface);
+  border: 1px solid var(--color-rule, var(--ink-100));
+  border-radius: var(--radius-panel, 8px);
+  background: var(--color-paper-raised, var(--surface));
 }
 
-.host-detail-hero { padding: 16px; }
+.host-detail-hero { padding: 16px 18px; }
 
 .host-detail-diagnostic {
   padding: 14px 16px;
@@ -1196,38 +1301,50 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  border-left: 4px solid var(--amber-600);
 }
 
-.host-detail-diagnostic.is-offline { border-left-color: var(--red-600); }
-.host-detail-diagnostic.is-missing,
-.host-detail-diagnostic.is-unchecked { border-left-color: var(--ink-300); }
 .host-detail-diagnostic span { color: var(--ink-400); font-size: 10px; }
-.host-detail-diagnostic strong { display: block; margin: 3px 0; font-size: 14px; }
+.host-detail-diagnostic strong { display: block; margin: 3px 0; font-size: 14px; font-weight: 650; }
 .host-detail-diagnostic p { margin: 0; color: var(--ink-500); font-size: 11px; overflow-wrap: anywhere; }
 
 .host-detail-hero h2 {
   margin: 8px 0 4px;
   font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .tone-badge {
   display: inline-flex;
   align-items: center;
-  min-height: 20px;
-  padding: 0 7px;
-  border-radius: 4px;
-  background: var(--ink-50);
+  gap: 6px;
+  min-height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--ink-600);
-  font-size: 11px;
-  font-weight: 700;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
-.tone-badge.is-critical { background: var(--red-100); color: var(--red-600); }
-.tone-badge.is-offline { background: var(--red-100); color: var(--red-600); }
-.tone-badge.is-warning,
-.tone-badge.is-unmanaged { background: var(--amber-100); color: var(--amber-600); }
-.tone-badge.is-healthy { background: var(--teal-50); color: var(--teal-700); }
+.tone-badge::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: 0 0 auto;
+}
+
+.tone-badge.is-critical,
+.tone-badge.is-offline { color: var(--red-600); }
+.tone-badge.is-warning { color: var(--amber-600); }
+.tone-badge.is-unmanaged { color: var(--ink-400); }
+.tone-badge.is-healthy { color: var(--teal-700); }
 
 .host-detail-metrics {
   display: grid;
@@ -1236,7 +1353,7 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
 
 .host-detail-metrics > div {
   padding: 12px 14px;
-  border-right: 1px solid var(--ink-100);
+  border-right: 1px solid var(--color-rule, var(--ink-100));
 }
 
 .host-detail-metrics > div:last-child { border-right: 0; }
@@ -1251,13 +1368,14 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
   margin-top: 6px;
   font-family: var(--font-mono);
   font-size: 18px;
+  font-weight: 650;
 }
 
-.host-disk-table header { padding: 10px 14px; border-bottom: 1px solid var(--ink-100); }
+.host-disk-table header { padding: 10px 14px; border-bottom: 1px solid var(--color-rule, var(--ink-100)); }
 .host-disk-table table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .host-disk-table th,
-.host-disk-table td { padding: 8px 14px; border-bottom: 1px solid var(--ink-100); text-align: left; }
-.host-disk-table th { color: var(--ink-400); font-weight: 650; }
+.host-disk-table td { padding: 8px 14px; border-bottom: 1px solid var(--color-rule, var(--ink-100)); text-align: left; }
+.host-disk-table th { color: var(--ink-400); font-weight: 600; }
 
 .probe-result-summary {
   margin-bottom: 10px;
@@ -1272,8 +1390,8 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
 .probe-result-list {
   max-height: 52vh;
   overflow-y: auto;
-  border: 1px solid var(--ink-100);
-  border-radius: var(--radius-card, 8px);
+  border: 1px solid var(--color-rule, var(--ink-100));
+  border-radius: var(--radius-panel, 8px);
 }
 
 .probe-result-list article {
@@ -1282,7 +1400,7 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
   gap: 10px;
   align-items: center;
   padding: 9px 12px;
-  border-bottom: 1px solid var(--ink-100);
+  border-bottom: 1px solid var(--color-rule, var(--ink-100));
   font-size: 12px;
 }
 
@@ -1295,18 +1413,37 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
 
 @media (max-width: 1100px) {
   .probe-state-tabs { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  .probe-state-tabs button { border-bottom: 1px solid var(--ink-100); }
-  .priority-host-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .host-fleet.is-detail-mode { grid-template-columns: minmax(0, 1fr); }
   .host-detail-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .host-detail-metrics > div:nth-child(2n) { border-right: 0; }
 }
 
 @media (max-width: 720px) {
   .probe-state-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .probe-state-tabs button { border-bottom: 1px solid var(--color-rule, var(--ink-100)); }
   .probe-state-group__head { align-items: flex-start; flex-direction: column; gap: 4px; }
   .probe-state-group__head small { text-align: left; }
   .host-detail-diagnostic { align-items: flex-start; flex-direction: column; }
-  .priority-host-grid { grid-template-columns: minmax(0, 1fr); }
+  .host-table-head { display: none; }
+  .priority-host-card,
+  .priority-host-card:has(.host-card-select),
+  .priority-host-card:has(.host-resource-line),
+  .priority-host-card:has(.host-card-select):has(.host-resource-line),
+  .host-table-head,
+  .host-table-head.has-select {
+    grid-template-columns: 18px minmax(0, 1fr);
+  }
+  .host-status-cell,
+  .host-bottleneck,
+  .host-resource-bars,
+  .host-card-action { grid-column: 1 / -1; }
+  .host-card-action { justify-self: start; }
   .probe-result-list article { grid-template-columns: 1fr auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .probe-state-tabs button,
+  .priority-host-card { transition: none; }
+  .host-fleet__more .is-spinning { animation: none; }
 }
 </style>

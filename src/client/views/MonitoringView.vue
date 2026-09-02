@@ -395,55 +395,68 @@ const summary = computed(() => overview.value?.summary ?? {
 }
 
 .noc-launch-button {
-  border-color: color-mix(in srgb, var(--teal-500) 45%, var(--ink-100));
-  color: var(--teal-700);
+  border-color: var(--color-rule, var(--ink-100));
+  color: var(--ink-700);
 }
 
 .noc-launch-button:hover,
 .noc-launch-button:focus-visible {
-  border-color: var(--teal-500);
-  background: var(--teal-50);
-  color: var(--teal-800);
+  border-color: var(--color-rule-strong, var(--ink-200));
+  background: var(--ink-50);
+  color: var(--ink-900);
 }
 
 .is-spinning { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .monitoring-subnav {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 14px;
-  padding: 4px;
-  border: 1px solid var(--ink-100);
-  border-radius: 9px;
-  background: var(--surface);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  margin: 0 0 20px;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--color-rule, var(--ink-100));
+  border-radius: 0;
+  background: transparent;
 }
 
 .monitoring-subnav button {
-  height: 34px;
+  height: 42px;
   padding: 0 12px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 0;
   background: transparent;
-  color: var(--ink-500);
+  color: var(--ink-400);
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  justify-content: center;
+  gap: 8px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 650;
+  transition: color var(--dur-micro, 120ms) var(--ease-out, ease);
 }
 
-.monitoring-subnav button:hover,
+.monitoring-subnav button:hover {
+  color: var(--ink-800);
+}
+
 .monitoring-subnav button.is-active {
-  background: var(--teal-50);
-  color: var(--teal-700);
+  background: transparent;
+  color: var(--ink-900);
+  box-shadow: inset 0 -2px 0 var(--ink-900);
+}
+
+.monitoring-subnav button:focus-visible {
+  outline: 2px solid var(--teal-500);
+  outline-offset: 1px;
 }
 
 .monitoring-banner-error {
   margin: 0 0 12px;
   padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: var(--radius-control, 7px);
   background: var(--red-100);
   color: var(--red-600);
   font-size: 12px;
@@ -452,6 +465,11 @@ const summary = computed(() => overview.value?.summary ?? {
 .monitoring-content-stage { min-width: 0; }
 
 @media (max-width: 720px) {
-  .monitoring-subnav { display: grid; grid-template-columns: 1fr; }
+  .monitoring-subnav { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .monitoring-subnav button { transition: none; }
+  .is-spinning { animation: none; }
 }
 </style>
