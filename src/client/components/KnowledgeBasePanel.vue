@@ -1013,6 +1013,7 @@ onBeforeUnmount(() => {
       class="envman-dialog knowledge-create-document-dialog"
       :title="$t('新建 Markdown 文档')"
       width="440px"
+      append-to-body
       :close-on-click-modal="!creatingDocument"
       :close-on-press-escape="!creatingDocument"
       :show-close="!creatingDocument"
@@ -1035,7 +1036,7 @@ onBeforeUnmount(() => {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="tagDialog" align-center class="envman-dialog knowledge-tag-dialog" :title="$t('环境标签 · {0}', [selectedNode?.name || ''])" width="520px">
+    <el-dialog append-to-body v-model="tagDialog" align-center class="envman-dialog knowledge-tag-dialog" :title="$t('环境标签 · {0}', [selectedNode?.name || ''])" width="520px">
       <p class="knowledge-grant-note"><Tags :size="17" />{{ $t('文件夹的环境标签会自动覆盖所有后代；文档可以同时关联多个环境。') }}</p>
       <el-select v-model="tagSelection" multiple filterable clearable collapse-tags :placeholder="$t('选择环境')" style="width: 100%">
         <el-option v-for="environment in environments" :key="environment.id" :label="environment.name" :value="environment.id" />
@@ -1046,7 +1047,7 @@ onBeforeUnmount(() => {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="associationDialog" align-center class="envman-dialog knowledge-association-dialog" :title="$t('关联文档')" width="640px">
+    <el-dialog append-to-body v-model="associationDialog" align-center class="envman-dialog knowledge-association-dialog" :title="$t('关联文档')" width="640px">
       <div v-loading="associationLoading" class="knowledge-association-content">
         <p class="knowledge-grant-note"><Link2 :size="17" />{{ $t('将可编辑的工作区文档关联到当前环境；已通过文件夹标签展示的文档不会重复出现。') }}</p>
         <el-input v-model="associationSearch" clearable :placeholder="$t('搜索文档或文件夹路径')" />
@@ -1063,7 +1064,7 @@ onBeforeUnmount(() => {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="grantDialog" align-center class="envman-dialog knowledge-grant-dialog" :title="$t('编辑权限 · {0}', [selectedNode?.name || ''])" width="620px">
+    <el-dialog append-to-body v-model="grantDialog" align-center class="envman-dialog knowledge-grant-dialog" :title="$t('编辑权限 · {0}', [selectedNode?.name || ''])" width="620px">
       <div v-loading="grantLoading" class="knowledge-grant-content">
         <p class="knowledge-grant-note"><ShieldCheck :size="17" />{{ $t('组织管理员始终拥有全部权限；文件夹授权自动覆盖当前和未来的所有子文件夹及文档。') }}</p>
         <div class="knowledge-grant-form">

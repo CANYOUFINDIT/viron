@@ -1175,7 +1175,7 @@ onBeforeUnmount(() => {
       @bound="loadEnvironment"
     />
 
-    <el-dialog v-model="entryDialog" align-center class="envman-dialog" :title="editingEntryId ? $t('编辑 Web 入口') : $t('添加 Web 入口')" width="600px">
+    <el-dialog append-to-body v-model="entryDialog" align-center class="envman-dialog" :title="editingEntryId ? $t('编辑 Web 入口') : $t('添加 Web 入口')" width="600px">
       <el-form label-position="top">
         <el-form-item :label="$t('入口名称')" required><el-input v-model="entryForm.name" :placeholder="$t('例如：管理控制台')" /></el-form-item>
         <el-form-item :label="$t('页面地址')" required><el-input v-model="entryForm.url" placeholder="https://console.example.com" /></el-form-item>
@@ -1185,7 +1185,7 @@ onBeforeUnmount(() => {
       <template #footer><el-button @click="entryDialog = false">{{ $t('取消') }}</el-button><el-button type="primary" :loading="saving" @click="saveEntry">{{ $t('保存入口') }}</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="credentialDialog" align-center class="envman-dialog compact-dialog" :title="editingCredentialId ? $t('编辑登录账号') : $t('添加登录账号')" width="560px">
+    <el-dialog append-to-body v-model="credentialDialog" align-center class="envman-dialog compact-dialog" :title="editingCredentialId ? $t('编辑登录账号') : $t('添加登录账号')" width="560px">
       <el-form label-position="top">
         <el-form-item :label="$t('用户名')" required><el-input v-model="credentialForm.username" /></el-form-item>
         <el-form-item :label="$t('密码')"><el-input v-model="credentialForm.password" type="password" show-password :placeholder="editingCredentialId ? $t('留空表示保持原密码') : ''" /></el-form-item>
@@ -1194,7 +1194,7 @@ onBeforeUnmount(() => {
       <template #footer><el-button @click="credentialDialog = false">{{ $t('取消') }}</el-button><el-button type="primary" :loading="saving" @click="saveCredential">{{ $t('加密保存') }}</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="environmentDialog" align-center class="envman-dialog" :title="$t('编辑环境')" width="620px">
+    <el-dialog append-to-body v-model="environmentDialog" align-center class="envman-dialog" :title="$t('编辑环境')" width="620px">
       <el-form label-position="top" class="dialog-form-grid">
         <el-form-item :label="$t('环境名称')" required><el-input v-model="environmentForm.name" /></el-form-item>
         <el-form-item :label="$t('环境组')"><el-select v-model="environmentForm.groupId" clearable :placeholder="$t('未分组')" style="width:100%"><el-option v-for="group in groups" :key="group.id" :label="group.name" :value="group.id" /></el-select></el-form-item>

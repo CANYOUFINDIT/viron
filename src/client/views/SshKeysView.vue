@@ -249,7 +249,7 @@ onMounted(load);
       <em><Upload :size="15" />{{ $t('导入第一把密钥') }}</em>
     </button>
 
-    <el-dialog v-model="importDialog" align-center class="envman-dialog" :title="$t('导入外部 SSH 密钥')" width="680px">
+    <el-dialog append-to-body v-model="importDialog" align-center class="envman-dialog" :title="$t('导入外部 SSH 密钥')" width="680px">
       <el-form label-position="top" class="vault-form">
         <el-form-item :label="$t('密钥名称')" required><el-input v-model="importForm.name" maxlength="160" :placeholder="$t('例如 bastion-01 id_rsa')" /></el-form-item>
         <el-form-item :label="$t('私钥口令')"><el-input v-model="importForm.passphrase" type="password" show-password :placeholder="$t('私钥未加密时留空')" /></el-form-item>
@@ -261,7 +261,7 @@ onMounted(load);
       <template #footer><el-button @click="importDialog = false">{{ $t('取消') }}</el-button><el-button type="primary" :loading="saving" @click="saveImport">{{ $t('导入密钥') }}</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="generateDialog" align-center class="envman-dialog" :title="$t('生成 SSH 密钥')" width="560px">
+    <el-dialog append-to-body v-model="generateDialog" align-center class="envman-dialog" :title="$t('生成 SSH 密钥')" width="560px">
       <el-form label-position="top" class="vault-form">
         <el-form-item :label="$t('密钥名称')" required><el-input v-model="generateForm.name" maxlength="160" :placeholder="$t('例如 生产环境发布密钥')" /></el-form-item>
         <el-form-item :label="$t('密钥算法')"><el-select v-model="generateForm.algorithm" style="width:100%"><el-option :label="$t('ED25519（推荐）')" value="ed25519" /><el-option label="RSA 3072" value="rsa3072" /><el-option label="RSA 4096" value="rsa4096" /></el-select></el-form-item>
@@ -271,7 +271,7 @@ onMounted(load);
       <template #footer><el-button @click="generateDialog = false">{{ $t('取消') }}</el-button><el-button type="primary" :loading="saving" @click="generateKey">{{ $t('生成密钥') }}</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="renameDialog" align-center class="envman-dialog compact-dialog" :title="$t('重命名 SSH 密钥')" width="440px">
+    <el-dialog append-to-body v-model="renameDialog" align-center class="envman-dialog compact-dialog" :title="$t('重命名 SSH 密钥')" width="440px">
       <el-form label-position="top"><el-form-item :label="$t('密钥名称')" required><el-input v-model="renameForm.name" maxlength="160" @keyup.enter="renameKey" /></el-form-item></el-form>
       <template #footer><el-button @click="renameDialog = false">{{ $t('取消') }}</el-button><el-button type="primary" :loading="saving" @click="renameKey">{{ $t('保存') }}</el-button></template>
     </el-dialog>

@@ -25,7 +25,7 @@ const {
     <el-button type="primary" :disabled="runningAction !== ''" @click="runBatchMaintenanceAction('restart')">{{ $t('批量重启') }}</el-button>
   </div>
 
-  <el-dialog v-model="batchDialog" align-center class="envman-dialog" :title="$t('批量操作进度')" width="720px">
+  <el-dialog append-to-body v-model="batchDialog" align-center class="envman-dialog" :title="$t('批量操作进度')" width="720px">
     <section v-if="batchOperation" class="script-action-results">
       <header :class="batchOperation.failed ? 'is-warning' : 'is-success'">
         <span><Check v-if="!batchOperation.failed" :size="18" /><CircleAlert v-else :size="18" /></span>

@@ -99,6 +99,11 @@ button { color: inherit; }
 .app-frame {
   --app-sidebar-collapsed-width: 68px;
   --app-sidebar-expanded-width: 224px;
+  /* Shell stacking: grid < page < window chrome < sidebar scrim < sidebar < floating tools / modals. */
+  --z-app-grid: 0;
+  --z-app-window-header: 30;
+  --z-app-sidebar-scrim: 35;
+  --z-app-sidebar: 40;
   position: relative;
   isolation: isolate;
   min-height: 100vh;
@@ -123,7 +128,7 @@ button { color: inherit; }
   content: "";
   position: fixed;
   inset: 0;
-  z-index: 0;
+  z-index: var(--z-app-grid);
   pointer-events: none;
   background-image:
     linear-gradient(var(--page-grid-line) 1px, transparent 1px),
@@ -134,7 +139,7 @@ button { color: inherit; }
 .app-sidebar {
   position: fixed;
   inset: 0 auto 0 0;
-  z-index: 40;
+  z-index: var(--z-app-sidebar);
   width: var(--app-sidebar-collapsed-width);
   color: #d8e2df;
   transition: width .28s cubic-bezier(.55, 0, 1, .45);
@@ -314,7 +319,6 @@ button { color: inherit; }
 .sidebar-scrim { display: none; }
 .app-surface {
   position: relative;
-  z-index: 1;
   min-width: 0;
   min-height: 100vh;
   background: transparent;
@@ -322,7 +326,7 @@ button { color: inherit; }
 .is-desktop .app-surface { display: flex; flex-direction: column; }
 .desktop-window-header {
   position: sticky;
-  z-index: 30;
+  z-index: var(--z-app-window-header);
   top: 0;
   height: var(--desktop-window-header-height);
   flex: 0 0 var(--desktop-window-header-height);
@@ -3861,7 +3865,7 @@ button { color: inherit; }
 
 @media (max-width: 900px) {
   .app-frame.is-sidebar-expanded { padding-left: var(--app-sidebar-collapsed-width); }
-  .sidebar-scrim { position: fixed; inset: 0; z-index: 35; display: block; padding: 0; border: 0; background: rgba(5, 15, 17, .42); cursor: pointer; }
+  .sidebar-scrim { position: fixed; inset: 0; z-index: var(--z-app-sidebar-scrim); display: block; padding: 0; border: 0; background: rgba(5, 15, 17, .42); cursor: pointer; }
   .app-content { padding: 24px 22px; }
   .database-automation-general { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(220px, 1fr) minmax(140px, .55fr); }
   .automation-selected { border-right: 0; border-bottom: 1px solid #2d3d40; }
