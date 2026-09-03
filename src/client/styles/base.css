@@ -208,8 +208,8 @@ button { color: inherit; }
 .is-sidebar-expanded .workspace-switcher { width: 100%; transition-duration: .52s; transition-timing-function: cubic-bezier(.22, 1, .36, 1); }
 .workspace-switcher .el-dropdown { width: 44px; margin-left: calc((var(--app-sidebar-collapsed-width) - 44px) / 2); transition: width .28s cubic-bezier(.55, 0, 1, .45), margin .28s cubic-bezier(.55, 0, 1, .45); }
 .is-sidebar-expanded .workspace-switcher .el-dropdown { width: calc(100% - 20px); margin-inline: 10px; transition-duration: .52s; transition-timing-function: cubic-bezier(.22, 1, .36, 1); }
-.workspace-switcher__trigger { width: 44px; height: 42px; padding: 0; border: 1px solid #2d4545; border-radius: 8px; background: rgba(255,255,255,.025); color: #91a6a1; display: flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; overflow: hidden; text-align: left; transition: width .28s cubic-bezier(.55, 0, 1, .45), padding .28s cubic-bezier(.55, 0, 1, .45), background .15s ease, border-color .15s ease, color .15s ease; }
-.is-sidebar-expanded .workspace-switcher__trigger { width: 100%; padding: 0 9px; justify-content: flex-start; transition-duration: .52s, .52s, .15s, .15s, .15s; transition-timing-function: cubic-bezier(.22, 1, .36, 1), cubic-bezier(.22, 1, .36, 1), ease, ease, ease; }
+.workspace-switcher__trigger { width: 44px; height: 42px; padding: 0 10px; border: 1px solid #2d4545; border-radius: 8px; background: rgba(255,255,255,.025); color: #91a6a1; display: flex; align-items: center; justify-content: flex-start; gap: 8px; cursor: pointer; overflow: hidden; text-align: left; transition: width .28s cubic-bezier(.55, 0, 1, .45), padding .28s cubic-bezier(.55, 0, 1, .45), background .15s ease, border-color .15s ease, color .15s ease; }
+.is-sidebar-expanded .workspace-switcher__trigger { width: 100%; padding: 0 12px; transition-duration: .52s, .52s, .15s, .15s, .15s; transition-timing-function: cubic-bezier(.22, 1, .36, 1), cubic-bezier(.22, 1, .36, 1), ease, ease, ease; }
 .workspace-switcher__trigger:hover, .workspace-switcher__trigger[aria-expanded="true"] { border-color: #3e786a; background: #17312c; color: #6bd3b1; }
 .workspace-switcher__trigger.is-switching { opacity: .58; cursor: wait; }
 .workspace-switcher__icon { width: 22px; height: 22px; flex: 0 0 22px; display: grid; place-items: center; color: #67c8a8; }
@@ -298,7 +298,6 @@ button { color: inherit; }
 .is-sidebar-expanded .header-user-control .header-admin-chip { width: 100%; }
 .is-sidebar-expanded .header-user-settings-icon { width: 16px; flex-basis: 16px; margin-left: auto; margin-right: 5px; opacity: 1; }
 .app-frame:not(.is-sidebar-expanded) .brand-lockup,
-.app-frame:not(.is-sidebar-expanded) .workspace-switcher__trigger,
 .app-frame:not(.is-sidebar-expanded) .primary-menu__item,
 .app-frame:not(.is-sidebar-expanded) .header-system-status,
 .app-frame:not(.is-sidebar-expanded) .header-icon-action,
@@ -3914,6 +3913,7 @@ button { color: inherit; }
   .brand-mark img { width: 27px; }
   .workspace-switcher { padding-block: 7px 5px; }
   .is-sidebar-expanded .workspace-switcher .el-dropdown { width: calc(100% - 14px); margin-inline: 7px; }
+  .is-sidebar-expanded .workspace-switcher__trigger { padding-inline: 10px; }
   .is-sidebar-expanded .primary-menu__item { width: calc(100% - 14px); margin-inline: 7px; padding-inline: 10px; }
   .header-utilities { --sidebar-utility-padding: 7px; gap: 5px; }
   .header-icon-action { height: 33px; }
