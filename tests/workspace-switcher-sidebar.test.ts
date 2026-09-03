@@ -56,7 +56,7 @@ vi.mock("../src/client/session", () => ({
   switchWorkspace: vi.fn(),
 }));
 
-import { i18nPlugin } from "../src/client/i18n";
+import { i18nPlugin, translate } from "../src/client/i18n";
 import AppShell from "../src/client/components/AppShell.vue";
 
 function mockMatchMedia({
@@ -147,6 +147,27 @@ describe("collapsed sidebar hover expand", () => {
     await wrapper.get(".app-sidebar").trigger("pointerleave");
     await flushPromises();
     expect(wrapper.get(".app-frame").classes()).toContain("is-sidebar-expanded");
+    wrapper.unmount();
+  });
+
+  it("pins a hover-expanded sidebar when clicking the toggle and keeps it open on leave", async () => {
+    mockMatchMedia();
+    const wrapper = await mountShell(vi.fn(), vi.fn());
+
+    await wrapper.get(".sidebar-toggle").trigger("click");
+    await wrapper.get(".app-sidebar").trigger("pointerenter");
+    expect(wrapper.get(".sidebar-toggle").attributes("aria-label")).toBe(translate("固定左侧菜单"));
+    expect(wrapper.get(".app-frame").classes()).not.toContain("is-sidebar-pinned");
+
+    await wrapper.get(".sidebar-toggle").trigger("click");
+    await wrapper.get(".app-sidebar").trigger("pointerleave");
+    expect(wrapper.get(".app-frame").classes()).toContain("is-sidebar-expanded");
+    expect(wrapper.get(".app-frame").classes()).toContain("is-sidebar-pinned");
+    expect(wrapper.get(".sidebar-toggle").attributes("aria-label")).toBe(translate("收起左侧菜单"));
+
+    await wrapper.get(".sidebar-toggle").trigger("click");
+    expect(wrapper.get(".app-frame").classes()).not.toContain("is-sidebar-expanded");
+    expect(wrapper.get(".app-frame").classes()).not.toContain("is-sidebar-pinned");
     wrapper.unmount();
   });
 
