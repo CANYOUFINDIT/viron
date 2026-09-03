@@ -183,7 +183,7 @@ function unpinSidebar() {
 }
 
 function toggleSidebar() {
-  if (sidebarPinned.value || sidebarHoverOpen.value) unpinSidebar();
+  if (sidebarPinned.value) unpinSidebar();
   else pinSidebar();
 }
 
@@ -307,13 +307,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="app-frame" :class="{ 'is-immersive': immersive, 'is-sidebar-expanded': sidebarExpanded, 'is-desktop': desktop, 'is-macos-desktop': macosDesktop }">
+  <div class="app-frame" :class="{ 'is-immersive': immersive, 'is-sidebar-expanded': sidebarExpanded, 'is-sidebar-pinned': sidebarPinned, 'is-desktop': desktop, 'is-macos-desktop': macosDesktop }">
     <aside class="app-sidebar" :aria-label="$t('应用导航')" @pointerenter="onSidebarPointerEnter" @pointerleave="onSidebarPointerLeave">
-      <div class="sidebar-prelayers" aria-hidden="true">
-        <span class="sidebar-prelayer sidebar-prelayer--back"></span>
-        <span class="sidebar-prelayer sidebar-prelayer--front"></span>
-      </div>
-
       <div class="app-sidebar__panel">
         <button class="brand-lockup" type="button" :aria-label="$t('打开环境总览')" :title="$t('Viron 环境运维平台')" @click="activateMenuItem('overview')">
           <span class="brand-mark"><img :src="vironLogoUrl" alt="" /></span>
@@ -387,11 +382,10 @@ onBeforeUnmount(() => {
 
         <nav id="envman-primary-menu" class="primary-menu" :aria-label="$t('主导航')">
           <button
-            v-for="(item, index) in visibleMenuItems"
+            v-for="item in visibleMenuItems"
             :key="item.key"
             class="primary-menu__item"
             :class="{ 'is-active': isMenuActive(item) }"
-            :style="{ '--item-delay': `${255 + index * 55}ms` }"
             type="button"
             :aria-current="isMenuActive(item) ? 'page' : undefined"
             :title="sidebarExpanded ? undefined : `${item.label}${item.planned ? $t(' · 待开放') : ''}`"
@@ -410,15 +404,15 @@ onBeforeUnmount(() => {
             type="button"
             :aria-expanded="sidebarExpanded"
             aria-controls="envman-primary-menu"
-            :aria-label="sidebarExpanded ? $t('收起左侧菜单') : $t('展开左侧菜单')"
-            :title="sidebarExpanded ? $t('收起菜单') : $t('展开菜单')"
+            :aria-label="sidebarPinned ? $t('收起左侧菜单') : sidebarHoverOpen ? $t('固定左侧菜单') : $t('展开左侧菜单')"
+            :title="sidebarPinned ? $t('收起菜单') : sidebarHoverOpen ? $t('固定左侧菜单') : $t('展开菜单')"
             @click="toggleSidebar"
           >
             <span class="header-utility-icon sidebar-toggle__icon">
-              <PanelLeftClose v-if="sidebarExpanded" :size="17" />
+              <PanelLeftClose v-if="sidebarPinned" :size="17" />
               <PanelLeftOpen v-else :size="17" />
             </span>
-            <span class="sidebar-label-wrap"><span class="sidebar-label">{{ sidebarExpanded ? $t('收起菜单') : $t('展开菜单') }}</span></span>
+            <span class="sidebar-label-wrap"><span class="sidebar-label">{{ sidebarPinned ? $t('收起菜单') : sidebarHoverOpen ? $t('固定左侧菜单') : $t('展开菜单') }}</span></span>
           </button>
           <MonitorAlertCenter :sidebar-expanded="sidebarExpanded" />
           <button

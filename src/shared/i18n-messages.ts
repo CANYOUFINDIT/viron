@@ -5331,6 +5331,7 @@ const enOverrides: Record<string, string> = {
   "下载 Viron 客户端": "Download Viron Client",
   "收起左侧菜单": "Collapse sidebar",
   "展开左侧菜单": "Expand sidebar",
+  "固定左侧菜单": "Pin sidebar",
   "关闭左侧菜单": "Close sidebar",
   "窗口标题栏": "Window title bar",
   "连接质量监控": "Connection quality monitor",
