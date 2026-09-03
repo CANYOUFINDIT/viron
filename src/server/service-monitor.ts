@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { executeSshCommand } from "./ssh/command.js";
+import { monitorCommand, monitorCommandNotFound } from "./monitor-command.js";
 import { evaluateMonitorHostAvailability, evaluateRecentMonitorAlerts } from "./monitor-alerts.js";
 
 const candidateSchema = z.object({
@@ -201,7 +202,6 @@ const monitorPullLimit = 20;
 const monitorPullMaxBytes = 16 * 1024 * 1024;
 const monitorPullCatchUpMaxBatches = 40;
 const monitorSampleRetentionMs = 30 * 24 * 60 * 60 * 1000;
-const monitorEnvironmentFile = "/etc/viron-monitor/viron-monitor.env";
 const monitorTransactionAttempts = 3;
 
 export function monitorSampleIsFresh(checkedAt: string, collectedAt: string | null | undefined, resolutionSeconds: number): boolean {
@@ -256,10 +256,9 @@ async function runMonitorTransaction<T>(app: FastifyInstance, work: () => T | Pr
   throw new Error("监控事务重试次数已耗尽");
 }
 
-function monitorCommand(after: number, collect: boolean, limit: number): string {
-  const prefix = `command -v viron-monitor >/dev/null 2>&1 || exit 127; set -a; if [ -r ${monitorEnvironmentFile} ]; then . ${monitorEnvironmentFile}; fi; set +a; `;
+function monitorPullCommand(after: number, collect: boolean, limit: number): string {
   const collectCommand = collect ? "viron-monitor collect --quiet && " : "";
-  return `${prefix}${collectCommand}viron-monitor pull --after ${Math.max(0, Math.trunc(after))} --limit ${limit}`;
+  return monitorCommand(`${collectCommand}viron-monitor pull --after ${Math.max(0, Math.trunc(after))} --limit ${limit}`);
 }
 
 async function executeMonitorPull(app: FastifyInstance, connectionId: string, after: number, collect: boolean) {
@@ -269,10 +268,10 @@ async function executeMonitorPull(app: FastifyInstance, connectionId: string, af
     preferredPullLimits.set(app, appLimits);
   }
   let limit = appLimits.get(connectionId) ?? monitorPullLimit;
-  let result = await executeSshCommand(app, connectionId, monitorCommand(after, collect, limit), { timeoutMs: 120_000, maxBytes: monitorPullMaxBytes });
+  let result = await executeSshCommand(app, connectionId, monitorPullCommand(after, collect, limit), { timeoutMs: 120_000, maxBytes: monitorPullMaxBytes });
   while (result.truncated && limit > 1) {
     limit = Math.max(1, Math.floor(limit / 2));
-    result = await executeSshCommand(app, connectionId, monitorCommand(after, false, limit), { timeoutMs: 120_000, maxBytes: monitorPullMaxBytes });
+    result = await executeSshCommand(app, connectionId, monitorPullCommand(after, false, limit), { timeoutMs: 120_000, maxBytes: monitorPullMaxBytes });
   }
   if (result.truncated) throw new Error("viron-monitor 单条数据超过 16 MiB，请检查目标机是否存在异常数量的服务候选");
   appLimits.set(connectionId, limit);
@@ -550,7 +549,7 @@ async function performMonitorHostSync(app: FastifyInstance, connectionId: string
     await markMonitorFailure(app, connectionId, "error", message);
     throw new Error(message);
   }
-  if (commandResult.exitCode === 127) {
+  if (monitorCommandNotFound(commandResult)) {
     const message = "目标机器尚未安装 viron-monitor";
     await markMonitorFailure(app, connectionId, "missing", message);
     return {
@@ -781,7 +780,6 @@ export function selectMonitorPollCandidates(
   const readyCutoff = now - Math.max(10, Math.min(3600, readyIntervalSeconds)) * 1000;
   const retryCutoff = now - 5 * 60_000;
   const due = candidates.filter((row) => {
-    if (!row.agent_id && !Number(row.install_managed ?? 0) && row.status !== null) return false;
     if (!row.status) return true;
     const attemptedAt = Date.parse(row.status === "ready" ? row.last_pulled_at ?? "" : row.updated_at ?? "");
     if (!Number.isFinite(attemptedAt)) return true;

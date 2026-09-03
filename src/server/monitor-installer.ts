@@ -10,6 +10,7 @@ import { quotePosixShellArg } from "../shared/environment-log.js";
 import { PRODUCT_VERSION } from "./product-info.js";
 import { executeSshCommand, executeSshCommandOnConnection } from "./ssh/command.js";
 import { connectSsh, type ConnectedSsh } from "./ssh/connector.js";
+import { monitorCommand, monitorPathSetupCommand } from "./monitor-command.js";
 
 export const DEFAULT_MONITOR_INSTALL_PATH = "/opt/viron/monitor";
 
@@ -40,13 +41,12 @@ const preflightMarker = "VIRON_MONITOR_PREFLIGHT_V1";
 const stagingPathPattern = /^\/tmp\/viron-monitor-install\.[A-Za-z0-9]+$/;
 
 export function restartMonitorServiceCommand(): string {
-  return [
-    "command -v viron-monitor >/dev/null 2>&1 || exit 127",
+  return monitorCommand([
     "if [ \"$(id -u)\" = 0 ]; then systemctl restart viron-monitor",
     "elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then sudo -n systemctl restart viron-monitor",
     "else exit 126",
     "fi",
-  ].join("; ");
+  ].join("; "));
 }
 
 const monitorUninstallMarker = "VIRON_MONITOR_UNINSTALL_V1";
@@ -288,6 +288,7 @@ function preflightCommand(installPath: string): string {
   const marker = quotePosixShellArg(posix.join(installPath, ".viron-monitor-install.json"));
   return [
     "set -u",
+    monitorPathSetupCommand,
     `printf '%s\\n' ${quotePosixShellArg(preflightMarker)}`,
     "printf 'kernel='; uname -s",
     "printf 'machine='; uname -m",
