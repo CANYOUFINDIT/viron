@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock3, RefreshCw } from "@lucide/vue";
+import { ElTooltip } from "element-plus";
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import {
   type MonitorAlertSeverity,
@@ -304,28 +305,14 @@ function isInteractiveDay(day: MonitorHostEventCalendarDay) {
 // 零延迟即时悬浮提示（Instant Custom Tooltip）
 interface HoveredDayInfo {
   day: MonitorHostEventCalendarDay;
-  x: number;
-  y: number;
-  placement: "top" | "bottom";
+  target: HTMLElement;
 }
 const hoveredDay = ref<HoveredDayInfo | null>(null);
 
 function handleCellMouseEnter(day: MonitorHostEventCalendarDay, event: MouseEvent | FocusEvent) {
   const target = event.currentTarget as HTMLElement | null;
   if (!target) return;
-  const rect = target.getBoundingClientRect();
-  const calendarEl = target.closest(".event-calendar") as HTMLElement | null;
-  const containerRect = calendarEl ? calendarEl.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth };
-
-  const topOffset = rect.top - containerRect.top;
-  const placement = topOffset < 78 ? "bottom" : "top";
-
-  hoveredDay.value = {
-    day,
-    x: rect.left - containerRect.left + rect.width / 2,
-    y: placement === "top" ? topOffset - 6 : topOffset + rect.height + 6,
-    placement,
-  };
+  hoveredDay.value = { day, target };
 }
 
 function handleCellMouseLeave() {
@@ -600,89 +587,103 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <!-- 零延迟即时悬浮提示卡片 (Instant Custom Popover) -->
-    <transition name="popover-fade">
-      <div
-        v-if="hoveredDay"
-        class="event-calendar__instant-tooltip"
-        :class="`placement-${hoveredDay.placement}`"
-        :style="{ left: `${hoveredDay.x}px`, top: `${hoveredDay.y}px` }"
-      >
-        <div class="tooltip-header">
-          <span class="tooltip-dot" :class="isDayActive(hoveredDay.day) ? dayTone(hoveredDay.day) : 'is-inactive'"></span>
-          <strong class="tooltip-date">{{ hoveredDay.day.date }}</strong>
-          <span class="tooltip-badge" :class="isDayActive(hoveredDay.day) ? dayTone(hoveredDay.day) : 'is-inactive'">
-            {{
-              !isDayActive(hoveredDay.day)
-                ? $t('未选范围')
-                : hoveredDay.day.future
-                  ? $t('未来')
-                  : !isDayLoaded(hoveredDay.day)
-                    ? isDayLoading(hoveredDay.day) ? $t('加载中') : $t('未加载')
-                    : hoveredDay.day.peakSeverity
-                      ? severityLabel(hoveredDay.day.peakSeverity)
-                      : isPlatform
-                        ? $t('无告警')
-                      : hoveredDay.day.date === todayKey && hoveredDay.day.coverageRatio < 0.8
-                        ? $t('检测中')
-                        : hoveredDay.day.coverageRatio < 0.8
-                          ? $t('无数据')
-                          : $t('健康')
-            }}
-          </span>
-        </div>
+    <!-- 挂载到页面浮层，避免卡片和滚动容器裁剪，并自动避让窗口边缘。 -->
+    <ElTooltip
+      :visible="Boolean(hoveredDay)"
+      :virtual-ref="hoveredDay?.target"
+      virtual-triggering
+      teleported
+      placement="top"
+      :offset="6"
+      :show-arrow="false"
+      :show-after="0"
+      :hide-after="0"
+      :enterable="false"
+      :popper-options="{ strategy: 'fixed', modifiers: [{ name: 'preventOverflow', options: { padding: 8 } }] }"
+      :popper-style="{ padding: 0, border: 0, background: 'transparent', pointerEvents: 'none' }"
+      popper-class="event-calendar-tooltip"
+    >
+      <template #content>
+        <div
+          v-if="hoveredDay"
+          class="event-calendar__instant-tooltip"
+        >
+          <div class="tooltip-header">
+            <span class="tooltip-dot" :class="isDayActive(hoveredDay.day) ? dayTone(hoveredDay.day) : 'is-inactive'"></span>
+            <strong class="tooltip-date">{{ hoveredDay.day.date }}</strong>
+            <span class="tooltip-badge" :class="isDayActive(hoveredDay.day) ? dayTone(hoveredDay.day) : 'is-inactive'">
+              {{
+                !isDayActive(hoveredDay.day)
+                  ? $t('未选范围')
+                  : hoveredDay.day.future
+                    ? $t('未来')
+                    : !isDayLoaded(hoveredDay.day)
+                      ? isDayLoading(hoveredDay.day) ? $t('加载中') : $t('未加载')
+                      : hoveredDay.day.peakSeverity
+                        ? severityLabel(hoveredDay.day.peakSeverity)
+                        : isPlatform
+                          ? $t('无告警')
+                        : hoveredDay.day.date === todayKey && hoveredDay.day.coverageRatio < 0.8
+                          ? $t('检测中')
+                          : hoveredDay.day.coverageRatio < 0.8
+                            ? $t('无数据')
+                            : $t('健康')
+              }}
+            </span>
+          </div>
 
-        <div class="tooltip-body">
-          <template v-if="!isDayActive(hoveredDay.day)">
-            <span class="tooltip-text is-dim">{{ $t('当前处于近 {0} 个月统计范围之外，可向左拖动竖线或点击以展开', [rangeMonths]) }}</span>
-          </template>
-          <template v-else-if="hoveredDay.day.future">
-            <span class="tooltip-text is-dim">{{ $t('暂无数据') }}</span>
-          </template>
-          <template v-else-if="!isDayLoaded(hoveredDay.day)">
-            <div v-if="isDayLoading(hoveredDay.day)" class="tooltip-stat is-detecting-stat">
-              <span class="detecting-pulse-dot"></span>
-              {{ $t('告警数据加载中') }}
-            </div>
-            <div v-else class="tooltip-stat is-no-data-stat">
-              {{ didDayFail(hoveredDay.day) ? $t('告警数据读取失败') : $t('当天告警数据尚未加载') }}
-            </div>
-          </template>
-          <template v-else-if="hoveredDay.day.activeEventCount">
-            <div class="tooltip-stat">
-              <span class="stat-highlight">{{ hoveredDay.day.activeEventCount }}</span> {{ $t('个事件') }}
-              <span class="stat-sep">·</span>
-              {{ $t('影响') }} <strong>{{ formatDuration(hoveredDay.day.affectedMinutes) }}</strong>
-            </div>
-            <div class="tooltip-hint" v-if="isInteractiveDay(hoveredDay.day)">
-              {{ $t('点击查看事件详情') }} ↗
-            </div>
-          </template>
-          <template v-else-if="isPlatform">
-            <div class="tooltip-stat is-healthy">
-              <CheckCircle2 :size="12" /> {{ $t('当天没有系统告警事件') }}
-            </div>
-            <div class="tooltip-hint">{{ $t('点击筛选当天事件列表') }} ↗</div>
-          </template>
-          <template v-else-if="hoveredDay.day.date === todayKey && hoveredDay.day.coverageRatio < 0.8">
-            <div class="tooltip-stat is-detecting-stat">
-              <span class="detecting-pulse-dot"></span>
-              {{ $t('运行检测中 · 采集覆盖率 {0}%', [Math.round(hoveredDay.day.coverageRatio * 100)]) }}
-            </div>
-          </template>
-          <template v-else-if="hoveredDay.day.coverageRatio < 0.8">
-            <div class="tooltip-stat is-no-data-stat">
-              {{ $t('该日期暂无监控采集数据') }}
-            </div>
-          </template>
-          <template v-else>
-            <div class="tooltip-stat is-healthy">
-              <CheckCircle2 :size="12" /> {{ $t('运行正常 · 覆盖 100%') }}
-            </div>
-          </template>
+          <div class="tooltip-body">
+            <template v-if="!isDayActive(hoveredDay.day)">
+              <span class="tooltip-text is-dim">{{ $t('当前处于近 {0} 个月统计范围之外，可向左拖动竖线或点击以展开', [rangeMonths]) }}</span>
+            </template>
+            <template v-else-if="hoveredDay.day.future">
+              <span class="tooltip-text is-dim">{{ $t('暂无数据') }}</span>
+            </template>
+            <template v-else-if="!isDayLoaded(hoveredDay.day)">
+              <div v-if="isDayLoading(hoveredDay.day)" class="tooltip-stat is-detecting-stat">
+                <span class="detecting-pulse-dot"></span>
+                {{ $t('告警数据加载中') }}
+              </div>
+              <div v-else class="tooltip-stat is-no-data-stat">
+                {{ didDayFail(hoveredDay.day) ? $t('告警数据读取失败') : $t('当天告警数据尚未加载') }}
+              </div>
+            </template>
+            <template v-else-if="hoveredDay.day.activeEventCount">
+              <div class="tooltip-stat">
+                <span class="stat-highlight">{{ hoveredDay.day.activeEventCount }}</span> {{ $t('个事件') }}
+                <span class="stat-sep">·</span>
+                {{ $t('影响') }} <strong>{{ formatDuration(hoveredDay.day.affectedMinutes) }}</strong>
+              </div>
+              <div class="tooltip-hint" v-if="isInteractiveDay(hoveredDay.day)">
+                {{ $t('点击查看事件详情') }} ↗
+              </div>
+            </template>
+            <template v-else-if="isPlatform">
+              <div class="tooltip-stat is-healthy">
+                <CheckCircle2 :size="12" /> {{ $t('当天没有系统告警事件') }}
+              </div>
+              <div class="tooltip-hint">{{ $t('点击筛选当天事件列表') }} ↗</div>
+            </template>
+            <template v-else-if="hoveredDay.day.date === todayKey && hoveredDay.day.coverageRatio < 0.8">
+              <div class="tooltip-stat is-detecting-stat">
+                <span class="detecting-pulse-dot"></span>
+                {{ $t('运行检测中 · 采集覆盖率 {0}%', [Math.round(hoveredDay.day.coverageRatio * 100)]) }}
+              </div>
+            </template>
+            <template v-else-if="hoveredDay.day.coverageRatio < 0.8">
+              <div class="tooltip-stat is-no-data-stat">
+                {{ $t('该日期暂无监控采集数据') }}
+              </div>
+            </template>
+            <template v-else>
+              <div class="tooltip-stat is-healthy">
+                <CheckCircle2 :size="12" /> {{ $t('运行正常 · 覆盖 100%') }}
+              </div>
+            </template>
+          </div>
         </div>
-      </div>
-    </transition>
+      </template>
+    </ElTooltip>
 
 
     <footer class="event-calendar__footer">
@@ -951,11 +952,9 @@ onBeforeUnmount(() => {
 
 /* 零延迟即时悬浮提示卡片 Instant Popover Tooltip */
 .event-calendar__instant-tooltip {
-  position: absolute;
-  z-index: 50;
   pointer-events: none;
-  min-width: 170px;
-  max-width: 280px;
+  min-width: min(170px, calc(100vw - 16px));
+  max-width: min(280px, calc(100vw - 16px));
   padding: 8px 11px;
   border-radius: 8px;
   background: rgba(15, 23, 42, 0.94);
@@ -965,12 +964,8 @@ onBeforeUnmount(() => {
   font-family: var(--font-body);
 }
 
-.event-calendar__instant-tooltip.placement-top {
-  transform: translate(-50%, -100%);
-}
-
-.event-calendar__instant-tooltip.placement-bottom {
-  transform: translate(-50%, 0);
+:global(.event-calendar-tooltip[data-popper-reference-hidden="true"]) {
+  visibility: hidden;
 }
 
 .tooltip-header {
@@ -1085,18 +1080,6 @@ onBeforeUnmount(() => {
   color: #94a3b8;
   font-size: 9.5px;
   text-align: right;
-}
-
-/* Popover 极速淡入淡出动画 */
-.popover-fade-enter-active,
-.popover-fade-leave-active {
-  transition: opacity 0.08s ease, transform 0.08s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.popover-fade-enter-from,
-.popover-fade-leave-to {
-  opacity: 0;
-  transform: translate(-50%, -95%) scale(0.96);
 }
 
 .event-calendar__error {
