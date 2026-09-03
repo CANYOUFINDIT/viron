@@ -116,7 +116,7 @@ describe("monitor history", () => {
     expect(order).toEqual(["personal:start", "personal:end", "organization:start", "organization:end"]);
   });
 
-  it("polls a known agent once and only discovers unseen SSH connections", () => {
+  it("polls a known agent once and backs off unsuccessful discovery for five minutes", () => {
     const now = Date.now();
     const dueAt = new Date(now - 120_000).toISOString();
     const rows = selectMonitorPollCandidates([
@@ -130,6 +130,17 @@ describe("monitor history", () => {
     ], now, 60);
 
     expect(rows.map((row) => row.ssh_connection_id).sort()).toEqual(["managed", "other-workspace", "unknown-a", "unknown-b"]);
+  });
+
+  it("rediscovers missing or unreachable probes after the retry interval", () => {
+    const now = Date.now();
+    const dueAt = new Date(now - 5 * 60_000).toISOString();
+    const rows = selectMonitorPollCandidates([
+      { ssh_connection_id: "installed-later", agent_id: "", workspace_type: "personal", workspace_id: "owner", install_managed: 0, status: "missing", last_pulled_at: dueAt, updated_at: dueAt },
+      { ssh_connection_id: "ssh-recovered", agent_id: "", workspace_type: "personal", workspace_id: "owner", install_managed: 0, status: "error", last_pulled_at: dueAt, updated_at: dueAt },
+    ], now, 60);
+
+    expect(rows.map((row) => row.ssh_connection_id)).toEqual(["installed-later", "ssh-recovered"]);
   });
 
   it("consolidates duplicate agent samples and exposes chart-ready dimensions through either connection", async () => {

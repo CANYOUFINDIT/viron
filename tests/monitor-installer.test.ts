@@ -9,6 +9,7 @@ import { buildApp } from "../src/server/app.js";
 import type { AppConfig } from "../src/server/config.js";
 import { ensureAdmin, openDatabase } from "../src/server/database.js";
 import { MonitorInstallError, normalizeMonitorInstallPath, restartMonitorServiceCommand, uninstallMonitorCommand } from "../src/server/monitor-installer.js";
+import { MONITOR_NOT_FOUND_MARKER } from "../src/server/monitor-command.js";
 import { monitorInstallTaskConcurrency, sanitizeMonitorInstallOutput } from "../src/server/monitor-install-task-manager.js";
 import { PRODUCT_VERSION } from "../src/server/product-info.js";
 
@@ -252,6 +253,7 @@ async function startMonitorSshServer() {
           } else if (info.command.includes("viron-monitor pull")) {
             if (state.monitorInstalled) stream.write(JSON.stringify(monitorPayload()));
             else {
+              stream.stderr.write(`${MONITOR_NOT_FOUND_MARKER}\n`);
               stream.exit(127);
               stream.end();
               return;

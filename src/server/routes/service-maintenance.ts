@@ -7,6 +7,7 @@ import { isUniqueConstraintError } from "../database-errors.js";
 import { quotePosixShellArg } from "../../shared/environment-log.js";
 import { hasExactIds } from "../../shared/tab-order.js";
 import { syncMonitorHost } from "../service-monitor.js";
+import { monitorCommand, monitorCommandNotFound } from "../monitor-command.js";
 import { executeSshCommand, executeSshScript } from "../ssh/command.js";
 import { closeSshConnectionPool } from "../ssh/connector.js";
 import {
@@ -1279,7 +1280,7 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
       if (invalidSelection) return reply.code(400).send({ error: "KUBERNETES_CONTEXT_NOT_DISCOVERED", message: "所选 kubeconfig context 已变化，请重新扫描后再选择" });
 
       const selectionDocument = Buffer.from(JSON.stringify({ version: 1, selections: body.selections }), "utf8").toString("base64");
-      const command = `command -v viron-monitor >/dev/null 2>&1 || exit 127; viron-monitor configure-kubernetes --selection-base64 ${quotePosixShellArg(selectionDocument)}`;
+      const command = monitorCommand(`viron-monitor configure-kubernetes --selection-base64 ${quotePosixShellArg(selectionDocument)}`);
       const started = Date.now();
       let result;
       try {
@@ -1289,7 +1290,7 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
         await writeAudit(app.db, { action: "monitor_host.kubernetes_contexts_update_failed", resourceType: "ssh_connection", resourceId: connection.id, summary: `更新 Kubernetes 扫描配置 ${connection.name} 失败`, details: { message, durationMs: Date.now() - started }, request });
         return reply.code(502).send({ error: "KUBERNETES_CONTEXTS_UPDATE_FAILED", message });
       }
-      if (result.exitCode === 127) return reply.code(409).send({ error: "MONITOR_UPDATE_REQUIRED", message: "当前 viron-monitor 版本不支持 Kubernetes 扫描，请先更新监控服务" });
+      if (monitorCommandNotFound(result)) return reply.code(409).send({ error: "MONITOR_NOT_INSTALLED", message: "目标机器尚未安装 viron-monitor" });
       if (result.exitCode !== 0) {
         const message = (result.stderr.trim() || result.stdout.trim() || "保存 Kubernetes 扫描配置失败").slice(0, 500);
         await writeAudit(app.db, { action: "monitor_host.kubernetes_contexts_update_failed", resourceType: "ssh_connection", resourceId: connection.id, summary: `更新 Kubernetes 扫描配置 ${connection.name} 失败`, details: { message, durationMs: Date.now() - started }, request });
@@ -1318,7 +1319,7 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
       const started = Date.now();
       try {
         const result = await executeSshCommand(app, connection.id, restartMonitorServiceCommand(), { timeoutMs: 60_000, maxBytes: 64 * 1024 });
-        if (result.exitCode === 127) {
+        if (monitorCommandNotFound(result)) {
           const message = "目标机器尚未安装 viron-monitor";
           await writeAudit(app.db, {
             action: "monitor_host.restart_failed",
@@ -1394,8 +1395,8 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
       if (!connection || !await canAccessConnection(app.db, request.admin!, "ssh", connection.id)) return reply.code(404).send({ error: "SSH_CONNECTION_NOT_FOUND", message: "SSH 连接不存在" });
       const started = Date.now();
       try {
-        const result = await executeSshCommand(app, connection.id, "command -v viron-monitor >/dev/null 2>&1 || exit 127; viron-monitor clear", { timeoutMs: 30_000, maxBytes: 64 * 1024 });
-        if (result.exitCode === 127) {
+        const result = await executeSshCommand(app, connection.id, monitorCommand("viron-monitor clear"), { timeoutMs: 30_000, maxBytes: 64 * 1024 });
+        if (monitorCommandNotFound(result)) {
           const message = "目标机器尚未安装 viron-monitor";
           await writeAudit(app.db, {
             action: "monitor_host.local_buffer_clear_failed",

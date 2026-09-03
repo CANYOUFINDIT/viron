@@ -12,6 +12,7 @@ import type { AppConfig } from "../src/server/config.js";
 import { ensureAdmin, openDatabase } from "../src/server/database.js";
 import { PRODUCT_VERSION } from "../src/server/product-info.js";
 import { pollMonitorHostsOnce } from "../src/server/service-monitor.js";
+import { MONITOR_NOT_FOUND_MARKER } from "../src/server/monitor-command.js";
 import { defaultMonitorAlertSettings } from "../src/shared/monitor-alerts.js";
 import { operationHeaders, waitForOperation } from "./helpers/service-operations.js";
 
@@ -135,7 +136,7 @@ async function startSshServer() {
   });
   const commands: string[] = [];
   const scripts: string[] = [];
-  const state = { monitorInstalled: true, kubernetesSelected: false, legacyKubernetesNull: false };
+  const state = { monitorInstalled: true, monitorExitCode: 0, kubernetesSelected: false, legacyKubernetesNull: false };
   const server = new Server({ hostKeys: [privateKey] }, (client) => {
     client.on("authentication", (context) => {
       if (context.method === "password" && context.username === "operator" && context.password === "maintenance-secret") context.accept();
@@ -164,6 +165,7 @@ async function startSshServer() {
             return;
           }
           if (info.command.includes("viron-monitor pull") && !state.monitorInstalled) {
+            stream.stderr.write(`${MONITOR_NOT_FOUND_MARKER}\n`);
             stream.exit(127);
             stream.end();
             return;
@@ -173,6 +175,12 @@ async function startSshServer() {
             stream.write('{"ok":true,"selectedContexts":1}\n');
           }
           else if (info.command.includes("viron-monitor pull")) {
+            if (state.monitorExitCode) {
+              stream.stderr.write("monitor loader failed\n");
+              stream.exit(state.monitorExitCode);
+              stream.end();
+              return;
+            }
             const payload = monitorPayload(state.kubernetesSelected);
             if (state.legacyKubernetesNull) {
               (payload.samples[0]!.payload as { kubernetesConfigs: unknown }).kubernetesConfigs = null;
@@ -182,6 +190,7 @@ async function startSshServer() {
           else if (info.command.includes("viron-monitor clear")) stream.write('{"ok":true,"cleared":{"samples":12,"gaps":2}}\n');
           else if (info.command.includes("systemctl restart") && info.command.includes("viron-monitor")) {
             if (!state.monitorInstalled) {
+              stream.stderr.write(`${MONITOR_NOT_FOUND_MARKER}\n`);
               stream.exit(127);
               stream.end();
               return;
@@ -615,6 +624,20 @@ describe("service maintenance", () => {
       expect(missingRestart.json()).toMatchObject({ error: "MONITOR_NOT_INSTALLED" });
       const missingWorkspace = await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/maintenance`, cookies });
       expect(missingWorkspace.json().discovery.hosts[0]).toMatchObject({ monitorStatus: "missing" });
+
+      ssh.state.monitorInstalled = true;
+      await pollMonitorHostsOnce(app);
+      expect(await app.db.prepare("SELECT status FROM monitor_hosts WHERE ssh_connection_id = ?").get(connectionId)).toEqual({ status: "missing" });
+      await app.db.prepare("UPDATE monitor_hosts SET updated_at = ? WHERE ssh_connection_id = ?")
+        .run(new Date(Date.now() - 5 * 60_000).toISOString(), connectionId);
+      await pollMonitorHostsOnce(app);
+      expect(await app.db.prepare("SELECT status FROM monitor_hosts WHERE ssh_connection_id = ?").get(connectionId)).toEqual({ status: "ready" });
+
+      ssh.state.monitorExitCode = 127;
+      const failed = await app.inject({ method: "POST", url: `/api/v1/environments/${environmentId}/monitor-hosts/${connectionId}/refresh`, cookies });
+      expect(failed.statusCode).toBe(502);
+      expect(await app.db.prepare("SELECT status, last_error FROM monitor_hosts WHERE ssh_connection_id = ?").get(connectionId))
+        .toEqual({ status: "error", last_error: "monitor loader failed" });
     } finally {
       await app.close();
       await new Promise<void>((resolve) => ssh.server.close(() => resolve()));
