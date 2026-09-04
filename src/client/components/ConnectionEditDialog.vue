@@ -6,6 +6,8 @@ import { computed, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { api } from "../api";
 import { session } from "../session";
+import ConnectionMethodPicker from "./ConnectionMethodPicker.vue";
+import DatabaseTlsSettings from "./DatabaseTlsSettings.vue";
 import SshLoginScriptEditor from "./SshLoginScriptEditor.vue";
 import TipIcon from "./TipIcon.vue";
 
@@ -29,6 +31,10 @@ interface EditableConnection {
   authType?: "password" | "privateKey" | "keyboardInteractive";
   sshKeyId?: string | null;
   hasPrivateKey?: boolean;
+  hasTlsCa?: boolean;
+  hasTlsCertificate?: boolean;
+  hasTlsPrivateKey?: boolean;
+  hasTlsPassphrase?: boolean;
   jumpConnectionId?: string | null;
   tags?: string[];
   engine?: "mysql" | "mariadb";
@@ -78,6 +84,9 @@ const form = reactive({
   tags: [] as string[],
   loginScriptEnabled: false,
   loginScript: "",
+  terminalType: "xterm-256color",
+  keepAliveSeconds: 30,
+  hostKeySha256: "",
   engine: "mysql" as "mysql" | "mariadb",
   defaultDatabase: "",
   connectionMode: "tcp" as "tcp" | "sshTunnel" | "httpTunnel",
@@ -88,6 +97,13 @@ const form = reactive({
   httpTunnelUsername: "",
   httpTunnelPassword: "",
   httpTunnelRejectUnauthorized: true,
+  charset: "utf8mb4",
+  timezone: "local",
+  connectTimeoutMs: 10000,
+  tlsCa: "",
+  tlsCertificate: "",
+  tlsPrivateKey: "",
+  tlsPassphrase: "",
 });
 
 const isCopying = computed(() => Boolean(props.connection && props.copyMode));
@@ -109,6 +125,16 @@ const profileManagerVisible = computed(() => Boolean(
 ));
 const selectedProfile = computed(() => props.profiles?.find((profile) => profile.id === selectedProfileId.value) ?? null);
 const selectedProfileIsActive = computed(() => selectedProfileId.value === (props.activeProfileId || "main"));
+const sshAuthChoices = computed(() => [
+  { value: "password", title: tr("密码"), description: tr("标准用户名与密码认证，适合常规主机。"), badge: tr("通用") },
+  { value: "privateKey", title: tr("SSH 密钥"), description: tr("引用工作空间托管密钥，适合生产环境。"), badge: tr("推荐") },
+  { value: "keyboardInteractive", title: tr("键盘交互"), description: tr("应对 PAM、堡垒机与动态挑战提示。"), badge: "PAM" },
+]);
+const databaseModeChoices = computed(() => [
+  { value: "tcp", title: tr("TCP 直连"), description: tr("直接访问数据库地址，适合内网、VPN 与云网络。"), badge: tr("标准") },
+  { value: "sshTunnel", title: "SSH Tunnel", description: tr("复用已托管的 SSH 认证与跳板链路。"), badge: tr("安全") },
+  { value: "httpTunnel", title: "HTTP Tunnel", description: tr("通过兼容 Navicat 的 HTTP 端点访问受限网络。"), badge: tr("兼容") },
+]);
 
 function close() {
   emit("update:modelValue", false);
@@ -133,6 +159,9 @@ function initializeForm() {
     tags: [...(connection?.tags ?? [])],
     loginScriptEnabled: Boolean(options.loginScriptEnabled),
     loginScript: String(options.loginScript ?? ""),
+    terminalType: String(options.terminalType ?? "xterm-256color"),
+    keepAliveSeconds: Number(options.keepAliveSeconds ?? 30),
+    hostKeySha256: String(options.hostKeySha256 ?? ""),
     engine: connection?.engine ?? "mysql",
     defaultDatabase: connection?.defaultDatabase ?? "",
     connectionMode: connection?.connectionMode ?? "tcp",
@@ -143,6 +172,13 @@ function initializeForm() {
     httpTunnelUsername: "",
     httpTunnelPassword: "",
     httpTunnelRejectUnauthorized: options.httpTunnelRejectUnauthorized !== false,
+    charset: String(options.charset ?? "utf8mb4"),
+    timezone: String(options.timezone ?? "local"),
+    connectTimeoutMs: Number(options.connectTimeoutMs ?? 10000),
+    tlsCa: "",
+    tlsCertificate: "",
+    tlsPrivateKey: "",
+    tlsPassphrase: "",
   });
 }
 
@@ -190,10 +226,10 @@ async function save() {
         tags: form.tags,
         options: {
           ...currentOptions,
-          terminalType: String(currentOptions.terminalType ?? "xterm-256color"),
-          keepAliveSeconds: Number(currentOptions.keepAliveSeconds ?? 30),
+          terminalType: form.terminalType,
+          keepAliveSeconds: form.keepAliveSeconds,
           encoding: String(currentOptions.encoding ?? "utf-8"),
-          hostKeySha256: String(currentOptions.hostKeySha256 ?? ""),
+          hostKeySha256: form.hostKeySha256.trim(),
           loginScriptEnabled: form.loginScriptEnabled,
           loginScript: form.loginScript,
         },
@@ -204,6 +240,11 @@ async function save() {
         body: JSON.stringify(payload),
       });
     } else {
+      if (form.connectionMode === "sshTunnel" && !form.sshConnectionId) return ElMessage.warning(tr("请选择用于数据库隧道的 SSH 连接"));
+      if (form.connectionMode === "httpTunnel" && !form.httpTunnelUrl.trim()) return ElMessage.warning(tr("请填写 HTTP Tunnel URL"));
+      const hasCertificate = Boolean(form.tlsCertificate || connection?.hasTlsCertificate);
+      const hasPrivateKey = Boolean(form.tlsPrivateKey || connection?.hasTlsPrivateKey);
+      if (form.sslEnabled && hasCertificate !== hasPrivateKey) return ElMessage.warning(tr("双向 TLS 必须同时配置客户端证书和客户端私钥"));
       const currentOptions = connection?.options ?? {};
       const currentSsl = (currentOptions.ssl as Record<string, unknown> | undefined) ?? {};
       const payload: Record<string, unknown> = {
@@ -220,17 +261,25 @@ async function save() {
         connectionMode: form.connectionMode,
         options: {
           ...currentOptions,
-          charset: String(currentOptions.charset ?? "utf8mb4"),
-          timezone: String(currentOptions.timezone ?? "local"),
-          connectTimeoutMs: Number(currentOptions.connectTimeoutMs ?? 10000),
+          charset: form.charset,
+          timezone: form.timezone,
+          connectTimeoutMs: form.connectTimeoutMs,
           sshConnectionId: form.sshConnectionId,
           ssl: { ...currentSsl, enabled: form.sslEnabled, rejectUnauthorized: form.rejectUnauthorized },
           httpTunnelUrl: form.httpTunnelUrl,
           httpTunnelRejectUnauthorized: form.httpTunnelRejectUnauthorized,
         },
       };
-      if (!connection || form.password || form.httpTunnelUsername || form.httpTunnelPassword) {
-        payload.credential = { password: form.password, httpTunnelUsername: form.httpTunnelUsername, httpTunnelPassword: form.httpTunnelPassword };
+      if (!connection || form.password || form.httpTunnelUsername || form.httpTunnelPassword || form.tlsCa || form.tlsCertificate || form.tlsPrivateKey || form.tlsPassphrase) {
+        payload.credential = {
+          password: form.password,
+          httpTunnelUsername: form.httpTunnelUsername,
+          httpTunnelPassword: form.httpTunnelPassword,
+          tlsCa: form.tlsCa,
+          tlsCertificate: form.tlsCertificate,
+          tlsPrivateKey: form.tlsPrivateKey,
+          tlsPassphrase: form.tlsPassphrase,
+        };
       }
       const path = isProfile.value
         ? `/api/v1/database-connections/${props.profileParentId}/profiles${isEditingProfile.value ? `/${connection!.id}` : ""}`
@@ -316,10 +365,24 @@ watch(() => props.profiles?.map((profile) => profile.id).join(","), () => {
         <header class="form-section__header"><strong>{{ activeConnectionType === 'ssh' ? $t('认证与登录') : $t('数据库与安全') }}</strong></header>
         <div class="form-grid form-grid--two">
           <template v-if="activeConnectionType === 'ssh'">
-            <el-form-item :label="$t('认证方式')"><el-select v-model="form.authType" style="width:100%"><el-option :label="$t('密码')" value="password" /><el-option :label="$t('SSH 密钥')" value="privateKey" /><el-option :label="$t('键盘交互')" value="keyboardInteractive" /></el-select></el-form-item>
-            <el-form-item :label="$t('单级跳板机')"><el-select v-model="form.jumpConnectionId" clearable :placeholder="$t('不使用跳板机')" style="width:100%"><el-option v-for="item in availableSshOptions" :key="item.id" :label="`${item.name} · ${item.host}`" :value="item.id" /></el-select></el-form-item>
+            <ConnectionMethodPicker v-model="form.authType" :label="$t('认证方式')" :choices="sshAuthChoices" />
             <el-form-item v-if="form.authType !== 'privateKey'" :label="$t('密码')" class="form-span-2"><el-input v-model="form.password" type="password" show-password :placeholder="preservesCredential ? $t('留空表示沿用原密码') : $t('连接密码，可稍后补录')" /></el-form-item>
             <el-form-item v-else :label="$t('SSH 密钥')" class="form-span-2" required><div class="inline-create-field"><el-select v-model="form.sshKeyId" clearable filterable :placeholder="preservesLegacyPrivateKey ? $t('沿用旧版内嵌私钥，或选择托管密钥') : $t('选择当前工作空间的密钥')" style="width:100%"><el-option v-for="key in sshKeys" :key="key.id" :label="`${key.name} · ${key.fingerprint}`" :value="key.id" /></el-select><el-button :aria-label="$t('打开 SSH 密钥管理')" :title="$t('密钥管理')" @click="close(); router.push({ name: 'ssh-keys' })"><KeyRound :size="14" /></el-button></div><small v-if="preservesLegacyPrivateKey && !form.sshKeyId">{{ $t('当前连接仍使用旧版内嵌私钥；选择托管密钥后将改为统一引用。') }}</small><small v-else-if="!sshKeys.length">{{ $t('当前空间没有可用密钥，请先进入 SSH 密钥管理导入或生成。') }}</small></el-form-item>
+            <el-form-item class="form-span-2">
+              <template #label><span class="form-label-with-tip">{{ $t('跳板机 / ProxyJump') }}<TipIcon :content="$t('目标连接会通过所选 SSH 主机转发；该 SSH 主机本身不能再引用跳板机。')" placement="right" /></span></template>
+              <el-select v-model="form.jumpConnectionId" clearable :placeholder="$t('直连，不使用跳板机')" style="width:100%"><el-option v-for="item in availableSshOptions" :key="item.id" :label="item.name + ' · ' + item.host" :value="item.id" /></el-select>
+            </el-form-item>
+            <details class="connection-advanced-panel form-span-2">
+              <summary><span><strong>{{ $t('SSH 高级参数') }}</strong><small>{{ $t('终端兼容、连接保活与主机身份固定') }}</small></span><span class="connection-advanced-panel__status">{{ form.hostKeySha256 ? $t('已固定主机') : $t('使用默认值') }}</span></summary>
+              <div class="form-grid form-grid--two connection-advanced-panel__body">
+                <el-form-item :label="$t('终端类型')"><el-select v-model="form.terminalType" allow-create filterable style="width:100%"><el-option label="xterm-256color" value="xterm-256color" /><el-option label="xterm" value="xterm" /><el-option label="vt100" value="vt100" /><el-option label="linux" value="linux" /></el-select></el-form-item>
+                <el-form-item :label="$t('保活间隔')"><el-input-number v-model="form.keepAliveSeconds" :min="0" :max="600" controls-position="right" style="width:100%" /><small>{{ $t('秒；设为 0 可关闭保活') }}</small></el-form-item>
+                <el-form-item class="form-span-2">
+                  <template #label><span class="form-label-with-tip">{{ $t('主机密钥 SHA-256') }}<TipIcon :content="$t('填写后会固定服务器主机密钥，密钥不匹配时拒绝连接，可防止中间人攻击。')" placement="right" /></span></template>
+                  <el-input v-model="form.hostKeySha256" class="mono-input" placeholder="SHA256:AbCdEf…" clearable />
+                </el-form-item>
+              </div>
+            </details>
             <el-form-item :label="$t('登录脚本')" class="form-span-2"><SshLoginScriptEditor v-model="form.loginScript" v-model:enabled="form.loginScriptEnabled" /></el-form-item>
           </template>
 
@@ -327,11 +390,30 @@ watch(() => props.profiles?.map((profile) => profile.id).join(","), () => {
             <el-form-item :label="$t('数据库类型')"><el-select v-model="form.engine" style="width:100%"><el-option label="MySQL" value="mysql" /><el-option label="MariaDB" value="mariadb" /></el-select></el-form-item>
             <el-form-item :label="$t('默认数据库')"><el-input v-model="form.defaultDatabase" /></el-form-item>
             <el-form-item :label="$t('密码')" class="form-span-2"><el-input v-model="form.password" type="password" show-password :placeholder="preservesCredential ? $t('留空表示沿用原密码') : $t('数据库密码，可稍后补录')" /></el-form-item>
-            <el-form-item :label="$t('连接方式')"><el-select v-model="form.connectionMode" style="width:100%"><el-option :label="$t('TCP 直连')" value="tcp" /><el-option label="SSH Tunnel" value="sshTunnel" /><el-option label="HTTP Tunnel" value="httpTunnel" /></el-select></el-form-item>
-            <el-form-item v-if="form.connectionMode === 'sshTunnel'" :label="$t('SSH 隧道连接')"><el-select v-model="form.sshConnectionId" :placeholder="$t('选择已有 SSH 连接')" style="width:100%"><el-option v-for="item in availableSshOptions" :key="item.id" :label="`${item.name} · ${item.host}`" :value="item.id" /></el-select></el-form-item>
+            <ConnectionMethodPicker v-model="form.connectionMode" :label="$t('网络链路')" :choices="databaseModeChoices" />
+            <el-form-item v-if="form.connectionMode === 'sshTunnel'" :label="$t('SSH 隧道连接')" class="form-span-2" required><el-select v-model="form.sshConnectionId" filterable :placeholder="$t('选择已有 SSH 连接')" style="width:100%"><el-option v-for="item in availableSshOptions" :key="item.id" :label="item.name + ' · ' + item.host" :value="item.id" /></el-select><small>{{ $t('隧道会复用该连接的认证、主机指纹与 ProxyJump 配置。') }}</small></el-form-item>
             <template v-if="form.connectionMode === 'httpTunnel'"><el-form-item label="HTTP Tunnel URL" class="form-span-2"><el-input v-model="form.httpTunnelUrl" /></el-form-item><el-form-item :label="$t('HTTP Basic Auth 用户名')"><el-input v-model="form.httpTunnelUsername" :placeholder="preservesCredential ? $t('留空表示沿用原认证') : $t('可选')" /></el-form-item><el-form-item :label="$t('HTTP Basic Auth 密码')"><el-input v-model="form.httpTunnelPassword" type="password" show-password :placeholder="preservesCredential ? $t('留空表示沿用原认证') : $t('可选')" /></el-form-item><el-form-item :label="$t('校验 Tunnel HTTPS 证书')"><el-switch v-model="form.httpTunnelRejectUnauthorized" /></el-form-item></template>
-            <el-form-item :label="$t('启用 SSL/TLS')"><el-switch v-model="form.sslEnabled" /></el-form-item>
-            <el-form-item v-if="form.sslEnabled" :label="$t('校验服务器证书')"><el-switch v-model="form.rejectUnauthorized" /></el-form-item>
+            <DatabaseTlsSettings
+              v-model:enabled="form.sslEnabled"
+              v-model:reject-unauthorized="form.rejectUnauthorized"
+              v-model:ca="form.tlsCa"
+              v-model:certificate="form.tlsCertificate"
+              v-model:private-key="form.tlsPrivateKey"
+              v-model:passphrase="form.tlsPassphrase"
+              :preserves-credential="preservesCredential"
+              :has-tls-ca="connection?.hasTlsCa"
+              :has-tls-certificate="connection?.hasTlsCertificate"
+              :has-tls-private-key="connection?.hasTlsPrivateKey"
+              :has-tls-passphrase="connection?.hasTlsPassphrase"
+            />
+            <details class="connection-advanced-panel form-span-2">
+              <summary><span><strong>{{ $t('数据库高级参数') }}</strong><small>{{ $t('字符集、会话时区与连接超时') }}</small></span><span class="connection-advanced-panel__status">{{ form.charset }} · {{ form.connectTimeoutMs / 1000 }}s</span></summary>
+              <div class="form-grid form-grid--two connection-advanced-panel__body">
+                <el-form-item :label="$t('连接字符集')"><el-select v-model="form.charset" filterable allow-create style="width:100%"><el-option label="utf8mb4" value="utf8mb4" /><el-option label="utf8" value="utf8" /><el-option label="latin1" value="latin1" /><el-option label="gbk" value="gbk" /></el-select></el-form-item>
+                <el-form-item :label="$t('会话时区')"><el-select v-model="form.timezone" filterable allow-create style="width:100%"><el-option :label="$t('跟随执行端')" value="local" /><el-option label="UTC / Z" value="Z" /><el-option label="+08:00" value="+08:00" /><el-option label="+00:00" value="+00:00" /></el-select></el-form-item>
+                <el-form-item :label="$t('连接超时')" class="form-span-2"><el-input-number v-model="form.connectTimeoutMs" :min="1000" :max="120000" :step="1000" controls-position="right" style="width:100%" /><small>{{ $t('毫秒，允许 1–120 秒') }}</small></el-form-item>
+              </div>
+            </details>
           </template>
         </div>
       </section>

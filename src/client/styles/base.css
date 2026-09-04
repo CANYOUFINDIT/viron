@@ -907,6 +907,16 @@ button { color: inherit; }
 .connection-form .el-radio-group { width: 100%; }
 .connection-form .el-radio-button { flex: 1; }
 .connection-form .el-radio-button__inner { width: 100%; min-height: 42px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; font-size: 13px; font-weight: 700; }
+.connection-advanced-panel { margin-bottom: 18px; overflow: hidden; border: 1px solid var(--ink-200); border-radius: 9px; background: var(--surface); }
+.connection-advanced-panel > summary { min-height: 52px; padding: 10px 13px; color: var(--ink-700); display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; list-style: none; transition: background-color .16s ease; }
+.connection-advanced-panel > summary::-webkit-details-marker { display: none; }
+.connection-advanced-panel > summary:hover { background: var(--ink-50); }
+.connection-advanced-panel > summary > span:first-child { display: grid; gap: 2px; }
+.connection-advanced-panel > summary strong { color: var(--ink-800); font-size: 13px; }
+.connection-advanced-panel > summary small { color: var(--ink-400); font-size: 11px; }
+.connection-advanced-panel__status { flex: 0 0 auto; padding: 3px 7px; border-radius: 999px; background: var(--ink-50); color: var(--ink-500); font-family: var(--font-mono); font-size: 10px; font-weight: 700; }
+.connection-advanced-panel__body { padding: 14px 13px 0; border-top: 1px solid var(--ink-100); }
+.mono-input .el-input__inner { font-family: var(--font-mono); }
 .connection-profile-manager .form-section__header { align-items: center; }
 .connection-profile-manager .form-section__header > button,
 .connection-profile-manager__actions button { min-height: 28px; padding: 0 9px; border: 1px solid var(--ink-200); border-radius: 5px; background: var(--surface); color: var(--ink-700); display: inline-flex; align-items: center; justify-content: center; gap: 5px; font: inherit; font-size: 12px; cursor: pointer; }
