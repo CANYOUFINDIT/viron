@@ -30,6 +30,7 @@ export function connectSshClient(client: Client, config: ConnectConfig, keyboard
 
     try {
       client.connect(config);
+      client.setNoDelay(true);
     } catch (error) {
       if (settled) return;
       settled = true;

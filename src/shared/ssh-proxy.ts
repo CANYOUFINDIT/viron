@@ -23,6 +23,7 @@ function connectSocket(socket: Socket): Promise<Socket> {
 
 function finishProxyHandshake(socket: Socket): void {
   socket.setTimeout(0);
+  socket.setNoDelay(true);
   socket.removeAllListeners("timeout");
   setImmediate(() => { if (!socket.destroyed) socket.resume(); });
 }

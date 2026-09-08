@@ -5,6 +5,7 @@ import { connectSshClient } from "../src/shared/ssh-client.js";
 
 class FakeSshClient extends EventEmitter {
   readonly connect = vi.fn((_config: ConnectConfig) => this);
+  readonly setNoDelay = vi.fn((_value?: boolean) => this);
 }
 
 const config: ConnectConfig = {
@@ -24,6 +25,7 @@ describe("SSH client connection lifecycle", () => {
     await expect(connection).rejects.toBe(socketError);
 
     expect(client.listenerCount("error")).toBe(1);
+    expect(client.setNoDelay).toHaveBeenCalledWith(true);
     expect(() => client.emit("error", new Error("Connection lost before handshake"))).not.toThrow();
   });
 

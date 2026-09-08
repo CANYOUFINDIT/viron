@@ -16,6 +16,17 @@ describe("ssh terminal styles", () => {
     expect(styles).toContain(":root.bright .ssh-terminal-pane { background: #fbfcfd; }");
   });
 
+  it("predicts local echo at the shell prompt and coalesces keystrokes before writing SSH input", () => {
+    expect(pane).toContain("SshEchoPredictor");
+    expect(pane).toContain("SshTerminalInputBuffer");
+    expect(pane).toContain("predictLocalEcho(data)");
+    expect(pane).toContain("echoPredictor.applyRemote(executionText)");
+    expect(pane).toContain("inputBuffer.enqueueText(data)");
+    expect(pane).toContain("inputBuffer.enqueueBinary(bytes)");
+    expect(pane).not.toContain("desktopWriteQueue");
+    expect(pane).not.toContain("desktopPendingBytes");
+  });
+
   it("repaints the lazily loaded xterm viewport so its default black background cannot win", () => {
     expect(pane).toContain("function paintTerminalChrome()");
     expect(pane).toContain("viewport.style.backgroundColor = \"transparent\"");
