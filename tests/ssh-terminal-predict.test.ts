@@ -6,6 +6,60 @@ import {
   type SshEchoPredictContext,
 } from "../src/client/ssh-terminal-predict.js";
 
+function playLocalEcho(typed: string[], remote: string[]): string[] {
+  const predictor = new SshEchoPredictor();
+  const writes: string[] = [];
+  for (const data of typed) {
+    predictor.predict(data);
+    writes.push(data);
+  }
+  for (const chunk of remote) {
+    const applied = predictor.applyRemote(chunk);
+    if (applied.rollback) writes.push(applied.rollback);
+    if (applied.display) writes.push(applied.display);
+  }
+  expect(predictor.pending).toBe("");
+  return writes;
+}
+
+function visibleLine(prompt: string, writes: string[]): string {
+  let line = prompt;
+  let cursor = prompt.length;
+  const write = (text: string) => {
+    let index = 0;
+    while (index < text.length) {
+      if (text.startsWith("\x1b[", index)) {
+        const end = text.slice(index + 2).search(/[A-Za-z]/);
+        if (end < 0) break;
+        const seq = text.slice(index, index + 2 + end + 1);
+        const body = seq.slice(2, -1);
+        const command = seq.at(-1);
+        const count = Number(body || "1");
+        if (command === "D") cursor = Math.max(0, cursor - (Number.isFinite(count) ? count : 1));
+        else if (command === "K") {
+          if (body === "2") line = "";
+          else line = line.slice(0, cursor);
+        }
+        index += seq.length;
+        continue;
+      }
+      const character = text[index];
+      if (character === "\r") cursor = 0;
+      else if (character === "\n") {
+        line = "";
+        cursor = 0;
+      } else if (character === "\b") cursor = Math.max(0, cursor - 1);
+      else {
+        line = `${line.slice(0, cursor)}${character}${line.slice(cursor + 1)}`;
+        cursor += 1;
+      }
+      index += 1;
+    }
+  };
+  for (const chunk of writes) write(chunk);
+  return line;
+}
+
 function context(overrides: Partial<SshEchoPredictContext> = {}): SshEchoPredictContext {
   return {
     acceptingCommandInput: true,
@@ -58,6 +112,19 @@ describe("SSH local echo prediction", () => {
     predictor.predict("中");
     expect(predictor.pendingWidth()).toBe(2);
     expect(predictor.applyRemote("nope")).toEqual({ rollback: "\x1b[2D\x1b[K", display: "nope" });
+  });
+
+  it("keeps a single copy of delayed bash echo, tab completion, and backspace", () => {
+    expect(visibleLine("host$ ", playLocalEcho(["l", "s"], ["l", "s"]))).toBe("host$ ls");
+    expect(visibleLine("host$ ", playLocalEcho(["ls"], ["ls"]))).toBe("host$ ls");
+    expect(visibleLine("host$ ", playLocalEcho(["l"], ["l", "s"]))).toBe("host$ ls");
+    expect(visibleLine("host$ ", playLocalEcho(["abc"], ["abc", "\b \b"])).trimEnd()).toBe("host$ ab");
+    expect(visibleLine("host$ ", playLocalEcho(["l"], ["l", "\x1b[2K\rhost$ cd /tmp"]))).toBe("host$ cd /tmp");
+    expect(visibleLine("host$ ", playLocalEcho(["l"], ["\x1b[2K\rhost$ cd /tmp"]))).toBe("host$ cd /tmp");
+    expect(visibleLine("host$ ", playLocalEcho(["ec"], ["echo hello"]))).toBe("host$ echo hello");
+    expect(visibleLine("host$ ", playLocalEcho(["l", "s"], ["l", "\x08ls"]))).toBe("host$ ls");
+    expect(visibleLine("host$ ", playLocalEcho(["ls"], ["l\x08ls"]))).toBe("host$ ls");
+    expect(visibleLine("host$ ", playLocalEcho(["ls"], ["ls", "\x08\x1b[K"])).trimEnd()).toBe("host$ l");
   });
 
   it("does not write empty remote while predictions are still outstanding", () => {
