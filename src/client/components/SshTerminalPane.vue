@@ -31,6 +31,8 @@ import {
   sendDesktopSshInput,
 } from "../desktop";
 import { ServiceSocket } from "../service-socket";
+import { SshTerminalInputBuffer } from "../ssh-terminal-input-buffer";
+import { canPredictSshInput, SshEchoPredictor } from "../ssh-terminal-predict";
 import { shouldReconnectFromTerminalKey, type SshTerminalStatus } from "../ssh-terminal-reconnect";
 import { consoleUsesLightPalette, theme } from "../theme";
 
@@ -85,9 +87,13 @@ let desktopAttached = false;
 let desktopAttaching = false;
 let desktopEventBacklog: Uint8Array[] = [];
 let unsubscribeDesktopEvents: (() => void) | null = null;
-let desktopWriteQueue = Promise.resolve();
-let desktopPendingBytes = 0;
 let connectionGeneration = 0;
+const echoPredictor = new SshEchoPredictor();
+const inputBuffer = new SshTerminalInputBuffer({
+  sendText: (data) => flushTransportText(data),
+  sendBinary: (data) => flushTransportBinary(data),
+  onError: (error) => handleTransportError(error),
+});
 let resizeObserver: ResizeObserver | null = null;
 let resizeTimer: number | undefined;
 let transferNoticeTimer: number | undefined;
@@ -285,6 +291,8 @@ function transportConnected(): boolean {
 }
 
 function handleTransportError(error: unknown) {
+  echoPredictor.reset();
+  inputBuffer.reset();
   if (props.localExecution) desktopAttached = false;
   settleAgentCommand(new Error(errorMessage(error)));
   if (zmodemSession) failTransfer(error);
@@ -292,30 +300,49 @@ function handleTransportError(error: unknown) {
   emit("status", "disconnected");
 }
 
-function enqueueDesktopWrite(operation: () => Promise<unknown>, bytes: number) {
-  const generation = connectionGeneration;
-  desktopPendingBytes += bytes;
-  desktopWriteQueue = desktopWriteQueue
-    .then(async () => {
-      if (generation !== connectionGeneration) return;
-      if (!desktopAttached) throw new Error(tr("SSH 终端连接已断开"));
-      await operation();
-    })
-    .catch((error) => { if (generation === connectionGeneration) handleTransportError(error); })
-    .finally(() => { desktopPendingBytes = Math.max(0, desktopPendingBytes - bytes); });
+async function flushTransportText(data: string) {
+  if (!transportConnected()) throw new Error(tr("SSH 终端连接已断开"));
+  if (props.localExecution) {
+    await sendDesktopSshInput(props.sessionId, data);
+    return;
+  }
+  socket!.send(JSON.stringify({ type: "input", data }));
+}
+
+async function flushTransportBinary(data: Uint8Array) {
+  if (!transportConnected()) throw new Error(tr("SSH 终端连接已断开"));
+  if (props.localExecution) {
+    await sendDesktopSshBinary(props.sessionId, data);
+    return;
+  }
+  socket!.send(data);
+}
+
+function predictLocalEcho(data: string): void {
+  if (!terminal || zmodemSession) return;
+  const snapshot = commandTracker.snapshot();
+  if (!canPredictSshInput(data, {
+    acceptingCommandInput: acceptingCommandInput.value,
+    alternateBuffer: terminal.buffer.active.type === "alternate",
+    reliableCommand: snapshot.reliable,
+    cursorAtEnd: snapshot.cursor === snapshot.value.length,
+    cursorX: terminal.buffer.active.cursorX + echoPredictor.pendingWidth(),
+    cols: terminal.cols,
+  })) return;
+  echoPredictor.predict(data);
+  terminal.write(data);
 }
 
 function sendTransportText(data: string) {
   if (!transportConnected()) throw new Error(tr("SSH 终端连接已断开"));
-  if (props.localExecution) enqueueDesktopWrite(() => sendDesktopSshInput(props.sessionId, data), new TextEncoder().encode(data).byteLength);
-  else socket!.send(JSON.stringify({ type: "input", data }));
+  predictLocalEcho(data);
+  inputBuffer.enqueueText(data);
 }
 
 function sendBinary(data: number[] | Uint8Array) {
   if (!transportConnected()) throw new Error(tr("SSH 终端连接已断开"));
   const bytes = data instanceof Uint8Array ? data : Uint8Array.from(data);
-  if (props.localExecution) enqueueDesktopWrite(() => sendDesktopSshBinary(props.sessionId, bytes), bytes.byteLength);
-  else socket!.send(bytes);
+  inputBuffer.enqueueBinary(bytes);
 }
 
 function observeTerminalOutput(text: string) {
@@ -329,9 +356,16 @@ function observeTerminalOutput(text: string) {
 
 function writeTerminalOutput(octets: number[] | Uint8Array) {
   if (!octets.length) return;
-  const executionText = outputDecoder.decode(octets instanceof Uint8Array ? octets : Uint8Array.from(octets), { stream: true });
+  const payload = octets instanceof Uint8Array ? octets : Uint8Array.from(octets);
+  const executionText = outputDecoder.decode(payload, { stream: true });
   observeTerminalOutput(executionText);
-  terminal?.write(octets instanceof Uint8Array ? octets : Uint8Array.from(octets));
+  if (echoPredictor.pending) {
+    const applied = echoPredictor.applyRemote(executionText);
+    if (applied.rollback) terminal?.write(applied.rollback);
+    if (applied.display) terminal?.write(applied.display);
+  } else {
+    terminal?.write(payload);
+  }
   const completed = agentExecution?.capture.append(executionText);
   if (completed && agentExecution) {
     settleAgentCommand(completed);
@@ -645,7 +679,7 @@ function chooseUploadFiles() {
 }
 
 async function waitForUploadCapacity() {
-  while (transportConnected() && (props.localExecution ? desktopPendingBytes : socket!.bufferedAmount) > MAX_BUFFERED_UPLOAD_BYTES) {
+  while (transportConnected() && inputBuffer.bufferedBytes + (props.localExecution ? 0 : socket!.bufferedAmount) > MAX_BUFFERED_UPLOAD_BYTES) {
     if (transferCancelled) throw new Error(tr("文件上传已取消"));
     await new Promise((resolve) => window.setTimeout(resolve, 20));
   }
@@ -736,6 +770,7 @@ function handleZmodemDetection(detection: Zmodem.Detection) {
     receivedFiles = 0;
     transferCancelled = false;
     pendingTransferEnd = null;
+    echoPredictor.reset();
     setTerminalInputEnabled(false);
     session.on("session_end", handleZmodemSessionEnd);
     if (session.type === "send") {
@@ -893,6 +928,8 @@ async function connect(ticket: string) {
   if (!terminal) return;
   const generation = ++connectionGeneration;
   commandTracker.reset();
+  echoPredictor.reset();
+  inputBuffer.reset();
   outputDecoder = new TextDecoder();
   outputTail = "";
   currentDirectory = UNKNOWN_REMOTE_CWD;
@@ -1027,6 +1064,8 @@ watch(commandSuggestions, (suggestions) => {
 
 onBeforeUnmount(() => {
   connectionGeneration += 1;
+  echoPredictor.reset();
+  inputBuffer.reset();
   intentionalClose = true;
   window.clearTimeout(resizeTimer);
   window.clearTimeout(transferNoticeTimer);
