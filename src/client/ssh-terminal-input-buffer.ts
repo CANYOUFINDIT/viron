@@ -75,11 +75,12 @@ export class SshTerminalInputBuffer {
         }
       }
     } catch (error) {
+      if (generation !== this.generation) return;
       this.queue = [];
       this.options.onError(error);
     } finally {
       this.pumping = false;
-      if (!this.closed && generation === this.generation && this.queue.length) this.schedule();
+      if (!this.closed && this.queue.length) this.schedule();
     }
   }
 }

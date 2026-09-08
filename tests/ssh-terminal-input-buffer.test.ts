@@ -61,6 +61,32 @@ describe("SSH terminal input coalescing", () => {
     expect(sent).toEqual(["a", "bc"]);
   });
 
+  it("does not disconnect a new session when a stale write fails after reset", async () => {
+    const errors: string[] = [];
+    const sent: string[] = [];
+    let rejectWrite!: (error: Error) => void;
+    const firstWrite = new Promise<void>((_resolve, reject) => { rejectWrite = reject; });
+    let calls = 0;
+    const buffer = new SshTerminalInputBuffer({
+      sendText: (data) => {
+        sent.push(data);
+        calls += 1;
+        if (calls === 1) return firstWrite;
+      },
+      sendBinary: () => undefined,
+      onError: (error) => { errors.push(error instanceof Error ? error.message : String(error)); },
+    });
+    buffer.enqueueText("old");
+    await flushMicrotasks();
+    expect(sent).toEqual(["old"]);
+    buffer.reset();
+    buffer.enqueueText("new");
+    rejectWrite(new Error("session closed"));
+    await flushMicrotasks();
+    expect(errors).toEqual([]);
+    expect(sent).toEqual(["old", "new"]);
+  });
+
   it("drops pending input after reset and reports send failures once", async () => {
     const errors: string[] = [];
     const buffer = new SshTerminalInputBuffer({
