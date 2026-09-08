@@ -87,7 +87,7 @@ interface SshConnection {
   environmentIds: string[];
   connectionGroupId: string | null;
   connectionGroupPath: string | null;
-  authType: "password" | "privateKey" | "keyboardInteractive";
+  authType: "password" | "privateKey" | "keyboardInteractive" | "sshAgent";
   jumpConnectionId: string | null;
   tags: string[];
   options: Record<string, unknown>;

@@ -9,6 +9,7 @@ import { IdleResourcePool } from "../shared/idle-resource-pool.js";
 import { normalizeAgentSshCommand, type AgentSshContextSnapshot, type AgentSshDiagnosticResult } from "../shared/agent.js";
 import { sshCommandRiskLevel } from "../shared/ssh-command-risk.js";
 import { buildSshConnectConfig } from "../shared/ssh-connect.js";
+import { openSshProxySocket } from "../shared/ssh-proxy.js";
 import { sshErrorMessage } from "../shared/ssh-error.js";
 import { normalizeSshLoginScript } from "../shared/ssh-login-script.js";
 import type { DesktopSshConnection, DesktopSshCredential } from "./device-identity.js";
@@ -49,6 +50,7 @@ export interface DesktopSshRecording {
 export interface ConnectedDesktopSsh {
   client: Client;
   jumpClient?: Client;
+  jumpClients?: Client[];
   connection: Omit<DesktopSshConnection, "credential">;
   close(): void;
 }
@@ -119,11 +121,17 @@ export function desktopSshErrorMessage(error: unknown): string {
   return tr(sshErrorMessage(error));
 }
 
-function connectClient(connection: DesktopSshConnection, sock?: Readable): Promise<Client> {
+async function connectClient(connection: DesktopSshConnection, sock?: Readable): Promise<Client> {
   const keyboardInteractivePassword = connection.authType === "keyboardInteractive"
     ? connection.credential.password
     : undefined;
-  return connectSshClient(new Client(), buildSshConnectConfig(connection, sock, tr), keyboardInteractivePassword);
+  const transport = sock ?? await openSshProxySocket(connection, tr);
+  try {
+    return await connectSshClient(new Client(), buildSshConnectConfig(connection, transport, tr), keyboardInteractivePassword);
+  } catch (error) {
+    transport?.destroy();
+    throw error;
+  }
 }
 
 function connectionMetadata(connection: DesktopSshConnection): Omit<DesktopSshConnection, "credential"> {
@@ -139,27 +147,27 @@ function forward(client: Client, host: string, port: number): Promise<Readable> 
 
 async function createConnectedDesktopSsh(credential: DesktopSshCredential): Promise<ConnectedDesktopSsh> {
   const connection = credential.connection;
-  if (!credential.jumpConnection) {
-    const client = await connectClient(connection);
-    return { client, connection: connectionMetadata(connection), close: () => client.end() };
-  }
-  const jump = credential.jumpConnection;
-  if (jump.jumpConnectionId) throw new Error(tr("只支持单级跳板机"));
-  const jumpClient = await connectClient(jump);
+  const jumps = credential.jumpConnections ?? (credential.jumpConnection ? [credential.jumpConnection] : []);
+  if (jumps.length > 8) throw new Error(tr("ProxyJump 最多支持 8 跳"));
+  const chain = [connection, ...jumps];
+  const clients = new Array<Client>(chain.length);
   try {
-    const stream = await forward(jumpClient, connection.host, connection.port);
-    const client = await connectClient(connection, stream);
+    const outermostIndex = chain.length - 1;
+    clients[outermostIndex] = await connectClient(chain[outermostIndex]);
+    for (let index = outermostIndex - 1; index >= 0; index -= 1) {
+      const stream = await forward(clients[index + 1], chain[index].host, chain[index].port);
+      clients[index] = await connectClient(chain[index], stream);
+    }
+    const jumpClients = clients.slice(1);
     return {
-      client,
-      jumpClient,
+      client: clients[0],
+      jumpClient: jumpClients[0],
+      jumpClients,
       connection: connectionMetadata(connection),
-      close: () => {
-        client.end();
-        jumpClient.end();
-      },
+      close: () => clients.forEach((client) => client.end()),
     };
   } catch (error) {
-    jumpClient.end();
+    clients.filter(Boolean).forEach((client) => client.end());
     throw error;
   }
 }
@@ -188,8 +196,10 @@ async function leaseDesktopSsh(key: string, create: () => Promise<ConnectedDeskt
     const resource: PooledDesktopSsh = { connected, usable: true };
     connected.client.once("close", () => { resource.usable = false; });
     connected.client.once("error", () => { resource.usable = false; });
-    connected.jumpClient?.once("close", () => { resource.usable = false; });
-    connected.jumpClient?.once("error", () => { resource.usable = false; });
+    for (const jumpClient of connected.jumpClients ?? []) {
+      jumpClient.once("close", () => { resource.usable = false; });
+      jumpClient.once("error", () => { resource.usable = false; });
+    }
     return resource;
   });
   return {

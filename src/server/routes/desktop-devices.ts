@@ -17,6 +17,7 @@ import { acceptDesktopReport, DesktopReportError } from "../desktop-report.js";
 import { resolveSshCredential } from "../ssh/key-store.js";
 import { parseBody } from "../validation.js";
 import { requireAdmin } from "./auth.js";
+import type { SshAuthType } from "../../shared/ssh-connect.js";
 
 const deviceIdSchema = z.string().uuid();
 const publicKeySchema = z.string().min(256).max(8192);
@@ -163,7 +164,7 @@ interface SshEnvelopeRow {
   host: string;
   port: number;
   username: string;
-  auth_type: "password" | "privateKey" | "keyboardInteractive";
+  auth_type: SshAuthType;
   ssh_key_id: string | null;
   credential_ciphertext: string;
   jump_connection_id: string | null;
@@ -226,6 +227,29 @@ async function sshConnectionPayload(app: FastifyInstance, row: SshEnvelopeRow) {
     options: parseJson<Record<string, unknown>>(row.options_json, {}),
     connectionUpdatedAt: row.updated_at,
   };
+}
+
+async function sshJumpChain(app: FastifyInstance, connection: SshEnvelopeRow): Promise<SshEnvelopeRow[]> {
+  const jumps: SshEnvelopeRow[] = [];
+  const visited = new Set([connection.id]);
+  let jumpId = connection.jump_connection_id;
+  while (jumpId) {
+    if (visited.has(jumpId)) throw new Error("跳板机配置不能形成循环");
+    if (jumps.length >= 8) throw new Error("ProxyJump 最多支持 8 跳");
+    const jump = await app.db.prepare(`
+      SELECT id, workspace_type, workspace_id, name, host, port, username, auth_type, ssh_key_id, credential_ciphertext,
+        jump_connection_id, options_json, source_deleted, updated_at
+      FROM ssh_connections WHERE id = ?
+    `).get(jumpId) as SshEnvelopeRow | undefined;
+    if (!jump || jump.source_deleted) throw new Error("跳板机连接不存在或已失效");
+    if (jump.workspace_type !== connection.workspace_type || jump.workspace_id !== connection.workspace_id) {
+      throw new Error("跳板机不属于同一工作空间");
+    }
+    visited.add(jump.id);
+    jumps.push(jump);
+    jumpId = jump.jump_connection_id;
+  }
+  return jumps;
 }
 
 function databaseConnectionPayload(app: FastifyInstance, row: DatabaseEnvelopeRow) {
@@ -539,20 +563,13 @@ export async function registerDesktopDeviceRoutes(app: FastifyInstance): Promise
         FROM ssh_connections WHERE id = ?
       `).get(connectionId.data) as SshEnvelopeRow | undefined;
       if (!connection || connection.source_deleted) return reply.code(404).send({ error: "NOT_FOUND", message: "SSH 连接不存在" });
-      const jumpConnection = connection.jump_connection_id
-        ? await app.db.prepare(`
-            SELECT id, workspace_type, workspace_id, name, host, port, username, auth_type, ssh_key_id, credential_ciphertext,
-              jump_connection_id, options_json, source_deleted, updated_at
-            FROM ssh_connections WHERE id = ?
-          `).get(connection.jump_connection_id) as SshEnvelopeRow | undefined
-        : undefined;
-      if (connection.jump_connection_id && (!jumpConnection || jumpConnection.source_deleted)) {
-        return reply.code(409).send({ error: "JUMP_CONNECTION_UNAVAILABLE", message: "跳板机连接不存在或已失效" });
+      let jumpConnections: SshEnvelopeRow[];
+      try {
+        jumpConnections = await sshJumpChain(app, connection);
+      } catch (error) {
+        return reply.code(409).send({ error: "JUMP_CONNECTION_INVALID", message: error instanceof Error ? error.message : "跳板机配置无效" });
       }
-      if (jumpConnection && (jumpConnection.workspace_type !== connection.workspace_type || jumpConnection.workspace_id !== connection.workspace_id)) {
-        return reply.code(409).send({ error: "JUMP_CONNECTION_INVALID", message: "跳板机不属于同一工作空间" });
-      }
-      if (jumpConnection?.jump_connection_id) return reply.code(409).send({ error: "JUMP_CONNECTION_INVALID", message: "只支持单级跳板机" });
+      const jumpConnection = jumpConnections[0];
 
       const now = new Date();
       const expiresAt = new Date(now.getTime() + 60 * 1000);
@@ -583,6 +600,8 @@ export async function registerDesktopDeviceRoutes(app: FastifyInstance): Promise
         connectionUpdatedAt: connection.updated_at,
         jumpConnectionId: jumpConnection?.id ?? null,
         jumpConnectionUpdatedAt: jumpConnection?.updated_at ?? null,
+        jumpConnectionIds: jumpConnections.map((item) => item.id),
+        jumpConnectionUpdatedAts: jumpConnections.map((item) => item.updated_at),
         issuedAt: now.toISOString(),
         expiresAt: expiresAt.toISOString(),
       };
@@ -595,11 +614,12 @@ export async function registerDesktopDeviceRoutes(app: FastifyInstance): Promise
         summary: `向 macOS App 发放 SSH 连接 ${connection.name} 的一次性凭据信封`,
         source: body.auditSource,
         request,
-        details: { deviceId: device.device_id, requestId: body.requestId, jumpConnectionId: jumpConnection?.id ?? null },
+        details: { deviceId: device.device_id, requestId: body.requestId, jumpConnectionIds: jumpConnections.map((item) => item.id) },
       });
       return encryptEnvelope(device, protectedPayload, {
         connection: await sshConnectionPayload(app, connection),
         jumpConnection: jumpConnection ? await sshConnectionPayload(app, jumpConnection) : null,
+        jumpConnections: await Promise.all(jumpConnections.map((item) => sshConnectionPayload(app, item))),
       });
     },
   );
@@ -630,7 +650,7 @@ export async function registerDesktopDeviceRoutes(app: FastifyInstance): Promise
 
       const options = parseJson<{ sshConnectionId?: string | null; httpTunnelUrl?: string }>(connection.options_json, {});
       let sshConnection: SshEnvelopeRow | undefined;
-      let jumpConnection: SshEnvelopeRow | undefined;
+      let jumpConnections: SshEnvelopeRow[] = [];
       if (connection.connection_mode === "sshTunnel") {
         if (!options.sshConnectionId) return reply.code(409).send({ error: "SSH_TUNNEL_UNAVAILABLE", message: "数据库连接没有配置 SSH Tunnel" });
         if (!await canAccessConnection(app.db, request.admin!, "ssh", options.sshConnectionId)) {
@@ -647,21 +667,13 @@ export async function registerDesktopDeviceRoutes(app: FastifyInstance): Promise
         if (sshConnection.workspace_type !== connection.workspace_type || sshConnection.workspace_id !== connection.workspace_id) {
           return reply.code(409).send({ error: "SSH_TUNNEL_INVALID", message: "SSH Tunnel 不属于同一工作空间" });
         }
-        jumpConnection = sshConnection.jump_connection_id
-          ? await app.db.prepare(`
-              SELECT id, workspace_type, workspace_id, name, host, port, username, auth_type, ssh_key_id, credential_ciphertext,
-                jump_connection_id, options_json, source_deleted, updated_at
-              FROM ssh_connections WHERE id = ?
-            `).get(sshConnection.jump_connection_id) as SshEnvelopeRow | undefined
-          : undefined;
-        if (sshConnection.jump_connection_id && (!jumpConnection || jumpConnection.source_deleted)) {
-          return reply.code(409).send({ error: "JUMP_CONNECTION_UNAVAILABLE", message: "跳板机连接不存在或已失效" });
+        try {
+          jumpConnections = await sshJumpChain(app, sshConnection);
+        } catch (error) {
+          return reply.code(409).send({ error: "JUMP_CONNECTION_INVALID", message: error instanceof Error ? error.message : "跳板机配置无效" });
         }
-        if (jumpConnection && (jumpConnection.workspace_type !== connection.workspace_type || jumpConnection.workspace_id !== connection.workspace_id)) {
-          return reply.code(409).send({ error: "JUMP_CONNECTION_INVALID", message: "跳板机不属于同一工作空间" });
-        }
-        if (jumpConnection?.jump_connection_id) return reply.code(409).send({ error: "JUMP_CONNECTION_INVALID", message: "只支持单级跳板机" });
       }
+      const jumpConnection = jumpConnections[0];
 
       let httpTunnelOrigin: string | null = null;
       if (connection.connection_mode === "httpTunnel") {
@@ -708,6 +720,8 @@ export async function registerDesktopDeviceRoutes(app: FastifyInstance): Promise
         sshConnectionUpdatedAt: sshConnection?.updated_at ?? null,
         jumpConnectionId: jumpConnection?.id ?? null,
         jumpConnectionUpdatedAt: jumpConnection?.updated_at ?? null,
+        jumpConnectionIds: jumpConnections.map((item) => item.id),
+        jumpConnectionUpdatedAts: jumpConnections.map((item) => item.updated_at),
         issuedAt: now.toISOString(),
         expiresAt: expiresAt.toISOString(),
       };
@@ -725,7 +739,7 @@ export async function registerDesktopDeviceRoutes(app: FastifyInstance): Promise
           requestId: body.requestId,
           connectionMode: connection.connection_mode,
           sshConnectionId: sshConnection?.id ?? null,
-          jumpConnectionId: jumpConnection?.id ?? null,
+          jumpConnectionIds: jumpConnections.map((item) => item.id),
         },
       });
       return encryptEnvelope(device, protectedPayload, {
@@ -733,6 +747,7 @@ export async function registerDesktopDeviceRoutes(app: FastifyInstance): Promise
         sshCredential: sshConnection ? {
           connection: await sshConnectionPayload(app, sshConnection),
           jumpConnection: jumpConnection ? await sshConnectionPayload(app, jumpConnection) : null,
+          jumpConnections: await Promise.all(jumpConnections.map((item) => sshConnectionPayload(app, item))),
         } : null,
       });
     },
@@ -765,7 +780,7 @@ export async function registerDesktopDeviceRoutes(app: FastifyInstance): Promise
 
       const options = parseJson<{ sshConnectionId?: string | null }>(connection.options_json, {});
       let sshConnection: SshEnvelopeRow | undefined;
-      let jumpConnection: SshEnvelopeRow | undefined;
+      let jumpConnections: SshEnvelopeRow[] = [];
       if (connection.connection_mode === "sshTunnel") {
         if (!options.sshConnectionId) return reply.code(409).send({ error: "SSH_TUNNEL_UNAVAILABLE", message: "Redis 连接没有配置 SSH Tunnel" });
         if (!await canAccessConnection(app.db, request.admin!, "ssh", options.sshConnectionId)) {
@@ -782,21 +797,13 @@ export async function registerDesktopDeviceRoutes(app: FastifyInstance): Promise
         if (sshConnection.workspace_type !== connection.workspace_type || sshConnection.workspace_id !== connection.workspace_id) {
           return reply.code(409).send({ error: "SSH_TUNNEL_INVALID", message: "SSH Tunnel 不属于同一工作空间" });
         }
-        jumpConnection = sshConnection.jump_connection_id
-          ? await app.db.prepare(`
-              SELECT id, workspace_type, workspace_id, name, host, port, username, auth_type, ssh_key_id, credential_ciphertext,
-                jump_connection_id, options_json, source_deleted, updated_at
-              FROM ssh_connections WHERE id = ?
-            `).get(sshConnection.jump_connection_id) as SshEnvelopeRow | undefined
-          : undefined;
-        if (sshConnection.jump_connection_id && (!jumpConnection || jumpConnection.source_deleted)) {
-          return reply.code(409).send({ error: "JUMP_CONNECTION_UNAVAILABLE", message: "跳板机连接不存在或已失效" });
+        try {
+          jumpConnections = await sshJumpChain(app, sshConnection);
+        } catch (error) {
+          return reply.code(409).send({ error: "JUMP_CONNECTION_INVALID", message: error instanceof Error ? error.message : "跳板机配置无效" });
         }
-        if (jumpConnection && (jumpConnection.workspace_type !== connection.workspace_type || jumpConnection.workspace_id !== connection.workspace_id)) {
-          return reply.code(409).send({ error: "JUMP_CONNECTION_INVALID", message: "跳板机不属于同一工作空间" });
-        }
-        if (jumpConnection?.jump_connection_id) return reply.code(409).send({ error: "JUMP_CONNECTION_INVALID", message: "只支持单级跳板机" });
       }
+      const jumpConnection = jumpConnections[0];
 
       const now = new Date();
       const expiresAt = new Date(now.getTime() + 60 * 1000);
@@ -830,6 +837,8 @@ export async function registerDesktopDeviceRoutes(app: FastifyInstance): Promise
         sshConnectionUpdatedAt: sshConnection?.updated_at ?? null,
         jumpConnectionId: jumpConnection?.id ?? null,
         jumpConnectionUpdatedAt: jumpConnection?.updated_at ?? null,
+        jumpConnectionIds: jumpConnections.map((item) => item.id),
+        jumpConnectionUpdatedAts: jumpConnections.map((item) => item.updated_at),
         issuedAt: now.toISOString(),
         expiresAt: expiresAt.toISOString(),
       };
@@ -847,7 +856,7 @@ export async function registerDesktopDeviceRoutes(app: FastifyInstance): Promise
           requestId: body.requestId,
           connectionMode: connection.connection_mode,
           sshConnectionId: sshConnection?.id ?? null,
-          jumpConnectionId: jumpConnection?.id ?? null,
+          jumpConnectionIds: jumpConnections.map((item) => item.id),
         },
       });
       return encryptEnvelope(device, protectedPayload, {
@@ -855,6 +864,7 @@ export async function registerDesktopDeviceRoutes(app: FastifyInstance): Promise
         sshCredential: sshConnection ? {
           connection: await sshConnectionPayload(app, sshConnection),
           jumpConnection: jumpConnection ? await sshConnectionPayload(app, jumpConnection) : null,
+          jumpConnections: await Promise.all(jumpConnections.map((item) => sshConnectionPayload(app, item))),
         } : null,
       });
     },

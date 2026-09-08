@@ -6,6 +6,8 @@ import type { WorkspaceType } from "../access-control.js";
 import { connectSshClient } from "../../shared/ssh-client.js";
 import { IdleResourcePool } from "../../shared/idle-resource-pool.js";
 import { buildSshConnectConfig } from "../../shared/ssh-connect.js";
+import { openSshProxySocket } from "../../shared/ssh-proxy.js";
+import type { SshAuthType, SshConnectionCredential, SshConnectionOptions } from "../../shared/ssh-connect.js";
 import { resolveSshCredential } from "./key-store.js";
 
 export interface SshConnectionRecord {
@@ -16,27 +18,17 @@ export interface SshConnectionRecord {
   host: string;
   port: number;
   username: string;
-  authType: "password" | "privateKey" | "keyboardInteractive";
+  authType: SshAuthType;
   sshKeyId: string | null;
-  credential: {
-    password?: string;
-    privateKey?: string;
-    passphrase?: string;
-  };
+  credential: SshConnectionCredential;
   jumpConnectionId: string | null;
-  options: {
-    terminalType?: string;
-    keepAliveSeconds?: number;
-    encoding?: string;
-    hostKeySha256?: string;
-    loginScriptEnabled?: boolean;
-    loginScript?: string;
-  };
+  options: SshConnectionOptions;
 }
 
 export interface ConnectedSsh {
   client: Client;
   jumpClient?: Client;
+  jumpClients?: Client[];
   connection: SshConnectionRecord;
   transportReused?: boolean;
   close(): void;
@@ -89,11 +81,17 @@ export async function loadSshConnection(app: FastifyInstance, connectionId: stri
   };
 }
 
-function connectClient(connection: SshConnectionRecord, sock?: Readable): Promise<Client> {
+async function connectClient(connection: SshConnectionRecord, sock?: Readable): Promise<Client> {
   const keyboardInteractivePassword = connection.authType === "keyboardInteractive"
     ? connection.credential.password
     : undefined;
-  return connectSshClient(new Client(), buildSshConnectConfig(connection, sock), keyboardInteractivePassword);
+  const transport = sock ?? await openSshProxySocket(connection);
+  try {
+    return await connectSshClient(new Client(), buildSshConnectConfig(connection, transport), keyboardInteractivePassword);
+  } catch (error) {
+    transport?.destroy();
+    throw error;
+  }
 }
 
 function forward(client: Client, host: string, port: number): Promise<Readable> {
@@ -112,8 +110,8 @@ interface PooledSsh {
 
 const sshPools = new WeakMap<object, IdleResourcePool<PooledSsh>>();
 
-function connectionFingerprint(connection: SshConnectionRecord, jump?: SshConnectionRecord): string {
-  return createHash("sha256").update(JSON.stringify({ connection, jump })).digest("hex");
+function connectionFingerprint(connection: SshConnectionRecord, jumps: SshConnectionRecord[]): string {
+  return createHash("sha256").update(JSON.stringify({ connection, jumps })).digest("hex");
 }
 
 function sshPool(app: FastifyInstance): IdleResourcePool<PooledSsh> {
@@ -129,51 +127,61 @@ function sshPool(app: FastifyInstance): IdleResourcePool<PooledSsh> {
   return pool;
 }
 
-async function createConnectedSsh(connection: SshConnectionRecord, jump?: SshConnectionRecord): Promise<ConnectedSsh> {
-  if (!connection.jumpConnectionId) {
-    const client = await connectClient(connection);
-    return {
-      client,
-      connection,
-      close: () => client.end(),
-    };
+async function loadJumpChain(app: FastifyInstance, connection: SshConnectionRecord): Promise<SshConnectionRecord[]> {
+  const jumps: SshConnectionRecord[] = [];
+  const visited = new Set([connection.id]);
+  let jumpId = connection.jumpConnectionId;
+  while (jumpId) {
+    if (visited.has(jumpId)) throw new Error("跳板机配置不能形成循环");
+    if (jumps.length >= 8) throw new Error("ProxyJump 最多支持 8 跳");
+    const jump = await loadSshConnection(app, jumpId);
+    if (jump.workspaceType !== connection.workspaceType || jump.workspaceId !== connection.workspaceId) {
+      throw new Error("跳板机不属于同一工作空间");
+    }
+    visited.add(jump.id);
+    jumps.push(jump);
+    jumpId = jump.jumpConnectionId;
   }
+  return jumps;
+}
 
-  if (!jump) throw new Error("跳板机连接不存在");
-  if (jump.workspaceType !== connection.workspaceType || jump.workspaceId !== connection.workspaceId) {
-    throw new Error("跳板机不属于同一工作空间");
-  }
-  if (jump.jumpConnectionId) throw new Error("首版只支持单级跳板机");
-  const jumpClient = await connectClient(jump);
+async function createConnectedSsh(connection: SshConnectionRecord, jumps: SshConnectionRecord[]): Promise<ConnectedSsh> {
+  const chain = [connection, ...jumps];
+  const clients = new Array<Client>(chain.length);
   try {
-    const stream = await forward(jumpClient, connection.host, connection.port);
-    const client = await connectClient(connection, stream);
+    const outermostIndex = chain.length - 1;
+    clients[outermostIndex] = await connectClient(chain[outermostIndex]);
+    for (let index = outermostIndex - 1; index >= 0; index -= 1) {
+      const stream = await forward(clients[index + 1], chain[index].host, chain[index].port);
+      clients[index] = await connectClient(chain[index], stream);
+    }
+    const jumpClients = clients.slice(1);
     return {
-      client,
-      jumpClient,
+      client: clients[0],
+      jumpClient: jumpClients[0],
+      jumpClients,
       connection,
-      close: () => {
-        client.end();
-        jumpClient.end();
-      },
+      close: () => clients.forEach((client) => client.end()),
     };
   } catch (error) {
-    jumpClient.end();
+    clients.filter(Boolean).forEach((client) => client.end());
     throw error;
   }
 }
 
 export async function connectSsh(app: FastifyInstance, connectionId: string): Promise<ConnectedSsh> {
   const connection = await loadSshConnection(app, connectionId);
-  const jump = connection.jumpConnectionId ? await loadSshConnection(app, connection.jumpConnectionId) : undefined;
-  const key = `${connection.id}\0${connectionFingerprint(connection, jump)}`;
+  const jumps = await loadJumpChain(app, connection);
+  const key = `${connection.id}\0${connectionFingerprint(connection, jumps)}`;
   const lease = await sshPool(app).acquire(key, async () => {
-    const connected = await createConnectedSsh(connection, jump);
+    const connected = await createConnectedSsh(connection, jumps);
     const resource: PooledSsh = { connected, usable: true };
     connected.client.once("close", () => { resource.usable = false; });
     connected.client.once("error", () => { resource.usable = false; });
-    connected.jumpClient?.once("close", () => { resource.usable = false; });
-    connected.jumpClient?.once("error", () => { resource.usable = false; });
+    for (const jumpClient of connected.jumpClients ?? []) {
+      jumpClient.once("close", () => { resource.usable = false; });
+      jumpClient.once("error", () => { resource.usable = false; });
+    }
     return resource;
   });
   return {

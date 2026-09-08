@@ -950,6 +950,125 @@ describe("Viron API", () => {
     await app.close();
   });
 
+  it("stores advanced SSH network settings and rejects conflicting or cyclic routes", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "viron-ssh-network-options-test-"));
+    directories.push(directory);
+    const config = configFor(directory);
+    const db = await openDatabase(config);
+    await ensureAdmin(db, config);
+    const app = await buildApp({ config, db, logger: false });
+    const login = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { username: "admin", password: "test-password-123" } });
+    const cookies = { envman_session: login.cookies.find((item) => item.name === "envman_session")!.value };
+
+    const outer = await app.inject({
+      method: "POST",
+      url: "/api/v1/ssh-connections",
+      cookies,
+      payload: {
+        name: "Edge Proxy",
+        host: "edge.internal",
+        port: 22,
+        username: "deploy",
+        authType: "sshAgent",
+        credential: { proxyPassword: "proxy-secret" },
+        options: {
+          connectTimeoutSeconds: 24,
+          ipVersion: "ipv4",
+          compression: true,
+          agentForwarding: true,
+          algorithmPreset: "modern",
+          proxyType: "socks5",
+          proxyHost: "proxy.internal",
+          proxyPort: 1081,
+          proxyUsername: "proxy-user",
+        },
+      },
+    });
+    expect(outer.statusCode).toBe(201);
+
+    const stored = await db.prepare("SELECT auth_type, credential_ciphertext, options_json FROM ssh_connections WHERE id = ?").get(outer.json().id) as {
+      auth_type: string;
+      credential_ciphertext: string;
+      options_json: string;
+    };
+    expect(stored.auth_type).toBe("sshAgent");
+    expect(stored.credential_ciphertext).not.toContain("proxy-secret");
+    expect(JSON.parse(app.secrets.decrypt(stored.credential_ciphertext))).toMatchObject({ proxyPassword: "proxy-secret" });
+    expect(JSON.parse(stored.options_json)).toMatchObject({
+      connectTimeoutSeconds: 24,
+      ipVersion: "ipv4",
+      compression: true,
+      agentForwarding: true,
+      algorithmPreset: "modern",
+      proxyType: "socks5",
+      proxyHost: "proxy.internal",
+      proxyPort: 1081,
+      proxyUsername: "proxy-user",
+    });
+    expect(stored.options_json).not.toContain("proxy-secret");
+
+    const conflicting = await app.inject({
+      method: "POST",
+      url: "/api/v1/ssh-connections",
+      cookies,
+      payload: {
+        name: "Conflicting Route",
+        host: "target.internal",
+        port: 22,
+        username: "deploy",
+        authType: "sshAgent",
+        jumpConnectionId: outer.json().id,
+        options: { proxyType: "http", proxyHost: "proxy.internal", proxyPort: 8080 },
+      },
+    });
+    expect(conflicting.statusCode).toBe(400);
+    expect(conflicting.json()).toMatchObject({ error: "INVALID_NETWORK_PATH" });
+
+    const inner = await app.inject({
+      method: "POST",
+      url: "/api/v1/ssh-connections",
+      cookies,
+      payload: {
+        name: "Inner Jump",
+        host: "jump.internal",
+        port: 22,
+        username: "deploy",
+        authType: "sshAgent",
+        jumpConnectionId: outer.json().id,
+      },
+    });
+    expect(inner.statusCode).toBe(201);
+
+    const cyclic = await app.inject({
+      method: "PUT",
+      url: `/api/v1/ssh-connections/${outer.json().id}`,
+      cookies,
+      payload: {
+        name: "Edge Proxy",
+        host: "edge.internal",
+        port: 22,
+        username: "deploy",
+        authType: "sshAgent",
+        jumpConnectionId: inner.json().id,
+      },
+    });
+    expect(cyclic.statusCode).toBe(400);
+    expect(cyclic.json()).toMatchObject({ error: "INVALID_JUMP_HOST", message: "跳板机配置不能形成循环" });
+
+    let previousId = inner.json().id;
+    for (let depth = 2; depth <= 9; depth += 1) {
+      const result = await app.inject({
+        method: "POST", url: "/api/v1/ssh-connections", cookies,
+        payload: { name: `Jump ${depth}`, host: "jump.internal", username: "deploy", authType: "sshAgent", jumpConnectionId: previousId },
+      });
+      expect(result.statusCode).toBe(depth <= 8 ? 201 : 400);
+      if (depth <= 8) previousId = result.json().id;
+      else expect(result.json().message).toBe("ProxyJump 最多支持 8 跳");
+    }
+
+    await app.close();
+  });
+
   it("copies SSH and database connections without exposing stored credentials", async () => {
     const directory = mkdtempSync(join(tmpdir(), "envman-test-"));
     directories.push(directory);

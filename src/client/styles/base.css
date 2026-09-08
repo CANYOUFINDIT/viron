@@ -916,6 +916,9 @@ button { color: inherit; }
 .connection-advanced-panel > summary small { color: var(--ink-400); font-size: 11px; }
 .connection-advanced-panel__status { flex: 0 0 auto; padding: 3px 7px; border-radius: 999px; background: var(--ink-50); color: var(--ink-500); font-family: var(--font-mono); font-size: 10px; font-weight: 700; }
 .connection-advanced-panel__body { padding: 14px 13px 0; border-top: 1px solid var(--ink-100); }
+.connection-switch-stack { width: 100%; min-height: 32px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.connection-switch-stack label { display: inline-flex; align-items: center; gap: 7px; color: var(--ink-650); font-size: 12px; }
+.form-field-warning { color: var(--warning-700, #9a5b12) !important; }
 .mono-input .el-input__inner { font-family: var(--font-mono); }
 .connection-profile-manager .form-section__header { align-items: center; }
 .connection-profile-manager .form-section__header > button,

@@ -24,6 +24,7 @@ const sshCredentialSchema = z.object({
   password: z.string().max(4096).default(""),
   privateKey: z.string().max(128 * 1024).default(""),
   passphrase: z.string().max(4096).default(""),
+  proxyPassword: z.string().max(4096).optional(),
 });
 
 const defaultSshOptions = {
@@ -33,7 +34,40 @@ const defaultSshOptions = {
   hostKeySha256: "",
   loginScriptEnabled: false,
   loginScript: "",
+  connectTimeoutSeconds: 15,
+  ipVersion: "auto",
+  compression: false,
+  agentForwarding: false,
+  agentSocket: "",
+  algorithmPreset: "default",
+  proxyType: "none",
+  proxyHost: "",
+  proxyPort: 1080,
+  proxyUsername: "",
 };
+
+const sshOptionsSchema = z.object({
+  terminalType: z.string().trim().min(1).max(80).default("xterm-256color"),
+  keepAliveSeconds: z.number().int().min(0).max(600).default(30),
+  encoding: z.string().trim().min(1).max(40).default("utf-8"),
+  hostKeySha256: z.string().trim().max(160).default(""),
+  loginScriptEnabled: z.boolean().default(false),
+  loginScript: z.string().max(64 * 1024).default(""),
+  connectTimeoutSeconds: z.number().int().min(1).max(120).default(15),
+  ipVersion: z.enum(["auto", "ipv4", "ipv6"]).default("auto"),
+  compression: z.boolean().default(false),
+  agentForwarding: z.boolean().default(false),
+  agentSocket: z.string().trim().max(4096).default(""),
+  algorithmPreset: z.enum(["default", "modern", "compatible"]).default("default"),
+  proxyType: z.enum(["none", "http", "socks5"]).default("none"),
+  proxyHost: z.string().trim().max(255).default(""),
+  proxyPort: z.number().int().min(1).max(65535).default(1080),
+  proxyUsername: z.string().max(255).default(""),
+}).superRefine((options, context) => {
+  if (options.proxyType !== "none" && !options.proxyHost) {
+    context.addIssue({ code: "custom", path: ["proxyHost"], message: "使用代理时必须填写代理主机" });
+  }
+});
 
 const sshConnectionSchema = z.object({
   environmentId: z.string().uuid().nullable().optional(),
@@ -43,19 +77,12 @@ const sshConnectionSchema = z.object({
   host: z.string().trim().min(1).max(255),
   port: z.number().int().min(1).max(65535).default(22),
   username: z.string().trim().min(1).max(255),
-  authType: z.enum(["password", "privateKey", "keyboardInteractive"]).default("password"),
+  authType: z.enum(["password", "privateKey", "keyboardInteractive", "sshAgent"]).default("password"),
   sshKeyId: z.string().uuid().nullable().optional(),
   credential: sshCredentialSchema.optional(),
   jumpConnectionId: z.string().uuid().nullable().optional(),
   tags: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
-  options: z.object({
-    terminalType: z.string().trim().min(1).max(80).default("xterm-256color"),
-    keepAliveSeconds: z.number().int().min(0).max(600).default(30),
-    encoding: z.string().trim().min(1).max(40).default("utf-8"),
-    hostKeySha256: z.string().trim().max(160).default(""),
-    loginScriptEnabled: z.boolean().default(false),
-    loginScript: z.string().max(64 * 1024).default(""),
-  }).optional(),
+  options: sshOptionsSchema.optional(),
 });
 
 const sshConnectionCreateSchema = sshConnectionSchema.extend({
@@ -227,12 +254,20 @@ function parseTags(value: unknown): string[] {
 
 async function assertJumpConnection(app: FastifyInstance, jumpConnectionId: string | null | undefined, workspace: ReturnType<typeof workspaceParams>, ownId?: string): Promise<string | null> {
   if (!jumpConnectionId) return null;
-  if (jumpConnectionId === ownId) return "SSH 连接不能把自己设为跳板机";
-  const jump = await app.db.prepare(`SELECT jump_connection_id FROM ssh_connections WHERE id = ? AND ${workspaceWhere()}`).get(jumpConnectionId, ...workspace) as
-    | { jump_connection_id: string | null }
-    | undefined;
-  if (!jump) return "所选跳板机不存在";
-  if (ownId && jump.jump_connection_id === ownId) return "跳板机配置不能形成循环";
+  const visited = new Set(ownId ? [ownId] : []);
+  let currentId: string | null = jumpConnectionId;
+  let depth = 0;
+  while (currentId) {
+    if (visited.has(currentId)) return ownId === currentId && depth === 0 ? "SSH 连接不能把自己设为跳板机" : "跳板机配置不能形成循环";
+    if (depth >= 8) return "ProxyJump 最多支持 8 跳";
+    visited.add(currentId);
+    const jump = await app.db.prepare(`SELECT jump_connection_id FROM ssh_connections WHERE id = ? AND ${workspaceWhere()}`).get(currentId, ...workspace) as
+      | { jump_connection_id: string | null }
+      | undefined;
+    if (!jump) return "所选跳板机不存在";
+    currentId = jump.jump_connection_id;
+    depth += 1;
+  }
   return null;
 }
 
@@ -251,7 +286,8 @@ function storedCredential(app: FastifyInstance, ciphertext: string): StoredCrede
 }
 
 function removeInlinePrivateKey(app: FastifyInstance, ciphertext: string): string {
-  return encryptCredential(app, {});
+  const { privateKey: _privateKey, passphrase: _passphrase, password: _password, ...credential } = storedCredential(app, ciphertext);
+  return encryptCredential(app, credential);
 }
 
 async function assertDatabaseTunnelConnection(
@@ -651,6 +687,9 @@ export async function registerConnectionRoutes(app: FastifyInstance): Promise<vo
     }
     const jumpError = await assertJumpConnection(app, body.jumpConnectionId, workspaceParams(request));
     if (jumpError) return reply.code(400).send({ error: "INVALID_JUMP_HOST", message: jumpError });
+    if (body.jumpConnectionId && body.options?.proxyType && body.options.proxyType !== "none") {
+      return reply.code(400).send({ error: "INVALID_NETWORK_PATH", message: "ProxyJump 与出站代理不能同时配置；请把代理配置在最外层跳板机上" });
+    }
     const workspace = workspaceParams(request);
     const sourceKeyId = copySource?.workspace_type === workspace[0] && copySource.workspace_id === workspace[1] ? copySource.ssh_key_id : null;
     const sshKeyId = body.authType === "privateKey" ? (body.sshKeyId === undefined ? sourceKeyId : body.sshKeyId) : null;
@@ -708,6 +747,10 @@ export async function registerConnectionRoutes(app: FastifyInstance): Promise<vo
     }
     const jumpError = await assertJumpConnection(app, body.jumpConnectionId, workspaceParams(request), request.params.id);
     if (jumpError) return reply.code(400).send({ error: "INVALID_JUMP_HOST", message: jumpError });
+    const effectiveSshOptions = body.options ?? parseOptions(existing.options_json);
+    if (body.jumpConnectionId && effectiveSshOptions.proxyType && effectiveSshOptions.proxyType !== "none") {
+      return reply.code(400).send({ error: "INVALID_NETWORK_PATH", message: "ProxyJump 与出站代理不能同时配置；请把代理配置在最外层跳板机上" });
+    }
     const sshKeyId = body.authType === "privateKey" ? (body.sshKeyId === undefined ? existing.ssh_key_id : body.sshKeyId) : null;
     const keyError = await assertSshKey(app, sshKeyId, workspaceParams(request));
     if (keyError) return reply.code(400).send({ error: "INVALID_SSH_KEY", message: keyError });
@@ -726,7 +769,7 @@ export async function registerConnectionRoutes(app: FastifyInstance): Promise<vo
       `).run(
         environmentIds[0] ?? null, connectionGroupId, body.name, body.host, body.port, body.username, body.authType,
         sshKeyId, encryptedCredential,
-        body.jumpConnectionId ?? null, JSON.stringify(body.options ?? parseOptions(existing.options_json)), JSON.stringify(tags), new Date().toISOString(), request.params.id,
+        body.jumpConnectionId ?? null, JSON.stringify(effectiveSshOptions), JSON.stringify(tags), new Date().toISOString(), request.params.id,
       );
       await replaceConnectionEnvironments(app.db, "ssh", request.params.id, environmentIds);
     })();

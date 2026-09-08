@@ -84,7 +84,7 @@ interface ConnectionItem {
   host: string;
   port: number;
   username: string;
-  authType?: "password" | "privateKey" | "keyboardInteractive";
+  authType?: "password" | "privateKey" | "keyboardInteractive" | "sshAgent";
   sshKeyId?: string | null;
   sshKeyName?: string | null;
   connectionMode?: "tcp" | "sshTunnel" | "httpTunnel";
@@ -178,7 +178,7 @@ const form = reactive({
   host: "",
   port: 22,
   username: "",
-  authType: "password" as "password" | "privateKey" | "keyboardInteractive",
+  authType: "password" as "password" | "privateKey" | "keyboardInteractive" | "sshAgent",
   sshKeyId: null as string | null,
   password: "",
   jumpConnectionId: null as string | null,
@@ -188,6 +188,17 @@ const form = reactive({
   terminalType: "xterm-256color",
   keepAliveSeconds: 30,
   hostKeySha256: "",
+  connectTimeoutSeconds: 15,
+  ipVersion: "auto" as "auto" | "ipv4" | "ipv6",
+  compression: false,
+  agentForwarding: false,
+  agentSocket: "",
+  algorithmPreset: "default" as "default" | "modern" | "compatible",
+  proxyType: "none" as "none" | "http" | "socks5",
+  proxyHost: "",
+  proxyPort: 1080,
+  proxyUsername: "",
+  proxyPassword: "",
   engine: "mysql" as "mysql" | "mariadb",
   defaultDatabase: "" as string | number,
   connectionMode: "tcp" as "tcp" | "sshTunnel" | "httpTunnel",
@@ -311,6 +322,7 @@ const authLabels: Record<string, string> = {
   password: tr("密码"),
   privateKey: tr("SSH 密钥"),
   keyboardInteractive: tr("键盘交互"),
+  sshAgent: "SSH Agent",
 };
 
 const modeLabels: Record<string, string> = {
@@ -323,6 +335,7 @@ const sshAuthChoices = computed(() => [
   { value: "password", title: tr("密码"), description: tr("标准用户名与密码认证，适合常规主机。"), badge: tr("通用") },
   { value: "privateKey", title: tr("SSH 密钥"), description: tr("引用工作空间托管密钥，适合生产环境。"), badge: tr("推荐") },
   { value: "keyboardInteractive", title: tr("键盘交互"), description: tr("应对 PAM、堡垒机与动态挑战提示。"), badge: "PAM" },
+  { value: "sshAgent", title: "SSH Agent", description: tr("使用执行端 ssh-agent 或 Pageant 中已解锁的密钥。"), badge: tr("免密钥落库") },
 ]);
 
 const databaseModeChoices = computed(() => [
@@ -391,6 +404,17 @@ function resetForm(connectionType: "ssh" | "database" | "redis" = "ssh") {
     terminalType: "xterm-256color",
     keepAliveSeconds: 30,
     hostKeySha256: "",
+    connectTimeoutSeconds: 15,
+    ipVersion: "auto",
+    compression: false,
+    agentForwarding: false,
+    agentSocket: "",
+    algorithmPreset: "default",
+    proxyType: "none",
+    proxyHost: "",
+    proxyPort: 1080,
+    proxyUsername: "",
+    proxyPassword: "",
     engine: "mysql",
     defaultDatabase: connectionType === "redis" ? 0 : "",
     connectionMode: "tcp",
@@ -435,6 +459,17 @@ function editConnection(item: ConnectionItem) {
     terminalType: String(item.options.terminalType ?? "xterm-256color"),
     keepAliveSeconds: Number(item.options.keepAliveSeconds ?? 30),
     hostKeySha256: String(item.options.hostKeySha256 ?? ""),
+    connectTimeoutSeconds: Number(item.options.connectTimeoutSeconds ?? 15),
+    ipVersion: (item.options.ipVersion as "auto" | "ipv4" | "ipv6" | undefined) ?? "auto",
+    compression: Boolean(item.options.compression),
+    agentForwarding: Boolean(item.options.agentForwarding),
+    agentSocket: String(item.options.agentSocket ?? ""),
+    algorithmPreset: (item.options.algorithmPreset as "default" | "modern" | "compatible" | undefined) ?? "default",
+    proxyType: (item.options.proxyType as "none" | "http" | "socks5" | undefined) ?? "none",
+    proxyHost: String(item.options.proxyHost ?? ""),
+    proxyPort: Number(item.options.proxyPort ?? 1080),
+    proxyUsername: String(item.options.proxyUsername ?? ""),
+    proxyPassword: "",
     engine: item.engine ?? "mysql",
     defaultDatabase: item.defaultDatabase ?? (item.type === "redis" ? 0 : ""),
     connectionMode: item.connectionMode ?? "tcp",
@@ -469,7 +504,11 @@ async function saveConnection() {
       if (form.authType === "privateKey" && !form.sshKeyId && !preservesLegacyPrivateKey.value) {
         return ElMessage.warning(tr("请选择用于连接的 SSH 密钥"));
       }
-      const credentialChanged = form.authType !== "privateKey" && Boolean(form.password);
+      if (form.jumpConnectionId && form.proxyType !== "none") return ElMessage.warning(tr("ProxyJump 与出站代理不能同时配置；请把代理配置在最外层跳板机上"));
+      if (form.proxyType !== "none" && !form.proxyHost.trim()) return ElMessage.warning(tr("请填写代理服务器地址"));
+      const credential: Record<string, string> = {};
+      if ((form.authType === "password" || form.authType === "keyboardInteractive") && form.password) credential.password = form.password;
+      if (form.proxyPassword) credential.proxyPassword = form.proxyPassword;
       const payload: Record<string, unknown> = {
         environmentIds: form.environmentIds,
         connectionGroupId: form.connectionGroupId,
@@ -488,11 +527,19 @@ async function saveConnection() {
           hostKeySha256: form.hostKeySha256.trim(),
           loginScriptEnabled: form.loginScriptEnabled,
           loginScript: form.loginScript,
+          connectTimeoutSeconds: form.connectTimeoutSeconds,
+          ipVersion: form.ipVersion,
+          compression: form.compression,
+          agentForwarding: form.agentForwarding,
+          agentSocket: form.agentSocket.trim(),
+          algorithmPreset: form.algorithmPreset,
+          proxyType: form.proxyType,
+          proxyHost: form.proxyHost.trim(),
+          proxyPort: form.proxyPort,
+          proxyUsername: form.proxyUsername,
         },
       };
-      if (!editingId.value || credentialChanged) {
-        payload.credential = { password: form.password };
-      }
+      if (!editingId.value || Object.keys(credential).length) payload.credential = credential;
       await api(editingId.value ? `/api/v1/ssh-connections/${editingId.value}` : "/api/v1/ssh-connections", {
         method: editingId.value ? "PUT" : "POST",
         body: JSON.stringify(payload),
@@ -1020,7 +1067,7 @@ onMounted(async () => {
           </template>
         </el-table-column>
         <el-table-column :label="$t('凭据')" width="100" align="center">
-          <template #default="{ row }: { row: ConnectionTableRow }"><span v-if="!isGroupRow(row)" class="credential-state" :title="row.hasPassword || row.hasPrivateKey ? $t('凭据已加密保存') : $t('未保存凭据')"><ShieldCheck v-if="row.hasPassword || row.hasPrivateKey" :size="17" /><Unplug v-else :size="16" /></span></template>
+          <template #default="{ row }: { row: ConnectionTableRow }"><span v-if="!isGroupRow(row)" class="credential-state" :title="row.authType === 'sshAgent' ? $t('使用执行端 ssh-agent 或 Pageant 中已解锁的密钥。') : row.hasPassword || row.hasPrivateKey ? $t('凭据已加密保存') : $t('未保存凭据')"><KeyRound v-if="row.authType === 'sshAgent'" :size="17" /><ShieldCheck v-else-if="row.hasPassword || row.hasPrivateKey" :size="17" /><Unplug v-else :size="16" /></span></template>
         </el-table-column>
         <el-table-column :label="$t('操作')" width="132" fixed="right">
           <template #default="{ row }: { row: ConnectionTableRow }">
@@ -1090,20 +1137,33 @@ onMounted(async () => {
           <div class="form-grid form-grid--two">
             <template v-if="form.type === 'ssh'">
               <ConnectionMethodPicker v-model="form.authType" :label="$t('认证方式')" :choices="sshAuthChoices" />
-              <el-form-item v-if="form.authType !== 'privateKey'" :label="$t('密码')" class="form-span-2"><el-input v-model="form.password" type="password" show-password :placeholder="editingId ? $t('留空表示保持原密码') : $t('连接密码')" /></el-form-item>
-              <el-form-item v-else :label="$t('SSH 密钥')" class="form-span-2" required>
+              <el-form-item v-if="form.authType === 'password' || form.authType === 'keyboardInteractive'" :label="$t('密码')" class="form-span-2"><el-input v-model="form.password" type="password" show-password :placeholder="editingId ? $t('留空表示保持原密码') : $t('连接密码')" /></el-form-item>
+              <el-form-item v-else-if="form.authType === 'privateKey'" :label="$t('SSH 密钥')" class="form-span-2" required>
                 <div class="inline-create-field"><el-select v-model="form.sshKeyId" clearable filterable :placeholder="preservesLegacyPrivateKey ? $t('沿用旧版内嵌私钥，或选择托管密钥') : $t('选择当前工作空间的密钥')" style="width:100%"><el-option v-for="key in sshKeys" :key="key.id" :label="`${key.name} · ${key.fingerprint}`" :value="key.id" /></el-select><el-button :aria-label="$t('打开 SSH 密钥管理')" :title="$t('密钥管理')" @click="connectionDialog = false; router.push({ name: 'ssh-keys' })"><KeyRound :size="14" /></el-button></div>
                 <small v-if="preservesLegacyPrivateKey && !form.sshKeyId">{{ $t('当前连接仍使用旧版内嵌私钥；选择托管密钥后将改为统一引用。') }}</small><small v-else-if="!sshKeys.length">{{ $t('当前空间没有可用密钥，请先进入 SSH 密钥管理导入或生成。') }}</small>
               </el-form-item>
-              <el-form-item class="form-span-2">
-                <template #label><span class="form-label-with-tip">{{ $t('跳板机 / ProxyJump') }}<TipIcon :content="$t('目标连接会通过所选 SSH 主机转发；该 SSH 主机本身不能再引用跳板机。')" placement="right" /></span></template>
-                <el-select v-model="form.jumpConnectionId" clearable :placeholder="$t('直连，不使用跳板机')" style="width:100%"><el-option v-for="connection in sshOptions" :key="connection.id" :label="connection.name + ' · ' + connection.username + '@' + connection.host + ':' + connection.port" :value="connection.id" /></el-select>
-              </el-form-item>
+              <el-form-item v-if="form.authType === 'sshAgent'" :label="$t('Agent Socket')" class="form-span-2"><el-input v-model="form.agentSocket" class="mono-input" :placeholder="$t('留空自动使用 SSH_AUTH_SOCK；Windows 使用 Pageant')" clearable /><small>{{ $t('桌面直连使用本机 Agent；服务端连接使用服务器上的 Agent。') }}</small></el-form-item>
+              <details class="connection-advanced-panel form-span-2" open>
+                <summary><span><strong>{{ $t('网络路径') }}</strong><small>{{ $t('直连、代理或多级 ProxyJump') }}</small></span><span class="connection-advanced-panel__status">{{ form.jumpConnectionId ? 'ProxyJump' : form.proxyType === 'none' ? $t('直连') : form.proxyType.toUpperCase() }}</span></summary>
+                <div class="form-grid form-grid--two connection-advanced-panel__body">
+                  <el-form-item class="form-span-2"><template #label><span class="form-label-with-tip">{{ $t('跳板机 / ProxyJump') }}<TipIcon :content="$t('目标连接会沿用所选主机的完整跳板链；最多支持 8 跳，且不能形成循环。')" placement="right" /></span></template><el-select v-model="form.jumpConnectionId" clearable :disabled="form.proxyType !== 'none'" :placeholder="$t('直连，不使用跳板机')" style="width:100%"><el-option v-for="connection in sshOptions" :key="connection.id" :label="connection.name + ' · ' + connection.username + '@' + connection.host + ':' + connection.port" :value="connection.id" /></el-select></el-form-item>
+                  <el-form-item :label="$t('出站代理')"><el-select v-model="form.proxyType" :disabled="Boolean(form.jumpConnectionId)" style="width:100%"><el-option :label="$t('不使用代理')" value="none" /><el-option label="HTTP CONNECT" value="http" /><el-option label="SOCKS5" value="socks5" /></el-select></el-form-item>
+                  <el-form-item v-if="form.proxyType !== 'none'" :label="$t('代理端口')"><el-input-number v-model="form.proxyPort" :min="1" :max="65535" controls-position="right" style="width:100%" /></el-form-item>
+                  <el-form-item v-if="form.proxyType !== 'none'" :label="$t('代理主机')" class="form-span-2" required><el-input v-model="form.proxyHost" placeholder="proxy.example.com" /></el-form-item>
+                  <el-form-item v-if="form.proxyType !== 'none'" :label="$t('代理用户名')"><el-input v-model="form.proxyUsername" :placeholder="$t('可选')" /></el-form-item>
+                  <el-form-item v-if="form.proxyType !== 'none'" :label="$t('代理密码')"><el-input v-model="form.proxyPassword" type="password" show-password :placeholder="editingId ? $t('留空表示保持原认证') : $t('可选')" /></el-form-item>
+                </div>
+              </details>
               <details class="connection-advanced-panel form-span-2">
-                <summary><span><strong>{{ $t('SSH 高级参数') }}</strong><small>{{ $t('终端兼容、连接保活与主机身份固定') }}</small></span><span class="connection-advanced-panel__status">{{ form.hostKeySha256 ? $t('已固定主机') : $t('使用默认值') }}</span></summary>
+                <summary><span><strong>{{ $t('SSH 协议与兼容性') }}</strong><small>{{ $t('超时、IP、压缩、算法与 Agent 转发') }}</small></span><span class="connection-advanced-panel__status">{{ form.algorithmPreset === 'default' ? $t('安全默认值') : form.algorithmPreset === 'modern' ? $t('现代算法') : $t('兼容旧主机') }}</span></summary>
                 <div class="form-grid form-grid--two connection-advanced-panel__body">
                   <el-form-item :label="$t('终端类型')"><el-select v-model="form.terminalType" allow-create filterable style="width:100%"><el-option label="xterm-256color" value="xterm-256color" /><el-option label="xterm" value="xterm" /><el-option label="vt100" value="vt100" /><el-option label="linux" value="linux" /></el-select></el-form-item>
                   <el-form-item :label="$t('保活间隔')"><el-input-number v-model="form.keepAliveSeconds" :min="0" :max="600" controls-position="right" style="width:100%" /><small>{{ $t('秒；设为 0 可关闭保活') }}</small></el-form-item>
+                  <el-form-item :label="$t('连接超时')"><el-input-number v-model="form.connectTimeoutSeconds" :min="1" :max="120" controls-position="right" style="width:100%" /><small>{{ $t('秒；包含 TCP 与 SSH 握手') }}</small></el-form-item>
+                  <el-form-item :label="$t('IP 版本')"><el-select v-model="form.ipVersion" style="width:100%"><el-option :label="$t('自动选择')" value="auto" /><el-option label="IPv4" value="ipv4" /><el-option label="IPv6" value="ipv6" /></el-select></el-form-item>
+                  <el-form-item :label="$t('算法策略')"><el-select v-model="form.algorithmPreset" style="width:100%"><el-option :label="$t('安全默认值')" value="default" /><el-option :label="$t('仅现代算法')" value="modern" /><el-option :label="$t('兼容旧主机')" value="compatible" /></el-select><small v-if="form.algorithmPreset === 'compatible'" class="form-field-warning">{{ $t('会启用部分旧算法，仅用于无法升级的设备。') }}</small></el-form-item>
+                  <el-form-item :label="$t('传输优化')"><div class="connection-switch-stack"><label><el-switch v-model="form.compression" />{{ $t('启用压缩') }}</label><label><el-switch v-model="form.agentForwarding" />{{ $t('转发 SSH Agent') }}</label></div></el-form-item>
+                  <el-form-item v-if="form.authType !== 'sshAgent' && form.agentForwarding" :label="$t('Agent Socket')" class="form-span-2"><el-input v-model="form.agentSocket" class="mono-input" :placeholder="$t('留空自动使用 SSH_AUTH_SOCK；Windows 使用 Pageant')" clearable /></el-form-item>
                   <el-form-item class="form-span-2">
                     <template #label><span class="form-label-with-tip">{{ $t('主机密钥 SHA-256') }}<TipIcon :content="$t('填写后会固定服务器主机密钥，密钥不匹配时拒绝连接，可防止中间人攻击。')" placement="right" /></span></template>
                     <el-input v-model="form.hostKeySha256" class="mono-input" placeholder="SHA256:AbCdEf…" clearable />

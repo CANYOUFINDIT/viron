@@ -1,4 +1,5 @@
 import { translate as tr } from "./i18n.js";
+import type { SshAuthType, SshConnectionCredential, SshConnectionOptions } from "../shared/ssh-connect.js";
 import {
   createDecipheriv,
   constants,
@@ -58,27 +59,17 @@ export interface DesktopSshConnection {
   host: string;
   port: number;
   username: string;
-  authType: "password" | "privateKey" | "keyboardInteractive";
-  credential: {
-    password?: string;
-    privateKey?: string;
-    passphrase?: string;
-  };
+  authType: SshAuthType;
+  credential: SshConnectionCredential;
   jumpConnectionId: string | null;
-  options: {
-    terminalType?: string;
-    keepAliveSeconds?: number;
-    encoding?: string;
-    hostKeySha256?: string;
-    loginScriptEnabled?: boolean;
-    loginScript?: string;
-  };
+  options: SshConnectionOptions;
   connectionUpdatedAt: string;
 }
 
 export interface DesktopSshCredential {
   connection: DesktopSshConnection;
   jumpConnection: DesktopSshConnection | null;
+  jumpConnections?: DesktopSshConnection[];
 }
 
 export interface DesktopDatabaseConnection {
@@ -165,6 +156,8 @@ export interface SshCredentialEnvelopeClaims {
   connectionUpdatedAt: string;
   jumpConnectionId: string | null;
   jumpConnectionUpdatedAt: string | null;
+  jumpConnectionIds?: string[];
+  jumpConnectionUpdatedAts?: string[];
   issuedAt: string;
   expiresAt: string;
 }
@@ -189,6 +182,8 @@ export interface DatabaseCredentialEnvelopeClaims {
   sshConnectionUpdatedAt: string | null;
   jumpConnectionId: string | null;
   jumpConnectionUpdatedAt: string | null;
+  jumpConnectionIds?: string[];
+  jumpConnectionUpdatedAts?: string[];
   issuedAt: string;
   expiresAt: string;
 }
@@ -212,6 +207,8 @@ export interface RedisCredentialEnvelopeClaims {
   sshConnectionUpdatedAt: string | null;
   jumpConnectionId: string | null;
   jumpConnectionUpdatedAt: string | null;
+  jumpConnectionIds?: string[];
+  jumpConnectionUpdatedAts?: string[];
   issuedAt: string;
   expiresAt: string;
 }
@@ -292,6 +289,25 @@ function assertClaim(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
 
+function assertSshJumpChain(
+  credential: DesktopSshCredential,
+  claims: { jumpConnectionId: string | null; jumpConnectionUpdatedAt: string | null; jumpConnectionIds?: string[]; jumpConnectionUpdatedAts?: string[] },
+): void {
+  const jumps = credential.jumpConnections ?? (credential.jumpConnection ? [credential.jumpConnection] : []);
+  assertClaim(jumps.length <= 8, tr("凭据信封跳板链过长"));
+  assertClaim((jumps[0]?.connectionId ?? null) === claims.jumpConnectionId, tr("凭据信封跳板机不匹配"));
+  assertClaim((jumps[0]?.connectionUpdatedAt ?? null) === claims.jumpConnectionUpdatedAt, tr("凭据信封跳板机版本不匹配"));
+  if (claims.jumpConnectionIds) {
+    assertClaim(JSON.stringify(jumps.map((item) => item.connectionId)) === JSON.stringify(claims.jumpConnectionIds), tr("凭据信封跳板链不匹配"));
+    assertClaim(JSON.stringify(jumps.map((item) => item.connectionUpdatedAt)) === JSON.stringify(claims.jumpConnectionUpdatedAts ?? []), tr("凭据信封跳板链版本不匹配"));
+  } else assertClaim(jumps.length <= 1, tr("凭据信封包含未声明的跳板链"));
+  const expectedFirst = jumps[0]?.connectionId ?? null;
+  assertClaim(credential.connection.jumpConnectionId === expectedFirst, tr("凭据信封跳板链入口不匹配"));
+  for (let index = 0; index < jumps.length; index += 1) {
+    assertClaim(jumps[index].jumpConnectionId === (jumps[index + 1]?.connectionId ?? null), tr("凭据信封跳板链顺序不匹配"));
+  }
+}
+
 function readEnvelopeClaims<TClaims>(envelope: CredentialEnvelope): TClaims {
   const protectedBytes = Buffer.from(envelope.protected, "base64url");
   return JSON.parse(protectedBytes.toString("utf8")) as TClaims;
@@ -359,8 +375,7 @@ export function openSshCredentialEnvelope(
   assertClaim(credential.connection.connectionId === claims.connectionId, tr("凭据信封内容资源不匹配"));
   assertClaim(credential.connection.connectionUpdatedAt === claims.connectionUpdatedAt, tr("凭据信封内容版本不匹配"));
   assertClaim(credential.connection.host === claims.targetHost && credential.connection.port === claims.targetPort, tr("凭据信封目标地址不匹配"));
-  assertClaim((credential.jumpConnection?.connectionId ?? null) === claims.jumpConnectionId, tr("凭据信封跳板机不匹配"));
-  assertClaim((credential.jumpConnection?.connectionUpdatedAt ?? null) === claims.jumpConnectionUpdatedAt, tr("凭据信封跳板机版本不匹配"));
+  assertSshJumpChain(credential, claims);
   return { claims, credential };
 }
 
@@ -392,8 +407,8 @@ export function openDatabaseCredentialEnvelope(
   assertClaim(tunnelOrigin === claims.httpTunnelOrigin, tr("凭据信封 HTTP Tunnel 不匹配"));
   assertClaim((credential.sshCredential?.connection.connectionId ?? null) === claims.sshConnectionId, tr("凭据信封 SSH Tunnel 不匹配"));
   assertClaim((credential.sshCredential?.connection.connectionUpdatedAt ?? null) === claims.sshConnectionUpdatedAt, tr("凭据信封 SSH Tunnel 版本不匹配"));
-  assertClaim((credential.sshCredential?.jumpConnection?.connectionId ?? null) === claims.jumpConnectionId, tr("凭据信封跳板机不匹配"));
-  assertClaim((credential.sshCredential?.jumpConnection?.connectionUpdatedAt ?? null) === claims.jumpConnectionUpdatedAt, tr("凭据信封跳板机版本不匹配"));
+  if (credential.sshCredential) assertSshJumpChain(credential.sshCredential, claims);
+  else assertClaim(claims.jumpConnectionId === null && !(claims.jumpConnectionIds?.length), tr("凭据信封包含未声明的跳板链"));
   if (connection.connectionMode === "sshTunnel") assertClaim(Boolean(credential.sshCredential), tr("数据库 SSH Tunnel 凭据缺失"));
   else assertClaim(credential.sshCredential === null, tr("数据库连接包含未声明的 SSH Tunnel 凭据"));
   if (connection.connectionMode === "httpTunnel") assertClaim(Boolean(connection.options.httpTunnelUrl), tr("数据库 HTTP Tunnel 地址缺失"));
@@ -426,8 +441,8 @@ export function openRedisCredentialEnvelope(
   assertClaim(connection.connectionMode === claims.connectionMode, tr("凭据信封连接模式不匹配"));
   assertClaim((credential.sshCredential?.connection.connectionId ?? null) === claims.sshConnectionId, tr("凭据信封 SSH Tunnel 不匹配"));
   assertClaim((credential.sshCredential?.connection.connectionUpdatedAt ?? null) === claims.sshConnectionUpdatedAt, tr("凭据信封 SSH Tunnel 版本不匹配"));
-  assertClaim((credential.sshCredential?.jumpConnection?.connectionId ?? null) === claims.jumpConnectionId, tr("凭据信封跳板机不匹配"));
-  assertClaim((credential.sshCredential?.jumpConnection?.connectionUpdatedAt ?? null) === claims.jumpConnectionUpdatedAt, tr("凭据信封跳板机版本不匹配"));
+  if (credential.sshCredential) assertSshJumpChain(credential.sshCredential, claims);
+  else assertClaim(claims.jumpConnectionId === null && !(claims.jumpConnectionIds?.length), tr("凭据信封包含未声明的跳板链"));
   if (connection.connectionMode === "sshTunnel") assertClaim(Boolean(credential.sshCredential), tr("Redis SSH Tunnel 凭据缺失"));
   else assertClaim(credential.sshCredential === null, tr("Redis 连接包含未声明的 SSH Tunnel 凭据"));
   return { claims, credential };
