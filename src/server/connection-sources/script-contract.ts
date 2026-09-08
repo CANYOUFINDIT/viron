@@ -111,14 +111,15 @@ export const scriptSyncPayloadSchema = z.object({
     host: name(255),
     port: z.number().int().min(1).max(65535).default(22),
     username: name(255),
-    authType: z.enum(["password", "privateKey", "keyboardInteractive"]).default("password"),
+    authType: z.enum(["password", "privateKey", "keyboardInteractive", "sshAgent"]).default("password"),
     keyName: name(160).nullable().default(null),
     jumpConnection: name(160).nullable().default(null),
     credential: z.object({
       password: z.string().max(4096).default(""),
       privateKey: z.string().max(128 * 1024).default(""),
       passphrase: z.string().max(4096).default(""),
-    }).strict().default({ password: "", privateKey: "", passphrase: "" }),
+      proxyPassword: z.string().max(4096).default(""),
+    }).strict().default({ password: "", privateKey: "", passphrase: "", proxyPassword: "" }),
     options: z.object({
       terminalType: name(80).default("xterm-256color"),
       keepAliveSeconds: z.number().int().min(0).max(600).default(30),
@@ -126,9 +127,26 @@ export const scriptSyncPayloadSchema = z.object({
       hostKeySha256: z.string().trim().max(160).default(""),
       loginScriptEnabled: z.boolean().default(false),
       loginScript: z.string().max(64 * 1024).default(""),
-    }).strict().default({ terminalType: "xterm-256color", keepAliveSeconds: 30, encoding: "utf-8", hostKeySha256: "", loginScriptEnabled: false, loginScript: "" }),
+      connectTimeoutSeconds: z.number().int().min(1).max(120).default(15),
+      ipVersion: z.enum(["auto", "ipv4", "ipv6"]).default("auto"),
+      compression: z.boolean().default(false),
+      agentForwarding: z.boolean().default(false),
+      agentSocket: z.string().trim().max(4096).default(""),
+      algorithmPreset: z.enum(["default", "modern", "compatible"]).default("default"),
+      proxyType: z.enum(["none", "http", "socks5"]).default("none"),
+      proxyHost: z.string().trim().max(255).default(""),
+      proxyPort: z.number().int().min(1).max(65535).default(1080),
+      proxyUsername: z.string().max(255).default(""),
+    }).strict().default({ terminalType: "xterm-256color", keepAliveSeconds: 30, encoding: "utf-8", hostKeySha256: "", loginScriptEnabled: false, loginScript: "", connectTimeoutSeconds: 15, ipVersion: "auto", compression: false, agentForwarding: false, agentSocket: "", algorithmPreset: "default", proxyType: "none", proxyHost: "", proxyPort: 1080, proxyUsername: "" }),
     tags,
-  }).strict()).max(10_000).default([]),
+  }).strict().superRefine((row, context) => {
+    if (row.options.proxyType !== "none" && !row.options.proxyHost) {
+      context.addIssue({ code: "custom", path: ["options", "proxyHost"], message: "使用代理时必须填写代理主机" });
+    }
+    if (row.jumpConnection && row.options.proxyType !== "none") {
+      context.addIssue({ code: "custom", path: ["options", "proxyType"], message: "ProxyJump 与出站代理不能同时配置；请把代理配置在最外层跳板机上" });
+    }
+  })).max(10_000).default([]),
   databaseConnections: z.array(z.object({
     name: name(160),
     environments: z.array(environmentReferenceSchema).max(100).default([]),

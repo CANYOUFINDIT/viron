@@ -1,3 +1,6 @@
+import { execFile, spawn } from "node:child_process";
+import { once } from "node:events";
+import { promisify } from "node:util";
 import { generateKeyPairSync, randomUUID } from "node:crypto";
 import {
   chmodSync,
@@ -19,7 +22,7 @@ import {
   writeFileSync,
   writeSync,
 } from "node:fs";
-import { createConnection, type Socket } from "node:net";
+import { createConnection, createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join, posix, resolve, sep } from "node:path";
 import type { AddressInfo } from "node:net";
@@ -289,6 +292,77 @@ function waitFor<T>(read: () => T, predicate: (value: T) => boolean, timeoutMs =
 }
 
 describe("desktop SSH runtime", () => {
+
+  it.skipIf(process.platform === "win32")("authenticates through a real SSH Agent without storing a connection private key", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "viron-agent-"));
+    directories.push(directory);
+    const target = await startSshFixture(directory);
+    const agentSocket = join(directory, "agent.sock");
+    const keyPath = join(directory, "identity");
+    writeFileSync(keyPath, sshConnection("key", target.port, "privateKey").credential.privateKey!, { mode: 0o600 });
+    const agent = spawn("ssh-agent", ["-D", "-a", agentSocket], { stdio: "ignore" });
+    const exited = once(agent, "exit");
+    try {
+      await waitFor(() => existsSync(agentSocket), Boolean);
+      await promisify(execFile)("ssh-add", [keyPath], { env: { ...process.env, SSH_AUTH_SOCK: agentSocket } });
+      const connection = sshConnection("agent", target.port, "sshAgent");
+      connection.credential = {};
+      connection.options.agentSocket = agentSocket;
+      const connected = await connectDesktopSsh({ connection, jumpConnection: null });
+      connected.close();
+    } finally {
+      agent.kill();
+      await exited;
+    }
+  });
+
+  it.each(["http", "socks5"] as const)("opens a real SSH session through a %s proxy", async (proxyType) => {
+    const directory = mkdtempSync(join(tmpdir(), "viron-proxy-ssh-"));
+    directories.push(directory);
+    const target = await startSshFixture(directory);
+    const sockets = new Set<Socket>();
+    const proxy = createServer((socket) => {
+      sockets.add(socket);
+      const tunnel = () => {
+        const upstream = createConnection(target.port, "127.0.0.1");
+        sockets.add(upstream);
+        upstream.once("error", () => socket.destroy());
+        upstream.once("connect", () => {
+          socket.write(proxyType === "http" ? Buffer.from("HTTP/1.1 200 OK\r\n\r\n") : Buffer.from([5, 0, 0, 1, 127, 0, 0, 1, 0, 22]));
+          socket.pipe(upstream).pipe(socket);
+        });
+      };
+      socket.once("data", () => {
+        if (proxyType === "http") tunnel();
+        else {
+          socket.write(Buffer.from([5, 0]));
+          socket.once("data", tunnel);
+        }
+      });
+    });
+    await new Promise<void>((resolveListen) => proxy.listen(0, "127.0.0.1", resolveListen));
+    try {
+      const connection = sshConnection(proxyType, target.port);
+      connection.host = "only-resolvable-by-proxy.test";
+      connection.options = { proxyType, proxyHost: "127.0.0.1", proxyPort: (proxy.address() as AddressInfo).port };
+      const connected = await connectDesktopSsh({ connection, jumpConnection: null });
+      connected.close();
+    } finally {
+      sockets.forEach((socket) => socket.destroy());
+      await new Promise<void>((resolveClose) => proxy.close(() => resolveClose()));
+    }
+  });
+
+  it.each(["modern", "compatible"] as const)("completes a real SSH handshake with %s algorithms and compression", async (algorithmPreset) => {
+    const directory = mkdtempSync(join(tmpdir(), "viron-algorithms-"));
+    directories.push(directory);
+    const target = await startSshFixture(directory);
+    const connection = sshConnection(algorithmPreset, target.port);
+    connection.options = { algorithmPreset, compression: true, connectTimeoutSeconds: 3, ipVersion: "ipv4" };
+    const connected = await connectDesktopSsh({ connection, jumpConnection: null });
+    connected.close();
+  });
+
   it("reuses a transport before loading another credential envelope and invalidates it by connection", async () => {
     const directory = mkdtempSync(join(tmpdir(), "viron-desktop-ssh-pool-"));
     directories.push(directory);
@@ -314,15 +388,18 @@ describe("desktop SSH runtime", () => {
     expect(loads).toBe(2);
   });
 
-  it("supports all auth modes, a jump host, terminal transport, login scripts, resize, and local recordings", async () => {
+  it("supports all auth modes, a multi-hop jump chain, terminal transport, login scripts, resize, and local recordings", async () => {
     const directory = mkdtempSync(join(tmpdir(), "viron-desktop-ssh-runtime-"));
     directories.push(directory);
     const targetRoot = join(directory, "target");
     const jumpRoot = join(directory, "jump");
+    const outerJumpRoot = join(directory, "outer-jump");
     mkdirSync(targetRoot, { recursive: true });
     mkdirSync(jumpRoot, { recursive: true });
+    mkdirSync(outerJumpRoot, { recursive: true });
     const target = await startSshFixture(targetRoot);
     const jump = await startSshFixture(jumpRoot, true);
+    const outerJump = await startSshFixture(outerJumpRoot, true);
 
     for (const authType of ["password", "keyboardInteractive", "privateKey"] as const) {
       const connected = await connectDesktopSsh({ connection: sshConnection(`auth-${authType}`, target.port, authType), jumpConnection: null });
@@ -331,8 +408,12 @@ describe("desktop SSH runtime", () => {
     }
     const throughJump = sshConnection("through-jump", target.port);
     throughJump.jumpConnectionId = "jump";
-    const jumped = await connectDesktopSsh({ connection: throughJump, jumpConnection: sshConnection("jump", jump.port) });
+    const immediateJump = sshConnection("jump", jump.port);
+    immediateJump.jumpConnectionId = "outer-jump";
+    const outermostJump = sshConnection("outer-jump", outerJump.port);
+    const jumped = await connectDesktopSsh({ connection: throughJump, jumpConnection: immediateJump, jumpConnections: [immediateJump, outermostJump] });
     expect(jumped.jumpClient).toBeTruthy();
+    expect(jumped.jumpClients).toHaveLength(2);
     jumped.close();
 
     const events: DesktopSshSessionEvent[] = [];

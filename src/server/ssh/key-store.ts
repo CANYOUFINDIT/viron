@@ -6,6 +6,7 @@ export interface StoredSshCredential {
   password?: string;
   privateKey?: string;
   passphrase?: string;
+  proxyPassword?: string;
 }
 
 export interface SshKeyReference {

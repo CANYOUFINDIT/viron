@@ -178,6 +178,20 @@ describe("desktop credential envelopes", () => {
       endpoint: "http://127.0.0.1:8081",
     })).toThrow();
 
+    const outerJump = await app.inject({
+      method: "POST",
+      url: "/api/v1/ssh-connections",
+      cookies,
+      payload: {
+        name: "Desktop Outer Jump",
+        host: "outer-jump.example.com",
+        port: 2223,
+        username: "outer-user",
+        authType: "password",
+        credential: { password: "outer-secret" },
+      },
+    });
+    expect(outerJump.statusCode).toBe(201);
     const jump = await app.inject({
       method: "POST",
       url: "/api/v1/ssh-connections",
@@ -189,6 +203,7 @@ describe("desktop credential envelopes", () => {
         username: "jump-user",
         authType: "password",
         credential: { password: "jump-secret" },
+        jumpConnectionId: outerJump.json().id,
       },
     });
     expect(jump.statusCode).toBe(201);
@@ -241,6 +256,7 @@ describe("desktop credential envelopes", () => {
       targetHost: "target.example.com",
       targetPort: 2201,
       jumpConnectionId: jump.json().id,
+      jumpConnectionIds: [jump.json().id, outerJump.json().id],
     });
     expect(sshOpened.credential.connection).toMatchObject({
       connectionId: sshConnection.json().id,
@@ -256,6 +272,7 @@ describe("desktop credential envelopes", () => {
       authType: "password",
       credential: { password: "jump-secret" },
     });
+    expect(sshOpened.credential.jumpConnections?.map((item) => item.connectionId)).toEqual([jump.json().id, outerJump.json().id]);
     expect(() => openSshCredentialEnvelope(identity, sshIssued.json(), {
       requestId: randomUUID(),
       userId,
@@ -324,6 +341,7 @@ describe("desktop credential envelopes", () => {
       connectionMode: "sshTunnel",
       sshConnectionId: sshConnection.json().id,
       jumpConnectionId: jump.json().id,
+      jumpConnectionIds: [jump.json().id, outerJump.json().id],
     });
     expect(databaseOpened.credential.connection).toMatchObject({
       connectionId: databaseConnection.json().id,
@@ -344,6 +362,7 @@ describe("desktop credential envelopes", () => {
     });
     expect(databaseOpened.credential.sshCredential?.connection.connectionId).toBe(sshConnection.json().id);
     expect(databaseOpened.credential.sshCredential?.jumpConnection?.connectionId).toBe(jump.json().id);
+    expect(databaseOpened.credential.sshCredential?.jumpConnections?.map((item) => item.connectionId)).toEqual([jump.json().id, outerJump.json().id]);
     const databaseReplayed = await app.inject(databaseRequest);
     expect(databaseReplayed.statusCode).toBe(409);
     expect(databaseReplayed.json().error).toBe("REQUEST_REPLAYED");
