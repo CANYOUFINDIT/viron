@@ -942,9 +942,13 @@ onBeforeUnmount(() => {
 .redis-connection-list h4 { min-width: 0; margin: 0 4px 4px; color: var(--ink-500); display: flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 700; }
 .redis-connection-list h4 span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .redis-connection-list h4 small { margin-left: auto; font-family: var(--font-mono); font-size: 9px; }
-.redis-connection-list section > button { width: 100%; min-height: 46px; padding: 6px 7px; border: 0; border-radius: 7px; background: transparent; color: var(--ink-600); display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 8px; text-align: left; cursor: pointer; transition: background .15s ease, color .15s ease, box-shadow .15s ease; }
+.redis-connection-list section > button { width: 100%; min-height: 46px; padding: 6px 7px; border: 0; border-radius: 7px; background: transparent; color: var(--ink-600); display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 8px; text-align: left; cursor: pointer; transition: background .15s ease, color .15s ease; }
 .redis-connection-list section > button:hover { background: var(--ink-50); color: var(--ink-800); }
-.redis-connection-list section > button.is-active { background: var(--teal-50); color: var(--teal-700); box-shadow: inset 2px 0 var(--teal-500); }
+.redis-connection-list section > button:focus-visible { outline: 2px solid var(--teal-500); outline-offset: -2px; }
+.redis-connection-list section > button.is-active { background: var(--teal-50); color: var(--teal-700); }
+.redis-connection-list section > button.is-active:hover { background: var(--teal-100); }
+.redis-connection-list section > button.is-active .redis-connection-icon { border-color: color-mix(in srgb, var(--teal-500) 32%, var(--ink-200)); color: var(--teal-700); }
+.redis-connection-list section > button.is-active small { color: color-mix(in srgb, var(--teal-700) 58%, var(--ink-500)); }
 .redis-connection-icon { width: 28px; height: 28px; border: 1px solid var(--ink-200); border-radius: 6px; background: var(--surface); display: grid; place-items: center; }
 .redis-connection-list button > div { min-width: 0; display: flex; flex-direction: column; }
 .redis-connection-list button strong, .redis-connection-list button small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -984,9 +988,11 @@ onBeforeUnmount(() => {
 .redis-scan-note b { margin-left: auto; color: var(--ink-600); font-family: var(--font-mono); font-size: 9px; font-weight: 600; }
 .redis-key-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(260px, 32%) minmax(0, 1fr); }
 .redis-key-list { min-height: 0; overflow: auto; border-right: 1px solid var(--ink-200); scrollbar-width: thin; }
-.redis-flat-key, .redis-key-tree-key { width: 100%; min-height: 48px; padding: 7px 11px; border: 0; border-bottom: 1px solid var(--ink-100); background: transparent; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 9px; text-align: left; cursor: pointer; transition: background .15s ease, box-shadow .15s ease; }
+.redis-flat-key, .redis-key-tree-key { width: 100%; min-height: 48px; padding: 7px 11px; border: 0; border-bottom: 1px solid var(--ink-100); background: transparent; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 9px; text-align: left; cursor: pointer; transition: background .15s ease; }
 .redis-flat-key:hover, .redis-key-tree-key:hover { background: var(--ink-50); }
-.redis-flat-key.is-active, .redis-key-tree-key.is-active { background: var(--teal-50); box-shadow: inset 3px 0 var(--teal-500); }
+.redis-flat-key:focus-visible, .redis-key-tree-key:focus-visible { outline: 2px solid var(--teal-500); outline-offset: -2px; }
+.redis-flat-key.is-active, .redis-key-tree-key.is-active { background: var(--teal-50); color: var(--teal-700); }
+.redis-flat-key.is-active:hover, .redis-key-tree-key.is-active:hover { background: var(--teal-100); }
 .redis-key-tree-group { width: 100%; min-height: 34px; padding: 5px 10px 5px var(--redis-tree-indent); border: 0; border-bottom: 1px solid var(--ink-100); background: color-mix(in srgb, var(--ink-50) 54%, var(--surface)); color: var(--ink-600); display: grid; grid-template-columns: 14px 16px minmax(0, 1fr) auto; align-items: center; gap: 6px; text-align: left; cursor: pointer; }
 .redis-key-tree-group:hover { background: var(--ink-50); color: var(--ink-800); }
 .redis-key-tree-group > svg:first-child { transition: transform .15s var(--ease-out); }
