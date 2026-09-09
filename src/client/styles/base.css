@@ -305,7 +305,14 @@ button { color: inherit; }
 .icon-action:hover:not(:disabled) { border-color: var(--teal-500); color: var(--teal-600); transform: translateY(-1px); }
 .icon-action:disabled { opacity: .38; cursor: not-allowed; }
 .admin-avatar { width: 28px; height: 28px; flex: 0 0 auto; border-radius: 7px; display: inline-grid; place-items: center; background: var(--teal-100); color: var(--teal-700); font-size: 14px; font-weight: 800; }
-.app-content { min-height: 100vh; padding: 30px 34px; }
+.app-content { isolation: isolate; min-height: 100vh; padding: 30px 34px; }
+/* Route loading stays below shell controls and does not paint a page-sized rectangle. */
+.app-content > * > .el-loading-mask { background: transparent; }
+.app-content > * > .el-loading-mask > .el-loading-spinner .circular {
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 0 0 8px var(--surface), var(--shadow-sm);
+}
 .is-desktop .app-content { min-height: var(--desktop-usable-viewport-height); }
 .app-content.is-workbench-page {
   --workbench-viewport-height: calc(100dvh - 32px);
