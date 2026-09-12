@@ -32,13 +32,13 @@ import {
   X,
 } from "@lucide/vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { TabulatorFull as Tabulator, type CellComponent, type ColumnDefinition, type RowComponent } from "tabulator-tables";
+import { TabulatorFull as Tabulator, type CellComponent, type ColumnComponent, type ColumnDefinition, type RowComponent } from "tabulator-tables";
 import "tabulator-tables/dist/css/tabulator_midnight.min.css";
 import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { api } from "../api";
 import { createClientId } from "../client-id";
 import { isBitFlagColumn } from "../../shared/database-cell-value";
-import { canBatchApplyColumnEdit, TABLE_GRID_LAYOUT, tableGridColumnSize, tableGridRangeBounds, tableGridSelectionMode } from "../database-table-grid";
+import { canBatchApplyColumnEdit, flattenTableGridRangeCells, isTableGridInternalField, TABLE_GRID_LAYOUT, TABLE_GRID_ROW_HEADER_FIELD, tableGridColumnSize, tableGridSelectionLabel } from "../database-table-grid";
 import { createTableFindMatch, resolveTableFindCell, type TableFindMatch } from "../database-table-find";
 import { type DatabaseTableProfile, type TableProfileConfig, normalizeTableProfile } from "../database-table-profile";
 import { downloadApiFile } from "../desktop";
@@ -108,6 +108,7 @@ const findColumn = ref("");
 const findMatchIndex = ref(-1);
 const findMatchCount = ref(0);
 const selectedCount = ref(0);
+const selectedColumnCount = ref(0);
 const selectedRow = ref<Record<string, unknown> | null>(null);
 const loadedRowCount = ref(0);
 const importDialog = ref(false);
@@ -131,8 +132,20 @@ let tableGrid: Tabulator | null = null;
 let loadController: AbortController | null = null;
 let loadGeneration = 0;
 let findMatches: TableFindMatch[] = [];
-let lastClickedRow: RowComponent | null = null;
 let applyingBatchEdit = false;
+
+const selectionLabel = computed(() => tableGridSelectionLabel(selectedCount.value, selectedColumnCount.value));
+
+type TableRangeLike = {
+  getRows: () => RowComponent[];
+  getColumns: () => ColumnComponent[];
+  getCells: () => CellComponent[] | CellComponent[][];
+};
+
+function tableRanges(): TableRangeLike[] {
+  const getRanges = (tableGrid as Tabulator & { getRanges?: () => TableRangeLike[] } | null)?.getRanges;
+  return getRanges?.() ?? [];
+}
 
 const canEdit = computed(() => !props.readOnly && primaryKey.value.length > 0);
 const pendingCount = computed(() => pending.value.size);
@@ -205,9 +218,26 @@ function formatCellText(value: unknown): string {
   return String(value ?? "");
 }
 
+function rowHeaderDefinition(): ColumnDefinition {
+  return {
+    title: "",
+    field: TABLE_GRID_ROW_HEADER_FIELD,
+    formatter: "rownum",
+    hozAlign: "center",
+    headerHozAlign: "center",
+    headerSort: false,
+    resizable: false,
+    frozen: true,
+    width: 42,
+    minWidth: 42,
+    cssClass: "table-row-header",
+    download: false,
+  };
+}
+
 function definitions(): ColumnDefinition[] {
   const positions = new Map(columnOrder.value.map((name, index) => [name, index]));
-  return [...columns.value].sort((left, right) => (positions.get(left.name) ?? Number.MAX_SAFE_INTEGER) - (positions.get(right.name) ?? Number.MAX_SAFE_INTEGER)).map((column) => ({
+  const dataColumns: ColumnDefinition[] = [...columns.value].sort((left, right) => (positions.get(left.name) ?? Number.MAX_SAFE_INTEGER) - (positions.get(right.name) ?? Number.MAX_SAFE_INTEGER)).map((column) => ({
     title: `${column.name}${column.primary ? " 🔑" : ""}`,
     field: column.name,
     ...tableGridColumnSize(column.name, columnWidths.value[column.name]),
@@ -216,7 +246,7 @@ function definitions(): ColumnDefinition[] {
     headerSort: true,
     headerTooltip: `${column.columnType}${column.comment ? ` · ${column.comment}` : ""}`,
     tooltip: true,
-    formatter: (cell) => {
+    formatter: (cell: CellComponent) => {
       const value = cell.getValue();
       if (value === null) return "<span class='db-null'>NULL</span>";
       const node = document.createElement("span");
@@ -225,6 +255,7 @@ function definitions(): ColumnDefinition[] {
       return node;
     },
   }));
+  return [rowHeaderDefinition(), ...dataColumns];
 }
 
 function currentProfileConfig(): TableProfileConfig {
@@ -342,57 +373,48 @@ function handleProfileCommand(command: string) {
   }
 }
 
-function syncSelection(active?: RowComponent | null) {
-  if (!tableGrid) return;
-  const selected = tableGrid.getSelectedRows();
-  selectedCount.value = selected.length;
-  const fallback = selected.at(-1);
-  selectedRow.value = active?.isSelected()
-    ? active.getData() as Record<string, unknown>
-    : fallback ? fallback.getData() as Record<string, unknown> : null;
-}
-
-function selectTableRow(row: RowComponent, mode: ReturnType<typeof tableGridSelectionMode>) {
-  if (!tableGrid) return;
-  const rows = tableGrid.getRows("active");
-  if (mode === "range" && lastClickedRow) {
-    const start = rows.indexOf(lastClickedRow);
-    const end = rows.indexOf(row);
-    if (start >= 0 && end >= 0) {
-      tableGrid.deselectRow();
-      const [from, to] = tableGridRangeBounds(start, end);
-      for (let index = from; index <= to; index += 1) rows[index]?.select();
-    } else {
-      tableGrid.deselectRow();
-      row.select();
-      lastClickedRow = row;
+function selectedRangeRows(): RowComponent[] {
+  const seen = new Set<string>();
+  const rows: RowComponent[] = [];
+  for (const range of tableRanges()) {
+    for (const row of range.getRows()) {
+      const id = String((row.getData() as Record<string, unknown>).__envmanId ?? "");
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      rows.push(row);
     }
-  } else if (mode === "toggle") {
-    if (row.isSelected()) row.deselect();
-    else row.select();
-    lastClickedRow = row;
-  } else if (mode === "preserve") {
-    if (!row.isSelected()) {
-      tableGrid.deselectRow();
-      row.select();
-    }
-    lastClickedRow = row;
-  } else {
-    tableGrid.deselectRow();
-    row.select();
-    lastClickedRow = row;
   }
-  syncSelection(row);
+  return rows;
 }
 
-function handleGridPointerDown(event: PointerEvent) {
-  const target = event.target instanceof Element ? event.target : null;
-  if (target?.closest(".tabulator-header, .tabulator-col-resize-handle")) return;
-  const rowElement = target?.closest<HTMLElement>(".tabulator-row");
-  if (!rowElement || !tableGrid) return;
-  const row = tableGrid.getRows().find((candidate) => candidate.getElement() === rowElement);
-  if (!row) return;
-  selectTableRow(row, tableGridSelectionMode(event, row.isSelected(), tableGrid.getSelectedRows().length));
+function selectedRangeColumns(): ColumnComponent[] {
+  const seen = new Set<string>();
+  const columnsInRange: ColumnComponent[] = [];
+  for (const range of tableRanges()) {
+    for (const column of range.getColumns()) {
+      const field = column.getField();
+      if (isTableGridInternalField(field) || seen.has(field)) continue;
+      seen.add(field);
+      columnsInRange.push(column);
+    }
+  }
+  return columnsInRange;
+}
+
+function selectedRangeCells(): CellComponent[] {
+  return tableRanges().flatMap((range) => flattenTableGridRangeCells(range.getCells()))
+    .filter((cell) => !isTableGridInternalField(cell.getField()));
+}
+
+function syncRangeSelection(active?: RowComponent | null) {
+  const rows = selectedRangeRows();
+  selectedCount.value = rows.length;
+  selectedColumnCount.value = selectedRangeColumns().length;
+  selectedRow.value = (active ?? rows.at(-1))?.getData() as Record<string, unknown> ?? null;
+}
+
+function remapMetaToCtrl(event: MouseEvent) {
+  if (event.metaKey && !event.ctrlKey) Object.defineProperty(event, "ctrlKey", { configurable: true, get: () => true });
 }
 
 function installTable(rows: Array<Record<string, unknown>>) {
@@ -404,7 +426,7 @@ function installTable(rows: Array<Record<string, unknown>>) {
   loadedRowCount.value = data.length;
   selectedRow.value = null;
   selectedCount.value = 0;
-  lastClickedRow = null;
+  selectedColumnCount.value = 0;
   if (!tableGrid) {
     tableGrid = new Tabulator(tableElement.value!, {
       data,
@@ -413,10 +435,25 @@ function installTable(rows: Array<Record<string, unknown>>) {
       layout: TABLE_GRID_LAYOUT,
       movableColumns: true,
       selectableRows: false,
+      selectableRange: true,
+      selectableRangeColumns: true,
+      selectableRangeRows: true,
+      selectableRangeClearCells: canEdit.value,
+      selectableRangeClearCellsValue: null,
+      selectableRangeInitializeDefault: false,
+      headerSortClickElement: "icon",
+      editTriggerEvent: "dblclick",
       clipboard: true,
+      clipboardCopyRowRange: "range",
+      clipboardPasteParser: "range",
+      clipboardPasteAction: "range",
       placeholder: tr("数据表中没有记录"),
       index: "__envmanId",
       columnDefaults: { resizable: true },
+    } as ConstructorParameters<typeof Tabulator>[1]);
+    tableGrid.on("rangeChanged", () => syncRangeSelection());
+    tableGrid.on("rowUpdated", (row: RowComponent) => {
+      if (!applyingBatchEdit) trackUpdate(row);
     });
     tableGrid.on("cellEdited", (cell: CellComponent) => {
       const row = cell.getRow();
@@ -425,24 +462,24 @@ function installTable(rows: Array<Record<string, unknown>>) {
       const field = cell.getField();
       const autoIncrementFields = columns.value.filter((column) => column.autoIncrement).map((column) => column.name);
       if (!canBatchApplyColumnEdit(field, primaryKey.value, autoIncrementFields)) return;
-      const selected = tableGrid?.getSelectedRows() ?? [];
-      if (selected.length <= 1) return;
       const value = cell.getValue();
+      const targets = selectedRangeCells().filter((candidate) => {
+        if (candidate === cell || candidate.getField() !== field) return false;
+        return candidate.getValue() !== value;
+      });
+      if (!targets.length) return;
       applyingBatchEdit = true;
-      void Promise.all(selected.map(async (candidate) => {
-        if (candidate === row) return;
-        const current = candidate.getData() as Record<string, unknown>;
-        if (current[field] === value) return;
-        await candidate.update({ [field]: value });
-        trackUpdate(candidate);
+      void Promise.all(targets.map(async (candidate) => {
+        candidate.setValue(value);
+        trackUpdate(candidate.getRow());
       })).finally(() => {
         applyingBatchEdit = false;
-        syncSelection(row);
+        syncRangeSelection(row);
       });
     });
     tableGrid.on("columnResized", (column) => {
       const name = column.getField();
-      if (!name) return;
+      if (!name || isTableGridInternalField(name)) return;
       columnWidths.value = { ...columnWidths.value, [name]: Math.round(column.getWidth()) };
     });
     tableGrid.on("dataSorted", (sorters: Array<{ field: string; dir: "asc" | "desc" }>) => {
@@ -454,7 +491,6 @@ function installTable(rows: Array<Record<string, unknown>>) {
       }
     });
   } else {
-    tableGrid.deselectRow();
     tableGrid.setColumns(definitions());
     void tableGrid.setData(data);
   }
@@ -542,7 +578,7 @@ async function addRow() {
 
 async function deleteSelected() {
   if (!tableGrid || !canEdit.value) return;
-  const rows = tableGrid.getSelectedRows();
+  const rows = selectedRangeRows();
   if (!rows.length) return ElMessage.warning(tr("请先选择要删除的数据行"));
   try {
     await ElMessageBox.confirm(tr("确定标记删除 {0} 行数据吗？提交变更后才会写入数据库。", [rows.length]), tr("删除数据行"), { confirmButtonText: tr("标记删除"), cancelButtonText: tr("取消"), type: "warning" });
@@ -552,11 +588,11 @@ async function deleteSelected() {
       if (row.__envmanNew) pending.value.delete(id);
       else pending.value.set(id, { type: "delete", values: {}, key: originalKey(row) });
       rowComponent.getElement().classList.add("is-pending-delete");
-      rowComponent.deselect();
     }
     pending.value = new Map(pending.value);
     transactionActive.value = true;
     selectedCount.value = 0;
+    selectedColumnCount.value = 0;
     selectedRow.value = null;
   } catch {
     // User cancelled deletion.
@@ -814,9 +850,9 @@ function toggleColumn(name: string, visible: boolean) {
 
 function updateFormValue(column: TableColumn, value: unknown) {
   if (!selectedRow.value || !tableGrid || column.autoIncrement || !canEdit.value) return;
-  const selected = tableGrid.getSelectedRows();
   const rowId = selectedRow.value.__envmanId;
   const current = tableGrid.getRow(rowId as string);
+  const selected = selectedRangeRows();
   const targets = selected.length ? selected : current ? [current] : [];
   if (!targets.length) return;
   applyingBatchEdit = targets.length > 1;
@@ -997,7 +1033,7 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <div v-show="viewMode === 'grid'" ref="tableElement" class="editable-data-grid" @pointerdown.capture="handleGridPointerDown"></div>
+    <div v-show="viewMode === 'grid'" ref="tableElement" class="editable-data-grid" @mousedown.capture="remapMetaToCtrl"></div>
     <div v-if="viewMode === 'form'" class="table-form-view">
       <div v-if="selectedRow" class="table-form-fields">
         <label v-for="column in columns" :key="column.name"><span><strong>{{ column.name }}</strong><small>{{ column.columnType }}</small></span><el-input :model-value="selectedRow[column.name] === null ? '' : String(selectedRow[column.name] ?? '')" :disabled="!canEdit || column.autoIncrement" :placeholder="selectedRow[column.name] === null ? 'NULL' : ''" @update:model-value="updateFormValue(column, $event)" /></label>
@@ -1036,7 +1072,7 @@ onBeforeUnmount(() => {
         <el-tooltip :content="$t('表单视图')" placement="top" :show-after="250"><span class="table-tooltip-trigger"><button data-navicat-action="form-view" :class="{ 'is-active': viewMode === 'form' }" :aria-label="$t('表单视图')" :title="$t('表单视图')" @click="viewMode = 'form'"><PanelTop :size="16" /></button></span></el-tooltip>
       </div>
     </footer>
-    <div class="table-data-statusbar"><span>{{ total.toLocaleString($locale()) }} {{ $t('条记录在第') }} {{ page }} {{ $t('页 ·') }} {{ activeProfile?.name || $t('默认视图') }}<template v-if="selectedCount > 1"> · {{ $t('已选 {0} 行，编辑将批量应用', [selectedCount]) }}</template></span><span>{{ readOnly ? $t('只读视图') : primaryKey.length ? $t('主键 {0}', [primaryKey.join(', ')]) : $t('无主键，只读') }}</span></div>
+    <div class="table-data-statusbar"><span>{{ total.toLocaleString($locale()) }} {{ $t('条记录在第') }} {{ page }} {{ $t('页 ·') }} {{ activeProfile?.name || $t('默认视图') }}<template v-if="selectionLabel"> · {{ $t('已选择 {0} 行和 {1} 列', [selectionLabel.rows, selectionLabel.columns]) }}</template></span><span>{{ readOnly ? $t('只读视图') : primaryKey.length ? $t('主键 {0}', [primaryKey.join(', ')]) : $t('无主键，只读') }}</span></div>
     <el-dialog v-model="profileManagerVisible" align-center class="envman-dialog database-table-profile-dialog" append-to-body :title="$t('管理表配置文件')" width="680px">
       <div class="table-profile-manager"><div v-if="!tableProfiles.length" class="table-form-empty"><FolderCog :size="24" /><span>{{ $t('当前数据表还没有配置文件') }}</span></div><article v-for="profile in tableProfiles" :key="profile.id" :class="{ 'is-active': activeProfileId === profile.id }"><span><strong>{{ profile.name }}</strong><small>{{ $t('修改于') }} {{ new Date(profile.updatedAt).toLocaleString($locale()) }}</small></span><div><button type="button" :title="$t('加载')" @click="applyProfile(profile)"><FolderOpen :size="15" /></button><button type="button" :title="$t('重命名')" @click="renameProfile(profile)"><Pencil :size="15" /></button><button type="button" class="is-danger" :title="$t('删除')" @click="deleteProfile(profile)"><Trash2 :size="15" /></button></div></article></div>
       <template #footer><el-button @click="profileManagerVisible = false">{{ $t('关闭') }}</el-button><el-button type="primary" @click="profileManagerVisible = false; saveProfile(true)">{{ $t('另存当前视图') }}</el-button></template>

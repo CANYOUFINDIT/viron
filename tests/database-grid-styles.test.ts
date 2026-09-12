@@ -46,5 +46,7 @@ describe("database grid styles", () => {
     expect(styles).toContain(".query-result-grid .tabulator-row.tabulator-selected,");
     expect(styles).toContain(".editable-data-grid .tabulator-row.tabulator-selected,");
     expect(styles).toContain(":root.bright .editable-data-grid .tabulator-row.tabulator-selected:hover { background: #cfe6de; color: #16332f; }");
+    expect(styles).toContain(".editable-data-grid.tabulator .tabulator-row .tabulator-cell.tabulator-range-selected:not(.tabulator-range-only-cell-selected):not(.tabulator-range-row-header) { background: #1a4a42; color: #e8f4f0; }");
+    expect(styles).toContain(":root.bright .editable-data-grid.tabulator .tabulator-row .tabulator-cell.tabulator-range-selected:not(.tabulator-range-only-cell-selected):not(.tabulator-range-row-header) { background: #c5ddd4; color: #16332f; }");
   });
 });

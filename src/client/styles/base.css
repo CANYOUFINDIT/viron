@@ -2454,6 +2454,18 @@ button { color: inherit; }
 .editable-data-grid .tabulator-row.tabulator-selected:hover { background: #173029; color: #e7f2ee; }
 .editable-data-grid .tabulator-row.is-pending-delete { opacity: .5; text-decoration: line-through; background: #2f1e1d; }
 .editable-data-grid .tabulator-cell { border-right: 1px solid #1f3032; padding: 7px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.editable-data-grid.tabulator .tabulator-col.table-row-header,
+.editable-data-grid.tabulator .tabulator-cell.table-row-header,
+.editable-data-grid.tabulator .tabulator-cell.tabulator-range-row-header { background: #121e20; color: #6d807b; text-align: center; padding: 0 4px; }
+.editable-data-grid.tabulator .tabulator-header .tabulator-col.tabulator-range-highlight,
+.editable-data-grid.tabulator .tabulator-header .tabulator-col.tabulator-range-selected { background: #1d3532; color: #e8f4f0; }
+.editable-data-grid.tabulator .tabulator-row .tabulator-cell.tabulator-range-selected:not(.tabulator-range-row-header),
+.editable-data-grid.tabulator .tabulator-row .tabulator-cell.tabulator-range-selected:not(.tabulator-range-only-cell-selected):not(.tabulator-range-row-header) { background: #1a4a42; color: #e8f4f0; }
+.editable-data-grid.tabulator .tabulator-row.tabulator-range-highlight .tabulator-cell.tabulator-range-row-header,
+.editable-data-grid.tabulator .tabulator-row.tabulator-range-selected .tabulator-cell.tabulator-range-row-header { background: #1d3532; color: #d5ebe4; }
+.editable-data-grid.tabulator .tabulator-range-overlay .tabulator-range { border-color: #4bc39d; }
+.editable-data-grid.tabulator .tabulator-range-overlay .tabulator-range.tabulator-range-active::after { background-color: #4bc39d; }
+.editable-data-grid.tabulator .tabulator-range-overlay .tabulator-range-cell-active { border: 2px solid #4bc39d; }
 .editable-data-grid .tabulator-cell.is-find-match { box-shadow: inset 0 0 0 1px #b68635; background: #493a1d; color: #fff4cc; }
 .editable-data-grid .tabulator-cell.is-current-find-match { box-shadow: inset 0 0 0 2px #55b9f4; background: #173f59; color: #ffffff; }
 .editable-data-grid .tabulator-cell.tabulator-editing { border: 1px solid #4bc39d; background: #142a25; }
@@ -3331,6 +3343,18 @@ button { color: inherit; }
 :root.bright .editable-data-grid .tabulator-row.tabulator-selected:hover { background: #cfe6de; color: #16332f; }
 :root.bright .query-result-grid .tabulator-cell,
 :root.bright .editable-data-grid .tabulator-cell { border-color: #e1e8e8; }
+:root.bright .editable-data-grid.tabulator .tabulator-col.table-row-header,
+:root.bright .editable-data-grid.tabulator .tabulator-cell.table-row-header,
+:root.bright .editable-data-grid.tabulator .tabulator-cell.tabulator-range-row-header { background: #edf2f2; color: #647a7f; }
+:root.bright .editable-data-grid.tabulator .tabulator-header .tabulator-col.tabulator-range-highlight,
+:root.bright .editable-data-grid.tabulator .tabulator-header .tabulator-col.tabulator-range-selected { background: #cfe6de; color: #16332f; }
+:root.bright .editable-data-grid.tabulator .tabulator-row .tabulator-cell.tabulator-range-selected:not(.tabulator-range-row-header),
+:root.bright .editable-data-grid.tabulator .tabulator-row .tabulator-cell.tabulator-range-selected:not(.tabulator-range-only-cell-selected):not(.tabulator-range-row-header) { background: #c5ddd4; color: #16332f; }
+:root.bright .editable-data-grid.tabulator .tabulator-row.tabulator-range-highlight .tabulator-cell.tabulator-range-row-header,
+:root.bright .editable-data-grid.tabulator .tabulator-row.tabulator-range-selected .tabulator-cell.tabulator-range-row-header { background: #cfe6de; color: #126f60; }
+:root.bright .editable-data-grid.tabulator .tabulator-range-overlay .tabulator-range { border-color: #177a66; }
+:root.bright .editable-data-grid.tabulator .tabulator-range-overlay .tabulator-range.tabulator-range-active::after { background-color: #177a66; }
+:root.bright .editable-data-grid.tabulator .tabulator-range-overlay .tabulator-range-cell-active { border-color: #177a66; }
 :root.bright .query-result-grid .db-null,
 :root.bright .editable-data-grid .db-null { color: #74868a; }
 :root.bright .query-result-grid .tabulator-placeholder,
