@@ -3,7 +3,7 @@
 import { TabulatorFull as Tabulator, type ColumnDefinition } from "tabulator-tables";
 import "tabulator-tables/dist/css/tabulator_midnight.min.css";
 import { nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { tableGridColumnSize } from "../database-table-grid";
+import { TABLE_GRID_LAYOUT, tableGridColumnSize } from "../database-table-grid";
 
 const props = defineProps<{
   columns: Array<{ name: string; table?: string; type?: number }>;
@@ -40,7 +40,7 @@ async function render() {
       data: props.rows,
       columns: definitions(),
       height: "100%",
-      layout: "fitDataFill",
+      layout: TABLE_GRID_LAYOUT,
       movableColumns: true,
       resizableColumnFit: false,
       clipboard: true,
