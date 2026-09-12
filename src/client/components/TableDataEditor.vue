@@ -33,9 +33,12 @@ import {
 } from "@lucide/vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { TabulatorFull as Tabulator, type CellComponent, type ColumnDefinition, type RowComponent } from "tabulator-tables";
+import "tabulator-tables/dist/css/tabulator_midnight.min.css";
 import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { api } from "../api";
 import { createClientId } from "../client-id";
+import { isBitFlagColumn } from "../../shared/database-cell-value";
+import { canBatchApplyColumnEdit, tableGridColumnSize, tableGridRangeBounds, tableGridSelectionMode } from "../database-table-grid";
 import { createTableFindMatch, resolveTableFindCell, type TableFindMatch } from "../database-table-find";
 import { type DatabaseTableProfile, type TableProfileConfig, normalizeTableProfile } from "../database-table-profile";
 import { downloadApiFile } from "../desktop";
@@ -128,6 +131,8 @@ let tableGrid: Tabulator | null = null;
 let loadController: AbortController | null = null;
 let loadGeneration = 0;
 let findMatches: TableFindMatch[] = [];
+let lastClickedRow: RowComponent | null = null;
+let applyingBatchEdit = false;
 
 const canEdit = computed(() => !props.readOnly && primaryKey.value.length > 0);
 const pendingCount = computed(() => pending.value.size);
@@ -194,22 +199,29 @@ function visibleValues(row: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(columns.value.map((column) => [column.name, row[column.name]]));
 }
 
+function formatCellText(value: unknown): string {
+  if (value === null) return "";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value ?? "");
+}
+
 function definitions(): ColumnDefinition[] {
   const positions = new Map(columnOrder.value.map((name, index) => [name, index]));
   return [...columns.value].sort((left, right) => (positions.get(left.name) ?? Number.MAX_SAFE_INTEGER) - (positions.get(right.name) ?? Number.MAX_SAFE_INTEGER)).map((column) => ({
     title: `${column.name}${column.primary ? " 🔑" : ""}`,
     field: column.name,
-    minWidth: Math.max(120, Math.min(260, column.name.length * 10 + 70)),
-    width: columnWidths.value[column.name],
+    ...tableGridColumnSize(column.name, columnWidths.value[column.name]),
     visible: !hiddenColumns.value.has(column.name),
     editor: canEdit.value && !column.autoIncrement ? "input" : undefined,
     headerSort: true,
-    tooltip: `${column.columnType}${column.comment ? ` · ${column.comment}` : ""}`,
+    headerTooltip: `${column.columnType}${column.comment ? ` · ${column.comment}` : ""}`,
+    tooltip: true,
     formatter: (cell) => {
       const value = cell.getValue();
       if (value === null) return "<span class='db-null'>NULL</span>";
       const node = document.createElement("span");
-      node.textContent = typeof value === "object" ? JSON.stringify(value) : String(value ?? "");
+      node.className = isBitFlagColumn(column) ? "db-bit" : "";
+      node.textContent = formatCellText(value);
       return node;
     },
   }));
@@ -330,25 +342,57 @@ function handleProfileCommand(command: string) {
   }
 }
 
-function selectTableRow(row: RowComponent, additive = false) {
+function syncSelection(active?: RowComponent | null) {
   if (!tableGrid) return;
-  if (!additive) tableGrid.deselectRow();
-  if (additive && row.isSelected()) row.deselect();
-  else row.select();
   const selected = tableGrid.getSelectedRows();
-  const fallback = selected.at(-1);
   selectedCount.value = selected.length;
-  selectedRow.value = row.isSelected()
-    ? row.getData() as Record<string, unknown>
+  const fallback = selected.at(-1);
+  selectedRow.value = active?.isSelected()
+    ? active.getData() as Record<string, unknown>
     : fallback ? fallback.getData() as Record<string, unknown> : null;
+}
+
+function selectTableRow(row: RowComponent, mode: ReturnType<typeof tableGridSelectionMode>) {
+  if (!tableGrid) return;
+  const rows = tableGrid.getRows("active");
+  if (mode === "range" && lastClickedRow) {
+    const start = rows.indexOf(lastClickedRow);
+    const end = rows.indexOf(row);
+    if (start >= 0 && end >= 0) {
+      tableGrid.deselectRow();
+      const [from, to] = tableGridRangeBounds(start, end);
+      for (let index = from; index <= to; index += 1) rows[index]?.select();
+    } else {
+      tableGrid.deselectRow();
+      row.select();
+      lastClickedRow = row;
+    }
+  } else if (mode === "toggle") {
+    if (row.isSelected()) row.deselect();
+    else row.select();
+    lastClickedRow = row;
+  } else if (mode === "preserve") {
+    if (!row.isSelected()) {
+      tableGrid.deselectRow();
+      row.select();
+    }
+    lastClickedRow = row;
+  } else {
+    tableGrid.deselectRow();
+    row.select();
+    lastClickedRow = row;
+  }
+  syncSelection(row);
 }
 
 function handleGridPointerDown(event: PointerEvent) {
   const target = event.target instanceof Element ? event.target : null;
+  if (target?.closest(".tabulator-header, .tabulator-col-resize-handle")) return;
   const rowElement = target?.closest<HTMLElement>(".tabulator-row");
   if (!rowElement || !tableGrid) return;
   const row = tableGrid.getRows().find((candidate) => candidate.getElement() === rowElement);
-  if (row) selectTableRow(row, event.metaKey || event.ctrlKey);
+  if (!row) return;
+  selectTableRow(row, tableGridSelectionMode(event, row.isSelected(), tableGrid.getSelectedRows().length));
 }
 
 function installTable(rows: Array<Record<string, unknown>>) {
@@ -360,6 +404,7 @@ function installTable(rows: Array<Record<string, unknown>>) {
   loadedRowCount.value = data.length;
   selectedRow.value = null;
   selectedCount.value = 0;
+  lastClickedRow = null;
   if (!tableGrid) {
     tableGrid = new Tabulator(tableElement.value!, {
       data,
@@ -371,8 +416,35 @@ function installTable(rows: Array<Record<string, unknown>>) {
       clipboard: true,
       placeholder: tr("数据表中没有记录"),
       index: "__envmanId",
+      columnDefaults: { resizable: true },
     });
-    tableGrid.on("cellEdited", (cell: CellComponent) => trackUpdate(cell.getRow()));
+    tableGrid.on("cellEdited", (cell: CellComponent) => {
+      const row = cell.getRow();
+      trackUpdate(row);
+      if (applyingBatchEdit) return;
+      const field = cell.getField();
+      const autoIncrementFields = columns.value.filter((column) => column.autoIncrement).map((column) => column.name);
+      if (!canBatchApplyColumnEdit(field, primaryKey.value, autoIncrementFields)) return;
+      const selected = tableGrid?.getSelectedRows() ?? [];
+      if (selected.length <= 1) return;
+      const value = cell.getValue();
+      applyingBatchEdit = true;
+      void Promise.all(selected.map(async (candidate) => {
+        if (candidate === row) return;
+        const current = candidate.getData() as Record<string, unknown>;
+        if (current[field] === value) return;
+        await candidate.update({ [field]: value });
+        trackUpdate(candidate);
+      })).finally(() => {
+        applyingBatchEdit = false;
+        syncSelection(row);
+      });
+    });
+    tableGrid.on("columnResized", (column) => {
+      const name = column.getField();
+      if (!name) return;
+      columnWidths.value = { ...columnWidths.value, [name]: Math.round(column.getWidth()) };
+    });
     tableGrid.on("dataSorted", (sorters: Array<{ field: string; dir: "asc" | "desc" }>) => {
       const sorter = sorters[0];
       const current = activeSorts.value;
@@ -742,12 +814,19 @@ function toggleColumn(name: string, visible: boolean) {
 
 function updateFormValue(column: TableColumn, value: unknown) {
   if (!selectedRow.value || !tableGrid || column.autoIncrement || !canEdit.value) return;
+  const selected = tableGrid.getSelectedRows();
   const rowId = selectedRow.value.__envmanId;
-  const row = tableGrid.getRow(rowId as string);
-  if (!row) return;
-  void row.update({ [column.name]: value }).then(() => {
-    selectedRow.value = row.getData() as Record<string, unknown>;
+  const current = tableGrid.getRow(rowId as string);
+  const targets = selected.length ? selected : current ? [current] : [];
+  if (!targets.length) return;
+  applyingBatchEdit = targets.length > 1;
+  void Promise.all(targets.map(async (row) => {
+    await row.update({ [column.name]: value });
     trackUpdate(row);
+  })).finally(() => {
+    applyingBatchEdit = false;
+    const active = current || targets.at(-1);
+    if (active) selectedRow.value = active.getData() as Record<string, unknown>;
   });
 }
 
@@ -957,7 +1036,7 @@ onBeforeUnmount(() => {
         <el-tooltip :content="$t('表单视图')" placement="top" :show-after="250"><span class="table-tooltip-trigger"><button data-navicat-action="form-view" :class="{ 'is-active': viewMode === 'form' }" :aria-label="$t('表单视图')" :title="$t('表单视图')" @click="viewMode = 'form'"><PanelTop :size="16" /></button></span></el-tooltip>
       </div>
     </footer>
-    <div class="table-data-statusbar"><span>{{ total.toLocaleString($locale()) }} {{ $t('条记录在第') }} {{ page }} {{ $t('页 ·') }} {{ activeProfile?.name || $t('默认视图') }}</span><span>{{ readOnly ? $t('只读视图') : primaryKey.length ? $t('主键 {0}', [primaryKey.join(', ')]) : $t('无主键，只读') }}</span></div>
+    <div class="table-data-statusbar"><span>{{ total.toLocaleString($locale()) }} {{ $t('条记录在第') }} {{ page }} {{ $t('页 ·') }} {{ activeProfile?.name || $t('默认视图') }}<template v-if="selectedCount > 1"> · {{ $t('已选 {0} 行，编辑将批量应用', [selectedCount]) }}</template></span><span>{{ readOnly ? $t('只读视图') : primaryKey.length ? $t('主键 {0}', [primaryKey.join(', ')]) : $t('无主键，只读') }}</span></div>
     <el-dialog v-model="profileManagerVisible" align-center class="envman-dialog database-table-profile-dialog" append-to-body :title="$t('管理表配置文件')" width="680px">
       <div class="table-profile-manager"><div v-if="!tableProfiles.length" class="table-form-empty"><FolderCog :size="24" /><span>{{ $t('当前数据表还没有配置文件') }}</span></div><article v-for="profile in tableProfiles" :key="profile.id" :class="{ 'is-active': activeProfileId === profile.id }"><span><strong>{{ profile.name }}</strong><small>{{ $t('修改于') }} {{ new Date(profile.updatedAt).toLocaleString($locale()) }}</small></span><div><button type="button" :title="$t('加载')" @click="applyProfile(profile)"><FolderOpen :size="15" /></button><button type="button" :title="$t('重命名')" @click="renameProfile(profile)"><Pencil :size="15" /></button><button type="button" class="is-danger" :title="$t('删除')" @click="deleteProfile(profile)"><Trash2 :size="15" /></button></div></article></div>
       <template #footer><el-button @click="profileManagerVisible = false">{{ $t('关闭') }}</el-button><el-button type="primary" @click="profileManagerVisible = false; saveProfile(true)">{{ $t('另存当前视图') }}</el-button></template>

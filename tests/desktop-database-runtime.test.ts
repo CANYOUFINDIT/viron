@@ -267,4 +267,54 @@ describe("desktop database errors", () => {
     expect(design.options).toMatchObject({ dataDirectory: "/srv/mysql/data", packKeys: "1", statsPersistent: "1" });
     runtime.closeAll();
   });
+
+  it("renders BIT table values as 0/1 and writes them back as buffers", async () => {
+    const updates: Array<{ sql: string; values: unknown }> = [];
+    const connection = {
+      async query(sql: string, values?: unknown) {
+        if (/FROM information_schema\.COLUMNS/i.test(sql)) {
+          return [[
+            { COLUMN_NAME: "id", COLUMN_TYPE: "bigint", DATA_TYPE: "bigint", IS_NULLABLE: "NO", COLUMN_DEFAULT: null, COLUMN_KEY: "PRI", EXTRA: "auto_increment", COLUMN_COMMENT: "", ORDINAL_POSITION: 1 },
+            { COLUMN_NAME: "connectivity_available", COLUMN_TYPE: "bit(1)", DATA_TYPE: "bit", IS_NULLABLE: "NO", COLUMN_DEFAULT: null, COLUMN_KEY: "", EXTRA: "", COLUMN_COMMENT: "", ORDINAL_POSITION: 2 },
+          ], []];
+        }
+        if (/SELECT COUNT\(\*\)/i.test(sql)) return [[{ total: 1 }], []];
+        if (/SELECT \*/i.test(sql)) return [[{ id: 1, connectivity_available: Buffer.from([1]) }], []];
+        updates.push({ sql, values });
+        return [{ affectedRows: 1 }, []];
+      },
+      async beginTransaction() {},
+      async commit() {},
+      async rollback() {},
+      escape(value: unknown) { return String(value); },
+      async end() {},
+      destroy() {},
+    } as DatabaseConnectionClient;
+    const runtime = new DesktopDatabaseRuntime(
+      async () => ({ context, credential }),
+      async () => undefined,
+      async (): Promise<ConnectedDesktopDatabase> => ({ connection, credential, async close() {} }),
+    );
+
+    const tableData = await runtime.handle({ path: `/api/v1/database-connections/${connectionId}/table-data?database=ops&table=wm_image_component` }, context);
+    expect(JSON.parse(tableData.body).rows).toEqual([{ id: 1, connectivity_available: 1 }]);
+
+    const changed = await runtime.handle({
+      path: `/api/v1/database-connections/${connectionId}/table-data/changes`,
+      method: "POST",
+      body: {
+        kind: "text",
+        value: JSON.stringify({
+          database: "ops",
+          table: "wm_image_component",
+          changes: [{ type: "update", values: { connectivity_available: "0x01" }, key: { id: 1 } }],
+        }),
+      },
+    }, context);
+    expect(changed.status).toBe(200);
+    expect(JSON.parse(changed.body)).toEqual({ changed: 1 });
+    const update = updates.find((item) => /UPDATE/i.test(item.sql));
+    expect(update?.values).toEqual([Buffer.from([1]), 1]);
+    runtime.closeAll();
+  });
 });

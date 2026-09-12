@@ -117,6 +117,7 @@ class BufferReader {
 }
 
 function decodeValue(value: Buffer, type: number, flags: number): unknown {
+  if (type === 16) return Buffer.from(value);
   if ([249, 250, 251, 252].includes(type) && (flags & 128) !== 0) return Buffer.from(value);
   const text = value.toString("utf8");
   if ([1, 2, 3, 9, 13].includes(type)) {
