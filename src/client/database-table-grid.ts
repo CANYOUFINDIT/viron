@@ -68,3 +68,35 @@ export function tableGridSelectionLabel(rowCount: number, columnCount: number): 
   if (rowCount === 1 && columnCount === 1) return null;
   return { rows: rowCount, columns: columnCount };
 }
+
+export type TableGridFillAction = "fill" | "clear" | "cancel" | "edit";
+
+export function tableGridFillAction(event: {
+  key: string;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  altKey: boolean;
+}, hasFillSession = false): TableGridFillAction | null {
+  if (event.key === "Escape") return hasFillSession ? "cancel" : null;
+  if (event.metaKey || event.ctrlKey || event.altKey) return null;
+  if (event.key === "Delete" || event.key === "Backspace") return "clear";
+  if (event.key === "F2" || event.key === "Enter") return "edit";
+  if (event.key.length === 1) return "fill";
+  return null;
+}
+
+export function tableGridFillDisplayValue(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  return String(value);
+}
+
+export function tableGridFillStoredValue(text: string): unknown {
+  return text === "" ? null : text;
+}
+
+export function isForeignTableGridInput(target: EventTarget | null, gridRoot: HTMLElement | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (!target.closest("input, textarea, select, [contenteditable='true']")) return false;
+  if (target.classList.contains("table-range-fill-input")) return false;
+  return !gridRoot || !gridRoot.contains(target);
+}
