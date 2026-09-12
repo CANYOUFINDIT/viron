@@ -7,6 +7,8 @@ import {
   tableGridColumnSize,
   tableGridColumnWidth,
   tableGridRangeBounds,
+  tableGridFillAction,
+  tableGridFillStoredValue,
   tableGridSelectionLabel,
   tableGridSelectionMode,
 } from "../src/client/database-table-grid.js";
@@ -59,5 +61,15 @@ describe("database table grid selection", () => {
     expect(tableGridSelectionLabel(1, 1)).toBeNull();
     expect(flattenTableGridRangeCells([["a", "b"], ["c"]])).toEqual(["a", "b", "c"]);
     expect(flattenTableGridRangeCells(["a", "b"])).toEqual(["a", "b"]);
+  });
+
+  it("maps typing, delete, enter and escape onto range fill actions", () => {
+    expect(tableGridFillAction({ key: "a", metaKey: false, ctrlKey: false, altKey: false })).toBe("fill");
+    expect(tableGridFillAction({ key: "Delete", metaKey: false, ctrlKey: false, altKey: false })).toBe("clear");
+    expect(tableGridFillAction({ key: "Enter", metaKey: false, ctrlKey: false, altKey: false })).toBe("edit");
+    expect(tableGridFillAction({ key: "Escape", metaKey: false, ctrlKey: false, altKey: false }, true)).toBe("cancel");
+    expect(tableGridFillAction({ key: "Escape", metaKey: false, ctrlKey: false, altKey: false }, false)).toBeNull();
+    expect(tableGridFillStoredValue("")).toBeNull();
+    expect(tableGridFillStoredValue("harbor")).toBe("harbor");
   });
 });

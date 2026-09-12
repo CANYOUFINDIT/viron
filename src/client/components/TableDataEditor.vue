@@ -38,7 +38,7 @@ import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch
 import { api } from "../api";
 import { createClientId } from "../client-id";
 import { isBitFlagColumn } from "../../shared/database-cell-value";
-import { canBatchApplyColumnEdit, flattenTableGridRangeCells, isTableGridInternalField, TABLE_GRID_LAYOUT, TABLE_GRID_ROW_HEADER_FIELD, tableGridColumnSize, tableGridSelectionLabel } from "../database-table-grid";
+import { canBatchApplyColumnEdit, flattenTableGridRangeCells, isForeignTableGridInput, isTableGridInternalField, TABLE_GRID_LAYOUT, TABLE_GRID_ROW_HEADER_FIELD, tableGridColumnSize, tableGridFillAction, tableGridFillDisplayValue, tableGridFillStoredValue, tableGridSelectionLabel } from "../database-table-grid";
 import { createTableFindMatch, resolveTableFindCell, type TableFindMatch } from "../database-table-find";
 import { type DatabaseTableProfile, type TableProfileConfig, normalizeTableProfile } from "../database-table-profile";
 import { downloadApiFile } from "../desktop";
@@ -133,6 +133,26 @@ let loadController: AbortController | null = null;
 let loadGeneration = 0;
 let findMatches: TableFindMatch[] = [];
 let applyingBatchEdit = false;
+let fillCancelling = false;
+const fillActive = ref(false);
+const fillDraft = ref("");
+const fillInputElement = ref<HTMLInputElement | null>(null);
+
+interface RangeFillSnapshot {
+  cell: CellComponent;
+  row: RowComponent;
+  field: string;
+  previous: unknown;
+}
+
+interface RangeFillSession {
+  snapshots: RangeFillSnapshot[];
+  pendingBefore: Map<string, PendingChange>;
+  active: CellComponent;
+  committed: boolean;
+}
+
+let fillSession: RangeFillSession | null = null;
 
 const selectionLabel = computed(() => tableGridSelectionLabel(selectedCount.value, selectedColumnCount.value));
 
@@ -140,6 +160,7 @@ type TableRangeLike = {
   getRows: () => RowComponent[];
   getColumns: () => ColumnComponent[];
   getCells: () => CellComponent[] | CellComponent[][];
+  getBounds?: () => { start?: CellComponent; end?: CellComponent };
 };
 
 function tableRanges(): TableRangeLike[] {
@@ -417,6 +438,183 @@ function remapMetaToCtrl(event: MouseEvent) {
   if (event.metaKey && !event.ctrlKey) Object.defineProperty(event, "ctrlKey", { configurable: true, get: () => true });
 }
 
+function autoIncrementFields(): string[] {
+  return columns.value.filter((column) => column.autoIncrement).map((column) => column.name);
+}
+
+function editableSelectedCells(): CellComponent[] {
+  const blocked = autoIncrementFields();
+  return selectedRangeCells().filter((cell) => canBatchApplyColumnEdit(cell.getField(), primaryKey.value, blocked));
+}
+
+function activeRangeCell(): CellComponent | null {
+  const start = tableRanges()[0]?.getBounds?.().start;
+  if (start && !isTableGridInternalField(start.getField())) return start;
+  return editableSelectedCells()[0] ?? selectedRangeCells()[0] ?? null;
+}
+
+function applyFillValue(value: unknown, track: boolean) {
+  if (!fillSession) return;
+  applyingBatchEdit = true;
+  for (const snapshot of fillSession.snapshots) {
+    if (snapshot.cell.getValue() !== value) snapshot.cell.setValue(value);
+    if (track) trackUpdate(snapshot.row);
+  }
+  applyingBatchEdit = false;
+}
+
+function positionFillInput() {
+  const input = fillInputElement.value;
+  const cell = fillSession?.active.getElement();
+  if (!input || !cell) return;
+  const rect = cell.getBoundingClientRect();
+  input.style.left = `${rect.left}px`;
+  input.style.top = `${rect.top}px`;
+  input.style.width = `${Math.max(rect.width, 72)}px`;
+  input.style.height = `${rect.height}px`;
+}
+
+function bindFillReposition(active: boolean) {
+  const holder = tableElement.value?.querySelector(".tabulator-tableholder");
+  if (active) {
+    holder?.addEventListener("scroll", positionFillInput);
+    window.addEventListener("resize", positionFillInput);
+  } else {
+    holder?.removeEventListener("scroll", positionFillInput);
+    window.removeEventListener("resize", positionFillInput);
+  }
+}
+
+function previewFillDraft() {
+  applyFillValue(tableGridFillStoredValue(fillDraft.value), false);
+}
+
+function startFillSession(options: { value?: unknown; openEditor: boolean; replace: boolean; commit?: boolean }) {
+  if (!canEdit.value) return;
+  const cells = editableSelectedCells();
+  if (!cells.length) {
+    if (selectedRangeCells().length) ElMessage.warning(tr("选中的单元格不能批量修改"));
+    return;
+  }
+  if (fillSession && !fillSession.committed) cancelFillSession();
+  else if (fillSession?.committed) fillSession = null;
+  const active = cells.find((cell) => cell === activeRangeCell()) ?? cells[0];
+  fillSession = {
+    snapshots: cells.map((cell) => ({ cell, row: cell.getRow(), field: cell.getField(), previous: cell.getValue() })),
+    pendingBefore: new Map(pending.value),
+    active,
+    committed: false,
+  };
+  const initial = options.replace ? options.value ?? "" : options.value !== undefined ? options.value : active.getValue();
+  fillDraft.value = tableGridFillDisplayValue(initial);
+  if (options.commit) {
+    applyFillValue(tableGridFillStoredValue(fillDraft.value), true);
+    fillSession.committed = true;
+    fillActive.value = false;
+    bindFillReposition(false);
+    return;
+  }
+  applyFillValue(tableGridFillStoredValue(fillDraft.value), false);
+  if (options.openEditor) {
+    fillActive.value = true;
+    void nextTick(() => {
+      positionFillInput();
+      bindFillReposition(true);
+      const input = fillInputElement.value;
+      input?.focus();
+      if (options.replace) input?.setSelectionRange(fillDraft.value.length, fillDraft.value.length);
+      else input?.select();
+    });
+  }
+}
+
+function clearFillSession() {
+  fillCancelling = true;
+  fillSession = null;
+  fillActive.value = false;
+  fillDraft.value = "";
+  bindFillReposition(false);
+  void nextTick(() => { fillCancelling = false; });
+}
+
+function commitFillSession() {
+  if (!fillSession || fillCancelling || fillSession.committed) return;
+  applyFillValue(tableGridFillStoredValue(fillDraft.value), true);
+  fillSession.committed = true;
+  fillActive.value = false;
+  bindFillReposition(false);
+}
+
+function cancelFillSession() {
+  if (!fillSession) return;
+  fillCancelling = true;
+  applyingBatchEdit = true;
+  for (const snapshot of fillSession.snapshots) {
+    if (snapshot.cell.getValue() !== snapshot.previous) snapshot.cell.setValue(snapshot.previous);
+  }
+  applyingBatchEdit = false;
+  pending.value = new Map(fillSession.pendingBefore);
+  transactionActive.value = pending.value.size > 0;
+  fillSession = null;
+  fillActive.value = false;
+  fillDraft.value = "";
+  bindFillReposition(false);
+  void nextTick(() => { fillCancelling = false; });
+}
+
+function handleGridKeydown(event: KeyboardEvent) {
+  if (!props.active || !canEdit.value || viewMode.value !== "grid") return;
+  if (isForeignTableGridInput(event.target, tableElement.value)) return;
+  if (event.target instanceof HTMLElement && event.target.classList.contains("table-range-fill-input")) return;
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "v") {
+    handleGridPaste();
+    return;
+  }
+  const action = tableGridFillAction(event, Boolean(fillSession));
+  if (!action) return;
+  if (action !== "cancel" && !selectedRangeCells().length) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (action === "cancel") cancelFillSession();
+  else if (action === "clear") startFillSession({ value: null, openEditor: false, replace: true, commit: true });
+  else if (action === "edit") startFillSession({ openEditor: true, replace: false });
+  else startFillSession({ value: event.key, openEditor: true, replace: true });
+}
+
+function handleGridDblClick(event: MouseEvent) {
+  if (!canEdit.value || viewMode.value !== "grid") return;
+  const cell = event.target instanceof Element ? event.target.closest(".tabulator-cell") : null;
+  if (!cell || cell.classList.contains("table-row-header") || cell.classList.contains("tabulator-range-row-header")) return;
+  event.preventDefault();
+  event.stopPropagation();
+  startFillSession({ openEditor: true, replace: false });
+}
+
+function handleGridPaste() {
+  if (!canEdit.value || fillActive.value) return;
+  const cells = editableSelectedCells();
+  if (!cells.length) return;
+  fillSession = {
+    snapshots: cells.map((cell) => ({ cell, row: cell.getRow(), field: cell.getField(), previous: cell.getValue() })),
+    pendingBefore: new Map(pending.value),
+    active: cells[0],
+    committed: true,
+  };
+}
+
+function handleFillInputKeydown(event: KeyboardEvent) {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    commitFillSession();
+  } else if (event.key === "Escape") {
+    event.preventDefault();
+    cancelFillSession();
+  } else if (event.key === "Tab") {
+    event.preventDefault();
+    commitFillSession();
+  }
+}
+
 function installTable(rows: Array<Record<string, unknown>>) {
   const data = rows.map((row) => ({
     ...row,
@@ -438,8 +636,7 @@ function installTable(rows: Array<Record<string, unknown>>) {
       selectableRange: true,
       selectableRangeColumns: true,
       selectableRangeRows: true,
-      selectableRangeClearCells: canEdit.value,
-      selectableRangeClearCellsValue: null,
+      selectableRangeClearCells: false,
       selectableRangeInitializeDefault: false,
       headerSortClickElement: "icon",
       editTriggerEvent: "dblclick",
@@ -451,31 +648,16 @@ function installTable(rows: Array<Record<string, unknown>>) {
       index: "__envmanId",
       columnDefaults: { resizable: true },
     } as ConstructorParameters<typeof Tabulator>[1]);
-    tableGrid.on("rangeChanged", () => syncRangeSelection());
+    tableGrid.on("rangeChanged", () => {
+      if (!fillActive.value && fillSession?.committed) fillSession = null;
+      syncRangeSelection();
+    });
     tableGrid.on("rowUpdated", (row: RowComponent) => {
       if (!applyingBatchEdit) trackUpdate(row);
     });
     tableGrid.on("cellEdited", (cell: CellComponent) => {
-      const row = cell.getRow();
-      trackUpdate(row);
-      if (applyingBatchEdit) return;
-      const field = cell.getField();
-      const autoIncrementFields = columns.value.filter((column) => column.autoIncrement).map((column) => column.name);
-      if (!canBatchApplyColumnEdit(field, primaryKey.value, autoIncrementFields)) return;
-      const value = cell.getValue();
-      const targets = selectedRangeCells().filter((candidate) => {
-        if (candidate === cell || candidate.getField() !== field) return false;
-        return candidate.getValue() !== value;
-      });
-      if (!targets.length) return;
-      applyingBatchEdit = true;
-      void Promise.all(targets.map(async (candidate) => {
-        candidate.setValue(value);
-        trackUpdate(candidate.getRow());
-      })).finally(() => {
-        applyingBatchEdit = false;
-        syncRangeSelection(row);
-      });
+      if (applyingBatchEdit || fillActive.value) return;
+      trackUpdate(cell.getRow());
     });
     tableGrid.on("columnResized", (column) => {
       const name = column.getField();
@@ -508,6 +690,7 @@ function trackUpdate(rowComponent: RowComponent) {
 }
 
 async function load() {
+  clearFillSession();
   const generation = ++loadGeneration;
   loadController?.abort();
   const controller = new AbortController();
@@ -901,6 +1084,11 @@ function toggleFocused() {
 
 function handleDocumentKeydown(event: KeyboardEvent) {
   if (!props.active) return;
+  if (event.key === "Escape" && fillSession) {
+    event.preventDefault();
+    cancelFillSession();
+    return;
+  }
   if (event.key === "Escape" && findVisible.value) {
     event.preventDefault();
     closeFind();
@@ -940,6 +1128,12 @@ watch(() => props.actionRequest?.id, () => { void handleActionRequest(); });
 watch(() => props.active, (active) => {
   if (active) void nextTick(() => tableGrid?.redraw(true));
 });
+watch(viewMode, (mode) => {
+  if (mode !== "grid") {
+    if (fillSession && !fillSession.committed) cancelFillSession();
+    else clearFillSession();
+  }
+});
 watch([findQuery, findColumn], () => updateFindMatches());
 onMounted(async () => {
   document.addEventListener("keydown", handleDocumentKeydown);
@@ -959,6 +1153,7 @@ onBeforeUnmount(() => {
   removeShortcutListener?.();
   stopLoading();
   clearFindHighlights();
+  clearFillSession();
   tableGrid?.destroy();
 });
 </script>
@@ -1033,7 +1228,19 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <div v-show="viewMode === 'grid'" ref="tableElement" class="editable-data-grid" @mousedown.capture="remapMetaToCtrl"></div>
+    <div v-show="viewMode === 'grid'" class="table-grid-host">
+      <div ref="tableElement" class="editable-data-grid" :class="{ 'is-range-filling': fillActive }" @mousedown.capture="remapMetaToCtrl" @keydown.capture="handleGridKeydown" @dblclick.capture="handleGridDblClick"></div>
+      <input
+        v-if="fillActive"
+        ref="fillInputElement"
+        v-model="fillDraft"
+        class="table-range-fill-input"
+        :aria-label="$t('批量修改选中单元格')"
+        @input="previewFillDraft"
+        @keydown="handleFillInputKeydown"
+        @blur="commitFillSession"
+      />
+    </div>
     <div v-if="viewMode === 'form'" class="table-form-view">
       <div v-if="selectedRow" class="table-form-fields">
         <label v-for="column in columns" :key="column.name"><span><strong>{{ column.name }}</strong><small>{{ column.columnType }}</small></span><el-input :model-value="selectedRow[column.name] === null ? '' : String(selectedRow[column.name] ?? '')" :disabled="!canEdit || column.autoIncrement" :placeholder="selectedRow[column.name] === null ? 'NULL' : ''" @update:model-value="updateFormValue(column, $event)" /></label>
@@ -1072,7 +1279,7 @@ onBeforeUnmount(() => {
         <el-tooltip :content="$t('表单视图')" placement="top" :show-after="250"><span class="table-tooltip-trigger"><button data-navicat-action="form-view" :class="{ 'is-active': viewMode === 'form' }" :aria-label="$t('表单视图')" :title="$t('表单视图')" @click="viewMode = 'form'"><PanelTop :size="16" /></button></span></el-tooltip>
       </div>
     </footer>
-    <div class="table-data-statusbar"><span>{{ total.toLocaleString($locale()) }} {{ $t('条记录在第') }} {{ page }} {{ $t('页 ·') }} {{ activeProfile?.name || $t('默认视图') }}<template v-if="selectionLabel"> · {{ $t('已选择 {0} 行和 {1} 列', [selectionLabel.rows, selectionLabel.columns]) }}</template></span><span>{{ readOnly ? $t('只读视图') : primaryKey.length ? $t('主键 {0}', [primaryKey.join(', ')]) : $t('无主键，只读') }}</span></div>
+    <div class="table-data-statusbar"><span>{{ total.toLocaleString($locale()) }} {{ $t('条记录在第') }} {{ page }} {{ $t('页 ·') }} {{ activeProfile?.name || $t('默认视图') }}<template v-if="selectionLabel"> · {{ $t('已选择 {0} 行和 {1} 列', [selectionLabel.rows, selectionLabel.columns]) }}</template><template v-if="fillActive"> · {{ $t('输入将应用到选中单元格，Esc 取消') }}</template></span><span>{{ readOnly ? $t('只读视图') : primaryKey.length ? $t('主键 {0}', [primaryKey.join(', ')]) : $t('无主键，只读') }}</span></div>
     <el-dialog v-model="profileManagerVisible" align-center class="envman-dialog database-table-profile-dialog" append-to-body :title="$t('管理表配置文件')" width="680px">
       <div class="table-profile-manager"><div v-if="!tableProfiles.length" class="table-form-empty"><FolderCog :size="24" /><span>{{ $t('当前数据表还没有配置文件') }}</span></div><article v-for="profile in tableProfiles" :key="profile.id" :class="{ 'is-active': activeProfileId === profile.id }"><span><strong>{{ profile.name }}</strong><small>{{ $t('修改于') }} {{ new Date(profile.updatedAt).toLocaleString($locale()) }}</small></span><div><button type="button" :title="$t('加载')" @click="applyProfile(profile)"><FolderOpen :size="15" /></button><button type="button" :title="$t('重命名')" @click="renameProfile(profile)"><Pencil :size="15" /></button><button type="button" class="is-danger" :title="$t('删除')" @click="deleteProfile(profile)"><Trash2 :size="15" /></button></div></article></div>
       <template #footer><el-button @click="profileManagerVisible = false">{{ $t('关闭') }}</el-button><el-button type="primary" @click="profileManagerVisible = false; saveProfile(true)">{{ $t('另存当前视图') }}</el-button></template>

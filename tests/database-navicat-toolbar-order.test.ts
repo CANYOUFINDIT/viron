@@ -238,6 +238,9 @@ describe("Navicat toolbar action order", () => {
     expect(tableData).toContain('editTriggerEvent: "dblclick"');
     expect(tableData).toContain("$t('已选择 {0} 行和 {1} 列'");
     expect(tableData).toContain("TABLE_GRID_ROW_HEADER_FIELD");
+    expect(tableData).toContain("startFillSession");
+    expect(tableData).toContain("cancelFillSession");
+    expect(tableData).toContain("$t('输入将应用到选中单元格，Esc 取消'");
   });
 
   it("themes database inputs independently from the outer app theme", () => {
