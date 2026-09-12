@@ -160,7 +160,6 @@ type TableRangeLike = {
   getRows: () => RowComponent[];
   getColumns: () => ColumnComponent[];
   getCells: () => CellComponent[] | CellComponent[][];
-  getBounds?: () => { start?: CellComponent; end?: CellComponent };
 };
 
 function tableRanges(): TableRangeLike[] {
@@ -447,12 +446,6 @@ function editableSelectedCells(): CellComponent[] {
   return selectedRangeCells().filter((cell) => canBatchApplyColumnEdit(cell.getField(), primaryKey.value, blocked));
 }
 
-function activeRangeCell(): CellComponent | null {
-  const start = tableRanges()[0]?.getBounds?.().start;
-  if (start && !isTableGridInternalField(start.getField())) return start;
-  return editableSelectedCells()[0] ?? selectedRangeCells()[0] ?? null;
-}
-
 function applyFillValue(value: unknown, track: boolean) {
   if (!fillSession) return;
   applyingBatchEdit = true;
@@ -498,7 +491,8 @@ function startFillSession(options: { value?: unknown; openEditor: boolean; repla
   }
   if (fillSession && !fillSession.committed) cancelFillSession();
   else if (fillSession?.committed) fillSession = null;
-  const active = cells.find((cell) => cell === activeRangeCell()) ?? cells[0];
+  // getCells() exposes CellComponents; Tabulator 6.5 getBounds() returns internal cells.
+  const active = cells[0];
   fillSession = {
     snapshots: cells.map((cell) => ({ cell, row: cell.getRow(), field: cell.getField(), previous: cell.getValue() })),
     pendingBefore: new Map(pending.value),
@@ -1229,7 +1223,7 @@ onBeforeUnmount(() => {
     </section>
 
     <div v-show="viewMode === 'grid'" class="table-grid-host">
-      <div ref="tableElement" class="editable-data-grid" :class="{ 'is-range-filling': fillActive }" @mousedown.capture="remapMetaToCtrl" @keydown.capture="handleGridKeydown" @dblclick.capture="handleGridDblClick"></div>
+      <div ref="tableElement" class="editable-data-grid" @mousedown.capture="remapMetaToCtrl" @keydown.capture="handleGridKeydown" @dblclick.capture="handleGridDblClick"></div>
       <input
         v-if="fillActive"
         ref="fillInputElement"
