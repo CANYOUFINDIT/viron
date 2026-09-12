@@ -4310,6 +4310,7 @@ const enOverrides: Record<string, string> = {
   "未能在本机保存 Viron 设备私钥，请检查当前用户的数据目录权限": "Could not save the Viron device private key on this device. Check the current user's data-directory permissions.",
   "已选 {0} 项": "{0} selected",
   "已选 {0} 行，编辑将批量应用": "{0} rows selected; edits apply to the selection",
+  "已选择 {0} 行和 {1} 列": "{0} rows and {1} columns selected",
   "复制已选 {0} 项到右侧当前目录": "Copy {0} selected items to the current directory on the right",
   "复制已选 {0} 项到左侧当前目录": "Copy {0} selected items to the current directory on the left",
   "无法识别拖动的 SFTP 文件": "Could not identify the dragged SFTP items",

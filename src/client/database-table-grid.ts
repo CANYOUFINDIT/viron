@@ -45,9 +45,26 @@ export function tableGridRangeBounds(start: number, end: number): [number, numbe
   return start <= end ? [start, end] : [end, start];
 }
 
+export const TABLE_GRID_ROW_HEADER_FIELD = "__envmanRow";
+
+export function isTableGridInternalField(field: string | undefined | null): boolean {
+  return !field || field.startsWith("__envman");
+}
+
 export function canBatchApplyColumnEdit(field: string, primaryKey: readonly string[], autoIncrementFields: readonly string[]): boolean {
   return Boolean(field)
-    && !field.startsWith("__envman")
+    && !isTableGridInternalField(field)
     && !primaryKey.includes(field)
     && !autoIncrementFields.includes(field);
+}
+
+export function flattenTableGridRangeCells<T>(cells: T[] | T[][] | undefined | null): T[] {
+  if (!cells?.length) return [];
+  return (cells as unknown[]).flatMap((item) => Array.isArray(item) ? item : [item]) as T[];
+}
+
+export function tableGridSelectionLabel(rowCount: number, columnCount: number): { rows: number; columns: number } | null {
+  if (rowCount < 1 || columnCount < 1) return null;
+  if (rowCount === 1 && columnCount === 1) return null;
+  return { rows: rowCount, columns: columnCount };
 }

@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   canBatchApplyColumnEdit,
+  flattenTableGridRangeCells,
   TABLE_GRID_LAYOUT,
   TABLE_GRID_MAX_INITIAL_COLUMN_WIDTH,
   tableGridColumnSize,
   tableGridColumnWidth,
   tableGridRangeBounds,
+  tableGridSelectionLabel,
   tableGridSelectionMode,
 } from "../src/client/database-table-grid.js";
 
@@ -50,5 +52,12 @@ describe("database table grid selection", () => {
     expect(canBatchApplyColumnEdit("status", ["id"], ["id"])).toBe(true);
     expect(canBatchApplyColumnEdit("id", ["id"], [])).toBe(false);
     expect(canBatchApplyColumnEdit("__envmanId", [], [])).toBe(false);
+  });
+
+  it("describes a Navicat-style cell range and flattens selected cells", () => {
+    expect(tableGridSelectionLabel(3, 3)).toEqual({ rows: 3, columns: 3 });
+    expect(tableGridSelectionLabel(1, 1)).toBeNull();
+    expect(flattenTableGridRangeCells([["a", "b"], ["c"]])).toEqual(["a", "b", "c"]);
+    expect(flattenTableGridRangeCells(["a", "b"])).toEqual(["a", "b"]);
   });
 });

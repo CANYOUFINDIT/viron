@@ -231,6 +231,15 @@ describe("Navicat toolbar action order", () => {
     expect(tableData).toContain("openFind();");
   });
 
+  it("selects a Navicat-style cell range instead of whole rows only", () => {
+    expect(tableData).toContain("selectableRange: true");
+    expect(tableData).toContain("selectableRangeColumns: true");
+    expect(tableData).toContain("selectableRangeRows: true");
+    expect(tableData).toContain('editTriggerEvent: "dblclick"');
+    expect(tableData).toContain("$t('已选择 {0} 行和 {1} 列'");
+    expect(tableData).toContain("TABLE_GRID_ROW_HEADER_FIELD");
+  });
+
   it("themes database inputs independently from the outer app theme", () => {
     expect(styles).toContain(".database-workbench,\n.database-navicat-dialog.el-dialog,");
     expect(styles).toContain("--el-fill-color-blank: #1b2022;");
