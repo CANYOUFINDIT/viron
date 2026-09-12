@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 import type { Connection, FieldPacket, ResultSetHeader } from "mysql2/promise";
 import type { AuthenticatedUser, WorkspaceType } from "../access-control.js";
 import { writeAudit } from "../audit.js";
+import { normalizeCellColumns, serializeDatabaseRow } from "../../shared/database-cell-value.js";
 import { splitSqlStatements } from "../../shared/sql-statements.js";
 import { connectDatabase, type ConnectedDatabase } from "./connector.js";
 
@@ -58,23 +59,15 @@ export interface PublicQueryJob {
 
 const MAX_RESULT_ROWS = 10_000;
 
-function safeValue(value: unknown): unknown {
-  if (typeof value === "bigint") return value.toString();
-  if (Buffer.isBuffer(value)) return `0x${value.toString("hex")}`;
-  if (value instanceof Date) return value.toISOString();
-  return value;
-}
-
-function safeRow(row: unknown): Record<string, unknown> {
-  if (!row || typeof row !== "object") return { value: safeValue(row) };
-  return Object.fromEntries(Object.entries(row).map(([key, value]) => [key, safeValue(value)]));
+function safeRow(row: unknown, columns: readonly unknown[] = []): Record<string, unknown> {
+  return serializeDatabaseRow(row, normalizeCellColumns(columns));
 }
 
 function resultSet(rows: unknown, fields: FieldPacket[] | undefined): QueryResultSet {
   if (Array.isArray(rows)) {
     return {
       columns: (fields ?? []).map((field) => ({ name: field.name, table: field.table, type: field.type ?? 0 })),
-      rows: rows.slice(0, MAX_RESULT_ROWS).map(safeRow),
+      rows: rows.slice(0, MAX_RESULT_ROWS).map((row) => safeRow(row, fields)),
       affectedRows: 0,
       insertId: 0,
       info: "",

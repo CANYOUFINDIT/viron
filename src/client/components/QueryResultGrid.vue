@@ -3,6 +3,7 @@
 import { TabulatorFull as Tabulator, type ColumnDefinition } from "tabulator-tables";
 import "tabulator-tables/dist/css/tabulator_midnight.min.css";
 import { nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { tableGridColumnSize } from "../database-table-grid";
 
 const props = defineProps<{
   columns: Array<{ name: string; table?: string; type?: number }>;
@@ -16,7 +17,7 @@ function definitions(): ColumnDefinition[] {
   return props.columns.map((column) => ({
     title: column.name,
     field: column.name,
-    minWidth: 120,
+    ...tableGridColumnSize(column.name),
     headerSort: true,
     tooltip: true,
     formatter: (cell) => {
@@ -44,6 +45,7 @@ async function render() {
       resizableColumnFit: false,
       clipboard: true,
       selectableRows: true,
+      columnDefaults: { resizable: true },
       placeholder: tr("查询没有返回数据行"),
     });
   } else {

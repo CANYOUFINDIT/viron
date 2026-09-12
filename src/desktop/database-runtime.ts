@@ -4,6 +4,7 @@ import type { Readable } from "node:stream";
 import mysql, { type ConnectionOptions, type FieldPacket, type QueryResult, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
 import type { ClientChannel } from "ssh2";
 import { NavicatHttpTunnelConnection } from "../server/database-workbench/http-tunnel.js";
+import { deserializeDatabaseCellValue, normalizeCellColumns, serializeDatabaseCellValue, serializeDatabaseRow } from "../shared/database-cell-value.js";
 import { buildTableDataClauses, parseTableDataQueryRules } from "../shared/database-table-data.js";
 import { parseCreateTableConstraints } from "../shared/database-table-design.js";
 import type { AgentDatabaseContextInput, AgentDatabaseContextSnapshot, AgentDatabaseReadResult } from "../shared/agent.js";
@@ -318,23 +319,19 @@ export async function connectDesktopDatabase(
   }
 }
 
-function safeValue(value: unknown): unknown {
-  if (typeof value === "bigint") return value.toString();
-  if (Buffer.isBuffer(value)) return `0x${value.toString("hex")}`;
-  if (value instanceof Date) return value.toISOString();
-  return value;
+function safeValue(value: unknown, column?: { dataType?: string; columnType?: string; type?: number; name?: string }): unknown {
+  return serializeDatabaseCellValue(value, column);
 }
 
-function safeRow(row: unknown): Record<string, unknown> {
-  if (!row || typeof row !== "object") return { value: safeValue(row) };
-  return Object.fromEntries(Object.entries(row).map(([key, value]) => [key, safeValue(value)]));
+function safeRow(row: unknown, columns: readonly unknown[] = []): Record<string, unknown> {
+  return serializeDatabaseRow(row, normalizeCellColumns(columns));
 }
 
 function resultSet(rows: unknown, fields: FieldPacket[] | undefined): DesktopDatabaseQueryResultSet {
   if (Array.isArray(rows)) {
     return {
       columns: (fields ?? []).map((field) => ({ name: field.name, table: field.table, type: field.type ?? 0 })),
-      rows: rows.slice(0, MAX_RESULT_ROWS).map(safeRow),
+      rows: rows.slice(0, MAX_RESULT_ROWS).map((row) => safeRow(row, fields)),
       affectedRows: 0,
       insertId: 0,
       info: "",
@@ -551,7 +548,7 @@ export class DesktopDatabaseRuntime {
     try {
       const querySql = /^EXPLAIN\b/i.test(sql) ? sql : `SELECT * FROM (${sql.replace(/;\s*$/, "")}) AS viron_agent_read LIMIT 101`;
       const [rows, fields] = await connected.connection.query<RowDataPacket[]>(querySql);
-      const preview = sanitizeAgentDatabaseInput({ connectionId, database, editorSql: "", selectedSql: "", resultPreview: rows.slice(0, 100).map(safeRow) }, 100).resultPreview;
+      const preview = sanitizeAgentDatabaseInput({ connectionId, database, editorSql: "", selectedSql: "", resultPreview: rows.slice(0, 100).map((row) => safeRow(row, fields)) }, 100).resultPreview;
       return {
         connectionId,
         connectionName: connected.credential.connection.name,
@@ -750,7 +747,7 @@ export class DesktopDatabaseRuntime {
           WHERE EVENT_SCHEMA = ? ORDER BY EVENT_NAME`;
       }
       const [rows] = await connected.connection.query<RowDataPacket[]>(sql, values);
-      return { items: rows.map(safeRow) };
+      return { items: rows.map((row) => safeRow(row)) };
     } finally {
       await connected.close();
     }
@@ -1019,7 +1016,7 @@ export class DesktopDatabaseRuntime {
       columnType: String(row.COLUMN_TYPE),
       dataType: String(row.DATA_TYPE),
       nullable: row.IS_NULLABLE === "YES",
-      defaultValue: safeValue(row.COLUMN_DEFAULT),
+      defaultValue: safeValue(row.COLUMN_DEFAULT, { dataType: String(row.DATA_TYPE), columnType: String(row.COLUMN_TYPE) }),
       primary: row.COLUMN_KEY === "PRI",
       unique: row.COLUMN_KEY === "UNI",
       autoIncrement: String(row.EXTRA).includes("auto_increment"),
@@ -1052,7 +1049,7 @@ export class DesktopDatabaseRuntime {
         page,
         pageSize,
         total: Number(countRows[0]?.total ?? 0),
-        rows: rows.map(safeRow),
+        rows: rows.map((row) => safeRow(row, columns)),
       };
     } finally {
       await connected.close();
@@ -1105,7 +1102,10 @@ export class DesktopDatabaseRuntime {
           if (!["insert", "update", "delete"].includes(String(change.type))) throw new DesktopDatabaseError(400, "INVALID_CHANGES", tr("数据表变更类型无效"));
           const valuesObject = change.values && typeof change.values === "object" && !Array.isArray(change.values) ? change.values as Record<string, unknown> : {};
           const keyObject = change.key && typeof change.key === "object" && !Array.isArray(change.key) ? change.key as Record<string, unknown> : {};
-          const values = Object.entries(valuesObject).filter(([key]) => allowed.has(key));
+          const columnByName = new Map(columns.map((column) => [column.name, column]));
+          const values = Object.entries(valuesObject)
+            .filter(([key]) => allowed.has(key))
+            .map(([key, value]) => [key, deserializeDatabaseCellValue(value, columnByName.get(key))] as const);
           if (change.type === "insert") {
             if (!values.length) continue;
             const sql = `INSERT INTO ${identifier(database)}.${identifier(table)} (${values.map(([key]) => identifier(key)).join(",")}) VALUES (${values.map(() => "?").join(",")})`;
@@ -1114,7 +1114,7 @@ export class DesktopDatabaseRuntime {
             continue;
           }
           if (!primary.length) throw new DesktopDatabaseError(400, "PRIMARY_KEY_REQUIRED", tr("没有主键的数据表不能直接修改或删除"));
-          const keys = primary.map((key) => [key, keyObject[key]] as const);
+          const keys = primary.map((key) => [key, deserializeDatabaseCellValue(keyObject[key], columnByName.get(key))] as const);
           if (keys.some(([, value]) => value === undefined)) throw new DesktopDatabaseError(400, "INVALID_CHANGES", tr("修改数据缺少完整主键"));
           const where = keys.map(([key]) => `${identifier(key)} <=> ?`).join(" AND ");
           if (change.type === "delete") {
@@ -1185,7 +1185,7 @@ export class DesktopDatabaseRuntime {
             connections.set(database, connected);
           }
           const [rows, fields] = await connected.connection.query<RowDataPacket[]>(queries[index].sql);
-          const safeRows = Array.isArray(rows) ? rows.slice(0, 500).map(safeRow) : [];
+          const safeRows = Array.isArray(rows) ? rows.slice(0, 500).map((row) => safeRow(row, fields)) : [];
           const item = {
             index, ok: true, database,
             columns: (fields ?? []).map((field) => ({ name: field.name, table: field.table, type: field.type ?? 0 })),

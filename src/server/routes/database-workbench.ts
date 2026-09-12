@@ -8,6 +8,7 @@ import { canAccessConnection, canManageWorkspace } from "../access-control.js";
 import { executionScope } from "../execution-scope.js";
 import { connectDatabase, type DatabaseConnectionClient } from "../database-workbench/connector.js";
 import { parseCreateTableConstraints } from "../../shared/database-table-design.js";
+import { deserializeDatabaseCellValue, normalizeCellColumns, serializeDatabaseRow } from "../../shared/database-cell-value.js";
 import { buildTableDataClauses, parseTableDataQueryRules } from "../../shared/database-table-data.js";
 import { parseBody } from "../validation.js";
 import { requireAdmin } from "./auth.js";
@@ -27,12 +28,8 @@ const readBatchSchema = z.object({
 });
 const databaseBatchMaxResponseBytes = 2 * 1024 * 1024;
 
-function safeBatchRow(row: unknown): Record<string, unknown> {
-  if (!row || typeof row !== "object") return { value: row };
-  return Object.fromEntries(Object.entries(row).map(([key, value]) => [key,
-    typeof value === "bigint" ? value.toString()
-      : Buffer.isBuffer(value) ? `0x${value.toString("hex")}`
-        : value instanceof Date ? value.toISOString() : value]));
+function safeBatchRow(row: unknown, columns: readonly unknown[] = []): Record<string, unknown> {
+  return serializeDatabaseRow(row, normalizeCellColumns(columns));
 }
 
 const favoriteSchema = z.object({
@@ -671,7 +668,7 @@ export async function registerDatabaseWorkbenchRoutes(app: FastifyInstance): Pro
           page,
           pageSize,
           total: Number(countRows[0]?.total ?? 0),
-          rows,
+          rows: rows.map((row) => serializeDatabaseRow(row, columns)),
         };
       } finally {
         await connected.close();
@@ -728,15 +725,18 @@ export async function registerDatabaseWorkbenchRoutes(app: FastifyInstance): Pro
       let changed = 0;
       try {
         await connected.connection.beginTransaction();
+        const columnByName = new Map(columns.map((column) => [column.name, column]));
         for (const change of body.changes) {
-          const values = Object.entries(change.values).filter(([key]) => allowed.has(key));
+          const values = Object.entries(change.values)
+            .filter(([key]) => allowed.has(key))
+            .map(([key, value]) => [key, deserializeDatabaseCellValue(value, columnByName.get(key))] as const);
           if (change.type === "insert") {
             if (!values.length) continue;
             const sql = `INSERT INTO ${identifier(body.database)}.${identifier(body.table)} (${values.map(([key]) => identifier(key)).join(",")}) VALUES (${values.map(() => "?").join(",")})`;
             const [result] = await connected.connection.query(sql, values.map(([, value]) => value));
             changed += Number((result as { affectedRows?: number }).affectedRows ?? 0);
           } else {
-            const keys = primary.map((key) => [key, change.key[key]] as const);
+            const keys = primary.map((key) => [key, deserializeDatabaseCellValue(change.key[key], columnByName.get(key))] as const);
             if (keys.some(([, value]) => value === undefined)) throw new Error("修改数据缺少完整主键");
             const where = keys.map(([key]) => `${identifier(key)} <=> ?`).join(" AND ");
             if (change.type === "delete") {
@@ -809,7 +809,7 @@ export async function registerDatabaseWorkbenchRoutes(app: FastifyInstance): Pro
             connections.set(database, connected);
           }
           const [rows, fields] = await connected.connection.query<RowDataPacket[]>(queries[index].sql);
-          const safeRows = Array.isArray(rows) ? rows.slice(0, 500).map(safeBatchRow) : [];
+          const safeRows = Array.isArray(rows) ? rows.slice(0, 500).map((row) => safeBatchRow(row, fields as FieldPacket[] | undefined ?? [])) : [];
           const item = {
             index, ok: true, database,
             columns: (fields as FieldPacket[] | undefined ?? []).map((field) => ({ name: field.name, table: field.table, type: field.type ?? 0 })),

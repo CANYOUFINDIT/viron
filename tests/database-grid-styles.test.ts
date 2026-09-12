@@ -29,4 +29,22 @@ describe("database grid styles", () => {
     expect(styles).not.toContain(".query-result-grid .tabulator { border: 0;");
     expect(styles).not.toContain(".editable-data-grid .tabulator { border: 0;");
   });
+
+  it("keeps selected and sorted header text readable in dark and bright themes", () => {
+    expect(styles).toContain(".database-object-table tbody tr.is-selected,");
+    expect(styles).toContain(".database-object-table tbody tr.is-selected:nth-child(even),");
+    expect(styles).toContain(".database-object-table tbody tr.is-selected:hover,");
+    expect(styles).toContain(".database-object-table tbody tr.is-selected:focus-visible { background: #175caa; color: #fff; }");
+    expect(styles).toContain(":root.bright .database-object-table tbody tr.is-selected,");
+    expect(styles).toContain(":root.bright .database-object-table tbody tr.is-selected:nth-child(even),");
+    expect(styles).toContain(":root.bright .database-object-table tbody tr.is-selected:hover,");
+    expect(styles).toContain(":root.bright .database-object-table tbody tr.is-selected:focus-visible { background: #cfe6de; color: #16332f; }");
+    expect(styles).toContain(".query-result-grid.tabulator .tabulator-header .tabulator-col.tabulator-sortable.tabulator-col-sorter-element:hover,");
+    expect(styles).toContain(".editable-data-grid.tabulator .tabulator-header .tabulator-col.tabulator-sortable.tabulator-col-sorter-element:hover,");
+    expect(styles).toContain(".editable-data-grid.tabulator .tabulator-header .tabulator-col.tabulator-sortable[aria-sort=\"descending\"] { background: #1d3532; color: #e8f4f0; }");
+    expect(styles).toContain(":root.bright .editable-data-grid.tabulator .tabulator-header .tabulator-col.tabulator-sortable[aria-sort=\"descending\"] { background: #d4ebe3; color: #16332f; }");
+    expect(styles).toContain(".query-result-grid .tabulator-row.tabulator-selected,");
+    expect(styles).toContain(".editable-data-grid .tabulator-row.tabulator-selected,");
+    expect(styles).toContain(":root.bright .editable-data-grid .tabulator-row.tabulator-selected:hover { background: #cfe6de; color: #16332f; }");
+  });
 });

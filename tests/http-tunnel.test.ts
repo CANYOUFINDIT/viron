@@ -67,6 +67,17 @@ describe("Navicat-compatible HTTP Tunnel", () => {
     expect(results[0].rows).toEqual([{ message: "hello", count: 42 }]);
   });
 
+  it("decodes BIT columns as raw buffers", () => {
+    const results = parseNavicatTunnelResponse(Buffer.concat([
+      uint32(1111), uint16(202), uint32(0), Buffer.alloc(6),
+      uint32(0), uint32(0), uint32(0), uint32(1), uint32(1), Buffer.alloc(12),
+      block("flag"), block(""), uint32(16), uint32(0), uint32(1),
+      Buffer.from([1, 1]),
+      Buffer.from([0]),
+    ]));
+    expect(results[0].rows).toEqual([{ flag: Buffer.from([1]) }]);
+  });
+
   it("tests a database connection through an ntunnel endpoint with encrypted Basic Auth", async () => {
     let receivedAuthorization = "";
     let receivedSql = "";
