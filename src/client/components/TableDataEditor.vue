@@ -38,7 +38,7 @@ import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch
 import { api } from "../api";
 import { createClientId } from "../client-id";
 import { isBitFlagColumn } from "../../shared/database-cell-value";
-import { canBatchApplyColumnEdit, tableGridColumnSize, tableGridRangeBounds, tableGridSelectionMode } from "../database-table-grid";
+import { canBatchApplyColumnEdit, TABLE_GRID_LAYOUT, tableGridColumnSize, tableGridRangeBounds, tableGridSelectionMode } from "../database-table-grid";
 import { createTableFindMatch, resolveTableFindCell, type TableFindMatch } from "../database-table-find";
 import { type DatabaseTableProfile, type TableProfileConfig, normalizeTableProfile } from "../database-table-profile";
 import { downloadApiFile } from "../desktop";
@@ -410,7 +410,7 @@ function installTable(rows: Array<Record<string, unknown>>) {
       data,
       columns: definitions(),
       height: "100%",
-      layout: "fitDataFill",
+      layout: TABLE_GRID_LAYOUT,
       movableColumns: true,
       selectableRows: false,
       clipboard: true,

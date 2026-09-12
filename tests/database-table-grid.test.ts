@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   canBatchApplyColumnEdit,
+  TABLE_GRID_LAYOUT,
   TABLE_GRID_MAX_INITIAL_COLUMN_WIDTH,
   tableGridColumnSize,
   tableGridColumnWidth,
@@ -10,18 +11,26 @@ import {
 
 describe("database table grid column sizing", () => {
   it("caps default column width so long cell text does not stretch the grid", () => {
-    expect(tableGridColumnWidth("accelerator_ids")).toBeLessThanOrEqual(200);
-    expect(tableGridColumnSize("accelerator_ids")).toMatchObject({
+    expect(tableGridColumnWidth("accelerator_ids")).toBeLessThanOrEqual(TABLE_GRID_MAX_INITIAL_COLUMN_WIDTH);
+    expect(tableGridColumnSize("accelerator_ids")).toEqual({
+      minWidth: 72,
       maxInitialWidth: TABLE_GRID_MAX_INITIAL_COLUMN_WIDTH,
       resizable: true,
     });
-    expect(tableGridColumnSize("accelerator_ids")).not.toHaveProperty("width");
+  });
+
+  it("does not force a wide min width onto short numeric columns", () => {
+    expect(TABLE_GRID_LAYOUT).toBe("fitData");
+    expect(tableGridColumnWidth("id")).toBeLessThanOrEqual(100);
+    expect(tableGridColumnWidth("sync_error_code")).toBeLessThan(200);
+    expect(tableGridColumnSize("sync_total_versions").minWidth).toBe(72);
+    expect(tableGridColumnSize("sync_total_versions")).not.toHaveProperty("width");
   });
 
   it("preserves a user-resized width above the default cap", () => {
     expect(tableGridColumnWidth("accelerator_ids", 640)).toBe(640);
     expect(tableGridColumnSize("accelerator_ids", 640)).toEqual({
-      minWidth: 96,
+      minWidth: 72,
       width: 640,
       resizable: true,
     });
