@@ -104,6 +104,10 @@ export interface DesktopWebViewState {
   canGoForward: boolean;
   autofillMessage: string;
   error: string;
+  certificateError: {
+    url: string;
+    error: string;
+  } | null;
   closedReason: string;
   notice: {
     id: string;
@@ -120,6 +124,11 @@ export interface ManagedDesktopWebPage {
   autofillSignature: string;
   autofillMessage: string;
   error: string;
+  certificateError: {
+    url: string;
+    error: string;
+    callback: (isTrusted: boolean) => void;
+  } | null;
   closing: boolean;
 }
 
@@ -206,9 +215,9 @@ export function layoutDesktopWebViewPages(view: ManagedDesktopWebView, focus = f
   for (const page of view.pages.values()) {
     const active = page.id === view.activePageId;
     if (active) page.view.setBounds(view.bounds);
-    page.view.setVisible(active && view.visible);
+    page.view.setVisible(active && view.visible && !page.certificateError);
   }
-  if (focus && view.visible) activeDesktopWebPage(view).view.webContents.focus();
+  if (focus && view.visible && !activeDesktopWebPage(view).certificateError) activeDesktopWebPage(view).view.webContents.focus();
 }
 
 export function activateDesktopWebPage(view: ManagedDesktopWebView, pageId: string): void {
@@ -253,11 +262,20 @@ export function removeDesktopWebPage(view: ManagedDesktopWebView, pageId: string
 export function destroyDesktopWebPages(view: ManagedDesktopWebView): void {
   for (const page of view.pages.values()) {
     page.closing = true;
+    resolveDesktopWebCertificateError(page, false);
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.contentView.removeChildView(page.view);
     if (!page.view.webContents.isDestroyed()) page.view.webContents.close();
   }
   view.pages.clear();
   view.activePageId = "";
+}
+
+function resolveDesktopWebCertificateError(page: ManagedDesktopWebPage, isTrusted: boolean): boolean {
+  const pending = page.certificateError;
+  if (!pending) return false;
+  page.certificateError = null;
+  pending.callback(isTrusted);
+  return true;
 }
 
 export function openDesktopWebLinkInNewPage(view: ManagedDesktopWebView, url: string): void {
@@ -315,6 +333,7 @@ export function createDesktopWebPage(
     autofillSignature: "",
     autofillMessage: "",
     error: "",
+    certificateError: null,
     closing: false,
   };
   view.pages.set(page.id, page);
@@ -389,6 +408,15 @@ export function createDesktopWebPage(
   nativeView.webContents.on("will-navigate", (event, url) => {
     if (!supportedDesktopPopupUrl(url)) event.preventDefault();
   });
+  nativeView.webContents.on("certificate-error", (event, url, error, _certificate, callback, isMainFrame) => {
+    if (!isMainFrame || !supportedDesktopWebUrl(url)) return;
+    event.preventDefault();
+    resolveDesktopWebCertificateError(page, false);
+    page.certificateError = { url, error, callback };
+    page.error = "";
+    layoutDesktopWebViewPages(view);
+    sendWebViewState(view);
+  });
   nativeView.webContents.on("did-start-loading", () => { touchDesktopWebView(view); sendWebViewState(view); });
   nativeView.webContents.on("did-stop-loading", () => { touchDesktopWebView(view); sendWebViewState(view); });
   nativeView.webContents.on("page-title-updated", () => sendWebViewState(view));
@@ -412,6 +440,7 @@ export function createDesktopWebPage(
     sendWebViewState(view);
   });
   nativeView.webContents.on("destroyed", () => {
+    resolveDesktopWebCertificateError(page, false);
     if (!view.closing && !page.closing) removeDesktopWebPage(view, page.id, false);
   });
   return page;
@@ -732,12 +761,25 @@ export async function handleDesktopWebViewAction(id: string, action: { type: str
   if (action.type === "reset") return await resetDesktopWebView(managed);
   const page = activeDesktopWebPage(managed);
   const navigation = page.view.webContents.navigationHistory;
-  if (action.type === "back" && navigation.canGoBack()) navigation.goBack();
-  else if (action.type === "forward" && navigation.canGoForward()) navigation.goForward();
-  else if (action.type === "reload") page.view.webContents.reload();
+  if (action.type === "continue-certificate") {
+    if (!resolveDesktopWebCertificateError(page, true)) throw new Error(tr("当前页面没有待确认的证书异常"));
+    layoutDesktopWebViewPages(managed, true);
+    sendWebViewState(managed);
+  } else if (action.type === "back" && navigation.canGoBack()) {
+    resolveDesktopWebCertificateError(page, false);
+    layoutDesktopWebViewPages(managed);
+    navigation.goBack();
+  } else if (action.type === "forward" && navigation.canGoForward()) navigation.goForward();
+  else if (action.type === "reload") {
+    resolveDesktopWebCertificateError(page, false);
+    layoutDesktopWebViewPages(managed);
+    page.view.webContents.reload();
+  }
   else if (action.type === "navigate") {
     const url = typeof action.url === "string" ? normalizeWebAddress(action.url) : null;
     if (!url || !supportedDesktopWebUrl(url)) throw new Error(tr("页面地址只支持 HTTP 或 HTTPS URL"));
+    resolveDesktopWebCertificateError(page, false);
+    layoutDesktopWebViewPages(managed);
     page.pendingUrl = "";
     page.error = "";
     void page.view.webContents.loadURL(url).catch((error) => {

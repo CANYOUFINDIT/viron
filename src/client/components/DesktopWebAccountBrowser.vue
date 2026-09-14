@@ -1,6 +1,6 @@
 <script setup lang="ts">import { translate as tr } from "../i18n";
 
-import { ArrowLeft, ArrowRight, Globe2, KeyRound, Laptop, LoaderCircle, Maximize2, Minimize2, Plus, RefreshCw, RotateCcw } from "@lucide/vue";
+import { ArrowLeft, ArrowRight, Globe2, KeyRound, Laptop, LoaderCircle, Maximize2, Minimize2, Plus, RefreshCw, RotateCcw, ShieldAlert } from "@lucide/vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from "vue";
 import { loadActiveConnections } from "../active-connections";
@@ -541,7 +541,8 @@ onBeforeUnmount(() => {
       </form>
       <div class="web-browser-tools">
         <button type="button" :aria-label="$t('新建空白标签页')" :title="$t('新建空白标签页')" @click="createBlankPage"><Plus :size="15" /></button>
-        <span v-if="state?.loading" class="desktop-web-view-status" :title="$t('本机页面加载中')"><LoaderCircle :size="14" class="is-spinning" /></span>
+        <span v-if="state?.certificateError" class="desktop-web-view-status is-certificate-error-status" :title="$t('页面证书校验失败')"><ShieldAlert :size="15" /></span>
+        <span v-else-if="state?.loading" class="desktop-web-view-status" :title="$t('本机页面加载中')"><LoaderCircle :size="14" class="is-spinning" /></span>
         <span v-else class="desktop-web-view-status is-local" :title="state?.autofillMessage || $t('页面由当前电脑本机直接访问')"><Laptop :size="14" /></span>
         <button type="button" :aria-label="$t('重新填充账号密码')" :title="$t('在入口原始域名的当前页面重新填充账号密码')" :disabled="!state" @click="runAction('refill')"><KeyRound :size="15" /></button>
         <button type="button" :aria-label="$t('重新登录')" :title="$t('清除本机登录状态并重新登录')" :disabled="!state || resetting" @click="resetLogin"><RotateCcw :size="15" /></button>
@@ -563,6 +564,16 @@ onBeforeUnmount(() => {
         <span>{{ startError || $t('请先确认 Viron 的安全存储说明；操作系统可能继续请求安全存储授权') }}</span>
         <button v-if="startError" type="button" @click="startError = ''; start()">{{ $t('重新连接') }}</button>
       </div>
+      <div v-else-if="state.certificateError" class="web-browser-loading is-certificate-error">
+        <div class="web-browser-certificate-icon"><ShieldAlert :size="28" /></div>
+        <strong>{{ $t('您的连接不是私密连接') }}</strong>
+        <span>{{ $t('此页面的 HTTPS 证书无法通过校验。只有在确认目标地址可信时，才继续访问。') }}</span>
+        <code>{{ state.certificateError.url }}</code>
+        <div class="web-browser-certificate-actions">
+          <button type="button" @click="runAction('continue-certificate')">{{ $t('继续访问（不安全）') }}</button>
+          <button type="button" class="is-secondary" @click="runAction('reload')">{{ $t('重新加载') }}</button>
+        </div>
+      </div>
       <div v-else-if="state.closedReason" class="web-browser-loading is-disconnected">
         <strong>{{ $t('页面连接已断开') }}</strong>
         <span>{{ state.closedReason }}{{ $t('；当前页面现场保留到你关闭此工作区为止。') }}</span>
@@ -579,5 +590,13 @@ onBeforeUnmount(() => {
 .desktop-web-browser-surface.is-overlay-frozen { cursor: default; }
 .desktop-web-view-status { width: 28px; height: 28px; color: var(--ink-400); display: grid; place-items: center; }
 .desktop-web-view-status.is-local { color: var(--teal-600); }
+.desktop-web-view-status.is-certificate-error-status { color: #d93025; }
 .web-browser-nav button:disabled, .web-browser-tools button:disabled { opacity: .34; cursor: not-allowed; }
+.web-browser-certificate-icon { width: 56px; height: 56px; margin-bottom: 4px; border-radius: 50%; background: #fff1f0; color: #d93025; display: grid; place-items: center; }
+.is-certificate-error strong { color: #202124; font-size: 17px; }
+.is-certificate-error span { max-width: 420px; line-height: 1.6; }
+.is-certificate-error code { max-width: min(520px, 90%); overflow: hidden; color: #5f6368; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.web-browser-certificate-actions { display: flex; align-items: center; gap: 8px; }
+.web-browser-certificate-actions button.is-secondary { border-color: #9aa0a6; background: #fff; color: #5f6368; }
+.web-browser-certificate-actions button.is-secondary:hover { border-color: #5f6368; background: #f8f9fa; }
 </style>

@@ -125,6 +125,10 @@ export interface DesktopWebViewState {
   canGoForward: boolean;
   autofillMessage: string;
   error: string;
+  certificateError: {
+    url: string;
+    error: string;
+  } | null;
   closedReason: string;
   notice: {
     id: string;
@@ -134,7 +138,7 @@ export interface DesktopWebViewState {
 }
 
 export interface DesktopWebViewAction {
-  type: "back" | "forward" | "reload" | "navigate" | "refill" | "reset" | "new-page" | "activate-page" | "close-page" | "reorder-pages";
+  type: "back" | "forward" | "reload" | "navigate" | "refill" | "reset" | "continue-certificate" | "new-page" | "activate-page" | "close-page" | "reorder-pages";
   url?: string;
   pageId?: string;
   orderedPageIds?: string[];

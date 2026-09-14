@@ -91,6 +91,9 @@ export function webViewState(view: ManagedDesktopWebView): DesktopWebViewState {
     canGoForward: navigation.canGoForward(),
     autofillMessage: active.autofillMessage,
     error: active.error,
+    certificateError: active.certificateError
+      ? { url: active.certificateError.url, error: active.certificateError.error }
+      : null,
     closedReason: view.closedReason,
     notice: view.notice,
   };
