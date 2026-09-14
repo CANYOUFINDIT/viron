@@ -243,6 +243,14 @@ describe("Navicat toolbar action order", () => {
     expect(tableData).toContain("$t('输入将应用到选中单元格，Esc 取消'");
   });
 
+  it("defaults form view to the first row when no row is selected", () => {
+    expect(tableData).toContain('function selectFirstRow()');
+    const viewMode = region(tableData, "function setViewMode", "function setPageSize");
+    expect(viewMode).toContain("if (command === \"form\") void nextTick(selectFirstRow);");
+    expect(tableData).toContain("if (viewMode.value === \"form\") void dataReady.then(selectFirstRow);");
+    expect(tableData).toContain('@click="setViewMode(\'form\')"');
+  });
+
   it("themes database inputs independently from the outer app theme", () => {
     expect(styles).toContain(".database-workbench,\n.database-navicat-dialog.el-dialog,");
     expect(styles).toContain("--el-fill-color-blank: #1b2022;");

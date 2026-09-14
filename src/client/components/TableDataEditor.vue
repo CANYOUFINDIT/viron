@@ -609,6 +609,20 @@ function handleFillInputKeydown(event: KeyboardEvent) {
   }
 }
 
+function selectFirstRow() {
+  if (!tableGrid || selectedRow.value) return;
+  const firstRow = tableGrid.getRows("active")[0];
+  const firstCell = firstRow?.getCells().find((cell) => !isTableGridInternalField(cell.getField()));
+  if (!firstCell) return;
+  const addRange = (tableGrid as Tabulator & { addRange?: (start: CellComponent, end?: CellComponent) => unknown }).addRange;
+  if (addRange) addRange.call(tableGrid, firstCell, firstCell);
+  else {
+    selectedCount.value = 1;
+    selectedColumnCount.value = 1;
+    selectedRow.value = firstRow.getData() as Record<string, unknown>;
+  }
+}
+
 function installTable(rows: Array<Record<string, unknown>>) {
   const data = rows.map((row) => ({
     ...row,
@@ -619,6 +633,7 @@ function installTable(rows: Array<Record<string, unknown>>) {
   selectedRow.value = null;
   selectedCount.value = 0;
   selectedColumnCount.value = 0;
+  let dataReady: Promise<unknown> = Promise.resolve();
   if (!tableGrid) {
     tableGrid = new Tabulator(tableElement.value!, {
       data,
@@ -668,8 +683,9 @@ function installTable(rows: Array<Record<string, unknown>>) {
     });
   } else {
     tableGrid.setColumns(definitions());
-    void tableGrid.setData(data);
+    dataReady = tableGrid.setData(data);
   }
+  if (viewMode.value === "form") void dataReady.then(selectFirstRow);
   void nextTick(() => updateFindMatches());
 }
 
@@ -1062,7 +1078,9 @@ function handleToolCommand(command: string) {
 }
 
 function setViewMode(command: string) {
-  if (command === "grid" || command === "form") viewMode.value = command;
+  if (command !== "grid" && command !== "form") return;
+  viewMode.value = command;
+  if (command === "form") void nextTick(selectFirstRow);
 }
 
 function setPageSize(command: string | number) {
@@ -1269,8 +1287,8 @@ onBeforeUnmount(() => {
         <el-tooltip :content="$t('下一页')" placement="top" :show-after="250"><span class="table-tooltip-trigger"><button data-navicat-action="next-page" :disabled="page >= pageCount" :aria-label="$t('下一页')" :title="$t('下一页')" @click="goToPage(page + 1)"><ChevronRight :size="16" /></button></span></el-tooltip>
         <el-tooltip :content="$t('最后一页')" placement="top" :show-after="250"><span class="table-tooltip-trigger"><button data-navicat-action="last-page" :disabled="page >= pageCount" :aria-label="$t('最后一页')" :title="$t('最后一页')" @click="goToPage(pageCount)"><ChevronLast :size="16" /></button></span></el-tooltip>
         <el-tooltip :content="$t('每页行数')" placement="top" :show-after="250"><el-dropdown trigger="click" @command="setPageSize"><button data-navicat-action="page-size" :aria-label="$t('每页行数')" :title="$t('每页行数')"><Settings2 :size="16" /></button><template #dropdown><el-dropdown-menu><el-dropdown-item command="50">{{ $t('每页 50 行') }}</el-dropdown-item><el-dropdown-item command="100">{{ $t('每页 100 行') }}</el-dropdown-item><el-dropdown-item command="200">{{ $t('每页 200 行') }}</el-dropdown-item><el-dropdown-item command="500">{{ $t('每页 500 行') }}</el-dropdown-item></el-dropdown-menu></template></el-dropdown></el-tooltip>
-        <el-tooltip :content="$t('网格视图')" placement="top" :show-after="250"><span class="table-tooltip-trigger"><button data-navicat-action="grid-view" :class="{ 'is-active': viewMode === 'grid' }" :aria-label="$t('网格视图')" :title="$t('网格视图')" @click="viewMode = 'grid'"><Grid3X3 :size="16" /></button></span></el-tooltip>
-        <el-tooltip :content="$t('表单视图')" placement="top" :show-after="250"><span class="table-tooltip-trigger"><button data-navicat-action="form-view" :class="{ 'is-active': viewMode === 'form' }" :aria-label="$t('表单视图')" :title="$t('表单视图')" @click="viewMode = 'form'"><PanelTop :size="16" /></button></span></el-tooltip>
+        <el-tooltip :content="$t('网格视图')" placement="top" :show-after="250"><span class="table-tooltip-trigger"><button data-navicat-action="grid-view" :class="{ 'is-active': viewMode === 'grid' }" :aria-label="$t('网格视图')" :title="$t('网格视图')" @click="setViewMode('grid')"><Grid3X3 :size="16" /></button></span></el-tooltip>
+        <el-tooltip :content="$t('表单视图')" placement="top" :show-after="250"><span class="table-tooltip-trigger"><button data-navicat-action="form-view" :class="{ 'is-active': viewMode === 'form' }" :aria-label="$t('表单视图')" :title="$t('表单视图')" @click="setViewMode('form')"><PanelTop :size="16" /></button></span></el-tooltip>
       </div>
     </footer>
     <div class="table-data-statusbar"><span>{{ total.toLocaleString($locale()) }} {{ $t('条记录在第') }} {{ page }} {{ $t('页 ·') }} {{ activeProfile?.name || $t('默认视图') }}<template v-if="selectionLabel"> · {{ $t('已选择 {0} 行和 {1} 列', [selectionLabel.rows, selectionLabel.columns]) }}</template><template v-if="fillActive"> · {{ $t('输入将应用到选中单元格，Esc 取消') }}</template></span><span>{{ readOnly ? $t('只读视图') : primaryKey.length ? $t('主键 {0}', [primaryKey.join(', ')]) : $t('无主键，只读') }}</span></div>
