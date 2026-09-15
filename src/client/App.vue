@@ -56,7 +56,7 @@ onErrorCaptured((error) => {
 </script>
 
 <template>
-  <el-config-provider :locale="elementPlusLocale">
+  <el-config-provider :locale="elementPlusLocale" :message="{ showClose: true, grouping: true, duration: 4500, offset: 24 }">
     <RouterView v-slot="{ Component, route }">
       <component :is="Component" v-if="route.meta.public && !routeError" />
       <RouteErrorState v-else-if="route.meta.public" :message="routeError" @reload="reloadApp" />
