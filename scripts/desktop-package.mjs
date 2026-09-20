@@ -1,4 +1,5 @@
-import { existsSync, rmSync } from "node:fs";
+import { fingerprintFiles } from "./build-fingerprint.mjs";
+import { existsSync, rmSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
@@ -22,11 +23,27 @@ const desktopRuntimePackageRoots = [
 ];
 
 export function buildDesktop() {
+  const outputPaths = ["dist/desktop", "dist/shared", "dist/desktop-renderer", "dist/database-sync.js", "dist/database-sync.js.map", "dist/server/database-workbench/http-tunnel.js", "dist/server/database-workbench/http-tunnel.js.map"];
+  const inputs = fingerprintFiles(root, ["src", "design", "package.json", "package-lock.json", "node_modules/.package-lock.json", "vite.config.ts", "tsconfig.json", "tsconfig.desktop.json", "scripts/desktop-package.mjs", "scripts/build-fingerprint.mjs", "tokens.css", ...readdirSync(root).filter((file) => file.endsWith(".html") || file.startsWith(".env"))]);
+  const environment = JSON.stringify([process.version, process.platform, process.arch, Object.entries(process.env).filter(([key]) => key.startsWith("VITE_") || key === "NODE_ENV").sort()]);
+  const stampPath = join(root, ".tmp", "desktop-build.json");
+  try {
+    const stamp = JSON.parse(readFileSync(stampPath, "utf8"));
+    if (stamp.inputs === inputs && stamp.environment === environment && outputPaths.every((path) => existsSync(join(root, path))) && stamp.outputs === fingerprintFiles(root, outputPaths)) {
+      process.stdout.write("[构建缓存命中] 桌面代码与产物未变，复用编译结果。\n");
+      return;
+    }
+  } catch { /* Missing, stale or incomplete output: rebuild it. */ }
+  const started = performance.now();
+  rmSync(stampPath, { force: true });
   for (const directory of ["desktop", "shared"]) {
     rmSync(join(root, "dist", directory), { recursive: true, force: true });
   }
   const result = spawnSync("npm", ["run", "build:desktop"], { cwd: root, stdio: "inherit" });
   if (result.status !== 0) throw new Error("桌面 App 构建失败");
+  mkdirSync(join(root, ".tmp"), { recursive: true });
+  writeFileSync(stampPath, JSON.stringify({ inputs, environment, outputs: fingerprintFiles(root, outputPaths) }));
+  process.stdout.write(`[耗时] 桌面代码编译: ${((performance.now() - started) / 1000).toFixed(1)}s\n`);
 }
 
 function installedPackageDirectory(name, fromDirectory = root) {

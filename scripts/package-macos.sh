@@ -10,8 +10,7 @@ fi
 
 cd "$ROOT_DIR"
 
-echo "正在按 package-lock.json 同步依赖..."
-npm ci --cache "$ROOT_DIR/.npm-cache" --prefer-offline --no-audit --no-fund
+node scripts/ensure-package-dependencies.mjs
 
 if [[ "${1:-}" == "--all" ]]; then
   if [[ "$#" -ne 1 ]]; then

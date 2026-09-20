@@ -1133,18 +1133,11 @@ DATA_DIR/migration-history/
 
 不传参数时使用 `package.json` 当前版本；传入新版本时会永久更新仓库版本、Compose 镜像标签和版本化文档。输出包括 macOS `arm64/x64`、Windows `x86/x64/arm64` 五个客户端安装包，以及 `linux/amd64`、`linux/arm64` 两个服务离线包；每个服务包都包含 Lite、Full 与 Script Runner 三个镜像。发布完成后应通过 `shasum -a 256 -c release/SHA256SUMS` 校验全部七个产物。
 
-Docker 镜像构建按架构和目标把 BuildKit `mode=max` 缓存保存在 `.tmp/docker-build-cache/release/`。缓存目录不存在时自动执行完整构建并写入缓存；普通源码变更会复用独立的 Chromium/字体运行时层、Node 下载缓存和 Go 编译缓存。`--refresh-docker-cache` 只在本轮忽略既有层缓存并用新结果刷新持久缓存，适用于升级基础镜像或系统依赖，不应作为日常发布参数。
+日常服务镜像打包使用 `npm run package:server -- --arch=arm64`（或 `amd64`），可用 `--base-only` 提前准备基础镜像。全平台发布脚本自动使用同一套 Base 流程：本地 `viron-base-*` 镜像按依赖内容和架构保存，普通代码更新复用 Node 依赖、Chromium/字体和脚本运行环境；版本号变化不会触发 npm 依赖重装。日志会显示缓存命中和分阶段耗时。
 
-Compose 使用 `.tmp/docker-build-cache/compose/` 下的对应目标缓存。需要显式刷新时执行 `docker compose -f docker-compose.full.yml build --no-cache`，Lite 使用对应 Compose 文件。两个入口都支持以下可选环境变量：
+`--refresh-docker-cache` 显式更新上游镜像并重新准备 Base，适用于基础依赖升级。首次准备会导入原 `.tmp/docker-build-cache/release/` 下的缓存；日常打包不再反复导出全量缓存。Compose 直接构建仍使用其原有 BuildKit 缓存，快速打包入口为 `package:server`。
 
-```dotenv
-VIRON_DOCKER_CACHE_DIR=/absolute/path/to/docker-build-cache
-VIRON_DOCKER_REGISTRY_MIRROR=docker.io
-VIRON_APT_MIRROR=http://mirrors.aliyun.com/debian
-VIRON_APT_SECURITY_MIRROR=http://mirrors.aliyun.com/debian-security
-```
-
-默认缓存位于仓库的忽略目录，不会进入 Git 或 Docker build context，但会占用额外磁盘空间；删除该目录后下一次构建会自动重建。Node 与 Go 基础镜像默认通过 Docker 官方 `docker.io` 解析，避免依赖第三方代理；受限网络可用上述变量切换到其他兼容镜像。APT 默认使用阿里云 Debian 镜像，APT 包仍通过 Debian Release 签名校验，覆盖镜像源时必须提供完整的 Debian 与 Debian Security 根地址。
+完整的缓存失效规则、镜像源配置、桌面构建复用和离线包压缩选项见 [增量打包说明](PACKAGING.md)。
 
 Web 手工下载与 App 登录前自动更新使用同一套发布清单。把 `.dmg` 或 `.exe` 直接放入 `DATA_DIR/installers/`，文件名使用：
 

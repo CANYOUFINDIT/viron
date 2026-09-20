@@ -7,8 +7,8 @@ services:
       dockerfile: Dockerfile
       target: lite
       args:
-        APT_MIRROR: "${VIRON_APT_MIRROR:-http://mirrors.aliyun.com/debian}"
-        APT_SECURITY_MIRROR: "${VIRON_APT_SECURITY_MIRROR:-http://mirrors.aliyun.com/debian-security}"
+        APT_MIRROR: "${VIRON_APT_MIRROR:-https://mirrors.aliyun.com/debian}"
+        APT_SECURITY_MIRROR: "${VIRON_APT_SECURITY_MIRROR:-https://mirrors.aliyun.com/debian-security}"
       additional_contexts:
         "golang:1.26-bookworm": "docker-image://${VIRON_DOCKER_REGISTRY_MIRROR:-docker.io}/library/golang:1.26-bookworm"
         "node:22-bookworm-slim": "docker-image://${VIRON_DOCKER_REGISTRY_MIRROR:-docker.io}/library/node:22-bookworm-slim"
@@ -46,8 +46,8 @@ services:
       dockerfile: Dockerfile
       target: script-runner
       args:
-        APT_MIRROR: "${VIRON_APT_MIRROR:-http://mirrors.aliyun.com/debian}"
-        APT_SECURITY_MIRROR: "${VIRON_APT_SECURITY_MIRROR:-http://mirrors.aliyun.com/debian-security}"
+        APT_MIRROR: "${VIRON_APT_MIRROR:-https://mirrors.aliyun.com/debian}"
+        APT_SECURITY_MIRROR: "${VIRON_APT_SECURITY_MIRROR:-https://mirrors.aliyun.com/debian-security}"
       additional_contexts:
         "golang:1.26-bookworm": "docker-image://${VIRON_DOCKER_REGISTRY_MIRROR:-docker.io}/library/golang:1.26-bookworm"
         "node:22-bookworm-slim": "docker-image://${VIRON_DOCKER_REGISTRY_MIRROR:-docker.io}/library/node:22-bookworm-slim"

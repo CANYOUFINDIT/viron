@@ -18,8 +18,11 @@ When version is omitted, package.json version is used. Passing a different
 version permanently updates the repository version, Compose image tags, and
 versioned documentation before building.
 
-Docker layers use a project-local BuildKit cache under .tmp by default.
-Use --refresh-docker-cache to ignore cached layers once and refresh that cache.
+Docker builds reuse content-addressed local Base images by default.
+Existing project-local BuildKit cache is imported when preparing a missing Base.
+Use --refresh-docker-cache to update upstream images and rebuild Bases once.
+To build only server images: node scripts/package-server.mjs --arch=arm64
+To prepare Bases only: node scripts/package-server.mjs --arch=arm64 --base-only
 
 If pulling golang/node from docker.io fails with TLS handshake timeout,
 set a Hub mirror before retrying, for example:
@@ -95,109 +98,12 @@ fi
 node scripts/sync-release-version.mjs "$VERSION"
 VERSION="$(node -p 'require("./package.json").version')"
 
-DOCKER_CACHE_ROOT="${VIRON_DOCKER_CACHE_DIR:-$ROOT_DIR/.tmp/docker-build-cache}"
-if [[ "$DOCKER_CACHE_ROOT" != /* ]]; then
-  DOCKER_CACHE_ROOT="$ROOT_DIR/$DOCKER_CACHE_ROOT"
-fi
-APT_MIRROR="${VIRON_APT_MIRROR:-http://mirrors.aliyun.com/debian}"
-APT_SECURITY_MIRROR="${VIRON_APT_SECURITY_MIRROR:-http://mirrors.aliyun.com/debian-security}"
-DOCKER_REGISTRY_MIRROR="${VIRON_DOCKER_REGISTRY_MIRROR:-docker.io}"
-GOLANG_IMAGE_PATH="library/golang:1.26-bookworm"
-NODE_IMAGE_PATH="library/node:22-bookworm-slim"
-# Skip SBOM/provenance attestation fetches; those extra registry round-trips
-# are a common source of Docker Hub TLS handshake timeouts.
-export BUILDX_NO_DEFAULT_ATTESTATIONS=1
-
-retry_transient() {
-  local max_attempts="${VIRON_DOCKER_RETRY_ATTEMPTS:-4}"
-  local delay_seconds="${VIRON_DOCKER_RETRY_DELAY:-8}"
-  local attempt=1
-  local exit_code=0
-
-  while (( attempt <= max_attempts )); do
-    if "$@"; then
-      return 0
-    fi
-    exit_code=$?
-    if (( attempt == max_attempts )); then
-      return "$exit_code"
-    fi
-    echo "操作失败（退出码 ${exit_code}），${delay_seconds}s 后重试（${attempt}/${max_attempts}）。" >&2
-    sleep "$delay_seconds"
-    delay_seconds=$((delay_seconds * 2))
-    attempt=$((attempt + 1))
-  done
-  return "$exit_code"
-}
-
-builder_linux_architecture() {
-  local machine
-  machine="$(uname -m)"
-  case "$machine" in
-    arm64|aarch64) echo arm64 ;;
-    x86_64|amd64) echo amd64 ;;
-    *) echo "$machine" ;;
-  esac
-}
-
-pull_release_base_image() {
-  local platform="$1"
-  local image_path="$2"
-  local candidates=("$DOCKER_REGISTRY_MIRROR")
-  local mirror image
-
-  if [[ "$DOCKER_REGISTRY_MIRROR" == "docker.io" ]]; then
-    candidates+=("docker.m.daocloud.io" "docker.1ms.run")
-  fi
-
-  for mirror in "${candidates[@]}"; do
-    image="$mirror/$image_path"
-    echo "拉取 $image ($platform)..."
-    if retry_transient docker pull --platform "$platform" "$image"; then
-      if [[ "$mirror" != "$DOCKER_REGISTRY_MIRROR" ]]; then
-        echo "已改用容器镜像源 $mirror（docker.io 连续失败）。后续构建将走该源。" >&2
-        DOCKER_REGISTRY_MIRROR="$mirror"
-      fi
-      return 0
-    fi
-    if docker image inspect "$image" >/dev/null 2>&1 \
-      || { [[ "$mirror" == "docker.io" ]] && docker image inspect "${image_path#library/}" >/dev/null 2>&1; }; then
-      echo "仓库拉取失败，改用本地已有的 $image。" >&2
-      if [[ "$mirror" != "$DOCKER_REGISTRY_MIRROR" ]]; then
-        DOCKER_REGISTRY_MIRROR="$mirror"
-      fi
-      return 0
-    fi
-    echo "从 $mirror 拉取 $image_path 失败。" >&2
-  done
-
-  echo "无法拉取 $image_path ($platform)。可设置 VIRON_DOCKER_REGISTRY_MIRROR=docker.m.daocloud.io 后重试。" >&2
-  return 1
-}
-
-pre_pull_release_base_images() {
-  local target_architecture="$1"
-  local builder_architecture
-  builder_architecture="$(builder_linux_architecture)"
-
-  echo "预先拉取基础镜像，避免 BuildKit 计算缓存键时回源 Docker Hub 超时。"
-  pull_release_base_image "linux/$builder_architecture" "$GOLANG_IMAGE_PATH"
-  pull_release_base_image "linux/$target_architecture" "$NODE_IMAGE_PATH"
-}
-
 cleanup_temporary_files() {
   rm -f "$RELEASE_DIR"/*.tmp
 }
 trap cleanup_temporary_files EXIT
 
-echo "正在按 package-lock.json 同步依赖..."
-npm ci --cache "$ROOT_DIR/.npm-cache" --prefer-offline --no-audit --no-fund
-node -e '
-  const { accessSync, constants } = require("node:fs");
-  const electronPath = require("electron");
-  accessSync(electronPath, constants.X_OK);
-  process.stdout.write(`Electron: ${electronPath}\n`);
-'
+node scripts/ensure-package-dependencies.mjs
 
 echo "正在验证源码..."
 npm run typecheck
@@ -239,36 +145,6 @@ verify_bundle_tags() {
     '
 }
 
-build_server_image() {
-  local architecture="$1"
-  local target="$2"
-  local image="$3"
-  local platform="linux/$architecture"
-  local cache_directory="$DOCKER_CACHE_ROOT/release/$architecture/$target"
-  local build_args=(
-    docker buildx build
-    --platform "$platform"
-    --target "$target"
-    --tag "$image"
-    --load
-    --provenance=false
-    --sbom=false
-    --build-arg "APT_MIRROR=$APT_MIRROR"
-    --build-arg "APT_SECURITY_MIRROR=$APT_SECURITY_MIRROR"
-    --build-context "golang:1.26-bookworm=docker-image://$DOCKER_REGISTRY_MIRROR/$GOLANG_IMAGE_PATH"
-    --build-context "node:22-bookworm-slim=docker-image://$DOCKER_REGISTRY_MIRROR/$NODE_IMAGE_PATH"
-  )
-
-  if [[ "$REFRESH_DOCKER_CACHE" == true ]]; then
-    build_args+=(--no-cache)
-  elif [[ -s "$cache_directory/index.json" ]]; then
-    build_args+=(--cache-from "type=local,src=$cache_directory")
-  fi
-  build_args+=(--cache-to "type=local,dest=$cache_directory,mode=max" "$ROOT_DIR")
-
-  retry_transient "${build_args[@]}"
-}
-
 build_server_bundle() {
   local architecture="$1"
   local platform="linux/$architecture"
@@ -286,11 +162,11 @@ build_server_bundle() {
   fi
 
   echo "正在构建 $platform 三种服务镜像..."
-  echo "BuildKit 持久缓存：$DOCKER_CACHE_ROOT/release/$architecture"
-  pre_pull_release_base_images "$architecture"
-  build_server_image "$architecture" full "viron-server-full:$VERSION"
-  build_server_image "$architecture" lite "viron-server-lite:$VERSION"
-  build_server_image "$architecture" script-runner "viron-script-runner:$VERSION"
+  local server_args=("--arch=$architecture")
+  if [[ "$REFRESH_DOCKER_CACHE" == true ]]; then
+    server_args+=(--refresh-docker-cache)
+  fi
+  node scripts/package-server.mjs "${server_args[@]}"
 
   for image in "${images[@]}"; do
     local image_platform
@@ -317,7 +193,18 @@ build_server_bundle() {
   fi
 
   rm -f "$temporary_bundle"
-  docker save "${images[@]}" | gzip -9 -n > "$temporary_bundle"
+  local compression_level="${VIRON_RELEASE_GZIP_LEVEL:-1}"
+  if [[ ! "$compression_level" =~ ^[1-9]$ ]]; then
+    echo "VIRON_RELEASE_GZIP_LEVEL 必须为 1 到 9。" >&2
+    exit 1
+  fi
+  local archive_started=$SECONDS
+  if command -v pigz >/dev/null 2>&1; then
+    docker save "${images[@]}" | pigz "-$compression_level" -n > "$temporary_bundle"
+  else
+    docker save "${images[@]}" | gzip "-$compression_level" -n > "$temporary_bundle"
+  fi
+  echo "[耗时] $platform 离线包压缩: $((SECONDS - archive_started))s"
   gzip -t "$temporary_bundle"
   verify_bundle_tags "$temporary_bundle"
   mv "$temporary_bundle" "$bundle_path"

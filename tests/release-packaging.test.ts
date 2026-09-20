@@ -31,28 +31,28 @@ describe("release packaging", () => {
     expect(source).toContain("shasum -a 256 -c");
     expect(source).toContain('relative_artifact="${artifact#$ROOT_DIR/}"');
     expect(source).toContain("for required_platform in linux/amd64 linux/arm64");
-    expect(source.indexOf('const electronPath = require("electron")')).toBeLessThan(source.indexOf("npm test"));
+    expect(source.indexOf("ensure-package-dependencies.mjs")).toBeLessThan(source.indexOf("npm test"));
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
     expect(packageJson.scripts.test).toContain("ensure-electron.mjs");
   });
 
   it("persists Docker build caches and supports explicit refreshes", () => {
-    const releaseSource = readFileSync(releaseScriptUrl, "utf8");
+    const releaseSource = readFileSync(new URL("../scripts/package-server.mjs", import.meta.url), "utf8");
     const dockerfileSource = readFileSync(dockerfileUrl, "utf8");
 
     expect(releaseSource).toContain("--refresh-docker-cache");
     expect(releaseSource).toContain("VIRON_DOCKER_CACHE_DIR");
     expect(releaseSource).toContain("VIRON_DOCKER_REGISTRY_MIRROR");
-    expect(releaseSource).toContain('VIRON_DOCKER_REGISTRY_MIRROR:-docker.io');
+    expect(releaseSource).toContain('env.VIRON_DOCKER_REGISTRY_MIRROR || "docker.io"');
     expect(releaseSource).toContain("--cache-from");
-    expect(releaseSource).toContain("--cache-to");
+    expect(releaseSource).not.toContain('args.push("--cache-to"');
     expect(releaseSource).toContain("mode=max");
     expect(releaseSource).toContain("--no-cache");
 
     expect(dockerfileSource).toContain("--mount=type=cache");
     expect(dockerfileSource).toContain("FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS monitor-build");
-    expect(dockerfileSource).toContain("FROM server-runtime AS full-runtime");
-    expect(dockerfileSource).toContain("FROM full-runtime AS full");
+    expect(dockerfileSource).toContain("FROM ${VIRON_SERVER_BASE} AS full-runtime");
+    expect(dockerfileSource).toContain("FROM ${VIRON_FULL_BASE} AS full");
     expect(dockerfileSource).toContain("COPY --from=server-base --chown=viron:viron /app/ /app/");
     expect(dockerfileSource).toContain("ELECTRON_SKIP_BINARY_DOWNLOAD=1");
     expect(dockerfileSource).not.toContain("COPY scripts ./scripts");
