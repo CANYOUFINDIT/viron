@@ -4,18 +4,30 @@ ARG VIRON_BUILD_BASE=dependencies
 ARG VIRON_PRODUCTION_BASE=production-dependencies
 ARG VIRON_FULL_BASE=full-runtime
 ARG VIRON_RUNNER_BASE=script-runner-runtime
-ARG VIRON_MONITOR_BASE=monitor-artifacts
+ARG VIRON_GO_BASE=monitor-dependencies
+ARG VIRON_LITE_BASE=lite-runtime
+ARG VIRON_FULL_APP_BASE=full-application-runtime
 ARG APT_MIRROR=https://deb.debian.org/debian
 ARG APT_SECURITY_MIRROR=https://deb.debian.org/debian-security
 
-FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS monitor-build
+FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS monitor-dependencies
 ENV GOPROXY=https://proxy.golang.org|https://goproxy.cn|direct
+WORKDIR /dependencies/monitor
+COPY monitor/go.mod monitor/go.sum ./
+COPY monitor/collector/go.mod monitor/collector/go.sum ./collector/
+RUN --mount=type=cache,id=viron-go-mod,target=/go/pkg/mod,sharing=locked \
+    go mod download \
+    && cd collector && go mod download \
+    && mkdir -p /opt/viron/go-mod \
+    && cp -a /go/pkg/mod/. /opt/viron/go-mod/
+ENV GOMODCACHE=/opt/viron/go-mod GOPROXY=off GOTOOLCHAIN=local
+
+FROM --platform=$BUILDPLATFORM ${VIRON_GO_BASE} AS monitor-build
 WORKDIR /app
 COPY package.json ./
 COPY monitor ./monitor
 COPY scripts/build-viron-monitor.sh ./scripts/build-viron-monitor.sh
-RUN --mount=type=cache,id=viron-go-mod,target=/go/pkg/mod,sharing=locked \
-    --mount=type=cache,id=viron-go-build,target=/root/.cache/go-build,sharing=locked \
+RUN --network=none --mount=type=cache,id=viron-go-build,target=/root/.cache/go-build,sharing=locked \
     bash scripts/build-viron-monitor.sh
 
 FROM scratch AS monitor-artifacts
@@ -45,7 +57,6 @@ COPY design/logo/viron-logo.svg ./design/logo/viron-logo.svg
 RUN npm run build
 
 FROM ${VIRON_PRODUCTION_BASE} AS production-base
-FROM --platform=$BUILDPLATFORM ${VIRON_MONITOR_BASE} AS monitor-base
 
 FROM node:22-bookworm-slim AS server-runtime
 ENV NODE_ENV=production \
@@ -67,13 +78,15 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 
 CMD ["node", "dist/server/index.js"]
 
-FROM ${VIRON_SERVER_BASE} AS server-base
-COPY --from=build --chown=viron:viron /app/package.json /app/package-lock.json ./
+FROM ${VIRON_SERVER_BASE} AS lite-runtime
 COPY --from=production-base --chown=viron:viron /app/node_modules ./node_modules
+
+FROM ${VIRON_LITE_BASE} AS server-base
+COPY --from=build --chown=viron:viron /app/package.json /app/package-lock.json ./
 COPY --from=build --chown=viron:viron /app/dist/*.js* ./dist/
 COPY --from=build --chown=viron:viron /app/dist/server ./dist/server
 COPY --from=build --chown=viron:viron /app/dist/shared ./dist/shared
-COPY --from=monitor-base --chown=viron:viron /app/dist/monitor ./monitor
+COPY --from=monitor-artifacts --chown=viron:viron /app/dist/monitor ./monitor
 
 FROM server-base AS lite
 COPY --chown=viron:viron docker/server-edition-lite ./dist/server/server-edition
@@ -93,8 +106,13 @@ RUN --mount=type=cache,id=viron-apt-lists-${TARGETARCH},target=/var/lib/apt/list
 ENV WEB_BROWSER_EXECUTABLE=/usr/bin/chromium
 USER viron
 
-FROM ${VIRON_FULL_BASE} AS full
-COPY --from=server-base --chown=viron:viron /app/ /app/
+FROM ${VIRON_FULL_BASE} AS full-application-runtime
+COPY --from=production-base --chown=viron:viron /app/node_modules ./node_modules
+
+FROM ${VIRON_FULL_APP_BASE} AS full
+COPY --from=server-base --chown=viron:viron /app/package.json /app/package-lock.json ./
+COPY --from=server-base --chown=viron:viron /app/dist ./dist
+COPY --from=server-base --chown=viron:viron /app/monitor ./monitor
 COPY --from=build --chown=viron:viron /app/dist/client ./dist/client
 COPY --chown=viron:viron docker/server-edition-full ./dist/server/server-edition
 

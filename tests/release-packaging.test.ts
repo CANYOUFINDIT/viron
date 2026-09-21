@@ -50,10 +50,10 @@ describe("release packaging", () => {
     expect(releaseSource).toContain("--no-cache");
 
     expect(dockerfileSource).toContain("--mount=type=cache");
-    expect(dockerfileSource).toContain("FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS monitor-build");
+    expect(dockerfileSource).toContain("FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS monitor-dependencies");
     expect(dockerfileSource).toContain("FROM ${VIRON_SERVER_BASE} AS full-runtime");
-    expect(dockerfileSource).toContain("FROM ${VIRON_FULL_BASE} AS full");
-    expect(dockerfileSource).toContain("COPY --from=server-base --chown=viron:viron /app/ /app/");
+    expect(dockerfileSource).toContain("FROM ${VIRON_FULL_APP_BASE} AS full");
+    expect(dockerfileSource).toContain("COPY --from=server-base --chown=viron:viron /app/dist ./dist");
     expect(dockerfileSource).toContain("ELECTRON_SKIP_BINARY_DOWNLOAD=1");
     expect(dockerfileSource).not.toContain("COPY scripts ./scripts");
 
@@ -85,7 +85,7 @@ describe("release packaging", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("./scripts/package-release.sh [--refresh-docker-cache] [version]");
     expect(result.stdout).toContain("When version is omitted, package.json version is used.");
-    expect(result.stdout).toContain("project-local BuildKit cache");
+    expect(result.stdout).toContain("Normal releases never install container dependencies");
   });
 
   it("accepts the current version without editing and rejects Docker-incompatible versions", () => {

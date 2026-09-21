@@ -1,60 +1,73 @@
 # 增量打包
 
-日常打包使用以下入口：
+把依赖环境准备与日常发布分开。Base 包含 Node/Go 工具链、npm/Go 依赖、Chromium、字体和系统工具，不包含 Viron 业务源码，也不随发布版本号变化。
+
+## 1. 一次准备 Base
 
 ```bash
-# 当前机器的桌面安装包
-npm run package:current-os
+# 默认同时准备 AMD64、ARM64 的运行环境及本机构建工具
+bash scripts/package-base.sh
+# 等价入口
+npm run package:base
 
-# 只构建一个架构的 Full、Lite、Script Runner 服务镜像
+# 可只准备一个目标架构
+bash scripts/package-base.sh --arch=amd64
+
+# 准备后导出可加载的 Base 镜像包
+bash scripts/package-base.sh --export=release/viron-base.tar.gz
+# 在同种构建机架构上恢复 Base
+# Go 工具链按构建机架构准备，运行环境按目标架构分别准备
+docker load -i release/viron-base.tar.gz
+```
+
+准备阶段需要网络，下载一次并保存带标签的本地镜像。再次执行准备命令时只补充缺失或依赖已变化的 Base。导出文件包含所选目标架构的运行环境和当前构建机架构的编译环境；例如 ARM64 构建机导出的包可在另一台 ARM64 构建机上加载并生成两个目标架构的应用。换成 AMD64 构建机时，还需要准备其原生 Go 构建 Base。
+
+服务打包使用当前 Docker context 的 `docker` 驱动 Buildx builder，Docker Desktop 默认满足要求。用 `docker buildx ls` 查看；`docker-container`/远程 builder 无法直接读取本地 Docker Engine 的 Base 标签，需要先选择 `docker` 驱动，例如 `docker buildx use default`。
+
+## 2. 日常只编译代码
+
+```bash
+# 仅打三个服务镜像
 npm run package:server -- --arch=arm64
 npm run package:server -- --arch=amd64
 
-# 提前准备 Base，不构建应用镜像
-npm run package:server -- --arch=arm64 --base-only
+# 完整发布矩阵：五种桌面安装包、两个服务离线包
+bash scripts/package-release.sh
 
-# 全平台发布：客户端、两个服务端架构、离线包和校验清单
-npm run package:release
+# 只打当前机器的桌面安装包
+npm run package:current-os
 ```
 
-## Base 如何复用
+`package-release.sh` 在验证源码和打桌面包之前，先检查两个目标架构的 Base 是否齐全。缺少 Base 会立即退出并给出准备命令，**不会在发布中途安装系统依赖**。
 
-服务打包使用当前 Docker context 的 `docker` 驱动 Buildx builder（可用 `docker buildx ls` 查看）。Docker Desktop 默认满足要求。`docker-container`/远程 builder 无法直接读取 Docker Engine 中的本地 Base 标签，需要先选择 `docker` 驱动 builder，例如 `docker buildx use default`。
+日常服务打包使用独立的 `docker/Dockerfile.application`，其中没有 apt/npm/Go 依赖安装步骤。业务源码以只读目录挂载到编译阶段，Node 和 Go 编译阶段都禁用网络，只把编译结果装入应用镜像。监控程序源码和真实版本号也在此阶段编译，不进入 Base。
 
-第一次为每个架构建立本地 `viron-base-*` 镜像，之后直接基于这些镜像叠加最新代码。Base 标签包含内容摘要和架构，避免把 ARM 的原生依赖混入 AMD64 镜像。
-
-| Base | 何时重建 |
+| 变化 | 是否重新准备 Base |
 | --- | --- |
-| Node 服务运行环境 | 运行环境配方、镜像源或架构变化 |
-| npm 构建依赖与生产依赖 | package.json（版本号除外）、锁文件中的依赖、归一化脚本、配方或架构变化 |
-| Chromium、字体及系统库 | 系统依赖配方、APT 源、运行环境或架构变化 |
-| Script Runner 运行环境 | 系统依赖配方、APT 源或架构变化 |
-| 监控程序产物 | monitor 源码、构建脚本、版本号或 Go 配方变化 |
+| 业务源码、监控源码、发布版本号 | 否，只重新编译受影响的代码 |
+| npm 依赖/锁文件、安装相关 package.json 配置 | 只更新 npm Base |
+| Go 的 go.mod/go.sum | 只更新 Go Base |
+| Chromium/系统库安装配方、APT 镜像源 | 只更新相关系统 Base |
+| 目标架构 | 为该架构单独准备，防止原生依赖混用 |
 
-仅修改应用源码不会执行 npm/apt 安装。仅更新发布版本不会让 npm Base 失效；最终应用中仍写入真实的版本号。监控程序带有发布版本，因此版本变化时会重新编译。监控程序由构建机原生架构交叉编译，产物含两个 Linux 架构，两个服务镜像架构共享这份 Base。
-
-Base 是带标签的本地 Docker 镜像，BuildKit 清理构建缓存后仍可复用；`docker image prune -a` 或手动删除对应镜像会使下次重新准备。首次创建时会尝试导入原 `.tmp/docker-build-cache/release/` 的缓存，`VIRON_DOCKER_CACHE_DIR` 可覆盖旧缓存根目录。日常发布不再为每个目标重复导出数 GB 的 `mode=max` 缓存。
-
-上游 Node/Go 镜像与系统软件包通过显式刷新更新，不在每次打包时主动拉取。升级或修复基础依赖时运行：
+需要更新上游 Node/Go 或系统安全补丁时显式刷新：
 
 ```bash
-npm run package:server -- --arch=arm64 --refresh-docker-cache
-# 全平台刷新
-npm run package:release -- --refresh-docker-cache
+bash scripts/package-base.sh --refresh-docker-cache
+# 兼容原入口：明确刷新后再发布
+bash scripts/package-release.sh --refresh-docker-cache
 ```
 
-Base 缺失或刷新时需要网络；正常构建仍可能解析 Dockerfile frontend 元数据，不保证完全离线。默认 APT 使用 HTTPS 阿里云 Debian 镜像，支持 `VIRON_APT_MIRROR`、`VIRON_APT_SECURITY_MIRROR`；上游容器镜像支持 `VIRON_DOCKER_REGISTRY_MIRROR`。Node 自带的 CA 信任根用于首次 HTTPS APT 连接，随后安装系统 ca-certificates，保留 TLS 和 Debian 签名校验。
+Base 使用内容摘要标签保存在本地 Docker 镜像库。BuildKit 缓存清理不会删除带标签的 Base；`docker image prune -a` 或手动删除镜像后，需要重新加载导出的包或重新准备。旧 `.tmp/docker-build-cache/release/` 缓存仅用于首次准备时的迁移，支持 `VIRON_DOCKER_CACHE_DIR`。日常不再反复导出数 GB 的 `mode=max` 缓存。
 
-直接 `docker compose build` 仍可使用 Dockerfile 内置阶段和原 Compose 缓存；需要持久 Base 的快速打包时使用 `package:server`，之后执行 `docker compose up -d` 加载生成的同版本镜像。源代码改变时，独立的生产依赖层也不会再执行 npm prune。
+默认 APT 使用 HTTPS 阿里云镜像，可通过 `VIRON_APT_MIRROR`、`VIRON_APT_SECURITY_MIRROR` 覆盖；容器镜像源通过 `VIRON_DOCKER_REGISTRY_MIRROR` 覆盖。保留 TLS 与 Debian 软件包签名/校验。编译步骤禁用网络，但 Docker BuildKit 仍可能解析 Dockerfile frontend 元数据，不承诺整个 Docker 命令完全离线。
+
+`docker compose build` 保留根目录 Dockerfile 的完整构建能力，可能安装依赖。日常使用 `package:server` 生成镜像，再执行 `docker compose up -d`。
 
 ## 桌面端与压缩
 
-macOS/全平台入口根据依赖、Node 版本/ABI、操作系统和架构复用已安装的 node_modules；版本号变化不会触发重装。首次运行新脚本会安装一次以建立可信缓存。缓存命中时仍检查 Electron 可执行文件。需要重置时运行：
+macOS/全平台入口按依赖、Node 版本/ABI、平台与架构复用 node_modules。首次建立缓存后，版本号变化不重装依赖；命中时仍检查 Electron。强制重置命令：`node scripts/ensure-package-dependencies.mjs --force`。
 
-```bash
-node scripts/ensure-package-dependencies.mjs --force
-```
+五种桌面包共享编译结果。源码、配置、依赖、环境或输出文件内容变化时会重新编译；安装包仍重新组装、签名并校验。
 
-桌面编译根据源码、配置、依赖、环境与输出文件内容判断是否复用。同一次全平台发布的五种桌面包共享编译结果。修改或删除输入/输出会自动重建；安装包仍重新组装、签名并执行现有校验。
-
-离线服务包默认使用 gzip 级别 1，已安装 pigz 时使用它进行并行压缩。文件通常略大，但生成更快；需要原来的最高压缩率时设置 `VIRON_RELEASE_GZIP_LEVEL=9`。日志中的 `[Base 命中]`、`[依赖缓存命中]`、`[构建缓存命中]` 和 `[耗时]` 可用于定位后续瓶颈。
+离线包默认 gzip 级别 1，安装 pigz 时使用并行压缩；`VIRON_RELEASE_GZIP_LEVEL=9` 可恢复最高压缩率。编译、镜像导出和离线包压缩仍需要时间，日志会分别显示 `[Base 命中]`、`[构建缓存命中]`、`[耗时]`。

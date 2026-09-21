@@ -18,11 +18,12 @@ When version is omitted, package.json version is used. Passing a different
 version permanently updates the repository version, Compose image tags, and
 versioned documentation before building.
 
-Docker builds reuse content-addressed local Base images by default.
-Existing project-local BuildKit cache is imported when preparing a missing Base.
-Use --refresh-docker-cache to update upstream images and rebuild Bases once.
+Docker builds require prebuilt local Base images for both architectures.
+Run bash scripts/package-base.sh once before the first release.
+Normal releases never install container dependencies; missing Bases fail at startup.
+Use --refresh-docker-cache only to explicitly refresh Bases before packaging.
 To build only server images: node scripts/package-server.mjs --arch=arm64
-To prepare Bases only: node scripts/package-server.mjs --arch=arm64 --base-only
+To prepare Bases only: bash scripts/package-base.sh
 
 If pulling golang/node from docker.io fails with TLS handshake timeout,
 set a Hub mirror before retrying, for example:
@@ -103,6 +104,13 @@ cleanup_temporary_files() {
 }
 trap cleanup_temporary_files EXIT
 
+# Validate both architectures before spending time on client packaging.
+if [[ "$REFRESH_DOCKER_CACHE" == true ]]; then
+  bash scripts/package-base.sh --refresh-docker-cache
+fi
+node scripts/package-server.mjs --arch=amd64 --check-base
+node scripts/package-server.mjs --arch=arm64 --check-base
+
 node scripts/ensure-package-dependencies.mjs
 
 echo "正在验证源码..."
@@ -163,9 +171,6 @@ build_server_bundle() {
 
   echo "正在构建 $platform 三种服务镜像..."
   local server_args=("--arch=$architecture")
-  if [[ "$REFRESH_DOCKER_CACHE" == true ]]; then
-    server_args+=(--refresh-docker-cache)
-  fi
   node scripts/package-server.mjs "${server_args[@]}"
 
   for image in "${images[@]}"; do

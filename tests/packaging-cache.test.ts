@@ -9,7 +9,7 @@ import { fingerprintFiles } from "../scripts/build-fingerprint.mjs";
 const dockerfile = readFileSync(new URL("../Dockerfile", import.meta.url), "utf8");
 const manifest = { name: "test", version: "1.0.0", dependencies: { example: "1.0.0" } };
 const lock = { version: "1.0.0", packages: { "": manifest, "node_modules/example": { version: "1.0.0", integrity: "old" } } };
-const input = { dockerfile, manifest, lock, normalizer: "v1", monitor: "monitor source", monitorScript: "monitor script", architecture: "arm64", builderArchitecture: "arm64", registry: "docker.io", apt: "mirror", aptSecurity: "security" };
+const input = { dockerfile, manifest, lock, normalizer: "v1", goManifests: ["go.mod", "go.sum"], architecture: "arm64", builderArchitecture: "arm64", registry: "docker.io", apt: "mirror", aptSecurity: "security" };
 const temps: string[] = [];
 afterEach(() => { for (const path of temps.splice(0)) rmSync(path, { recursive: true, force: true }); });
 const images = (options = input) => Object.fromEntries(baseImagePlan(options).map((base) => [base.target, base.image]));
@@ -19,7 +19,7 @@ describe("packaging Base invalidation", () => {
     const before = images();
     const changed = images({ ...input, manifest: { ...manifest, version: "2.0.0" }, lock: { ...lock, version: "2.0.0", packages: { ...lock.packages, "": { ...manifest, version: "2.0.0" } } } });
     for (const target of ["dependencies", "production-dependencies", "server-runtime", "full-runtime", "script-runner-runtime"]) expect(changed[target]).toBe(before[target]);
-    expect(changed["monitor-artifacts"]).not.toBe(before["monitor-artifacts"]);
+    expect(changed).toEqual(before);
     expect(images({ ...input, dockerfile: dockerfile.replace("RUN npm run build", "RUN npm run build && echo new-app") })).toEqual(before);
   });
   it("invalidates dependencies on transitive integrity changes, and separates target architectures", () => {
@@ -29,9 +29,9 @@ describe("packaging Base invalidation", () => {
     expect(changed["full-runtime"]).toBe(images()["full-runtime"]);
     const cross = images({ ...input, architecture: "amd64" });
     expect(cross.dependencies).not.toBe(images().dependencies);
-    expect(cross["monitor-artifacts"]).toBe(images()["monitor-artifacts"]);
+    expect(cross["monitor-dependencies"]).toBe(images()["monitor-dependencies"]);
     expect(images({ ...input, apt: "new-mirror" })["full-runtime"]).not.toBe(images()["full-runtime"]);
-    expect(images({ ...input, monitor: "new monitor" })["monitor-artifacts"]).not.toBe(images()["monitor-artifacts"]);
+    expect(images({ ...input, goManifests: ["changed go.mod", "go.sum"] })["monitor-dependencies"]).not.toBe(images()["monitor-dependencies"]);
   });
   it("accepts both Docker image metadata formats and rejects wrong architectures", () => {
     expect(imageMatchesPlatform({ Os: "linux", Architecture: "arm64" }, "arm64")).toBe(true);
@@ -52,19 +52,44 @@ describe("packaging Base invalidation", () => {
       return { status: 0 };
     };
     packageServer({ architecture: "arm64", execute, env: {}, baseOnly: true });
-    expect(builds).toHaveLength(6);
+    expect(builds).toHaveLength(8);
     builds.length = 0;
     packageServer({ architecture: "arm64", execute, env: {} });
     expect(builds.map((args) => args[args.indexOf("--target") + 1])).toEqual(["full", "lite", "script-runner"]);
     expect(builds.every((args) => !args.includes("--no-cache") && !args.includes("--cache-to"))).toBe(true);
+    expect(builds.every((args) => args.includes("docker/Dockerfile.application") && args.includes("--network=none"))).toBe(true);
+    builds.length = 0;
+    packageServer({ architecture: "arm64", execute, env: {}, checkBase: true });
+    expect(builds).toHaveLength(0);
     builds.length = 0;
     packageServer({ architecture: "arm64", execute, env: {}, refresh: true, baseOnly: true });
-    expect(builds).toHaveLength(6);
+    expect(builds).toHaveLength(8);
     expect(builds.every((args) => args.includes("--no-cache"))).toBe(true);
     expect(builds.find((args) => args.includes("production-dependencies"))).not.toContain("--pull");
   });
+  it("rejects missing Bases without running any build or download", () => {
+    const calls: string[][] = [];
+    const execute = (_: string, args: string[]) => {
+      calls.push(args);
+      return args[0] === "buildx" ? { status: 0, stdout: "Driver: docker\n" } : { status: 1 };
+    };
+    expect(() => packageServer({ architecture: "amd64", env: {}, execute })).toThrow("package-base.sh");
+    expect(calls.some((args) => args.includes("build") || args.includes("pull"))).toBe(false);
+    expect(() => packageServer({ architecture: "amd64", env: {}, execute, checkBase: true, baseOnly: true })).toThrow("缺少");
+  });
+  it("keeps installation out of the daily application recipe", () => {
+    const recipe = readFileSync(new URL("../docker/Dockerfile.application", import.meta.url), "utf8");
+    expect(recipe).not.toMatch(/apt-get|npm ci|npm prune|go mod download/);
+    expect(recipe).toContain("RUN --network=none");
+    expect(recipe).toContain("--mount=type=bind,source=src,target=/app/src,readonly");
+    expect(recipe).not.toContain("COPY src");
+    expect(recipe).toContain("${VIRON_GO_BASE}");
+    const release = readFileSync(new URL("../scripts/package-release.sh", import.meta.url), "utf8");
+    expect(release.indexOf("--arch=amd64 --check-base")).toBeLessThan(release.indexOf("npm run typecheck"));
+    expect(release.indexOf("--arch=arm64 --check-base")).toBeLessThan(release.indexOf("package-macos.mjs --arch=arm64"));
+  });
   it("stops on a failed Docker build", () => {
-    expect(() => packageServer({ architecture: "arm64", env: {}, execute: (_: string, args: string[]) => args[1] === "inspect" && args[0] === "buildx" ? { status: 0, stdout: "Driver: docker\n" } : { status: 1, stderr: "failed" } })).toThrow("失败");
+    expect(() => packageServer({ architecture: "arm64", baseOnly: true, env: {}, execute: (_: string, args: string[]) => args[1] === "inspect" && args[0] === "buildx" ? { status: 0, stdout: "Driver: docker\n" } : { status: 1, stderr: "failed" } })).toThrow("失败");
   });
 });
 

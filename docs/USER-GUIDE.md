@@ -1133,9 +1133,11 @@ DATA_DIR/migration-history/
 
 不传参数时使用 `package.json` 当前版本；传入新版本时会永久更新仓库版本、Compose 镜像标签和版本化文档。输出包括 macOS `arm64/x64`、Windows `x86/x64/arm64` 五个客户端安装包，以及 `linux/amd64`、`linux/arm64` 两个服务离线包；每个服务包都包含 Lite、Full 与 Script Runner 三个镜像。发布完成后应通过 `shasum -a 256 -c release/SHA256SUMS` 校验全部七个产物。
 
-日常服务镜像打包使用 `npm run package:server -- --arch=arm64`（或 `amd64`），可用 `--base-only` 提前准备基础镜像。全平台发布脚本自动使用同一套 Base 流程：本地 `viron-base-*` 镜像按依赖内容和架构保存，普通代码更新复用 Node 依赖、Chromium/字体和脚本运行环境；版本号变化不会触发 npm 依赖重装。日志会显示缓存命中和分阶段耗时。
+首次先执行 `bash scripts/package-base.sh`，一次准备 AMD64 与 ARM64 的 Base，也可用 `--export=release/viron-base.tar.gz` 导出，以后通过 `docker load -i` 恢复。Base 包含工具链与依赖，不含业务源码，不随发布版本号变化。
 
-`--refresh-docker-cache` 显式更新上游镜像并重新准备 Base，适用于基础依赖升级。首次准备会导入原 `.tmp/docker-build-cache/release/` 下的缓存；日常打包不再反复导出全量缓存。Compose 直接构建仍使用其原有 BuildKit 缓存，快速打包入口为 `package:server`。
+日常服务打包执行 `npm run package:server -- --arch=arm64`（或 `amd64`）。全平台 `package-release.sh` 会在打包开始前检查两个架构的 Base；缺失时立即退出，不会边发布边安装系统依赖。应用 Dockerfile 只读挂载最新源码，在禁用网络的编译阶段生成新镜像。
+
+`--refresh-docker-cache` 仅用于显式更新基础依赖。直接 `docker compose build` 保留完整构建能力；快速打包入口为 `package:server`。
 
 完整的缓存失效规则、镜像源配置、桌面构建复用和离线包压缩选项见 [增量打包说明](PACKAGING.md)。
 

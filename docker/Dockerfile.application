@@ -1,0 +1,51 @@
+# syntax=docker/dockerfile:1.7
+# Code-only packaging. All environments must be prepared by package-base.sh.
+ARG VIRON_SERVER_BASE
+ARG VIRON_BUILD_BASE
+ARG VIRON_PRODUCTION_BASE
+ARG VIRON_FULL_BASE
+ARG VIRON_RUNNER_BASE
+ARG VIRON_GO_BASE
+ARG VIRON_LITE_BASE
+ARG VIRON_FULL_APP_BASE
+
+FROM --platform=$BUILDPLATFORM ${VIRON_GO_BASE} AS monitor-build
+WORKDIR /app
+COPY package.json ./
+COPY scripts/build-viron-monitor.sh ./scripts/build-viron-monitor.sh
+RUN --network=none --mount=type=bind,source=monitor,target=/source/monitor,readonly \
+    --mount=type=cache,id=viron-go-build,target=/root/.cache/go-build,sharing=locked \
+    cp -a /source/monitor /app/monitor && bash scripts/build-viron-monitor.sh
+
+FROM scratch AS monitor-artifacts
+COPY --from=monitor-build /app/dist/monitor /app/dist/monitor
+
+FROM ${VIRON_BUILD_BASE} AS build
+COPY package.json package-lock.json ./
+COPY tsconfig.json tsconfig.server.json vite.config.ts index.html tokens.css ./
+RUN --network=none \
+    --mount=type=bind,source=src,target=/app/src,readonly \
+    --mount=type=bind,source=design/logo,target=/app/design/logo,readonly \
+    npm run build
+
+FROM ${VIRON_PRODUCTION_BASE} AS production-base
+
+FROM ${VIRON_LITE_BASE} AS server-base
+COPY --from=build --chown=viron:viron /app/package.json /app/package-lock.json ./
+COPY --from=build --chown=viron:viron /app/dist/*.js* ./dist/
+COPY --from=build --chown=viron:viron /app/dist/server ./dist/server
+COPY --from=build --chown=viron:viron /app/dist/shared ./dist/shared
+COPY --from=monitor-artifacts --chown=viron:viron /app/dist/monitor ./monitor
+
+FROM server-base AS lite
+COPY --chown=viron:viron docker/server-edition-lite ./dist/server/server-edition
+
+FROM ${VIRON_FULL_APP_BASE} AS full
+COPY --from=server-base --chown=viron:viron /app/package.json /app/package-lock.json ./
+COPY --from=server-base --chown=viron:viron /app/dist ./dist
+COPY --from=server-base --chown=viron:viron /app/monitor ./monitor
+COPY --from=build --chown=viron:viron /app/dist/client ./dist/client
+COPY --chown=viron:viron docker/server-edition-full ./dist/server/server-edition
+
+FROM ${VIRON_RUNNER_BASE} AS script-runner
+COPY scripts/script-runner.mjs /runner/script-runner.mjs
