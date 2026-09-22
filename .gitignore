@@ -21,7 +21,8 @@ output/
 output/playwright/
 docs/tasks/
 
-# Local private workspace — runtime data, keys, and internal notes. Never publish.
+# All new private material belongs in private/. Never force-add or commit it.
+# This includes credentials, internal screenshots, exports, backups, and notes.
 private/
 master_key
 *.db
@@ -31,6 +32,9 @@ master_key
 *.pem
 *.p12
 *.pfx
+*.key
+*.jks
+*.keystore
 
 # Local agent / skill files — not part of the published project
 AGENTS.md
