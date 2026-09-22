@@ -16,7 +16,7 @@ services:
         - "type=local,src=${VIRON_DOCKER_CACHE_DIR:-.tmp/docker-build-cache}/compose/lite"
       cache_to:
         - "type=local,dest=${VIRON_DOCKER_CACHE_DIR:-.tmp/docker-build-cache}/compose/lite,mode=max"
-    image: viron-server-lite:0.1.6
+    image: viron-server-lite:0.1.7
     container_name: viron-server
     restart: unless-stopped
     init: true
@@ -55,7 +55,7 @@ services:
         - "type=local,src=${VIRON_DOCKER_CACHE_DIR:-.tmp/docker-build-cache}/compose/script-runner"
       cache_to:
         - "type=local,dest=${VIRON_DOCKER_CACHE_DIR:-.tmp/docker-build-cache}/compose/script-runner,mode=max"
-    image: viron-script-runner:0.1.6
+    image: viron-script-runner:0.1.7
     container_name: viron-script-runner
     restart: unless-stopped
     init: true

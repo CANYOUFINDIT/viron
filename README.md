@@ -9,7 +9,7 @@
 <p align="center">
   开发运维全家桶<br />
   <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" /></a>
-  <img alt="Version" src="https://img.shields.io/badge/version-0.1.6-informational.svg" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.1.7-informational.svg" />
 </p>
 
 Viron 是面向开发与运维的一站式工作台。它把 Web 浏览器、SSH 终端、MySQL / MariaDB、Redis、主机监控和 Agent 放在同一个环境里，减少在终端、数据库客户端、浏览器和跳板机之间来回切换。组织、项目组和资源授权用来控制谁能进哪套环境；操作审计、终端录像和 SQL 历史用来追溯谁做了什么。
@@ -92,7 +92,7 @@ Viron 是同一套产品的三个部分，共用账号、工作空间、环境�
 
 ## 快速开始
 
-需要 Docker 24 与 Docker Compose v2。当前版本为 **0.1.6**。
+需要 Docker 24 与 Docker Compose v2。当前版本为 **0.1.7**。
 
 ```bash
 cp .env.example .env

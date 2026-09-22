@@ -4,7 +4,6 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import net from "node:net";
-import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
@@ -15,7 +14,7 @@ const { Server: SshServer } = ssh2;
 
 // Critical-user-flow integration: production server and UI are real; external database and Electron bridge boundaries use deterministic fixtures.
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const artifactDirectory = resolve(repositoryRoot, ".tmp/user-flow-verification");
+const artifactDirectory = resolve(repositoryRoot, "private/user-flow-verification");
 const adminUsername = "flow-admin";
 const adminPassword = "Flow-password-123";
 const flowSuffix = `${Date.now()}-${process.pid}`;
@@ -412,9 +411,9 @@ async function verifyCredentialsAndMonitoring(page, { environmentId, serviceName
   await page.waitForURL((url) => url.pathname === "/monitoring", { timeout: 20_000 });
   await expectVisible(page.getByRole("heading", { name: "监控大盘" }), "监控大盘页");
   await expectVisible(page.getByRole("heading", { name: "重点告警事件" }), "重点告警事件");
-  await page.waitForFunction(() => document.querySelectorAll(".priority-event-panel .event-row").length === 5);
-  assert.equal(await page.locator(".priority-event-panel .event-row").count(), 5, "重点告警未限制为 5 条");
-  assert.equal(await page.locator(".priority-event-panel .event-row .tone-badge").first().innerText(), "CRITICAL", "重点告警未按严重度排序");
+  await page.waitForFunction(() => document.querySelectorAll(".priority-event-panel button.event-row").length === 5);
+  assert.equal(await page.locator(".priority-event-panel button.event-row").count(), 5, "重点告警未限制为 5 条");
+  assert.equal(await page.locator(".priority-event-panel button.event-row .tone-badge").first().innerText(), "CRITICAL", "重点告警未按严重度排序");
   await expectVisible(page.getByText(serviceName).first(), "重点告警下方的服务列表");
   if (process.env.VIRON_CAPTURE_FLOW_SCREENSHOTS === "true") {
     await page.screenshot({ path: resolve(artifactDirectory, "monitoring-top5-review.png"), fullPage: true });
@@ -426,10 +425,11 @@ async function verifyCredentialsAndMonitoring(page, { environmentId, serviceName
   await page.getByRole("tab", { name: "主机节点" }).click();
   await expectVisible(page.locator(".priority-host-grid").first(), "监控主机卡片列表");
   await expectVisible(page.locator(".probe-state-tabs"), "探针状态分类");
-  await expectVisible(page.getByText("按探针状态分组，组内按资源压力排序"), "主机分类说明");
+  await expectVisible(page.getByText("优先展示异常和高风险节点，未安装探针置底"), "主机分类说明");
   await expectVisible(page.locator('[data-probe-state="unreachable"]'), "连接异常探针分类");
   await expectVisible(page.locator('[data-probe-state="unchecked"]'), "尚未检测探针分类");
-  await expectVisible(page.getByText("状态判定依据").or(page.getByText("优先处理原因")).first(), "主机状态判定依据");
+  await expectVisible(page.locator('[data-probe-state="unreachable"] .host-bottleneck').getByText("SSH 连接失败，无法确认是否安装探针"), "连接异常主机状态判定依据");
+  await expectVisible(page.locator('[data-probe-state="unchecked"] .host-bottleneck').getByText("尚未执行探针检测"), "尚未检测主机状态判定依据");
   assert.equal(await page.locator(".host-pressure-score").count(), 0, "主机列表仍展示难以理解的压力裸分数");
   if (process.env.VIRON_CAPTURE_FLOW_SCREENSHOTS === "true") {
     await page.screenshot({ path: resolve(artifactDirectory, "monitoring-host-cards-review.png"), fullPage: true });
@@ -827,7 +827,7 @@ async function main() {
   assert(existsSync(resolve(repositoryRoot, "dist/server/index.js")), "缺少服务端构建产物；请先执行 npm run build");
   assert(existsSync(resolve(repositoryRoot, "dist/client/index.html")), "缺少 Web 构建产物；请先执行 npm run build");
   await mkdir(artifactDirectory, { recursive: true });
-  const dataDirectory = await mkdtemp(join(tmpdir(), "viron-user-flow-"));
+  const dataDirectory = await mkdtemp(join(artifactDirectory, "data-"));
   const port = await availablePort();
   const baseUrl = `http://127.0.0.1:${port}`;
   const environment = { ...process.env };

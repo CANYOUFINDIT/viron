@@ -1,6 +1,6 @@
-# Viron 0.1.6 全功能介绍与操作手册
+# Viron 0.1.7 全功能介绍与操作手册
 
-本文面向 Viron 使用者、组织管理员和平台管理员，介绍 0.1.6 版本当前已经交付的全部产品能力、常用操作路径和管理员维护方式。界面操作以当前 Web 与桌面共享界面为准；底层架构、API、安全约束和验收口径见 [TECHNICAL-DESIGN](../TECHNICAL-DESIGN.md)，尚未交付的方向见 [ROADMAP](./ROADMAP.md)。
+本文面向 Viron 使用者、组织管理员和平台管理员，介绍 0.1.7 版本当前已经交付的全部产品能力、常用操作路径和管理员维护方式。界面操作以当前 Web 与桌面共享界面为准；底层架构、API、安全约束和验收口径见 [TECHNICAL-DESIGN](../TECHNICAL-DESIGN.md)，尚未交付的方向见 [ROADMAP](./ROADMAP.md)。
 
 ## 1. 产品概览
 
@@ -17,7 +17,7 @@ Viron 是以“环境”为中心的运维工作台。它把网站入口及其�
 
 ### 1.1 当前功能范围
 
-| 能力域 | 0.1.6 已交付能力 |
+| 能力域 | 0.1.7 已交付能力 |
 | --- | --- |
 | 账号与协作 | 自主注册、登录、个人空间、多组织、任意层级项目组、邀请链接、成员和项目授权、平台账号管理 |
 | 环境管理 | 一层环境组、未分组环境、搜索、环境组与环境卡片拖动排序、拖动分组、环境详情、统一沉浸导航 |
@@ -742,7 +742,7 @@ Finder 或资源管理器中的多个文件、目录可以直接拖入任一远�
 
 ## 14. 数据库工作台
 
-Viron 0.1.6 支持 MySQL 和 MariaDB。普通 Web 由中心服务连接数据库；桌面 App 本机模式从当前电脑连接，并支持 TCP、SSL/TLS、SSH Tunnel 和 Navicat HTTP Tunnel。
+Viron 0.1.7 支持 MySQL 和 MariaDB。普通 Web 由中心服务连接数据库；桌面 App 本机模式从当前电脑连接，并支持 TCP、SSL/TLS、SSH Tunnel 和 Navicat HTTP Tunnel。
 
 ### 14.1 连接与统一导航树
 
@@ -902,7 +902,7 @@ Viron 0.1.6 支持 MySQL 和 MariaDB。普通 Web 由中心服务连接数据库
 3. 工作区显示连接地址、TCP/SSH Tunnel、TLS 和只读状态。
 4. 切换逻辑库后重新读取键空间摘要和键列表。
 
-当前只支持 Redis Standalone。Sentinel、Cluster、Valkey 完整兼容矩阵和拓扑修改不属于 0.1.6 已交付范围。
+当前只支持 Redis Standalone。Sentinel、Cluster、Valkey 完整兼容矩阵和拓扑修改不属于 0.1.7 已交付范围。
 
 ### 15.2 键空间浏览
 
@@ -1012,7 +1012,7 @@ Redis 审计记录命令名、参数数量、执行位置、耗时和响应字�
 
 ## 18. 平台管理员部署与维护
 
-本节给出 0.1.6 的最小可执行操作。更完整的构建、开发和验证命令见根目录 [README](../README.md)。
+本节给出 0.1.7 的最小可执行操作。更完整的构建、开发和验证命令见根目录 [README](../README.md)。
 
 ### 18.1 Docker Compose 部署
 
@@ -1059,7 +1059,7 @@ curl http://127.0.0.1:8080/readyz
 curl http://127.0.0.1:8080/api/v1/version
 ```
 
-Lite 部署把命令中的 Compose 文件改为 `docker-compose.lite.yml`。两个文件都会启动非 root `viron` 主服务和不发布端口、没有 Viron 数据挂载的 `script-runner`；主服务健康检查会等待 Runner 的 Unix Socket 就绪。成功时 `/healthz` 返回 HTTP 200、`status: "ok"`、`product: "viron"` 和 `productVersion: "0.1.6"`；版本接口也应返回服务端 `0.1.6`、API 协议范围和各平台安装包状态。只有端口可访问但版本或产品不符，不能视为 0.1.6 验证通过。`/healthz` 只表示进程存活与产品身份，不接触元数据库；容器 HEALTHCHECK 打的是 `/readyz`，它会真实探测元数据库，正常返回 HTTP 200 和 `status: "ok"`，元数据库不可用时返回 HTTP 503 和 `error: "DATABASE_UNAVAILABLE"`，容器随之判为 unhealthy。
+Lite 部署把命令中的 Compose 文件改为 `docker-compose.lite.yml`。两个文件都会启动非 root `viron` 主服务和不发布端口、没有 Viron 数据挂载的 `script-runner`；主服务健康检查会等待 Runner 的 Unix Socket 就绪。成功时 `/healthz` 返回 HTTP 200、`status: "ok"`、`product: "viron"` 和 `productVersion: "0.1.7"`；版本接口也应返回服务端 `0.1.7`、API 协议范围和各平台安装包状态。只有端口可访问但版本或产品不符，不能视为 0.1.7 验证通过。`/healthz` 只表示进程存活与产品身份，不接触元数据库；容器 HEALTHCHECK 打的是 `/readyz`，它会真实探测元数据库，正常返回 HTTP 200 和 `status: "ok"`，元数据库不可用时返回 HTTP 503 和 `error: "DATABASE_UNAVAILABLE"`，容器随之判为 unhealthy。
 
 ### 18.2 使用 MySQL/MariaDB 作为元数据库
 
@@ -1127,8 +1127,8 @@ DATA_DIR/migration-history/
 
 ```bash
 ./scripts/package-release.sh
-./scripts/package-release.sh 0.1.6
-./scripts/package-release.sh --refresh-docker-cache 0.1.6
+./scripts/package-release.sh 0.1.7
+./scripts/package-release.sh --refresh-docker-cache 0.1.7
 ```
 
 不传参数时使用 `package.json` 当前版本；传入新版本时会永久更新仓库版本、Compose 镜像标签和版本化文档。输出包括 macOS `arm64/x64`、Windows `x86/x64/arm64` 五个客户端安装包，以及 `linux/amd64`、`linux/arm64` 两个服务离线包；每个服务包都包含 Lite、Full 与 Script Runner 三个镜像。发布完成后应通过 `shasum -a 256 -c release/SHA256SUMS` 校验全部七个产物。
@@ -1172,7 +1172,7 @@ Lite 使用对应 Compose 文件。重置后该用户现有会话全部失效。
 
 平台管理员进入“设置 → 数据迁移”：
 
-1. 确认源、目标均运行经过验证的兼容版本；0.1.6 手册默认按 0.1.6 到 0.1.6 迁移。
+1. 确认源、目标均运行经过验证的兼容版本；0.1.7 手册默认按 0.1.7 到 0.1.7 迁移。
 2. 设置至少 12 个字符的迁移密码并确认。
 3. 点击“生成并下载”，得到包含平台元数据库快照、终端录像和数据库备份的加密迁移 ZIP。
 4. 在目标实例选择迁移 ZIP，输入迁移密码。
@@ -1204,7 +1204,7 @@ Lite 使用对应 Compose 文件。重置后该用户现有会话全部失效。
 
 ## 20. 当前边界
 
-0.1.6 当前不包含：
+0.1.7 当前不包含：
 
 - SSO、LDAP/OIDC、MFA、WebAuthn、审批流和跨组织共享；
 - 关闭自主注册、注册审批和邮件找回密码；

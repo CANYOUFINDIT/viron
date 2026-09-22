@@ -9,7 +9,7 @@
 <p align="center">
   An all-in-one workbench for development and operations<br />
   <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" /></a>
-  <img alt="Version" src="https://img.shields.io/badge/version-0.1.6-informational.svg" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.1.7-informational.svg" />
 </p>
 
 Viron keeps a website, SSH hosts, MySQL / MariaDB, Redis, host monitoring, and an Agent in one environment. The goal is to stop jumping between a terminal, a database client, a browser, and a jump host. Organizations, project groups, and resource grants control who can enter which environment. Audit events, terminal recordings, and SQL history show who did what.
@@ -93,7 +93,7 @@ These shots come from a real workspace. Internal details are heavily mosaicked.
 
 ## Quick start
 
-Docker 24 and Docker Compose v2 are required. Current release: **0.1.6**.
+Docker 24 and Docker Compose v2 are required. Current release: **0.1.7**.
 
 ```bash
 cp .env.example .env
