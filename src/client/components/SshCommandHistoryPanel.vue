@@ -122,7 +122,7 @@ function formatTime(value: string): string {
 </template>
 
 <style scoped>
-.ssh-command-history { inset: 0 0 0 auto; width: var(--ssh-history-panel-width, 292px); grid-template-rows: 45px 35px minmax(0, 1fr) 37px; }
+.ssh-command-history { inset: 8px 8px 8px auto; width: min(292px, calc(86% - 8px)); border: 1px solid #2b4043; border-radius: 8px; overflow: hidden; grid-template-rows: 45px 35px minmax(0, 1fr) 37px; }
 .ssh-command-history__tabs { padding: 4px 7px; border-bottom: 1px solid #26383b; background: #0d181a; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
 .ssh-command-history__tabs button { min-width: 0; height: 26px; padding: 0 6px; border: 0; border-radius: 5px; background: transparent; color: #667c77; display: flex; align-items: center; justify-content: center; gap: 4px; cursor: pointer; font-size: 10px; }
 .ssh-command-history__tabs button:hover { background: #18282b; color: #bdd0cb; }

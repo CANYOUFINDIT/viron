@@ -728,7 +728,6 @@ async function clearHistory() {
 function toggleHistory() {
   historyOpen.value = !historyOpen.value;
   persist();
-  nextTick(() => Object.values(terminalRefs.value).forEach((terminal) => terminal?.fit()));
 }
 
 function setSftpOpen(open: boolean) {
@@ -969,7 +968,7 @@ onBeforeUnmount(() => {
               <em :title="$t('关闭终端')" @click.stop="closeSession(session)"><X :size="12" /></em>
             </button>
           </header>
-          <div class="terminal-cell__body" :class="{ 'is-history-open': historyOpen && historyBelongsToPane(pane) }">
+          <div class="terminal-cell__body">
             <template v-if="activeSession(pane)">
               <template v-for="session in sessionsForPane(pane)" :key="session.id">
                 <SshTerminalPane
@@ -1046,8 +1045,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.terminal-cell__body { grid-row: 2; min-width: 0; min-height: 0; position: relative; overflow: hidden; background: #081214; box-sizing: border-box; transition: padding-right .16s ease-out; }
-.terminal-cell__body.is-history-open { --ssh-history-panel-width: min(292px, 86%); padding-right: var(--ssh-history-panel-width); }
+.terminal-cell__body { grid-row: 2; min-width: 0; min-height: 0; position: relative; overflow: hidden; background: #081214; box-sizing: border-box; }
 .terminal-cell__body > .ssh-terminal-shell,
 .terminal-cell__body > .terminal-cell-empty { height: 100%; }
 .terminal-statusbar__controls { margin-left: auto; }

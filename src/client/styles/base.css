@@ -1345,9 +1345,7 @@ button { color: inherit; }
 .sftp-drawer { position: absolute; z-index: 24; inset: 0 0 0 auto; width: min(82%, 1080px); min-width: 0; max-width: calc(100% - min(180px, 18%)); background: #0b1518; box-shadow: -22px 0 48px rgba(0,0,0,.4); opacity: 0; pointer-events: none; transform: translateX(calc(100% + 18px)); transition: transform .22s ease-out, opacity .16s ease-out; }
 .sftp-drawer.is-open { opacity: 1; pointer-events: auto; transform: translateX(0); }
 .sftp-drawer > .sftp-workspace { width: 100%; height: 100%; min-height: 0; margin-top: 0; border: 0; border-left: 1px solid #37504c; border-radius: 0; box-shadow: none; }
-.terminal-grid { --split-x: 50%; --split-y: 50%; min-width: 0; min-height: 0; position: relative; display: grid; gap: 1px; background: #26373a; overflow: hidden; transition: margin-right .16s ease-out; }
-.terminal-workspace.is-history-open .terminal-grid { margin-right: 292px; }
-.terminal-workspace.is-history-open::after { content: ""; position: absolute; z-index: 7; top: 45px; right: 0; width: 292px; height: 35px; border-bottom: 1px solid #1e2e31; border-left: 1px solid #2b4043; background: #0e191b; pointer-events: none; }
+.terminal-grid { --split-x: 50%; --split-y: 50%; min-width: 0; min-height: 0; position: relative; display: grid; gap: 1px; background: #26373a; overflow: hidden; }
 .terminal-grid.layout-single { grid-template-columns: 1fr; grid-template-rows: 1fr; }
 .terminal-grid.layout-vertical { grid-template-columns: var(--split-x) minmax(0, 1fr); grid-template-rows: 1fr; }
 .terminal-grid.layout-horizontal { grid-template-columns: 1fr; grid-template-rows: var(--split-y) minmax(0, 1fr); }
@@ -1429,7 +1427,7 @@ button { color: inherit; }
 .terminal-statusbar .terminal-font-control span { min-width: 38px; font-size: 11px; }
 .terminal-statusbar .terminal-assist-switch { height: 25px; font-size: 11px; }
 .terminal-statusbar .terminal-side-toggle { height: 25px; padding-inline: 7px; font-family: var(--font-mono); font-size: 11px; }
-.ssh-command-history { position: absolute; z-index: 8; inset: 80px 0 36px auto; width: 292px; border-left: 1px solid #2b4043; background: #101c1f; color: #dce7e4; display: grid; grid-template-rows: 45px minmax(0, 1fr) 37px; box-shadow: -12px 0 28px rgba(0,0,0,.2); animation: command-history-in .16s ease-out; }
+.ssh-command-history { position: absolute; z-index: 8; inset: 80px 0 36px auto; width: 292px; border-left: 1px solid #2b4043; background: #101c1f; color: #dce7e4; display: grid; grid-template-rows: 45px minmax(0, 1fr) 37px; box-shadow: 0 12px 36px rgba(0,0,0,.28); animation: command-history-in .16s ease-out; }
 @keyframes command-history-in { from { transform: translateX(14px); opacity: 0; } }
 .ssh-command-history__header { min-width: 0; padding: 0 10px 0 12px; border-bottom: 1px solid #26383b; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .ssh-command-history__title { min-width: 0; display: flex; align-items: center; gap: 8px; }
@@ -2786,8 +2784,7 @@ button { color: inherit; }
 :root.bright .ssh-hosts .sidebar-empty a,
 :root.bright :where(.ssh-workbench, .database-workbench) .sidebar-empty-action { border-color: #b9d2cc; background: #ffffff; color: #126f60; }
 
-:root.bright .terminal-workspace.is-history-open::after { border-color: #d5dfe0; background: #eef3f3; }
-:root.bright .ssh-command-history { border-color: #d5dfe0; background: #f4f7f7; color: #26393e; box-shadow: -12px 0 28px rgba(22, 40, 44, .12); }
+:root.bright .ssh-command-history { border-color: #d5dfe0; background: #f4f7f7; color: #26393e; box-shadow: 0 12px 36px rgba(22, 40, 44, .16); }
 :root.bright .ssh-command-history__header,
 :root.bright .ssh-command-history__tabs,
 :root.bright .ssh-command-history__footer { border-color: #d5dfe0; background: #eef3f3; color: #61757a; }
@@ -4928,8 +4925,6 @@ button { color: inherit; }
 }
 
 @media (max-width: 600px) {
-  .terminal-workspace.is-history-open .terminal-grid { margin-right: 0; }
-  .terminal-workspace.is-history-open::after { display: none; }
   .ssh-command-history { width: min(292px, 86vw); }
   .terminal-assist-switch > svg, .terminal-assist-switch > span { display: none; }
   .terminal-side-toggle { width: 29px; padding: 0; justify-content: center; gap: 0; font-size: 0; }
