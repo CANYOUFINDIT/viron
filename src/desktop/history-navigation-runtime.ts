@@ -1,11 +1,14 @@
-import { type BrowserWindow, type WebContents } from "electron";
+import { screen, type BrowserWindow, type WebContents } from "electron";
 import {
+  HISTORY_NAVIGATION_EDGE_PROBE,
   HISTORY_NAVIGATION_SCROLL_PROBE,
   defaultHistoryNavigationGestureConfig,
+  historyNavigationDirectionFromDeltaX,
   historyNavigationFromAppCommand,
   historyNavigationFromMouseButton,
   historyNavigationFromSwipeDirection,
   historyNavigationProgress,
+  historyNavigationStartsAtEdge,
   idleHistoryNavigationGesture,
   reduceHistoryNavigationWheel,
   settleHistoryNavigationGesture,
@@ -34,6 +37,8 @@ let historyNavigationScrollProbe = 0;
 let historyNavigationAppliedAt = 0;
 let historyNavigationTouchHeld = false;
 let historyNavigationSuppressWheelUntil = 0;
+let historyNavigationEdgeEligible: boolean | null = null;
+let historyNavigationLastWheelAt = 0;
 const HISTORY_NAVIGATION_COOLDOWN_MS = 420;
 const HISTORY_NAVIGATION_INERTIA_SUPPRESS_MS = 280;
 
@@ -50,6 +55,7 @@ export function resetDesktopHistoryNavigationGesture(time = Date.now()): void {
     historyNavigationGestureTimer = null;
   }
   historyNavigationTouchHeld = false;
+  historyNavigationEdgeEligible = null;
   historyNavigationGesture = idleHistoryNavigationGesture(time);
   historyNavigationScrollBlocked = null;
   historyNavigationSuppressWheelUntil = time + HISTORY_NAVIGATION_INERTIA_SUPPRESS_MS;
@@ -106,6 +112,7 @@ function finishDesktopHistoryNavigationGesture(): void {
 function handleHistoryNavigationInputEvent(input: Electron.InputEvent): void {
   if (input.type === "gestureScrollBegin") {
     historyNavigationTouchHeld = true;
+    historyNavigationEdgeEligible = null;
     if (historyNavigationGestureTimer) {
       clearTimeout(historyNavigationGestureTimer);
       historyNavigationGestureTimer = null;
@@ -171,9 +178,20 @@ export function handleDesktopHistoryNavigationWheel(
   const time = Date.now();
   if (time < historyNavigationSuppressWheelUntil) return;
   const wheel = mouse as Electron.MouseWheelInputEvent;
+  const deltaX = Number(wheel.deltaX ?? 0) || Number(wheel.wheelTicksX ?? 0) * 40;
+  const deltaY = Number(wheel.deltaY ?? 0) || Number(wheel.wheelTicksY ?? 0) * 40;
+  if (!historyNavigationTouchHeld && time - historyNavigationLastWheelAt > defaultHistoryNavigationGestureConfig.idleMs) historyNavigationEdgeEligible = null;
+  historyNavigationLastWheelAt = time;
+  if (historyNavigationEdgeEligible === null && Math.abs(deltaX) > Math.abs(deltaY) * defaultHistoryNavigationGestureConfig.axisRatio && Math.abs(deltaX) >= 0.5) {
+    const direction = historyNavigationDirectionFromDeltaX(deltaX);
+    historyNavigationEdgeEligible = Boolean(direction && historyNavigationStartsAtEdge(direction, mouse.x, mouse.y, {
+      x: 0, y: 0, width: view.bounds.width, height: view.bounds.height,
+    }));
+  }
+  if (historyNavigationEdgeEligible === false) return;
   const next = reduceHistoryNavigationWheel(historyNavigationGesture, {
-    deltaX: Number(wheel.deltaX ?? 0) || Number(wheel.wheelTicksX ?? 0) * 40,
-    deltaY: Number(wheel.deltaY ?? 0) || Number(wheel.wheelTicksY ?? 0) * 40,
+    deltaX,
+    deltaY,
     deltaMode: 0,
     ctrlKey: false,
     shiftKey: false,
@@ -191,7 +209,10 @@ export function handleDesktopHistoryNavigationWheel(
     event.preventDefault();
   }
   publishDesktopHistoryNavigationGesture(next, view);
-  if (next.status === "idle") hideDesktopHistoryNavigationOverlay();
+  if (next.status === "idle") {
+    historyNavigationEdgeEligible = null;
+    hideDesktopHistoryNavigationOverlay();
+  }
   else scheduleDesktopHistoryNavigationIdle(time, view);
 }
 
@@ -217,7 +238,16 @@ export function attachDesktopHistoryNavigationListeners(window: BrowserWindow): 
   attachHistoryNavigationTouchTracking(window.webContents);
   window.on("swipe", (_event, direction) => {
     const navigation = historyNavigationFromSwipeDirection(direction);
-    if (navigation) handleDesktopHistoryNavigationCommand(navigation);
+    if (!navigation || !mainWindow || mainWindow.isDestroyed()) return;
+    const content = mainWindow.getContentBounds();
+    const pointer = screen.getCursorScreenPoint();
+    const x = pointer.x - content.x;
+    const y = pointer.y - content.y;
+    const view = visibleHistoryNavigationWebView();
+    if (view && x >= view.bounds.x && x <= view.bounds.x + view.bounds.width && y >= view.bounds.y && y <= view.bounds.y + view.bounds.height) return;
+    void mainWindow.webContents.executeJavaScript(`(${HISTORY_NAVIGATION_EDGE_PROBE})(${JSON.stringify(navigation)}, ${x}, ${y})`, true)
+      .then((eligible) => { if (eligible) handleDesktopHistoryNavigationCommand(navigation); })
+      .catch(() => undefined);
   });
   window.on("app-command", (event, command) => {
     const navigation = historyNavigationFromAppCommand(command);

@@ -32,6 +32,36 @@ export interface HistoryNavigationHandleBounds extends HistoryNavigationSurface 
 
 export const HISTORY_NAVIGATION_HANDLE_SIZE = { width: 48, height: 80 };
 export const HISTORY_NAVIGATION_SURFACE_SELECTOR = ".app-content";
+export const HISTORY_NAVIGATION_EDGE_WIDTH = 32;
+
+export function historyNavigationStartsAtEdge(
+  direction: HistoryNavigationDirection,
+  x: number,
+  y: number,
+  surface: HistoryNavigationSurface,
+  edgeWidth = HISTORY_NAVIGATION_EDGE_WIDTH,
+): boolean {
+  if (!Number.isFinite(x) || !Number.isFinite(y) || surface.width <= 0 || surface.height <= 0) return false;
+  if (y < surface.y || y > surface.y + surface.height) return false;
+  if (direction === "back") return x >= surface.x && x <= surface.x + edgeWidth;
+  return x <= surface.x + surface.width && x >= surface.x + surface.width - edgeWidth;
+}
+
+export const HISTORY_NAVIGATION_EDGE_PROBE = `function(direction, x, y) {
+  const surface = document.querySelector("${HISTORY_NAVIGATION_SURFACE_SELECTOR}");
+  const target = document.elementFromPoint(x, y);
+  if (!surface || !target || target.closest(".web-account-browser")) return false;
+  const rect = surface.getBoundingClientRect();
+  if (y < rect.top || y > rect.bottom) return false;
+  for (let node = target; node; node = node.parentElement) {
+    if (node.scrollWidth <= node.clientWidth + 1) continue;
+    if (direction === "back" && node.scrollLeft > 1) return false;
+    if (direction === "forward" && node.scrollLeft + node.clientWidth < node.scrollWidth - 1) return false;
+  }
+  return direction === "back"
+    ? x >= rect.left && x <= rect.left + ${HISTORY_NAVIGATION_EDGE_WIDTH}
+    : x <= rect.right && x >= rect.right - ${HISTORY_NAVIGATION_EDGE_WIDTH};
+}`;
 
 export const HISTORY_NAVIGATION_BLOCKED_SELECTOR = [
   "input",

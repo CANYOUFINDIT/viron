@@ -1,10 +1,13 @@
 import { shallowRef } from "vue";
 import {
   HISTORY_NAVIGATION_BLOCKED_SELECTOR,
+  HISTORY_NAVIGATION_SURFACE_SELECTOR,
   defaultHistoryNavigationGestureConfig,
   elementCanScrollHistoryDirection,
+  historyNavigationDirectionFromDeltaX,
   historyNavigationFromMouseButton,
   historyNavigationProgress,
+  historyNavigationStartsAtEdge,
   idleHistoryNavigationGesture,
   reduceHistoryNavigationWheel,
   settleHistoryNavigationGesture,
@@ -33,6 +36,8 @@ let controller: HistoryNavigationController | null = null;
 let lastNavigationAt = 0;
 let holdUntilRelease = false;
 let suppressWheelUntil = 0;
+let edgeEligible: boolean | null = null;
+let lastWheelAt = 0;
 const navigationCooldownMs = 420;
 const inertiaSuppressMs = 280;
 
@@ -60,6 +65,7 @@ function suppressInertia(time = performance.now()) {
 function resetGesture(time = performance.now()) {
   clearIdleTimer();
   holdUntilRelease = false;
+  edgeEligible = null;
   gesture = idleHistoryNavigationGesture(time);
   historyNavigationOverlay.value = null;
 }
@@ -87,6 +93,7 @@ function scheduleIdleReset(time: number) {
 export function applyHistoryNavigationTouch(phase: "begin" | "end") {
   if (phase === "begin") {
     holdUntilRelease = true;
+    edgeEligible = null;
     clearIdleTimer();
     return;
   }
@@ -121,11 +128,21 @@ function commitNavigation(direction: HistoryNavigationDirection) {
 }
 
 export function applyHistoryNavigationWheel(
-  event: Pick<WheelEvent, "deltaX" | "deltaY" | "deltaMode" | "ctrlKey" | "shiftKey" | "target">,
+  event: Pick<WheelEvent, "deltaX" | "deltaY" | "deltaMode" | "ctrlKey" | "shiftKey" | "target" | "clientX" | "clientY">,
   time = performance.now(),
   options?: { ignoreBlockedTargets?: boolean },
 ): HistoryNavigationGestureState {
   if (time < suppressWheelUntil) return gesture;
+  if (!holdUntilRelease && time - lastWheelAt > defaultHistoryNavigationGestureConfig.idleMs) edgeEligible = null;
+  lastWheelAt = time;
+  if (edgeEligible === null && Math.abs(event.deltaX) > Math.abs(event.deltaY) * defaultHistoryNavigationGestureConfig.axisRatio && Math.abs(event.deltaX) >= 0.5) {
+    const direction = historyNavigationDirectionFromDeltaX(event.deltaX);
+    const surface = document.querySelector(HISTORY_NAVIGATION_SURFACE_SELECTOR)?.getBoundingClientRect();
+    edgeEligible = Boolean(direction && surface && historyNavigationStartsAtEdge(direction, event.clientX, event.clientY, {
+      x: surface.left, y: surface.top, width: surface.width, height: surface.height,
+    }));
+  }
+  if (edgeEligible === false) return gesture;
   const next = reduceHistoryNavigationWheel(gesture, {
     deltaX: event.deltaX,
     deltaY: event.deltaY,
@@ -148,6 +165,7 @@ export function applyHistoryNavigationWheel(
   }
   gesture = next;
   if (gesture.status === "idle") {
+    edgeEligible = null;
     historyNavigationOverlay.value = null;
     return gesture;
   }

@@ -3,6 +3,8 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   HISTORY_NAVIGATION_HANDLE_SIZE,
+  HISTORY_NAVIGATION_EDGE_WIDTH,
+  HISTORY_NAVIGATION_EDGE_PROBE,
   elementCanScrollHistoryDirection,
   historyNavigationBlockedBySelector,
   historyNavigationDirectionFromDeltaX,
@@ -11,6 +13,7 @@ import {
   historyNavigationFromSwipeDirection,
   historyNavigationHandleBounds,
   historyNavigationProgress,
+  historyNavigationStartsAtEdge,
   idleHistoryNavigationGesture,
   reduceHistoryNavigationWheel,
   settleHistoryNavigationGesture,
@@ -117,6 +120,34 @@ describe("history navigation gestures", () => {
     expect(historyNavigationHandleBounds("forward", 1, surface)).toEqual({ x: 1200 - width, y, width, height });
     expect(width).toBeGreaterThanOrEqual(48);
     expect(height).toBeGreaterThanOrEqual(72);
+  });
+
+  it("requires a swipe to begin within the matching content edge", () => {
+    const surface = { x: 100, y: 40, width: 900, height: 600 };
+    expect(historyNavigationStartsAtEdge("back", 100 + HISTORY_NAVIGATION_EDGE_WIDTH, 300, surface)).toBe(true);
+    expect(historyNavigationStartsAtEdge("back", 100 + HISTORY_NAVIGATION_EDGE_WIDTH + 1, 300, surface)).toBe(false);
+    expect(historyNavigationStartsAtEdge("forward", 1000 - HISTORY_NAVIGATION_EDGE_WIDTH, 300, surface)).toBe(true);
+    expect(historyNavigationStartsAtEdge("forward", 1000 - HISTORY_NAVIGATION_EDGE_WIDTH - 1, 300, surface)).toBe(false);
+    expect(historyNavigationStartsAtEdge("back", 99, 300, surface)).toBe(false);
+    expect(historyNavigationStartsAtEdge("forward", 1001, 300, surface)).toBe(false);
+    expect(historyNavigationStartsAtEdge("back", 110, 39, surface)).toBe(false);
+    expect(historyNavigationStartsAtEdge("forward", Number.NaN, 300, surface)).toBe(false);
+  });
+
+  it("keeps native swipe navigation away from embedded browsers and horizontal scrollers", () => {
+    const surface = { getBoundingClientRect: () => ({ left: 100, right: 1000, top: 40, bottom: 640 }) };
+    let embedded = false;
+    const target = { closest: () => embedded ? {} : null, scrollLeft: 0, clientWidth: 400, scrollWidth: 400, parentElement: null };
+    const document = { querySelector: () => surface, elementFromPoint: () => target };
+    const probe = new Function("document", `return (${HISTORY_NAVIGATION_EDGE_PROBE});`)(document) as (direction: string, x: number, y: number) => boolean;
+    expect(probe("back", 110, 300)).toBe(true);
+    expect(probe("back", 150, 300)).toBe(false);
+    target.scrollLeft = 40;
+    target.scrollWidth = 900;
+    expect(probe("back", 110, 300)).toBe(false);
+    target.scrollLeft = 0;
+    embedded = true;
+    expect(probe("back", 110, 300)).toBe(false);
   });
 
   it("does not steal an in-progress horizontal scroll, and allows workbench tab switching", () => {
