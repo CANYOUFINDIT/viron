@@ -1703,7 +1703,8 @@ button { color: inherit; }
 .schema-disclosure:hover { background: #203235; color: #69cfad; }
 .schema-node { width: 100%; min-width: 0; height: 32px; padding: 0 7px 0 2px; border: 0; border-radius: 5px; background: transparent; color: #8b9d98; display: flex; align-items: center; gap: 6px; cursor: pointer; text-align: left; }
 .schema-node:hover, .schema-node.is-selected { background: #1c3030; color: #62cfad; }
-.schema-node.is-located, .schema-object-row.is-located { background: #24423a; box-shadow: inset 2px 0 #5bd1ad; }
+.schema-node.is-located, .schema-object-row.is-located { background: #24423a; }
+.schema-object-row.is-located { box-shadow: inset 2px 0 #5bd1ad; }
 .schema-node span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .object-favorite-toggle { width: 25px; height: 25px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: #526762; display: grid; place-items: center; cursor: pointer; }
 .object-favorite-toggle:hover { background: #29423d; color: #d5b35e; }
@@ -3124,7 +3125,8 @@ button { color: inherit; }
 :root.bright .database-workbench .schema-utility-row:hover,
 :root.bright .database-workbench .schema-utility-row:focus-visible { background: #e1f0eb; color: #126f60; }
 :root.bright .database-workbench .schema-node.is-located,
-:root.bright .database-workbench .schema-object-row.is-located { background: #d4e9e2; box-shadow: inset 2px 0 #219780; }
+:root.bright .database-workbench .schema-object-row.is-located { background: #d4e9e2; }
+:root.bright .database-workbench .schema-object-row.is-located { box-shadow: inset 2px 0 #219780; }
 :root.bright .database-workbench .schema-children { border-color: #cbd7d8; }
 :root.bright .database-workbench .schema-category-node em,
 :root.bright .database-workbench .object-favorite-toggle,
