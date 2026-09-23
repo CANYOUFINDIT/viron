@@ -122,6 +122,8 @@ type Layout = "single" | "vertical" | "horizontal" | "quad";
 const loading = ref(true);
 const openingId = ref("");
 const movingSessionId = ref("");
+const draggingSessionId = ref("");
+const dropPane = ref<number | null>(null);
 const connections = ref<SshConnection[]>([]);
 const sessions = ref<WorkbenchSession[]>([]);
 const keyword = ref("");
@@ -759,23 +761,28 @@ function setLayout(value: Layout) {
   nextTick(() => Object.values(terminalRefs.value).forEach((terminal) => terminal?.fit()));
 }
 
+function placeSessionInPane(session: WorkbenchSession, pane: number) {
+  const previousPane = session.pane;
+  session.pane = pane;
+  if (activeByPane.value[previousPane] === session.id) {
+    activeByPane.value = { ...activeByPane.value, [previousPane]: sessionsForPane(previousPane)[0]?.id ?? "" };
+  }
+  selectSession(session, false);
+}
+
 async function moveToPane(session: WorkbenchSession, pane: number) {
   if (session.pane === pane || movingSessionId.value) return;
   movingSessionId.value = session.id;
   try {
     if (session.placeholder) {
-      session.pane = pane;
-      activeByPane.value = { ...activeByPane.value, [pane]: session.id };
-      persist();
+      placeSessionInPane(session, pane);
       return;
     }
     const response = props.localExecution
       ? await issueDesktopSshTicket(session.id)
       : await api<{ ticket: string }>(`/api/v1/ssh-sessions/${session.id}/ticket`, { method: "POST" });
     session.ticket = response.ticket;
-    session.pane = pane;
-    activeByPane.value = { ...activeByPane.value, [pane]: session.id };
-    persist();
+    placeSessionInPane(session, pane);
     await nextTick();
     terminalRefs.value[session.id]?.fit();
     terminalRefs.value[session.id]?.focus();
@@ -784,6 +791,45 @@ async function moveToPane(session: WorkbenchSession, pane: number) {
   } finally {
     movingSessionId.value = "";
   }
+}
+
+function startSessionDrag(session: WorkbenchSession | null, event: DragEvent) {
+  if (!session || paneCount.value < 2 || movingSessionId.value || !event.dataTransfer) {
+    event.preventDefault();
+    return;
+  }
+  draggingSessionId.value = session.id;
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("application/x-viron-ssh-session", session.id);
+}
+
+function dragOverPane(pane: number, event: DragEvent) {
+  const session = sessions.value.find((item) => item.id === draggingSessionId.value);
+  if (!session || session.pane === pane || movingSessionId.value) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+  dropPane.value = pane;
+}
+
+function dragLeavePane(pane: number, event: DragEvent) {
+  if (dropPane.value !== pane || !(event.currentTarget instanceof HTMLElement)) return;
+  const bounds = event.currentTarget.getBoundingClientRect();
+  if (event.clientX >= bounds.left && event.clientX < bounds.right
+    && event.clientY >= bounds.top && event.clientY < bounds.bottom) return;
+  dropPane.value = null;
+}
+
+function endSessionDrag() {
+  draggingSessionId.value = "";
+  dropPane.value = null;
+}
+
+function dropSessionOnPane(pane: number, event: DragEvent) {
+  const session = sessions.value.find((item) => item.id === draggingSessionId.value);
+  if (!session || session.pane === pane || movingSessionId.value) return;
+  event.preventDefault();
+  endSessionDrag();
+  void moveToPane(session, pane);
 }
 
 function startResize(axis: "x" | "y", event: PointerEvent) {
@@ -960,9 +1006,9 @@ onBeforeUnmount(() => {
       </header>
 
       <div ref="gridElement" class="terminal-grid" :class="`layout-${layout}`" :style="gridStyle">
-        <section v-for="pane in panes" :key="pane" class="terminal-cell">
-          <header v-if="sessionsForPane(pane).length" class="terminal-tabs">
-            <button v-for="session in sessionsForPane(pane)" :key="session.id" class="terminal-tab" :class="{ 'is-active': activeSession(pane)?.id === session.id }" @click="selectSession(session)">
+        <section v-for="pane in panes" :key="pane" class="terminal-cell" :class="{ 'is-session-drop-target': dropPane === pane }" @dragover="dragOverPane(pane, $event)" @dragleave="dragLeavePane(pane, $event)" @drop="dropSessionOnPane(pane, $event)">
+          <header v-if="sessionsForPane(pane).length" class="terminal-tabs" :draggable="paneCount > 1 && !movingSessionId" @dragstart.self="startSessionDrag(activeSession(pane), $event)" @dragend.self="endSessionDrag">
+            <button v-for="session in sessionsForPane(pane)" :key="session.id" class="terminal-tab" :class="{ 'is-active': activeSession(pane)?.id === session.id, 'is-dragging': draggingSessionId === session.id }" :draggable="paneCount > 1 && !movingSessionId" @click="selectSession(session)" @dragstart="startSessionDrag(session, $event)" @dragend="endSessionDrag">
               <i :class="`is-${session.status}`"></i><span>{{ session.connectionName }}</span>
               <em v-if="session.status === 'disconnected'" :title="$t('重新连接浏览器终端')" @click.stop="renewTicket(session)"><RefreshCw :size="12" /></em>
               <em :title="$t('关闭终端')" @click.stop="closeSession(session)"><X :size="12" /></em>
@@ -1045,6 +1091,12 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.terminal-tabs[draggable="true"] { cursor: grab; }
+.terminal-tabs[draggable="true"]:active { cursor: grabbing; }
+.terminal-tab[draggable="true"] { cursor: grab; }
+.terminal-tab[draggable="true"]:active { cursor: grabbing; }
+.terminal-tab.is-dragging { opacity: .5; }
+.terminal-cell.is-session-drop-target::after { content: ""; position: absolute; z-index: 15; inset: 5px; border: 2px dashed #55bd9b; border-radius: 7px; background: rgba(85, 189, 155, .08); pointer-events: none; }
 .terminal-cell__body { grid-row: 2; min-width: 0; min-height: 0; position: relative; overflow: hidden; background: #081214; box-sizing: border-box; }
 .terminal-cell__body > .ssh-terminal-shell,
 .terminal-cell__body > .terminal-cell-empty { height: 100%; }
