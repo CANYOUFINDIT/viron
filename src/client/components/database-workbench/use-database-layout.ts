@@ -55,36 +55,28 @@ export function useDatabaseLayout(props: Readonly<DatabaseWorkbenchProps>) {
   function startConnectionPaneResize(event: PointerEvent) {
     if (!event.isPrimary || event.button !== 0) return;
     event.preventDefault();
-    const bounds = workbenchElement.value?.getBoundingClientRect();
-    const handle = event.currentTarget as HTMLElement | null;
-    if (!bounds || !handle) return;
+    const workbench = workbenchElement.value;
+    const bounds = workbench?.getBoundingClientRect();
+    if (!workbench || !bounds) return;
     stopConnectionPaneResize?.();
 
     const pointerId = event.pointerId;
     const maxWidth = Math.min(520, bounds.width * .5);
     const widthAt = (clientX: number) => Math.round(Math.max(220, Math.min(maxWidth, clientX - bounds.left)));
-    const indicator = handle.querySelector<HTMLElement>("span");
-    let previewWidth = connectionPaneWidth.value;
+    let nextWidth = connectionPaneWidth.value;
     let frame = 0;
-    const paintPreview = () => {
+    const resizeGrid = () => {
       frame = 0;
-      // Override the handle's inherited variable without resizing the grid or rendering Vue on every move.
-      handle.style.setProperty("--connection-pane-width", `${previewWidth}px`);
+      // Resize the real grid once per frame without rerendering the workbench's large Vue tree.
+      workbench.style.setProperty("--connection-pane-width", `${nextWidth}px`);
     };
-    indicator?.style.setProperty("height", "100%");
-    indicator?.style.setProperty("opacity", "1");
-    indicator?.style.setProperty("background", "#56c9a5");
     const move = (moveEvent: PointerEvent) => {
       if (moveEvent.pointerId !== pointerId) return;
-      previewWidth = widthAt(moveEvent.clientX);
-      if (!frame) frame = requestAnimationFrame(paintPreview);
+      nextWidth = widthAt(moveEvent.clientX);
+      if (!frame) frame = requestAnimationFrame(resizeGrid);
     };
     const cleanup = () => {
       if (frame) cancelAnimationFrame(frame);
-      handle.style.removeProperty("--connection-pane-width");
-      indicator?.style.removeProperty("height");
-      indicator?.style.removeProperty("opacity");
-      indicator?.style.removeProperty("background");
       document.removeEventListener("pointermove", move);
       document.removeEventListener("pointerup", finish);
       document.removeEventListener("pointercancel", cancel);
@@ -95,10 +87,14 @@ export function useDatabaseLayout(props: Readonly<DatabaseWorkbenchProps>) {
       if (upEvent.pointerId !== pointerId) return;
       const width = widthAt(upEvent.clientX);
       cleanup();
+      workbench.style.setProperty("--connection-pane-width", `${width}px`);
       setConnectionPaneWidth(width);
       persistWorkbenchPreferences();
     };
-    const cancel = () => cleanup();
+    const cancel = () => {
+      cleanup();
+      workbench.style.setProperty("--connection-pane-width", `${connectionPaneWidth.value}px`);
+    };
     stopConnectionPaneResize = cancel;
     document.addEventListener("pointermove", move);
     document.addEventListener("pointerup", finish);

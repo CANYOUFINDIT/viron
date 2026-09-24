@@ -9,7 +9,7 @@ afterEach(() => {
 });
 
 describe("database navigation pane resize", () => {
-  it("moves the divider without updating the workbench until pointer release", () => {
+  it("resizes the workbench grid during drag and persists the final width", () => {
     let paint: FrameRequestCallback | undefined;
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
       paint = callback;
@@ -36,14 +36,14 @@ describe("database navigation pane resize", () => {
     document.dispatchEvent(new PointerEvent("pointermove", { pointerId: 1, clientX: 460 }));
     paint?.(0);
 
-    expect(divider.style.getPropertyValue("--connection-pane-width")).toBe("360px");
+    expect(workbench.style.getPropertyValue("--connection-pane-width")).toBe("360px");
     expect(layout.connectionPaneWidth.value).toBe(240);
     expect(layout.workbenchStyle.value["--connection-pane-width"]).toBe("240px");
 
     document.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, clientX: 460 }));
 
     expect(layout.connectionPaneWidth.value).toBe(360);
-    expect(divider.style.getPropertyValue("--connection-pane-width")).toBe("");
+    expect(workbench.style.getPropertyValue("--connection-pane-width")).toBe("360px");
     expect(JSON.parse(preferences.get("envman:database-workbench:resize-test:global")!)).toMatchObject({ connectionPaneWidth: 360 });
     scope.stop();
   });
