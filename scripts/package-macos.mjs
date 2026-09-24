@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
-import { chmod, cp, lstat, mkdtemp, mkdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, cp, lstat, mkdtemp, mkdir, readFile, readdir, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -26,6 +26,17 @@ const persistentKeychain = join(signingDirectory, "VironLocalDevelopment.keychai
 const keychainPasswordFile = join(signingDirectory, "keychain-password");
 const opensslCommand = resolveOpenSslCommand();
 const opensslLegacyPkcs12 = supportsPkcs12Legacy(opensslCommand);
+
+async function cachedElectronZipDirectory() {
+  const cacheRoot = process.env.ELECTRON_CACHE || join(homedir(), "Library", "Caches", "electron");
+  const filename = `electron-v${electronVersion}-darwin-${arch}.zip`;
+  try {
+    for (const entry of await readdir(cacheRoot, { withFileTypes: true })) {
+      if (entry.isDirectory() && existsSync(join(cacheRoot, entry.name, filename))) return join(cacheRoot, entry.name);
+    }
+  } catch { /* No cached Electron archive; packager will download it. */ }
+  return undefined;
+}
 
 function run(command, args, options = {}) {
   const captureOutput = options.capture || options.input !== undefined;
@@ -407,10 +418,10 @@ async function signingIdentity(searchKeychains) {
   return { identity, identityName, keychain: persistentKeychain, created: false };
 }
 
-function sign(identity, path, includeEntitlements) {
+function sign(signing, path, includeEntitlements) {
   const args = ["--deep", "--force"];
   if (includeEntitlements) args.push("--options", "runtime", "--entitlements", entitlements);
-  args.push("--sign", identity, "--timestamp=none", path);
+  args.push("--sign", signing.identity, "--keychain", signing.keychain, "--timestamp=none", path);
   run("codesign", args);
   run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", path]);
 }
@@ -453,6 +464,7 @@ try {
     platform: "darwin",
     arch,
     electronVersion,
+    electronZipDir: await cachedElectronZipDirectory(),
     name: "Viron",
     executableName: "Viron",
     appBundleId: "com.viron.desktop",
@@ -474,11 +486,11 @@ try {
 
   signing = await signingIdentity(originalKeychains);
   run("security", ["list-keychains", "-d", "user", "-s", signing.keychain, ...originalKeychains]);
-  sign(signing.identity, appPath, true);
+  sign(signing, appPath, true);
   await verifyPackagedApplication(appPath);
 
   await createDmg(appPath);
-  sign(signing.identity, dmgPath, false);
+  sign(signing, dmgPath, false);
   await verifyDmg();
 
   process.stdout.write(`\nmacOS App: ${appPath}\nDMG: ${dmgPath}\n架构: ${arch}\n最低系统: macOS ${minimumMacosVersion}\n签名: ${signing.identityName}（自签名，未公证，${signing.created ? "已创建并持久保存" : "已复用"}）\n`);
