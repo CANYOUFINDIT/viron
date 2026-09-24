@@ -19,7 +19,7 @@ import {
   type DesktopWebViewState,
 } from "../desktop";
 import { releaseAgentNativeOverlay, retainAgentNativeOverlay } from "../agent-host";
-import { rendererOverlayCoversSurface, type RectangleBounds } from "../desktop-web-overlay";
+import { rendererOverlayCoversSurface, rendererSidebarCoversSurface, type RectangleBounds } from "../desktop-web-overlay";
 import { normalizeWebAddress } from "../../shared/web-address";
 import { historyNavigationFromMouseButton } from "../../shared/history-navigation-gesture";
 import { applyHistoryNavigationCommand, applyHistoryNavigationWheel } from "../history-navigation";
@@ -132,6 +132,16 @@ function scheduleBounds() {
 function rendererOverlayVisible() {
   const surfaceRect = surface.value?.getBoundingClientRect();
   if (!surfaceRect) return false;
+  const appFrame = document.querySelector(".app-frame");
+  const sidebar = appFrame?.querySelector<HTMLElement>(".app-sidebar");
+  const sidebarPanel = sidebar?.querySelector<HTMLElement>(".app-sidebar__panel");
+  if (appFrame && sidebar && sidebarPanel && window.getComputedStyle(sidebar).display !== "none"
+    && rendererSidebarCoversSurface(
+      surfaceRect,
+      elementBounds(sidebar),
+      elementBounds(sidebarPanel),
+      appFrame.classList.contains("is-sidebar-expanded"),
+    )) return true;
   return [...document.querySelectorAll<HTMLElement>(".el-overlay, .el-popper")].some((overlay) => {
     const style = window.getComputedStyle(overlay);
     const rect = overlay.getBoundingClientRect();
@@ -143,6 +153,10 @@ function rendererOverlayVisible() {
       ignored: overlay.classList.contains("sidebar-user-popper"),
     });
   });
+}
+
+function onSidebarTransitionEnd(event: TransitionEvent) {
+  if (event.propertyName === "width" && event.target instanceof Element && event.target.classList.contains("app-sidebar")) syncVisibility();
 }
 
 function syncNativeOverlay(needed: boolean) {
@@ -444,6 +458,7 @@ onMounted(() => {
   });
   window.addEventListener("resize", scheduleBounds);
   window.addEventListener("scroll", scheduleBounds, true);
+  document.addEventListener("transitionend", onSidebarTransitionEnd, true);
   document.addEventListener("visibilitychange", syncPreviewMode);
   if (props.autoStart) void start("entry", props.preloadStart);
 });
@@ -500,6 +515,7 @@ onBeforeUnmount(() => {
   removeNativeViewPointerDownListener?.();
   window.removeEventListener("resize", scheduleBounds);
   window.removeEventListener("scroll", scheduleBounds, true);
+  document.removeEventListener("transitionend", onSidebarTransitionEnd, true);
   document.removeEventListener("visibilitychange", syncPreviewMode);
   if (state.value) {
     void setDesktopWebViewPreviewing(state.value.id, false).catch(() => undefined);

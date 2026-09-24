@@ -15,6 +15,22 @@ export interface RendererOverlayCandidate {
   ignored: boolean;
 }
 
+export function rendererSidebarCoversSurface(
+  surface: RectangleBounds,
+  sidebar: RectangleBounds,
+  expandedPanel: RectangleBounds,
+  expanded: boolean,
+): boolean {
+  return rendererOverlayCoversSurface(surface, {
+    // The sidebar's width animates, so reserve its full target width as soon as it opens.
+    rect: expanded ? expandedPanel : sidebar,
+    ariaHidden: false,
+    display: "block",
+    visibility: "visible",
+    ignored: false,
+  });
+}
+
 export function desktopWebBoundsBesideOverlay(
   surface: RectangleBounds,
   overlay: RectangleBounds,
