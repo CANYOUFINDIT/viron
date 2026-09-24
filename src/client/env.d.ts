@@ -117,6 +117,9 @@ interface Window {
     captureWebView(id: string, mode?: "preview" | "page"): Promise<string>;
     webViewAction(id: string, action: import("./desktop").DesktopWebViewAction): Promise<import("./desktop").DesktopWebViewState>;
     closeWebView(id: string): Promise<{ closed: boolean }>;
+    listWebExtensions(id: string): Promise<import("./desktop").DesktopWebExtensionInfo[]>;
+    installWebExtension(id: string): Promise<{ canceled: boolean; items: import("./desktop").DesktopWebExtensionInfo[] }>;
+    removeWebExtension(id: string, installId: string): Promise<import("./desktop").DesktopWebExtensionInfo[]>;
     onWebViewState(listener: (state: import("./desktop").DesktopWebViewState) => void): () => void;
     updateImmersiveNavigation(state: import("../shared/immersive-navigation").ImmersiveNavigationState | null): Promise<void>;
     onImmersiveNavigationAction(listener: (action: import("../shared/immersive-navigation").ImmersiveNavigationAction) => void): () => void;

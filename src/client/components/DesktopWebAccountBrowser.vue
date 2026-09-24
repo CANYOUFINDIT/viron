@@ -1,6 +1,6 @@
 <script setup lang="ts">import { translate as tr } from "../i18n";
 
-import { ArrowLeft, ArrowRight, Globe2, KeyRound, Laptop, LoaderCircle, Maximize2, Minimize2, Plus, RefreshCw, RotateCcw, ShieldAlert } from "@lucide/vue";
+import { ArrowLeft, ArrowRight, Globe2, KeyRound, Laptop, LoaderCircle, Maximize2, Minimize2, Plus, Puzzle, RefreshCw, RotateCcw, ShieldAlert } from "@lucide/vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from "vue";
 import { loadActiveConnections } from "../active-connections";
@@ -8,15 +8,19 @@ import {
   captureDesktopWebView,
   closeDesktopWebView,
   desktopWebViewAction,
+  installDesktopWebExtension,
+  listDesktopWebExtensions,
   onDesktopWebViewState,
   onDesktopNativeViewPointerDown,
   openDesktopWebView,
+  removeDesktopWebExtension,
   setDesktopWebViewVisible,
   setDesktopWebViewPreviewing,
   updateDesktopWebViewBounds,
   type DesktopWebViewAction,
   type DesktopWebViewBounds,
   type DesktopWebViewState,
+  type DesktopWebExtensionInfo,
 } from "../desktop";
 import { releaseAgentNativeOverlay, retainAgentNativeOverlay } from "../agent-host";
 import { rendererOverlayCoversSurface, rendererSidebarCoversSurface, type RectangleBounds } from "../desktop-web-overlay";
@@ -56,6 +60,9 @@ const startError = ref("");
 const started = ref(false);
 const starting = ref(false);
 const resetting = ref(false);
+const extensionsOpen = ref(false);
+const extensionsBusy = ref(false);
+const extensions = ref<DesktopWebExtensionInfo[]>([]);
 const previewFrame = ref("");
 const overlayBlocking = ref(false);
 const overlayFrame = ref("");
@@ -318,6 +325,48 @@ async function resetLogin() {
   }
 }
 
+async function openExtensions() {
+  if (!state.value) return;
+  extensionsOpen.value = true;
+  try {
+    extensions.value = await listDesktopWebExtensions(state.value.id);
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : tr("读取本机扩展失败"));
+  }
+}
+
+async function installExtension() {
+  if (!state.value || extensionsBusy.value) return;
+  extensionsBusy.value = true;
+  try {
+    const result = await installDesktopWebExtension(state.value.id);
+    extensions.value = result.items;
+    if (!result.canceled) ElMessage.success(tr("扩展已安装；刷新页面后生效"));
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : tr("安装本机扩展失败"));
+  } finally {
+    extensionsBusy.value = false;
+  }
+}
+
+async function removeExtension(extension: DesktopWebExtensionInfo) {
+  if (!state.value || extensionsBusy.value) return;
+  try {
+    await ElMessageBox.confirm(tr("从当前 Web 账号移除扩展「{0}」及其本机文件？", [extension.name]), tr("移除扩展"), {
+      type: "warning",
+      confirmButtonText: tr("移除"),
+      cancelButtonText: tr("取消"),
+    });
+    extensionsBusy.value = true;
+    extensions.value = await removeDesktopWebExtension(state.value.id, extension.installId);
+    ElMessage.success(tr("扩展已移除；刷新页面后生效"));
+  } catch (error) {
+    if (error !== "cancel" && error !== "close") ElMessage.error(error instanceof Error ? error.message : tr("移除本机扩展失败"));
+  } finally {
+    extensionsBusy.value = false;
+  }
+}
+
 function claimPreloadedView() {
   if (!preloading.value) return;
   preloading.value = false;
@@ -557,6 +606,7 @@ onBeforeUnmount(() => {
       </form>
       <div class="web-browser-tools">
         <button type="button" :aria-label="$t('新建空白标签页')" :title="$t('新建空白标签页')" @click="createBlankPage"><Plus :size="15" /></button>
+        <button type="button" :aria-label="$t('管理本机扩展')" :title="$t('管理当前 Web 账号的本机扩展')" :disabled="!state || Boolean(state.closedReason)" @click="openExtensions"><Puzzle :size="15" /></button>
         <span v-if="state?.certificateError" class="desktop-web-view-status is-certificate-error-status" :title="$t('页面证书校验失败')"><ShieldAlert :size="15" /></span>
         <span v-else-if="state?.loading" class="desktop-web-view-status" :title="$t('本机页面加载中')"><LoaderCircle :size="14" class="is-spinning" /></span>
         <span v-else class="desktop-web-view-status is-local" :title="state?.autofillMessage || $t('页面由当前电脑本机直接访问')"><Laptop :size="14" /></span>
@@ -596,6 +646,19 @@ onBeforeUnmount(() => {
         <button type="button" @click="reconnect">{{ $t('重新连接') }}</button>
       </div>
     </div>
+    <el-dialog v-model="extensionsOpen" :title="$t('本机 Chrome 扩展')" width="min(480px, 92vw)" append-to-body>
+      <div class="desktop-web-extensions">
+        <p>{{ $t('扩展只安装在当前电脑、当前 Web 账号的隔离浏览器中，不会保存到服务端。请选择已解压且可信的扩展目录；Electron 仅支持部分 Chrome 扩展功能。') }}</p>
+        <div v-if="!extensions.length" class="desktop-web-extensions__empty">{{ $t('当前账号尚未安装扩展') }}</div>
+        <div v-for="extension in extensions" :key="extension.installId" class="desktop-web-extensions__item">
+          <div><strong>{{ extension.name }}</strong><span>v{{ extension.version }}</span><small v-if="!extension.loaded">{{ extension.error || $t('扩展未加载') }}</small></div>
+          <button type="button" :disabled="extensionsBusy" @click="removeExtension(extension)">{{ $t('移除') }}</button>
+        </div>
+        <button type="button" class="desktop-web-extensions__install" :disabled="extensionsBusy" @click="installExtension">
+          <Plus :size="15" />{{ $t('从本机目录安装') }}
+        </button>
+      </div>
+    </el-dialog>
   </section>
 </template>
 
@@ -615,4 +678,14 @@ onBeforeUnmount(() => {
 .web-browser-certificate-actions { display: flex; align-items: center; gap: 8px; }
 .web-browser-certificate-actions button.is-secondary { border-color: #9aa0a6; background: #fff; color: #5f6368; }
 .web-browser-certificate-actions button.is-secondary:hover { border-color: #5f6368; background: #f8f9fa; }
+.desktop-web-extensions { display: grid; gap: 12px; }
+.desktop-web-extensions p { margin: 0 0 4px; color: var(--ink-500); line-height: 1.6; font-size: 13px; }
+.desktop-web-extensions__empty { padding: 20px; text-align: center; color: var(--ink-400); background: var(--surface-50, #f7f9f8); border-radius: 8px; }
+.desktop-web-extensions__item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--line-200, #e1e8e5); border-radius: 8px; }
+.desktop-web-extensions__item div { display: grid; gap: 2px; min-width: 0; }
+.desktop-web-extensions__item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.desktop-web-extensions__item span, .desktop-web-extensions__item small { color: var(--ink-400); font-size: 12px; }
+.desktop-web-extensions__item button, .desktop-web-extensions__install { border: 0; background: none; color: var(--teal-600); cursor: pointer; }
+.desktop-web-extensions__item button:disabled, .desktop-web-extensions__install:disabled { opacity: .45; cursor: not-allowed; }
+.desktop-web-extensions__install { display: inline-flex; align-items: center; gap: 6px; justify-self: start; padding: 8px 0; font-weight: 600; }
 </style>

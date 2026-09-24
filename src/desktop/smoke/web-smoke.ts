@@ -1,5 +1,6 @@
 import { basename } from "node:path";
 import { translate as tr } from "../i18n.js";
+import { installDesktopWebExtensionFromDirectory, listDesktopWebExtensions, removeDesktopWebExtension } from "../web-extensions.js";
 import {
   activeDesktopWebPage,
   closeDesktopWebView,
@@ -31,7 +32,7 @@ export async function waitForDesktopWebNotice(view: ManagedDesktopWebView, type:
   throw new Error(tr("等待本机网页下载完成超时"));
 }
 
-export async function runDesktopWebSmoke(credentialId: string, username: string, uploadPath?: string): Promise<{
+export async function runDesktopWebSmoke(credentialId: string, username: string, uploadPath?: string, extensionPath?: string): Promise<{
   opened: boolean;
   blankOpenedWithoutEntry: boolean;
   manualRefillOnCurrentPage: boolean;
@@ -40,11 +41,14 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
   tabsReordered: boolean;
   inspectorOpened: boolean;
   resetCleared: boolean;
+  extensionInjected: boolean;
+  extensionManaged: boolean | null;
   uploadSelected: boolean | null;
   downloadTriggered: boolean;
 }> {
   const blankState = await openDesktopWebView(credentialId, { x: 40, y: 120, width: 900, height: 620 }, "blank");
   const blankView = localWebView(blankState.id);
+  const extensionLoaded = listDesktopWebExtensions(blankView.partition, blankView.lastUrlKey).some((item) => item.loaded);
   const deferredEntryPage = blankView.pages.get(blankState.pages[0]?.id ?? "");
   const blankOpenedWithoutEntry = blankState.pages.length === 2
     && blankState.pages[0]?.url === blankView.entryUrl
@@ -56,6 +60,7 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
   const blankTarget = new URL(blankView.entryUrl);
   await handleDesktopWebViewAction(blankState.id, { type: "navigate", url: `${blankTarget.host}/upload` });
   await waitForDesktopWebTitle(blankView, "Upload fixture");
+  const extensionOnFirstPage = await activeDesktopWebPage(blankView).view.webContents.executeJavaScript('document.documentElement.dataset.vironExtension === "loaded"') as boolean;
   const shorthandAddressLoaded = activeDesktopWebPage(blankView).view.webContents.getURL() === `${blankView.entryOrigin}/upload`;
   const reorderedBlankState = await handleDesktopWebViewAction(blankState.id, {
     type: "reorder-pages",
@@ -81,6 +86,7 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
   await waitForDesktopWebTitle(managed, "Upload fixture");
   const lastLocationRestored = activeDesktopWebPage(managed).view.webContents.getURL() === `${managed.entryOrigin}/upload`;
   const sessionStatePersisted = await activeDesktopWebPage(managed).view.webContents.executeJavaScript(`localStorage.getItem("viron-persist-smoke") === "present"`) as boolean;
+  const extensionAfterReopen = await activeDesktopWebPage(managed).view.webContents.executeJavaScript('document.documentElement.dataset.vironExtension === "loaded"') as boolean;
   const initialPage = activeDesktopWebPage(managed).view.webContents;
   const devToolsOpened = initialPage.isDevToolsOpened()
     ? Promise.resolve()
@@ -98,6 +104,7 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
   await resetDesktopWebView(managed);
   await waitForDesktopWebTitle(managed, `Logged ${username}`);
   const resetCleared = await activeDesktopWebPage(managed).view.webContents.executeJavaScript(`localStorage.getItem("viron-reset-smoke") === null`) as boolean;
+  const extensionAfterReset = await activeDesktopWebPage(managed).view.webContents.executeJavaScript('document.documentElement.dataset.vironExtension === "loaded"') as boolean;
 
   let uploadSelected: boolean | null = null;
   if (uploadPath) {
@@ -122,7 +129,20 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
   managed.notice = null;
   await downloadPage.executeJavaScript(`document.querySelector("a[download]").click()`);
   await waitForDesktopWebNotice(managed, "success");
-  return { opened: true, blankOpenedWithoutEntry: blankOpenedWithoutEntry && shorthandAddressLoaded && defaultAddressPreserved, manualRefillOnCurrentPage, sessionStatePersisted, lastLocationRestored, tabsReordered, inspectorOpened: true, resetCleared, uploadSelected, downloadTriggered: true };
+  let extensionManaged: boolean | null = null;
+  if (extensionPath) {
+    const before = listDesktopWebExtensions(managed.partition, managed.lastUrlKey);
+    const installed = await installDesktopWebExtensionFromDirectory(managed.partition, managed.lastUrlKey, extensionPath);
+    const added = installed.find((item) => !before.some((existing) => existing.installId === item.installId));
+    if (!added) throw new Error("Desktop extension was not installed");
+    await downloadPage.loadURL(`${managed.entryOrigin}/upload`);
+    await waitForDesktopWebTitle(managed, "Upload fixture");
+    const applied = await downloadPage.executeJavaScript('document.documentElement.dataset.vironInstalled === "loaded"') as boolean;
+    await removeDesktopWebExtension(managed.partition, managed.lastUrlKey, added.installId);
+    await downloadPage.loadURL(`${managed.entryOrigin}/upload`);
+    await waitForDesktopWebTitle(managed, "Upload fixture");
+    const removed = await downloadPage.executeJavaScript('document.documentElement.dataset.vironInstalled === undefined') as boolean;
+    extensionManaged = applied && removed;
+  }
+  return { opened: true, blankOpenedWithoutEntry: blankOpenedWithoutEntry && shorthandAddressLoaded && defaultAddressPreserved, manualRefillOnCurrentPage, sessionStatePersisted, lastLocationRestored, tabsReordered, inspectorOpened: true, resetCleared, extensionInjected: extensionLoaded && extensionOnFirstPage && extensionAfterReopen && extensionAfterReset, extensionManaged, uploadSelected, downloadTriggered: true };
 }
-
-

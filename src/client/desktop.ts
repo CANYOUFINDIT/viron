@@ -144,6 +144,15 @@ export interface DesktopWebViewAction {
   orderedPageIds?: string[];
 }
 
+export interface DesktopWebExtensionInfo {
+  installId: string;
+  extensionId: string;
+  name: string;
+  version: string;
+  loaded: boolean;
+  error: string;
+}
+
 export interface DesktopSshSessionState {
   id: string;
   connectionId: string;
@@ -570,6 +579,18 @@ export function desktopWebViewAction(id: string, action: DesktopWebViewAction): 
 
 export async function closeDesktopWebView(id: string): Promise<void> {
   await desktopBridge().closeWebView(id);
+}
+
+export function listDesktopWebExtensions(id: string): Promise<DesktopWebExtensionInfo[]> {
+  return desktopBridge().listWebExtensions(id);
+}
+
+export function installDesktopWebExtension(id: string): Promise<{ canceled: boolean; items: DesktopWebExtensionInfo[] }> {
+  return desktopBridge().installWebExtension(id);
+}
+
+export function removeDesktopWebExtension(id: string, installId: string): Promise<DesktopWebExtensionInfo[]> {
+  return desktopBridge().removeWebExtension(id, installId);
 }
 
 export function onDesktopWebViewState(listener: (state: DesktopWebViewState) => void): () => void {

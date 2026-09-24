@@ -48,6 +48,7 @@ import { DatabaseArtifactFileRuntime } from "../database-artifact-files.js";
 import { isDesktopDatabaseDownloadPath } from "../database-operations-runtime.js";
 import { probeDesktopTcpTarget } from "../connection-quality-probe.js";
 import { readState, shortcutPreferences, writeState } from "../app-state.js";
+import { installDesktopWebExtension, listDesktopWebExtensions, removeDesktopWebExtension } from "../web-extensions.js";
 import { activeEndpoint, currentExecutionMode } from "../endpoint-context.js";
 import { mainWindow } from "../window-host.js";
 import { installApplicationMenu } from "../app-menu.js";
@@ -575,5 +576,24 @@ export function registerDesktopCoreIpc(desktopUpdater: DesktopUpdater): void {
     trustedSender(event);
     await closeDesktopWebView(id);
     return { closed: true as const };
+  });
+
+  ipcMain.handle("viron:web-extension:list", (event, id: string) => {
+    trustedMainWindowSender(event);
+    const view = localWebView(id);
+    return listDesktopWebExtensions(view.partition, view.lastUrlKey);
+  });
+
+  ipcMain.handle("viron:web-extension:install", async (event, id: string) => {
+    trustedMainWindowSender(event);
+    const view = localWebView(id);
+    return await installDesktopWebExtension(view.partition, view.lastUrlKey);
+  });
+
+  ipcMain.handle("viron:web-extension:remove", async (event, id: string, installId: string) => {
+    trustedMainWindowSender(event);
+    if (typeof installId !== "string") throw new Error(tr("本机扩展标识无效"));
+    const view = localWebView(id);
+    return await removeDesktopWebExtension(view.partition, view.lastUrlKey, installId);
   });
 }

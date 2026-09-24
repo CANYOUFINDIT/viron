@@ -107,9 +107,11 @@ export function touchDesktopWebView(view: ManagedDesktopWebView): void {
 export function trackDesktopWebPartition(partition: Session): void {
   if (trackedWebPartitions.has(partition)) return;
   trackedWebPartitions.add(partition);
-  partition.webRequest.onBeforeRequest((_details, callback) => {
+  partition.webRequest.onBeforeRequest((details, callback) => {
     for (const view of desktopWebViews.values()) {
-      if (view.partition === partition && !view.closing) touchDesktopWebView(view);
+      if (view.partition === partition && !view.closing && [...view.pages.values()].some((page) => page.view.webContents.id === details.webContentsId)) {
+        touchDesktopWebView(view);
+      }
     }
     callback({});
   });

@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { createServer, type Server } from "node:http";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -132,6 +133,29 @@ describe.skipIf(!enabled)("macOS local Web", () => {
     const credential = await app.inject({ method: "POST", url: `/api/v1/web-entries/${entry.json().id}/credentials`, cookies, payload: { username: config.adminUsername, password: "target-password", note: "", customFields: {} } });
 
     const userData = join(directory, "electron-user-data");
+    const scopeKey = createHash("sha256").update(`http://127.0.0.1:${appPort}\0${login.json().user.id}\0${credential.json().id}`).digest("hex");
+    const installId = "f852548a-2c59-42fa-a089-18b647b97bc8";
+    const extensionDir = join(userData, "web-extensions", scopeKey, installId);
+    mkdirSync(extensionDir, { recursive: true });
+    writeFileSync(join(extensionDir, "manifest.json"), JSON.stringify({
+      manifest_version: 3,
+      name: "Viron smoke extension",
+      version: "1.0.0",
+      content_scripts: [{ matches: ["http://127.0.0.1/*"], js: ["content.js"], run_at: "document_end" }],
+    }));
+    writeFileSync(join(extensionDir, "content.js"), 'document.documentElement.dataset.vironExtension = "loaded";');
+    writeFileSync(join(userData, "desktop-state.json"), JSON.stringify({
+      webExtensions: { [scopeKey]: [{ installId, extensionId: "pending", name: "Viron smoke extension", version: "1.0.0" }] },
+    }));
+    const sourceExtension = join(directory, "extension-source");
+    mkdirSync(sourceExtension);
+    writeFileSync(join(sourceExtension, "manifest.json"), JSON.stringify({
+      manifest_version: 3,
+      name: "Viron installed extension",
+      version: "1.0.0",
+      content_scripts: [{ matches: ["http://127.0.0.1/*"], js: ["content.js"], run_at: "document_end" }],
+    }));
+    writeFileSync(join(sourceExtension, "content.js"), 'document.documentElement.dataset.vironInstalled = "loaded";');
     const uploadPath = join(directory, "upload fixture.txt");
     const downloadPath = join(directory, "artifact.txt");
     writeFileSync(uploadPath, "desktop upload contents");
@@ -147,13 +171,15 @@ describe.skipIf(!enabled)("macOS local Web", () => {
       VIRON_DESKTOP_SMOKE_WEB_CREDENTIAL_ID: credential.json().id,
       VIRON_DESKTOP_SMOKE_UPLOAD_PATH: uploadPath,
       VIRON_DESKTOP_SMOKE_DOWNLOAD_PATH: downloadPath,
+      VIRON_DESKTOP_SMOKE_EXTENSION_PATH: sourceExtension,
     });
     expect(result.code, result.stderr).toBe(0);
     const line = result.stdout.split("\n").find((item) => item.startsWith("VIRON_DESKTOP_SMOKE "));
     expect(line, result.stdout).toBeTruthy();
     const smoke = JSON.parse(line!.slice("VIRON_DESKTOP_SMOKE ".length));
-    expect(smoke.localWeb).toEqual({ opened: true, blankOpenedWithoutEntry: true, manualRefillOnCurrentPage: true, sessionStatePersisted: true, lastLocationRestored: true, tabsReordered: true, inspectorOpened: true, resetCleared: true, uploadSelected: true, downloadTriggered: true });
+    expect(smoke.localWeb).toEqual({ opened: true, blankOpenedWithoutEntry: true, manualRefillOnCurrentPage: true, sessionStatePersisted: true, lastLocationRestored: true, tabsReordered: true, inspectorOpened: true, resetCleared: true, extensionInjected: true, extensionManaged: true, uploadSelected: true, downloadTriggered: true });
+    expect(JSON.parse(readFileSync(join(userData, "desktop-state.json"), "utf8")).webExtensions[scopeKey][0].extensionId).not.toBe("pending");
     expect(basename(uploadPath)).toBe("upload fixture.txt");
     expect(readFileSync(downloadPath, "utf8")).toBe("desktop download contents");
-  });
+  }, 120_000);
 });

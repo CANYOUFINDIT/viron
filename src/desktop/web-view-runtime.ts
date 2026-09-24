@@ -50,6 +50,7 @@ import {
   handleDesktopHistoryNavigationMouse,
 } from "./history-navigation-runtime.js";
 import { mainWindow } from "./window-host.js";
+import { forgetDesktopWebExtensions, loadDesktopWebExtensions } from "./web-extensions.js";
 import {
   desktopWebActionScript,
   desktopWebSnapshotScript,
@@ -544,6 +545,7 @@ export async function openDesktopWebView(
     desktopWebViews.set(id, managed);
     trackDesktopWebPartition(webPartition);
     webPartition.on("will-download", managed.downloadListener);
+    await loadDesktopWebExtensions(webPartition, lastUrlKey);
     const page = createDesktopWebPage(managed, true);
     activateDesktopWebPage(managed, page.id);
     trackDesktopRuntime({
@@ -839,6 +841,8 @@ export async function reconcileDesktopWebMutation(context: DesktopWebMutationCon
     }
     await Promise.all(activeViews.map((view) => closeDesktopWebView(view.id)));
     if (method === "DELETE") forgetDesktopWebLastUrl(lastUrlKey);
-    await clearDesktopWebSession(desktopWebSession(context.endpoint, context.userId, credentialId));
+    const partition = desktopWebSession(context.endpoint, context.userId, credentialId);
+    if (method === "DELETE") await forgetDesktopWebExtensions(partition, lastUrlKey);
+    await clearDesktopWebSession(partition);
   }
 }

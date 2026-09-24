@@ -140,6 +140,9 @@ contextBridge.exposeInMainWorld("vironDesktop", {
   captureWebView: (id: string, mode?: string) => ipcRenderer.invoke("viron:web-view:capture", id, mode),
   webViewAction: (id: string, action: unknown) => ipcRenderer.invoke("viron:web-view:action", id, action),
   closeWebView: (id: string) => ipcRenderer.invoke("viron:web-view:close", id),
+  listWebExtensions: (id: string) => ipcRenderer.invoke("viron:web-extension:list", id),
+  installWebExtension: (id: string) => ipcRenderer.invoke("viron:web-extension:install", id),
+  removeWebExtension: (id: string, installId: string) => ipcRenderer.invoke("viron:web-extension:remove", id, installId),
   onWebViewState: (listener: (state: unknown) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, state: unknown) => listener(state);
     ipcRenderer.on("viron:web-view-state", handler);
