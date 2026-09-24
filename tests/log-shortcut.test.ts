@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   isLogPauseShortcut,
   isLogReconnectShortcut,
+  shouldHandleLogLineBreakShortcut,
   shouldHandleLogPauseShortcut,
   shouldHandleLogReconnectShortcut,
 } from "../src/client/log-shortcut.js";
@@ -52,6 +53,17 @@ describe("log pause shortcut", () => {
     expect(shouldHandleLogReconnectShortcut(shortcut, { reconnectAvailable: false })).toBe(false);
     expect(shouldHandleLogReconnectShortcut(shortcut, { reconnectAvailable: true, dialogVisible: true })).toBe(false);
     expect(shouldHandleLogReconnectShortcut(shortcut, { reconnectAvailable: true, interactiveTarget: true })).toBe(false);
+  });
+
+  it("inserts a line break only while streaming outside interactive controls", () => {
+    const shortcut = { key: "Enter" };
+    expect(shouldHandleLogLineBreakShortcut(shortcut, { streamActive: true })).toBe(true);
+    expect(shouldHandleLogLineBreakShortcut(shortcut, { streamActive: false })).toBe(false);
+    expect(shouldHandleLogLineBreakShortcut(shortcut, { streamActive: true, dialogVisible: true })).toBe(false);
+    expect(shouldHandleLogLineBreakShortcut(shortcut, { streamActive: true, interactiveTarget: true })).toBe(false);
+    expect(shouldHandleLogLineBreakShortcut({ key: "Enter", control: true }, { streamActive: true })).toBe(false);
+    expect(shouldHandleLogLineBreakShortcut({ key: "Enter", repeat: true }, { streamActive: true })).toBe(false);
+    expect(shouldHandleLogLineBreakShortcut({ key: "Enter", composing: true }, { streamActive: true })).toBe(false);
   });
 
   it("shows Enter directly in the reconnect button label", () => {

@@ -2171,7 +2171,7 @@ const generatedEnMessages: Record<string, string> = {
   "日志": "Log",
   "日志操作": "Log operations",
   "日志查看": "Log view",
-  "日志查看为只读操作，不会修改远程文件；界面最多保留 5000 行，下载导出当前屏幕结果。": "Log viewing is a read-only operation, and remote files will not be modified; the interface can retain up to 5,000 lines, and the current screen results can be downloaded and exported.",
+  "实时跟踪时按 Enter 可插入空行分隔日志；只修改当前屏幕，不会修改远程文件。界面最多保留 5000 行，下载导出当前屏幕结果。": "Press Enter while following logs to insert a blank line. This only changes the current view, not the remote file. The view retains up to 5,000 lines, and downloads export the current result.",
   "日志关键字过滤": "Log keyword filtering",
   "日志过滤": "Log filtering",
   "日志流 ID": "Log stream ID",

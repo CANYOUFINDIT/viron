@@ -38,7 +38,7 @@ import {
   tailLogLines,
 } from "../log-filter";
 import { renderHighlightedLogHtml } from "../log-highlighting";
-import { shouldHandleLogPauseShortcut, shouldHandleLogReconnectShortcut } from "../log-shortcut";
+import { shouldHandleLogLineBreakShortcut, shouldHandleLogPauseShortcut, shouldHandleLogReconnectShortcut } from "../log-shortcut";
 import { ServiceSocket } from "../service-socket";
 import DesktopExecutionNotice from "./DesktopExecutionNotice.vue";
 import TipIcon from "./TipIcon.vue";
@@ -564,6 +564,7 @@ async function restartStream(logId = selectedLogId.value) {
 function handleLogShortcut(event: KeyboardEvent) {
   if (!props.active) return;
   const target = event.target instanceof Element ? event.target : null;
+  const interactiveTarget = Boolean(target?.closest("a[href], button, input, textarea, select, [role='button'], [contenteditable]:not([contenteditable='false'])"));
   const selection = window.getSelection();
   const input = {
     key: event.key,
@@ -584,10 +585,19 @@ function handleLogShortcut(event: KeyboardEvent) {
     void stopStream();
     return;
   }
+  if (shouldHandleLogLineBreakShortcut(input, {
+    streamActive: Boolean(selectedLog.value) && streamActive.value,
+    dialogVisible: dialogVisible.value,
+    interactiveTarget,
+  })) {
+    event.preventDefault();
+    appendOutput(selectedLogId.value, "\n");
+    return;
+  }
   if (shouldHandleLogReconnectShortcut(input, {
     reconnectAvailable: Boolean(selectedLog.value) && (viewerStatus.value === "stopped" || viewerStatus.value === "error"),
     dialogVisible: dialogVisible.value,
-    interactiveTarget: Boolean(target?.closest("a[href], button, input, textarea, select, [role='button'], [contenteditable]:not([contenteditable='false'])")),
+    interactiveTarget,
   })) {
     event.preventDefault();
     void restartStream();
@@ -774,7 +784,7 @@ onBeforeUnmount(() => {
       </div>
 
       <footer class="log-viewer__footer">
-        <div><TipIcon :content="$t('日志查看为只读操作，不会修改远程文件；界面最多保留 5000 行，下载导出当前屏幕结果。')" placement="right" /><label><input v-model="highlightImportant" type="checkbox" />{{ $t('重点高亮') }}</label><label><input v-model="autoScroll" type="checkbox" />{{ $t('自动滚动') }}</label><span>{{ $t('显示') }} {{ lineCount }} {{ $t('行 / 保留') }} {{ rawLineCount }} {{ $t('行') }}</span></div>
+        <div><TipIcon :content="$t('实时跟踪时按 Enter 可插入空行分隔日志；只修改当前屏幕，不会修改远程文件。界面最多保留 5000 行，下载导出当前屏幕结果。')" placement="right" /><label><input v-model="highlightImportant" type="checkbox" />{{ $t('重点高亮') }}</label><label><input v-model="autoScroll" type="checkbox" />{{ $t('自动滚动') }}</label><span>{{ $t('显示') }} {{ lineCount }} {{ $t('行 / 保留') }} {{ rawLineCount }} {{ $t('行') }}</span></div>
       </footer>
     </main>
 

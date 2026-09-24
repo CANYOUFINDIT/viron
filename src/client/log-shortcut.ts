@@ -21,6 +21,12 @@ export interface LogReconnectShortcutContext {
   interactiveTarget?: boolean;
 }
 
+export interface LogLineBreakShortcutContext {
+  streamActive: boolean;
+  dialogVisible?: boolean;
+  interactiveTarget?: boolean;
+}
+
 export function isLogPauseShortcut(input: LogShortcutInput): boolean {
   return input.key.toLowerCase() === "c"
     && Boolean(input.control)
@@ -52,6 +58,13 @@ export function isLogReconnectShortcut(input: LogShortcutInput): boolean {
 export function shouldHandleLogReconnectShortcut(input: LogShortcutInput, context: LogReconnectShortcutContext): boolean {
   return isLogReconnectShortcut(input)
     && context.reconnectAvailable
+    && !context.dialogVisible
+    && !context.interactiveTarget;
+}
+
+export function shouldHandleLogLineBreakShortcut(input: LogShortcutInput, context: LogLineBreakShortcutContext): boolean {
+  return isLogReconnectShortcut(input)
+    && context.streamActive
     && !context.dialogVisible
     && !context.interactiveTarget;
 }
