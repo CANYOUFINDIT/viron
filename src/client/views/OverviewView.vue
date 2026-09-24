@@ -132,11 +132,24 @@ async function load() {
     environments.value = environmentResponse.items;
     const groupIds = new Set([FAVORITES_GROUP_ID, ...groups.value.map((group) => group.id), "ungrouped"]);
     if (!groupIds.has(activeGroup.value)) activeGroup.value = FAVORITES_GROUP_ID;
+    return true;
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : tr("加载环境失败"));
+    return false;
   } finally {
     loading.value = false;
   }
+}
+
+async function applyFilter() {
+  const searchKeyword = keyword.value.trim();
+  if (!(await load()) || !searchKeyword || keyword.value.trim() !== searchKeyword) return;
+  const firstGroup = groupedEnvironments.value.find((group) => group.items.length > 0);
+  if (!firstGroup) return;
+  activeGroup.value = firstGroup.id;
+  setGroupCollapsed(firstGroup.id, false);
+  await nextTick();
+  sectionElements.get(firstGroup.id)?.querySelector<HTMLElement>(".environment-card-shell")?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function resetEnvironmentForm() {
@@ -554,10 +567,10 @@ onMounted(load);
     </PageHeader>
 
     <section class="overview-commandbar" :aria-label="$t('环境筛选')">
-      <el-input v-model="keyword" clearable :placeholder="$t('搜索环境名称、别称或标签')" @clear="load" @keyup.enter="load">
+      <el-input v-model="keyword" clearable :placeholder="$t('搜索环境名称、别称或标签')" @clear="load" @keyup.enter="applyFilter">
         <template #prefix><Search :size="16" /></template>
       </el-input>
-      <el-button @click="load">{{ $t('应用筛选') }}</el-button>
+      <el-button @click="applyFilter">{{ $t('应用筛选') }}</el-button>
       <span>{{ keyword ? $t('找到 {0} 个环境', [environments.length]) : $t('共 {0} 个环境', [environments.length]) }}</span>
     </section>
 

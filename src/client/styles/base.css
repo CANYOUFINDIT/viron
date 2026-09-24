@@ -383,7 +383,7 @@ button { color: inherit; }
 .environment-group-sort-handle { justify-self: end; }
 .environment-group-sort-handle.is-section-handle { margin-left: -3px; }
 .environment-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 13px; }
-.environment-card-shell { min-width: 0; transition: opacity .15s ease, transform .15s ease; }
+.environment-card-shell { min-width: 0; scroll-margin-top: 72px; transition: opacity .15s ease, transform .15s ease; }
 .environment-card-shell.is-dragging { opacity: .38; transform: scale(.985); }
 .environment-card-shell.is-moving { pointer-events: none; opacity: .58; }
 .environment-card { --environment-card-accent: var(--teal-500); position: relative; min-height: 242px; height: 100%; border: 1px solid var(--ink-100); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-sm); display: flex; flex-direction: column; overflow: hidden; transition: transform var(--dur-short) var(--ease-out), border-color var(--dur-short) var(--ease-out); }
