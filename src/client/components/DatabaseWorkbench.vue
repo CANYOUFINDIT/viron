@@ -618,6 +618,7 @@ onBeforeUnmount(() => {
       </header>
 
       <div class="query-tabs">
+        <button v-if="!connectionPaneVisible && !queryFocused" class="database-navigation-restore" type="button" :aria-label="$t('显示导航窗格')" :title="$t('显示导航窗格')" @click="setConnectionPaneVisible(true)"><PanelLeftOpen :size="16" /></button>
         <button v-for="tab in tabs" :key="tab.id" :class="{ 'is-active': activeTabId === tab.id }" @click="activeTabId = tab.id"><HardDriveDownload v-if="tab.kind === 'utility' && tab.utilityCategory === 'backups'" :size="13" /><History v-else-if="tab.kind === 'automation'" :size="13" /><Server v-else-if="tab.kind === 'user'" :size="13" /><LayoutGrid v-else-if="tab.kind === 'model' || tab.kind === 'bi'" :size="13" /><TerminalSquare v-else-if="tab.kind === 'command-line'" :size="13" /><FileCode2 v-else-if="tab.kind === 'sql' || tab.kind === 'utility'" :size="13" /><Table2 v-else :size="13" /><span>{{ tab.title }}{{ queryTabDirty(tab) || tab.dirty ? ' *' : '' }}</span><i role="button" :aria-label="$t('关闭页签')" :title="$t('关闭页签')" @click.stop="closeTab(tab)"><X :size="12" /></i></button>
         <button class="new-query-tab" :aria-label="$t('新建查询')" :title="$t('新建查询')" @click="newTab()"><Plus :size="14" /></button>
       </div>

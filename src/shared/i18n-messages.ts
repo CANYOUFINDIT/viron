@@ -2985,6 +2985,7 @@ const generatedEnMessages: Record<string, string> = {
   "下载自动运行输出失败": "Download autorun output failed",
   "显示": "show",
   "显示 SSH 连接列表": "Show SSH connection list",
+  "显示导航窗格": "Show navigation pane",
   "显示连接列表": "Show connection list",
   "显示密码": "show password",
   "显示名称": "display name",

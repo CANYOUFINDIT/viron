@@ -1851,6 +1851,7 @@ button { color: inherit; }
 .query-tabs > button span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; font-size: 12px; }
 .query-tabs > button i { width: 18px; height: 18px; border-radius: 4px; display: grid; place-items: center; font-style: normal; }
 .query-tabs > button i:hover { background: #28393c; color: #fff; }
+.query-tabs > button.database-navigation-restore { flex: 0 0 36px; min-width: 36px; max-width: 36px; padding: 0; justify-content: center; color: #69c9ac; }
 .query-tabs > button.new-query-tab { min-width: 30px; width: 30px; padding: 0; justify-content: center; }
 .query-stage { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(190px, 43%) minmax(0, 1fr); }
 .query-stage.is-results-side { grid-template-columns: minmax(260px, 1fr) minmax(300px, 1fr); grid-template-rows: minmax(0, 1fr); }
