@@ -147,8 +147,10 @@ describe.skipIf(!enabled)("macOS local Web", () => {
     writeFileSync(join(userData, "desktop-state.json"), JSON.stringify({
       webExtensions: { [scopeKey]: [{ installId, extensionId: "pending", name: "Viron smoke extension", version: "1.0.0" }] },
     }));
-    const sourceExtension = join(directory, "extension-source");
-    mkdirSync(sourceExtension);
+    const chromeRoot = join(directory, "chrome-user-data");
+    const chromeExtensionId = "b".repeat(32);
+    const sourceExtension = join(chromeRoot, "Default", "Extensions", chromeExtensionId, "1.0.0_0");
+    mkdirSync(sourceExtension, { recursive: true });
     writeFileSync(join(sourceExtension, "manifest.json"), JSON.stringify({
       manifest_version: 3,
       name: "Viron installed extension",
@@ -171,7 +173,8 @@ describe.skipIf(!enabled)("macOS local Web", () => {
       VIRON_DESKTOP_SMOKE_WEB_CREDENTIAL_ID: credential.json().id,
       VIRON_DESKTOP_SMOKE_UPLOAD_PATH: uploadPath,
       VIRON_DESKTOP_SMOKE_DOWNLOAD_PATH: downloadPath,
-      VIRON_DESKTOP_SMOKE_EXTENSION_PATH: sourceExtension,
+      VIRON_DESKTOP_SMOKE_CHROME_ROOT: chromeRoot,
+      VIRON_DESKTOP_SMOKE_CHROME_EXTENSION_ID: chromeExtensionId,
     });
     expect(result.code, result.stderr).toBe(0);
     const line = result.stdout.split("\n").find((item) => item.startsWith("VIRON_DESKTOP_SMOKE "));

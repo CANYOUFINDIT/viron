@@ -143,6 +143,9 @@ contextBridge.exposeInMainWorld("vironDesktop", {
   listWebExtensions: (id: string) => ipcRenderer.invoke("viron:web-extension:list", id),
   installWebExtension: (id: string) => ipcRenderer.invoke("viron:web-extension:install", id),
   removeWebExtension: (id: string, installId: string) => ipcRenderer.invoke("viron:web-extension:remove", id, installId),
+  scanChromeExtensions: () => ipcRenderer.invoke("viron:web-extension:scan-chrome"),
+  importChromeExtension: (id: string, token: string) => ipcRenderer.invoke("viron:web-extension:import-chrome", id, token),
+  openChromeWebStore: () => ipcRenderer.invoke("viron:web-extension:open-store"),
   onWebViewState: (listener: (state: unknown) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, state: unknown) => listener(state);
     ipcRenderer.on("viron:web-view-state", handler);

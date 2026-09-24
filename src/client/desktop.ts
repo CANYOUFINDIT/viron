@@ -149,8 +149,17 @@ export interface DesktopWebExtensionInfo {
   extensionId: string;
   name: string;
   version: string;
+  chromeId?: string;
   loaded: boolean;
   error: string;
+}
+
+export interface DesktopChromeExtensionInfo {
+  token: string;
+  chromeId: string;
+  name: string;
+  version: string;
+  profile: string;
 }
 
 export interface DesktopSshSessionState {
@@ -591,6 +600,18 @@ export function installDesktopWebExtension(id: string): Promise<{ canceled: bool
 
 export function removeDesktopWebExtension(id: string, installId: string): Promise<DesktopWebExtensionInfo[]> {
   return desktopBridge().removeWebExtension(id, installId);
+}
+
+export function scanDesktopChromeExtensions(): Promise<DesktopChromeExtensionInfo[]> {
+  return desktopBridge().scanChromeExtensions();
+}
+
+export function importDesktopChromeExtension(id: string, token: string): Promise<DesktopWebExtensionInfo[]> {
+  return desktopBridge().importChromeExtension(id, token);
+}
+
+export function openChromeWebStore(): Promise<void> {
+  return desktopBridge().openChromeWebStore();
 }
 
 export function onDesktopWebViewState(listener: (state: DesktopWebViewState) => void): () => void {

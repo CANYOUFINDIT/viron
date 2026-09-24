@@ -120,6 +120,9 @@ interface Window {
     listWebExtensions(id: string): Promise<import("./desktop").DesktopWebExtensionInfo[]>;
     installWebExtension(id: string): Promise<{ canceled: boolean; items: import("./desktop").DesktopWebExtensionInfo[] }>;
     removeWebExtension(id: string, installId: string): Promise<import("./desktop").DesktopWebExtensionInfo[]>;
+    scanChromeExtensions(): Promise<import("./desktop").DesktopChromeExtensionInfo[]>;
+    importChromeExtension(id: string, token: string): Promise<import("./desktop").DesktopWebExtensionInfo[]>;
+    openChromeWebStore(): Promise<void>;
     onWebViewState(listener: (state: import("./desktop").DesktopWebViewState) => void): () => void;
     updateImmersiveNavigation(state: import("../shared/immersive-navigation").ImmersiveNavigationState | null): Promise<void>;
     onImmersiveNavigationAction(listener: (action: import("../shared/immersive-navigation").ImmersiveNavigationAction) => void): () => void;

@@ -4,12 +4,14 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { app, dialog, type Session } from "electron";
 import { readState, writeState } from "./app-state.js";
 import { translate as tr } from "./i18n.js";
+import { findChromeExtensions, type ChromeExtensionOnDisk } from "./chrome-extension-scan.js";
 
 interface InstalledWebExtension {
   installId: string;
   extensionId: string;
   name: string;
   version: string;
+  chromeId?: string;
 }
 
 export interface DesktopWebExtensionInfo extends InstalledWebExtension {
@@ -17,8 +19,17 @@ export interface DesktopWebExtensionInfo extends InstalledWebExtension {
   error: string;
 }
 
+export interface DesktopChromeExtensionInfo {
+  token: string;
+  chromeId: string;
+  name: string;
+  version: string;
+  profile: string;
+}
+
 const failedLoads = new Map<string, string>();
 const loadingSessions = new WeakMap<Session, Promise<void>>();
+const scannedChromeExtensions = new Map<string, { extension: ChromeExtensionOnDisk; expiresAt: number }>();
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SCOPE_PATTERN = /^[0-9a-f]{64}$/i;
 const MAX_EXTENSION_BYTES = 100 * 1024 * 1024;
@@ -93,6 +104,24 @@ export function listDesktopWebExtensions(partition: Session, scopeKey: string): 
   }));
 }
 
+export async function scanDesktopChromeExtensions(): Promise<DesktopChromeExtensionInfo[]> {
+  const now = Date.now();
+  for (const [token, entry] of scannedChromeExtensions) if (entry.expiresAt < now) scannedChromeExtensions.delete(token);
+  const smokeRoot = process.argv.includes("--smoke-test") ? process.env.VIRON_DESKTOP_SMOKE_CHROME_ROOT : undefined;
+  const found = await findChromeExtensions(smokeRoot);
+  return found.map((extension) => {
+    const token = randomUUID();
+    scannedChromeExtensions.set(token, { extension, expiresAt: now + 5 * 60_000 });
+    return { token, chromeId: extension.chromeId, name: extension.name, version: extension.version, profile: extension.profile };
+  });
+}
+
+export async function importDesktopChromeExtension(partition: Session, scopeKey: string, token: string): Promise<DesktopWebExtensionInfo[]> {
+  const scanned = scannedChromeExtensions.get(token);
+  if (!scanned || scanned.expiresAt < Date.now()) throw new Error(tr("Chrome 扩展列表已过期，请刷新后重试"));
+  return installDesktopWebExtensionFromDirectory(partition, scopeKey, scanned.extension.path, scanned.extension.chromeId);
+}
+
 export async function installDesktopWebExtension(partition: Session, scopeKey: string): Promise<{ canceled: boolean; items: DesktopWebExtensionInfo[] }> {
   await loadDesktopWebExtensions(partition, scopeKey);
   const selected = await dialog.showOpenDialog({
@@ -103,7 +132,8 @@ export async function installDesktopWebExtension(partition: Session, scopeKey: s
   return { canceled: false, items: await installDesktopWebExtensionFromDirectory(partition, scopeKey, selected.filePaths[0]) };
 }
 
-export async function installDesktopWebExtensionFromDirectory(partition: Session, scopeKey: string, directory: string): Promise<DesktopWebExtensionInfo[]> {
+export async function installDesktopWebExtensionFromDirectory(partition: Session, scopeKey: string, directory: string, chromeId?: string): Promise<DesktopWebExtensionInfo[]> {
+  if (chromeId && installedExtensions(scopeKey).some((item) => item.chromeId === chromeId)) throw new Error(tr("当前账号已添加此 Chrome 扩展"));
   const source = resolve(directory);
   await validateManifest(source);
   const root = extensionRoot(scopeKey);
@@ -132,7 +162,7 @@ export async function installDesktopWebExtensionFromDirectory(partition: Session
     await validateManifest(target);
     const extension = await partition.extensions.loadExtension(target);
     loadedExtensionId = extension.id;
-    const item: InstalledWebExtension = { installId, extensionId: extension.id, name: extension.name, version: extension.version };
+    const item: InstalledWebExtension = { installId, extensionId: extension.id, name: extension.name, version: extension.version, ...(chromeId ? { chromeId } : {}) };
     saveInstalledExtensions(scopeKey, [...installedExtensions(scopeKey), item]);
     return listDesktopWebExtensions(partition, scopeKey);
   } catch (error) {

@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 import { translate as tr } from "../i18n.js";
-import { installDesktopWebExtensionFromDirectory, listDesktopWebExtensions, removeDesktopWebExtension } from "../web-extensions.js";
+import { importDesktopChromeExtension, listDesktopWebExtensions, removeDesktopWebExtension, scanDesktopChromeExtensions } from "../web-extensions.js";
 import {
   activeDesktopWebPage,
   closeDesktopWebView,
@@ -32,7 +32,7 @@ export async function waitForDesktopWebNotice(view: ManagedDesktopWebView, type:
   throw new Error(tr("等待本机网页下载完成超时"));
 }
 
-export async function runDesktopWebSmoke(credentialId: string, username: string, uploadPath?: string, extensionPath?: string): Promise<{
+export async function runDesktopWebSmoke(credentialId: string, username: string, uploadPath?: string, chromeExtensionId?: string): Promise<{
   opened: boolean;
   blankOpenedWithoutEntry: boolean;
   manualRefillOnCurrentPage: boolean;
@@ -130,9 +130,11 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
   await downloadPage.executeJavaScript(`document.querySelector("a[download]").click()`);
   await waitForDesktopWebNotice(managed, "success");
   let extensionManaged: boolean | null = null;
-  if (extensionPath) {
+  if (chromeExtensionId) {
     const before = listDesktopWebExtensions(managed.partition, managed.lastUrlKey);
-    const installed = await installDesktopWebExtensionFromDirectory(managed.partition, managed.lastUrlKey, extensionPath);
+    const scanned = (await scanDesktopChromeExtensions()).find((item) => item.chromeId === chromeExtensionId);
+    if (!scanned) throw new Error("Chrome extension was not found");
+    const installed = await importDesktopChromeExtension(managed.partition, managed.lastUrlKey, scanned.token);
     const added = installed.find((item) => !before.some((existing) => existing.installId === item.installId));
     if (!added) throw new Error("Desktop extension was not installed");
     await downloadPage.loadURL(`${managed.entryOrigin}/upload`);

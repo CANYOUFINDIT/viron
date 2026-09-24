@@ -1,6 +1,6 @@
 <script setup lang="ts">import { translate as tr } from "../i18n";
 
-import { ArrowLeft, ArrowRight, Globe2, KeyRound, Laptop, LoaderCircle, Maximize2, Minimize2, Plus, Puzzle, RefreshCw, RotateCcw, ShieldAlert } from "@lucide/vue";
+import { ArrowLeft, ArrowRight, ExternalLink, FolderPlus, Globe2, KeyRound, Laptop, LoaderCircle, Maximize2, Minimize2, Plus, Puzzle, RefreshCw, RotateCcw, ShieldAlert } from "@lucide/vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from "vue";
 import { loadActiveConnections } from "../active-connections";
@@ -8,12 +8,15 @@ import {
   captureDesktopWebView,
   closeDesktopWebView,
   desktopWebViewAction,
+  importDesktopChromeExtension,
   installDesktopWebExtension,
   listDesktopWebExtensions,
   onDesktopWebViewState,
   onDesktopNativeViewPointerDown,
   openDesktopWebView,
+  openChromeWebStore,
   removeDesktopWebExtension,
+  scanDesktopChromeExtensions,
   setDesktopWebViewVisible,
   setDesktopWebViewPreviewing,
   updateDesktopWebViewBounds,
@@ -21,6 +24,7 @@ import {
   type DesktopWebViewBounds,
   type DesktopWebViewState,
   type DesktopWebExtensionInfo,
+  type DesktopChromeExtensionInfo,
 } from "../desktop";
 import { releaseAgentNativeOverlay, retainAgentNativeOverlay } from "../agent-host";
 import { desktopWebBoundsOutsideSidebar, rendererOverlayCoversSurface, type RectangleBounds } from "../desktop-web-overlay";
@@ -63,6 +67,9 @@ const resetting = ref(false);
 const extensionsOpen = ref(false);
 const extensionsBusy = ref(false);
 const extensions = ref<DesktopWebExtensionInfo[]>([]);
+const extensionsLoading = ref(false);
+const chromeExtensions = ref<DesktopChromeExtensionInfo[]>([]);
+const chromeScanning = ref(false);
 const previewFrame = ref("");
 const overlayBlocking = ref(false);
 const overlayFrame = ref("");
@@ -338,11 +345,57 @@ async function resetLogin() {
 
 async function openExtensions() {
   if (!state.value) return;
-  extensionsOpen.value = true;
+  extensions.value = [];
+  extensionsLoading.value = true;
   try {
     extensions.value = await listDesktopWebExtensions(state.value.id);
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : tr("读取本机扩展失败"));
+  } finally {
+    extensionsLoading.value = false;
+  }
+  await refreshChromeExtensions();
+}
+
+async function refreshChromeExtensions() {
+  if (chromeScanning.value) return;
+  chromeScanning.value = true;
+  try {
+    chromeExtensions.value = await scanDesktopChromeExtensions();
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : tr("扫描 Chrome 扩展失败"));
+  } finally {
+    chromeScanning.value = false;
+  }
+}
+
+async function importChromeExtension(extension: DesktopChromeExtensionInfo) {
+  if (!state.value || extensionsBusy.value) return;
+  extensionsBusy.value = true;
+  try {
+    extensions.value = await importDesktopChromeExtension(state.value.id, extension.token);
+    ElMessage.success(tr("扩展已安装；刷新页面后生效"));
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : tr("导入 Chrome 扩展失败"));
+  } finally {
+    extensionsBusy.value = false;
+  }
+}
+
+function chromeExtensionAdded(chromeId: string): boolean {
+  return extensions.value.some((extension) => extension.chromeId === chromeId);
+}
+
+function chromeProfileName(profile: string): string {
+  return profile === "Default" ? tr("默认资料") : profile.replace("Profile ", tr("资料 "));
+}
+
+async function openChromeStore() {
+  try {
+    await openChromeWebStore();
+    extensionsOpen.value = false;
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : tr("打开 Chrome 扩展商店失败"));
   }
 }
 
@@ -617,7 +670,36 @@ onBeforeUnmount(() => {
       </form>
       <div class="web-browser-tools">
         <button type="button" :aria-label="$t('新建空白标签页')" :title="$t('新建空白标签页')" @click="createBlankPage"><Plus :size="15" /></button>
-        <button type="button" :aria-label="$t('管理本机扩展')" :title="$t('管理当前 Web 账号的本机扩展')" :disabled="!state || Boolean(state.closedReason)" @click="openExtensions"><Puzzle :size="15" /></button>
+        <el-popover v-model:visible="extensionsOpen" placement="bottom-end" trigger="click" :width="360" :offset="8" @show="openExtensions">
+          <template #reference>
+            <button type="button" :aria-label="$t('本地拓展')" :title="$t('本地拓展')" :disabled="!state || Boolean(state.closedReason)"><Puzzle :size="15" /></button>
+          </template>
+          <div class="desktop-web-extensions">
+            <div class="desktop-web-extensions__heading"><strong>{{ $t('本地拓展') }}</strong><button type="button" :aria-label="$t('刷新 Chrome 拓展列表')" :title="$t('刷新 Chrome 拓展列表')" :disabled="chromeScanning" @click="refreshChromeExtensions"><RefreshCw :size="14" :class="{ 'is-spinning': chromeScanning }" /></button></div>
+            <div class="desktop-web-extensions__section">
+              <span class="desktop-web-extensions__label">{{ $t('当前账号') }}</span>
+              <span v-if="extensionsLoading" class="desktop-web-extensions__empty">{{ $t('正在加载…') }}</span>
+              <span v-else-if="!extensions.length" class="desktop-web-extensions__empty">{{ $t('尚未添加拓展') }}</span>
+              <div v-for="extension in extensions" :key="extension.installId" class="desktop-web-extensions__item">
+                <div><strong>{{ extension.name }}</strong><small>{{ extension.error || `v${extension.version}` }}</small></div>
+                <button type="button" :disabled="extensionsBusy" @click="removeExtension(extension)">{{ $t('移除') }}</button>
+              </div>
+            </div>
+            <div class="desktop-web-extensions__section desktop-web-extensions__chrome">
+              <span class="desktop-web-extensions__label">{{ $t('Chrome 中的拓展') }}</span>
+              <span v-if="chromeScanning" class="desktop-web-extensions__empty">{{ $t('正在扫描…') }}</span>
+              <span v-else-if="!chromeExtensions.length" class="desktop-web-extensions__empty">{{ $t('未找到 Chrome 拓展') }}</span>
+              <div v-for="extension in chromeExtensions" :key="extension.token" class="desktop-web-extensions__item">
+                <div><strong>{{ extension.name }}</strong><small>{{ chromeProfileName(extension.profile) }} · v{{ extension.version }}</small></div>
+                <button type="button" :disabled="extensionsBusy || chromeExtensionAdded(extension.chromeId)" @click="importChromeExtension(extension)">{{ chromeExtensionAdded(extension.chromeId) ? $t('已添加') : $t('导入') }}</button>
+              </div>
+            </div>
+            <div class="desktop-web-extensions__actions">
+              <button type="button" :disabled="extensionsBusy" @click="installExtension"><FolderPlus :size="15" />{{ $t('导入文件夹') }}</button>
+              <button type="button" :title="$t('在 Chrome 安装后，返回刷新并导入')" @click="openChromeStore"><ExternalLink :size="14" />{{ $t('Chrome 商店') }}</button>
+            </div>
+          </div>
+        </el-popover>
         <span v-if="state?.certificateError" class="desktop-web-view-status is-certificate-error-status" :title="$t('页面证书校验失败')"><ShieldAlert :size="15" /></span>
         <span v-else-if="state?.loading" class="desktop-web-view-status" :title="$t('本机页面加载中')"><LoaderCircle :size="14" class="is-spinning" /></span>
         <span v-else class="desktop-web-view-status is-local" :title="state?.autofillMessage || $t('页面由当前电脑本机直接访问')"><Laptop :size="14" /></span>
@@ -657,19 +739,6 @@ onBeforeUnmount(() => {
         <button type="button" @click="reconnect">{{ $t('重新连接') }}</button>
       </div>
     </div>
-    <el-dialog v-model="extensionsOpen" :title="$t('本机 Chrome 扩展')" width="min(480px, 92vw)" append-to-body>
-      <div class="desktop-web-extensions">
-        <p>{{ $t('扩展只安装在当前电脑、当前 Web 账号的隔离浏览器中，不会保存到服务端。请选择已解压且可信的扩展目录；Electron 仅支持部分 Chrome 扩展功能。') }}</p>
-        <div v-if="!extensions.length" class="desktop-web-extensions__empty">{{ $t('当前账号尚未安装扩展') }}</div>
-        <div v-for="extension in extensions" :key="extension.installId" class="desktop-web-extensions__item">
-          <div><strong>{{ extension.name }}</strong><span>v{{ extension.version }}</span><small v-if="!extension.loaded">{{ extension.error || $t('扩展未加载') }}</small></div>
-          <button type="button" :disabled="extensionsBusy" @click="removeExtension(extension)">{{ $t('移除') }}</button>
-        </div>
-        <button type="button" class="desktop-web-extensions__install" :disabled="extensionsBusy" @click="installExtension">
-          <Plus :size="15" />{{ $t('从本机目录安装') }}
-        </button>
-      </div>
-    </el-dialog>
   </section>
 </template>
 
@@ -689,14 +758,22 @@ onBeforeUnmount(() => {
 .web-browser-certificate-actions { display: flex; align-items: center; gap: 8px; }
 .web-browser-certificate-actions button.is-secondary { border-color: #9aa0a6; background: #fff; color: #5f6368; }
 .web-browser-certificate-actions button.is-secondary:hover { border-color: #5f6368; background: #f8f9fa; }
-.desktop-web-extensions { display: grid; gap: 12px; }
-.desktop-web-extensions p { margin: 0 0 4px; color: var(--ink-500); line-height: 1.6; font-size: 13px; }
-.desktop-web-extensions__empty { padding: 20px; text-align: center; color: var(--ink-400); background: var(--surface-50, #f7f9f8); border-radius: 8px; }
-.desktop-web-extensions__item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--line-200, #e1e8e5); border-radius: 8px; }
+.desktop-web-extensions { display: grid; gap: 12px; color: var(--ink-900); }
+.desktop-web-extensions__heading { display: flex; align-items: center; justify-content: space-between; padding: 2px 2px 0; }
+.desktop-web-extensions__heading strong { font-size: 15px; }
+.desktop-web-extensions__heading button { display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 7px; background: transparent; color: var(--ink-500); cursor: pointer; }
+.desktop-web-extensions__heading button:hover { background: var(--surface-50, #f3f6f5); }
+.desktop-web-extensions__section { display: grid; gap: 5px; }
+.desktop-web-extensions__label { padding: 0 2px; color: var(--ink-400); font-size: 11px; font-weight: 600; }
+.desktop-web-extensions__empty { padding: 8px 2px; color: var(--ink-400); font-size: 12px; }
+.desktop-web-extensions__chrome { max-height: 250px; overflow-y: auto; border-top: 1px solid var(--line-200, #e1e8e5); padding-top: 10px; }
+.desktop-web-extensions__item { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 42px; padding: 5px 7px; border-radius: 7px; }
+.desktop-web-extensions__item:hover { background: var(--surface-50, #f3f6f5); }
 .desktop-web-extensions__item div { display: grid; gap: 2px; min-width: 0; }
-.desktop-web-extensions__item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.desktop-web-extensions__item span, .desktop-web-extensions__item small { color: var(--ink-400); font-size: 12px; }
-.desktop-web-extensions__item button, .desktop-web-extensions__install { border: 0; background: none; color: var(--teal-600); cursor: pointer; }
-.desktop-web-extensions__item button:disabled, .desktop-web-extensions__install:disabled { opacity: .45; cursor: not-allowed; }
-.desktop-web-extensions__install { display: inline-flex; align-items: center; gap: 6px; justify-self: start; padding: 8px 0; font-weight: 600; }
+.desktop-web-extensions__item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; }
+.desktop-web-extensions__item small { overflow: hidden; color: var(--ink-400); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.desktop-web-extensions__item button { flex: none; border: 0; background: none; color: var(--teal-600); font-size: 12px; cursor: pointer; }
+.desktop-web-extensions__item button:disabled, .desktop-web-extensions__actions button:disabled { opacity: .45; cursor: not-allowed; }
+.desktop-web-extensions__actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; border-top: 1px solid var(--line-200, #e1e8e5); padding-top: 10px; }
+.desktop-web-extensions__actions button { display: inline-flex; align-items: center; gap: 5px; padding: 6px 2px; border: 0; background: none; color: var(--teal-600); font-size: 12px; font-weight: 600; cursor: pointer; }
 </style>

@@ -26,7 +26,7 @@ export interface DesktopStateFile {
   systemKeyAccessConsentVersion?: number;
   shortcutOverrides?: ShortcutOverrides;
   webLastUrls?: Record<string, string>;
-  webExtensions?: Record<string, Array<{ installId: string; extensionId: string; name: string; version: string }>>;
+  webExtensions?: Record<string, Array<{ installId: string; extensionId: string; name: string; version: string; chromeId?: string }>>;
 }
 
 export function statePath(): string {

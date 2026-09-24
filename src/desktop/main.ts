@@ -456,7 +456,7 @@ async function createWindow(): Promise<void> {
           if (smokeUsername && smokePassword && (smokeCredentialId || smokeSshConnectionId || (smokeLogId && smokeLogEnvironmentId) || smokeDatabaseConnectionId || (smokeInspectionSshConnectionId && smokeInspectionDatabaseConnectionId))) {
             await endpointJson("/api/v1/auth/login", { method: "POST", body: { username: smokeUsername, password: smokePassword } });
             desktopSmokeStage("login-ready");
-            if (smokeCredentialId) localWeb = await runDesktopWebSmoke(smokeCredentialId, smokeUsername, process.env.VIRON_DESKTOP_SMOKE_UPLOAD_PATH, process.env.VIRON_DESKTOP_SMOKE_EXTENSION_PATH);
+            if (smokeCredentialId) localWeb = await runDesktopWebSmoke(smokeCredentialId, smokeUsername, process.env.VIRON_DESKTOP_SMOKE_UPLOAD_PATH, process.env.VIRON_DESKTOP_SMOKE_CHROME_EXTENSION_ID);
             if (smokeSshConnectionId) localSsh = await runDesktopSshSmoke(smokeSshConnectionId);
             if (smokeLogId && smokeLogEnvironmentId) localLogs = await runDesktopLogSmoke(smokeLogEnvironmentId, smokeLogId);
             if (smokeDatabaseConnectionId) {

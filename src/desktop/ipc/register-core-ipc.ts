@@ -48,7 +48,7 @@ import { DatabaseArtifactFileRuntime } from "../database-artifact-files.js";
 import { isDesktopDatabaseDownloadPath } from "../database-operations-runtime.js";
 import { probeDesktopTcpTarget } from "../connection-quality-probe.js";
 import { readState, shortcutPreferences, writeState } from "../app-state.js";
-import { installDesktopWebExtension, listDesktopWebExtensions, removeDesktopWebExtension } from "../web-extensions.js";
+import { importDesktopChromeExtension, installDesktopWebExtension, listDesktopWebExtensions, removeDesktopWebExtension, scanDesktopChromeExtensions } from "../web-extensions.js";
 import { activeEndpoint, currentExecutionMode } from "../endpoint-context.js";
 import { mainWindow } from "../window-host.js";
 import { installApplicationMenu } from "../app-menu.js";
@@ -595,5 +595,22 @@ export function registerDesktopCoreIpc(desktopUpdater: DesktopUpdater): void {
     if (typeof installId !== "string") throw new Error(tr("本机扩展标识无效"));
     const view = localWebView(id);
     return await removeDesktopWebExtension(view.partition, view.lastUrlKey, installId);
+  });
+
+  ipcMain.handle("viron:web-extension:scan-chrome", async (event) => {
+    trustedMainWindowSender(event);
+    return await scanDesktopChromeExtensions();
+  });
+
+  ipcMain.handle("viron:web-extension:import-chrome", async (event, id: string, token: string) => {
+    trustedMainWindowSender(event);
+    if (typeof token !== "string") throw new Error(tr("Chrome 扩展选择无效"));
+    const view = localWebView(id);
+    return await importDesktopChromeExtension(view.partition, view.lastUrlKey, token);
+  });
+
+  ipcMain.handle("viron:web-extension:open-store", async (event) => {
+    trustedMainWindowSender(event);
+    await shell.openExternal("https://chromewebstore.google.com/");
   });
 }
