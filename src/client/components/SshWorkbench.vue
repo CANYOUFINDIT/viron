@@ -52,6 +52,7 @@ import { session as adminSession } from "../session";
 import { onAppShortcut } from "../keyboard-shortcuts";
 import { createSftpOpenRequest, type SftpOpenRequest } from "../sftp";
 import { rememberActiveConnectionOrigin } from "../active-connection-origin";
+import { WORKBENCH_SIDEBAR_COLLAPSE_THRESHOLD, WORKBENCH_SIDEBAR_RESTORE_WIDTH } from "../workbench-sidebar-width";
 import ConnectionEditDialog from "./ConnectionEditDialog.vue";
 import SshCommandHistoryPanel from "./SshCommandHistoryPanel.vue";
 import SshTerminalPane from "./SshTerminalPane.vue";
@@ -250,7 +251,7 @@ function restorePreferences() {
     if (value.fontSize && value.fontScaleVersion === terminalFontScaleVersion) {
       fontSize.value = Math.max(10, Math.min(22, value.fontSize));
     }
-    if (value.connectionPaneWidth) connectionPaneWidth.value = Math.max(220, Math.min(520, value.connectionPaneWidth));
+    if (value.connectionPaneWidth) connectionPaneWidth.value = Math.max(WORKBENCH_SIDEBAR_COLLAPSE_THRESHOLD + 1, Math.min(520, value.connectionPaneWidth));
     if (typeof value.connectionPaneVisible === "boolean") connectionPaneVisible.value = value.connectionPaneVisible;
     if (typeof value.historyOpen === "boolean") historyOpen.value = value.historyOpen;
     activeByPane.value = value.activeByPane ?? {};
@@ -851,25 +852,56 @@ function startResize(axis: "x" | "y", event: PointerEvent) {
 
 function setConnectionPaneWidth(value: number) {
   const maxWidth = Math.min(520, (workbenchElement.value?.getBoundingClientRect().width ?? 1040) * .55);
-  connectionPaneWidth.value = Math.round(Math.max(220, Math.min(maxWidth, value)));
+  connectionPaneWidth.value = Math.round(Math.max(WORKBENCH_SIDEBAR_COLLAPSE_THRESHOLD + 1, Math.min(maxWidth, value)));
 }
 
 function startConnectionPaneResize(event: PointerEvent) {
+  if (!event.isPrimary || event.button !== 0) return;
   event.preventDefault();
   const bounds = workbenchElement.value?.getBoundingClientRect();
   if (!bounds) return;
-  const move = (moveEvent: PointerEvent) => setConnectionPaneWidth(moveEvent.clientX - bounds.left);
-  const finish = () => {
+  const pointerId = event.pointerId;
+  const restoreWidth = Math.max(WORKBENCH_SIDEBAR_RESTORE_WIDTH, connectionPaneWidth.value);
+  const cleanup = () => {
     document.removeEventListener("pointermove", move);
     document.removeEventListener("pointerup", finish);
+    document.removeEventListener("pointercancel", cancel);
+  };
+  const collapse = () => {
+    cleanup();
+    connectionPaneWidth.value = restoreWidth;
+    setConnectionPaneVisible(false);
+  };
+  const move = (moveEvent: PointerEvent) => {
+    if (moveEvent.pointerId !== pointerId) return;
+    const width = moveEvent.clientX - bounds.left;
+    if (width <= WORKBENCH_SIDEBAR_COLLAPSE_THRESHOLD) collapse();
+    else setConnectionPaneWidth(width);
+  };
+  const finish = (upEvent: PointerEvent) => {
+    if (upEvent.pointerId !== pointerId) return;
+    if (upEvent.clientX - bounds.left <= WORKBENCH_SIDEBAR_COLLAPSE_THRESHOLD) {
+      collapse();
+      return;
+    }
+    setConnectionPaneWidth(upEvent.clientX - bounds.left);
+    cleanup();
     persist();
   };
+  const cancel = () => { cleanup(); persist(); };
   document.addEventListener("pointermove", move);
-  document.addEventListener("pointerup", finish, { once: true });
+  document.addEventListener("pointerup", finish);
+  document.addEventListener("pointercancel", cancel, { once: true });
 }
 
 function resizeConnectionPane(delta: number) {
-  setConnectionPaneWidth(connectionPaneWidth.value + delta);
+  const width = connectionPaneWidth.value + delta;
+  if (width <= WORKBENCH_SIDEBAR_COLLAPSE_THRESHOLD) {
+    connectionPaneWidth.value = Math.max(WORKBENCH_SIDEBAR_RESTORE_WIDTH, connectionPaneWidth.value);
+    setConnectionPaneVisible(false);
+    return;
+  }
+  setConnectionPaneWidth(width);
   persist();
 }
 
@@ -990,7 +1022,7 @@ onBeforeUnmount(() => {
       </div>
     </aside>
 
-    <button v-if="connectionPaneVisible" class="workbench-sidebar-resizer" type="button" role="separator" aria-orientation="vertical" :aria-label="$t('调整 SSH 连接列表宽度')" :aria-valuenow="connectionPaneWidth" @pointerdown="startConnectionPaneResize" @keydown.left.prevent="resizeConnectionPane(-20)" @keydown.right.prevent="resizeConnectionPane(20)"><span></span></button>
+    <button v-if="connectionPaneVisible" class="workbench-sidebar-resizer" type="button" role="separator" aria-orientation="vertical" :aria-label="$t('调整 SSH 连接列表宽度')" :aria-valuemin="WORKBENCH_SIDEBAR_COLLAPSE_THRESHOLD + 1" :aria-valuenow="connectionPaneWidth" @pointerdown="startConnectionPaneResize" @keydown.left.prevent="resizeConnectionPane(-20)" @keydown.right.prevent="resizeConnectionPane(20)"><span></span></button>
 
     <main class="terminal-workspace">
       <button v-if="!connectionPaneVisible" class="workbench-sidebar-restore" type="button" :aria-label="$t('显示 SSH 连接列表')" :title="$t('显示连接列表')" @click="setConnectionPaneVisible(true)"><PanelLeftOpen :size="16" /></button>

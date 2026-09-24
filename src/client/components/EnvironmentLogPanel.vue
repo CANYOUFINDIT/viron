@@ -41,6 +41,7 @@ import {
 import { renderHighlightedLogHtml } from "../log-highlighting";
 import { shouldHandleLogLineBreakShortcut, shouldHandleLogPauseShortcut, shouldHandleLogReconnectShortcut } from "../log-shortcut";
 import { ServiceSocket } from "../service-socket";
+import { WORKBENCH_SIDEBAR_COLLAPSE_THRESHOLD, WORKBENCH_SIDEBAR_RESTORE_WIDTH } from "../workbench-sidebar-width";
 import DesktopExecutionNotice from "./DesktopExecutionNotice.vue";
 import TipIcon from "./TipIcon.vue";
 import WorkbenchConnectionActions from "./WorkbenchConnectionActions.vue";
@@ -137,7 +138,8 @@ const logConnectionActions = [
   { key: "delete", label: tr("删除日志配置"), icon: Trash2, divided: true, danger: true },
 ];
 let catalogResizeMove: ((event: PointerEvent) => void) | null = null;
-let catalogResizeFinish: (() => void) | null = null;
+let catalogResizeFinish: ((event: PointerEvent) => void) | null = null;
+let catalogResizeCancel: (() => void) | null = null;
 let stopDesktopLogEvents: (() => void) | null = null;
 
 const form = reactive({ name: "", sshConnectionId: "", filePaths: [""] as string[] });
@@ -612,34 +614,54 @@ function clearOutput(logId = selectedLogId.value) {
 
 function setCatalogWidth(value: number) {
   const maxWidth = Math.min(520, (panelElement.value?.getBoundingClientRect().width ?? 1040) * .55);
-  catalogWidth.value = Math.round(Math.max(220, Math.min(maxWidth, value)));
+  catalogWidth.value = Math.round(Math.max(WORKBENCH_SIDEBAR_COLLAPSE_THRESHOLD + 1, Math.min(maxWidth, value)));
 }
 
 function finishCatalogResize() {
   if (catalogResizeMove) document.removeEventListener("pointermove", catalogResizeMove);
   if (catalogResizeFinish) {
     document.removeEventListener("pointerup", catalogResizeFinish);
-    document.removeEventListener("pointercancel", catalogResizeFinish);
   }
+  if (catalogResizeCancel) document.removeEventListener("pointercancel", catalogResizeCancel);
   catalogResizeMove = null;
   catalogResizeFinish = null;
+  catalogResizeCancel = null;
 }
 
 function startCatalogResize(event: PointerEvent) {
-  if (event.button !== 0) return;
+  if (!event.isPrimary || event.button !== 0) return;
   event.preventDefault();
   const bounds = panelElement.value?.getBoundingClientRect();
   if (!bounds) return;
   finishCatalogResize();
-  catalogResizeMove = (moveEvent) => setCatalogWidth(moveEvent.clientX - bounds.left);
-  catalogResizeFinish = finishCatalogResize;
+  const pointerId = event.pointerId;
+  const restoreWidth = Math.max(WORKBENCH_SIDEBAR_RESTORE_WIDTH, catalogWidth.value);
+  catalogResizeMove = (moveEvent) => {
+    if (moveEvent.pointerId !== pointerId) return;
+    const width = moveEvent.clientX - bounds.left;
+    if (width <= WORKBENCH_SIDEBAR_COLLAPSE_THRESHOLD) {
+      finishCatalogResize();
+      catalogWidth.value = restoreWidth;
+      catalogVisible.value = false;
+    } else setCatalogWidth(width);
+  };
+  catalogResizeFinish = (upEvent) => {
+    if (upEvent.pointerId !== pointerId) return;
+    catalogResizeMove?.(upEvent);
+    finishCatalogResize();
+  };
+  catalogResizeCancel = finishCatalogResize;
   document.addEventListener("pointermove", catalogResizeMove);
-  document.addEventListener("pointerup", catalogResizeFinish, { once: true });
-  document.addEventListener("pointercancel", catalogResizeFinish, { once: true });
+  document.addEventListener("pointerup", catalogResizeFinish);
+  document.addEventListener("pointercancel", catalogResizeCancel);
 }
 
 function resizeCatalog(delta: number) {
-  setCatalogWidth(catalogWidth.value + delta);
+  const width = catalogWidth.value + delta;
+  if (width <= WORKBENCH_SIDEBAR_COLLAPSE_THRESHOLD) {
+    catalogWidth.value = Math.max(WORKBENCH_SIDEBAR_RESTORE_WIDTH, catalogWidth.value);
+    catalogVisible.value = false;
+  } else setCatalogWidth(width);
 }
 
 async function stopAllStreams() {
@@ -727,7 +749,7 @@ onBeforeUnmount(() => {
       </div>
     </aside>
 
-    <button v-if="catalogVisible" class="log-catalog-resizer" type="button" role="separator" aria-orientation="vertical" :aria-label="$t('调整日志配置列表宽度')" aria-valuemin="220" aria-valuemax="520" :aria-valuenow="catalogWidth" @pointerdown="startCatalogResize" @keydown.left.prevent="resizeCatalog(-20)" @keydown.right.prevent="resizeCatalog(20)"><span></span></button>
+    <button v-if="catalogVisible" class="log-catalog-resizer" type="button" role="separator" aria-orientation="vertical" :aria-label="$t('调整日志配置列表宽度')" :aria-valuemin="WORKBENCH_SIDEBAR_COLLAPSE_THRESHOLD + 1" aria-valuemax="520" :aria-valuenow="catalogWidth" @pointerdown="startCatalogResize" @keydown.left.prevent="resizeCatalog(-20)" @keydown.right.prevent="resizeCatalog(20)"><span></span></button>
 
     <main v-if="!executionEnabled" class="log-viewer log-viewer--execution-disabled">
       <button v-if="!catalogVisible" class="log-catalog-restore" type="button" :aria-label="$t('显示日志配置列表')" :title="$t('显示配置列表')" @click="catalogVisible = true"><PanelLeftOpen :size="16" /></button>

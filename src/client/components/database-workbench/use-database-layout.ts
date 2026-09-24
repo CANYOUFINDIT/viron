@@ -1,4 +1,5 @@
 import { computed, onScopeDispose, ref } from "vue";
+import { WORKBENCH_SIDEBAR_COLLAPSE_THRESHOLD, WORKBENCH_SIDEBAR_RESTORE_WIDTH } from "../../workbench-sidebar-width";
 import type { DatabaseWorkbenchProps } from "./types";
 
 export function useDatabaseLayout(props: Readonly<DatabaseWorkbenchProps>) {
@@ -34,7 +35,7 @@ export function useDatabaseLayout(props: Readonly<DatabaseWorkbenchProps>) {
         informationPaneVisible?: boolean;
         queryResultLayout?: "below" | "right";
       };
-      if (value.connectionPaneWidth) connectionPaneWidth.value = Math.max(220, Math.min(520, value.connectionPaneWidth));
+      if (value.connectionPaneWidth) connectionPaneWidth.value = Math.max(WORKBENCH_SIDEBAR_COLLAPSE_THRESHOLD + 1, Math.min(520, value.connectionPaneWidth));
       if (value.explorerPaneWidth) explorerPaneWidth.value = Math.max(220, Math.min(420, value.explorerPaneWidth));
       if (typeof value.informationPaneVisible === "boolean") informationPaneVisible.value = value.informationPaneVisible;
       if (value.queryResultLayout === "below" || value.queryResultLayout === "right") queryResultLayout.value = value.queryResultLayout;
@@ -45,7 +46,7 @@ export function useDatabaseLayout(props: Readonly<DatabaseWorkbenchProps>) {
 
   function clampConnectionPaneWidth(value: number) {
     const maxWidth = Math.min(520, (workbenchElement.value?.getBoundingClientRect().width ?? 1040) * .5);
-    return Math.round(Math.max(220, Math.min(maxWidth, value)));
+    return Math.round(Math.max(WORKBENCH_SIDEBAR_COLLAPSE_THRESHOLD + 1, Math.min(maxWidth, value)));
   }
 
   function setConnectionPaneWidth(value: number) {
@@ -62,7 +63,8 @@ export function useDatabaseLayout(props: Readonly<DatabaseWorkbenchProps>) {
 
     const pointerId = event.pointerId;
     const maxWidth = Math.min(520, bounds.width * .5);
-    const widthAt = (clientX: number) => Math.round(Math.max(220, Math.min(maxWidth, clientX - bounds.left)));
+    const restoreWidth = Math.max(WORKBENCH_SIDEBAR_RESTORE_WIDTH, connectionPaneWidth.value);
+    const widthAt = (clientX: number) => Math.round(Math.max(WORKBENCH_SIDEBAR_COLLAPSE_THRESHOLD + 1, Math.min(maxWidth, clientX - bounds.left)));
     let nextWidth = connectionPaneWidth.value;
     let frame = 0;
     const resizeGrid = () => {
@@ -72,6 +74,10 @@ export function useDatabaseLayout(props: Readonly<DatabaseWorkbenchProps>) {
     };
     const move = (moveEvent: PointerEvent) => {
       if (moveEvent.pointerId !== pointerId) return;
+      if (moveEvent.clientX - bounds.left <= WORKBENCH_SIDEBAR_COLLAPSE_THRESHOLD) {
+        collapse();
+        return;
+      }
       nextWidth = widthAt(moveEvent.clientX);
       if (!frame) frame = requestAnimationFrame(resizeGrid);
     };
@@ -83,8 +89,18 @@ export function useDatabaseLayout(props: Readonly<DatabaseWorkbenchProps>) {
       window.removeEventListener("blur", cancel);
       stopConnectionPaneResize = null;
     };
+    const collapse = () => {
+      cleanup();
+      workbench.style.setProperty("--connection-pane-width", `${restoreWidth}px`);
+      connectionPaneWidth.value = restoreWidth;
+      setConnectionPaneVisible(false);
+    };
     const finish = (upEvent: PointerEvent) => {
       if (upEvent.pointerId !== pointerId) return;
+      if (upEvent.clientX - bounds.left <= WORKBENCH_SIDEBAR_COLLAPSE_THRESHOLD) {
+        collapse();
+        return;
+      }
       const width = widthAt(upEvent.clientX);
       cleanup();
       workbench.style.setProperty("--connection-pane-width", `${width}px`);
@@ -105,7 +121,13 @@ export function useDatabaseLayout(props: Readonly<DatabaseWorkbenchProps>) {
   onScopeDispose(() => stopConnectionPaneResize?.());
 
   function resizeConnectionPane(delta: number) {
-    setConnectionPaneWidth(connectionPaneWidth.value + delta);
+    const width = connectionPaneWidth.value + delta;
+    if (width <= WORKBENCH_SIDEBAR_COLLAPSE_THRESHOLD) {
+      connectionPaneWidth.value = Math.max(WORKBENCH_SIDEBAR_RESTORE_WIDTH, connectionPaneWidth.value);
+      setConnectionPaneVisible(false);
+      return;
+    }
+    setConnectionPaneWidth(width);
     persistWorkbenchPreferences();
   }
 

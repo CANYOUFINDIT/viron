@@ -591,7 +591,7 @@ onBeforeUnmount(() => {
       </footer>
     </aside>
 
-    <button v-if="connectionPaneVisible" class="workbench-sidebar-resizer" type="button" role="separator" aria-orientation="vertical" :aria-label="$t('调整导航窗格宽度')" :aria-valuenow="connectionPaneWidth" @pointerdown="startConnectionPaneResize" @keydown.left.prevent="resizeConnectionPane(-20)" @keydown.right.prevent="resizeConnectionPane(20)"><span></span></button>
+    <button v-if="connectionPaneVisible" class="workbench-sidebar-resizer" type="button" role="separator" aria-orientation="vertical" :aria-label="$t('调整导航窗格宽度')" :aria-valuemin="121" :aria-valuenow="connectionPaneWidth" @pointerdown="startConnectionPaneResize" @keydown.left.prevent="resizeConnectionPane(-20)" @keydown.right.prevent="resizeConnectionPane(20)"><span></span></button>
 
     <main class="sql-workspace" :class="{ 'is-sql-tab': activeTab?.kind === 'sql' }">
       <div v-if="selectedConnection && !databaseConnected && !connecting" class="database-disconnected-banner"><Unplug :size="14" /><span>{{ $t('连接已断开，当前查询页签和结果仍保留。') }}</span><button type="button" @click="selectConnection(selectedConnection)">{{ $t('重新连接') }}</button></div>

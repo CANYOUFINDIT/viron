@@ -45,6 +45,21 @@ describe("database navigation pane resize", () => {
     expect(layout.connectionPaneWidth.value).toBe(360);
     expect(workbench.style.getPropertyValue("--connection-pane-width")).toBe("360px");
     expect(JSON.parse(preferences.get("envman:database-workbench:resize-test:global")!)).toMatchObject({ connectionPaneWidth: 360 });
+
+    divider.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 2, isPrimary: true, button: 0, clientX: 460 }));
+    document.dispatchEvent(new PointerEvent("pointermove", { pointerId: 2, clientX: 260 }));
+    paint?.(0);
+    expect(workbench.style.getPropertyValue("--connection-pane-width")).toBe("160px");
+    expect(layout.connectionPaneVisible.value).toBe(true);
+
+    document.dispatchEvent(new PointerEvent("pointermove", { pointerId: 2, clientX: 210 }));
+    expect(layout.connectionPaneVisible.value).toBe(false);
+    expect(layout.connectionPaneWidth.value).toBe(360);
+    expect(workbench.style.getPropertyValue("--connection-pane-width")).toBe("360px");
+
+    layout.setConnectionPaneVisible(true);
+    expect(layout.connectionPaneVisible.value).toBe(true);
+    expect(layout.connectionPaneWidth.value).toBe(360);
     scope.stop();
   });
 });
