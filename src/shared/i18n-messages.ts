@@ -4171,6 +4171,23 @@ const generatedEnMessages: Record<string, string> = {
 };
 
 const enOverrides: Record<string, string> = {
+  "数据行操作": "Data row actions",
+  "复制字段名称": "Copy field names",
+  "复制为": "Copy as",
+  "Insert 语句": "INSERT statements",
+  "Update 语句": "UPDATE statements",
+  "制表符分隔值（数据）": "Tab separated values (data)",
+  "制表符分隔值（字段名称）": "Tab separated values (field names)",
+  "制表符分隔值（字段名称和数据）": "Tab separated values (field names and data)",
+  "设置行高…": "Set row height…",
+  "设置行高": "Set row height",
+  "请输入行高（24–160 像素）": "Enter a row height (24–160 px)",
+  "行高需为 24–160 像素": "Row height must be between 24 and 160 px",
+  "没有可复制的数据": "No data to copy",
+  "复制失败，请检查剪贴板权限": "Copy failed. Check clipboard permissions.",
+  "无法读取剪贴板，请检查权限": "Cannot read clipboard. Check permissions.",
+  "剪贴板中没有可粘贴的数据": "No data to paste from the clipboard",
+  "所选区域没有可编辑的单元格": "The selected area has no editable cells",
   "定时同步": "Scheduled sync",
   "等待调度": "Waiting to run",
   "下次执行 {{0}}": "Next run {{0}}",

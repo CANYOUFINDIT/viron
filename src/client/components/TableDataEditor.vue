@@ -38,13 +38,16 @@ import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch
 import { api } from "../api";
 import { createClientId } from "../client-id";
 import { isBitFlagColumn } from "../../shared/database-cell-value";
+import { copyTableRows, parseTableClipboard, type TableRowCopyFormat } from "../database-table-row-actions";
 import { canBatchApplyColumnEdit, flattenTableGridRangeCells, isForeignTableGridInput, isTableGridInternalField, TABLE_GRID_LAYOUT, TABLE_GRID_ROW_HEADER_FIELD, tableGridColumnSize, tableGridFillAction, tableGridFillDisplayValue, tableGridFillStoredValue, tableGridSelectionLabel } from "../database-table-grid";
+import type { DatabaseNavigatorMenuItem } from "../database-navigator-menu";
 import { createTableFindMatch, resolveTableFindCell, type TableFindMatch } from "../database-table-find";
 import { type DatabaseTableProfile, type TableProfileConfig, normalizeTableProfile } from "../database-table-profile";
 import { downloadApiFile } from "../desktop";
 import { onAppShortcut, shortcutActionFromKeyboardEvent } from "../keyboard-shortcuts";
 import type { TableDataFilterOperator, TableDataFilterRule, TableDataSortRule } from "../../shared/database-table-data";
 import TipIcon from "./TipIcon.vue";
+import DatabaseNavigatorContextMenu from "./DatabaseNavigatorContextMenu.vue";
 
 const props = defineProps<{
   connectionId: string;
@@ -137,6 +140,10 @@ let fillCancelling = false;
 const fillActive = ref(false);
 const fillDraft = ref("");
 const fillInputElement = ref<HTMLInputElement | null>(null);
+const rowHeight = ref(31);
+const rowMenuVisible = ref(false);
+const rowMenuPosition = ref({ x: 0, y: 0 });
+let rowMenuCell: CellComponent | null = null;
 
 interface RangeFillSnapshot {
   cell: CellComponent;
@@ -160,6 +167,7 @@ type TableRangeLike = {
   getRows: () => RowComponent[];
   getColumns: () => ColumnComponent[];
   getCells: () => CellComponent[] | CellComponent[][];
+  remove: () => void;
 };
 
 function tableRanges(): TableRangeLike[] {
@@ -171,6 +179,20 @@ const canEdit = computed(() => !props.readOnly && primaryKey.value.length > 0);
 const pendingCount = computed(() => pending.value.size);
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)));
 const activeProfile = computed(() => tableProfiles.value.find((profile) => profile.id === activeProfileId.value) ?? null);
+const rowMenuItems = computed<DatabaseNavigatorMenuItem[]>(() => [
+  { key: "delete", label: tr("删除记录"), disabled: !canEdit.value || !selectedCount.value, danger: true },
+  { key: "copy", label: tr("复制"), separated: true },
+  { key: "copy-names", label: tr("复制字段名称") },
+  { key: "copy-as", label: tr("复制为"), children: [
+    { key: "copy-insert", label: tr("Insert 语句") },
+    { key: "copy-update", label: tr("Update 语句"), disabled: !primaryKey.value.length },
+    { key: "copy-values", label: tr("制表符分隔值（数据）"), separated: true },
+    { key: "copy-field-names", label: tr("制表符分隔值（字段名称）") },
+    { key: "copy-names-and-values", label: tr("制表符分隔值（字段名称和数据）") },
+  ] },
+  { key: "paste", label: tr("粘贴"), disabled: !canEdit.value },
+  { key: "row-height", label: tr("设置行高…"), separated: true },
+]);
 const activeFilters = computed<TableDataFilterRule[]>(() => filterRules.value
   .filter((rule) => rule.column)
   .map(({ id: _id, ...rule }) => rule));
@@ -433,6 +455,133 @@ function syncRangeSelection(active?: RowComponent | null) {
   selectedRow.value = (active ?? rows.at(-1))?.getData() as Record<string, unknown> ?? null;
 }
 
+async function openRowMenu(event: MouseEvent) {
+  if (!tableGrid || !(event.target instanceof Element)) return;
+  const rowElement = event.target.closest(".tabulator-row");
+  const cellElement = event.target.closest(".tabulator-cell");
+  if (!rowElement || !cellElement || !tableElement.value?.contains(rowElement)) return;
+  const row = tableGrid.getRows("active").find((item) => item.getElement() === rowElement);
+  if (!row) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const clickedCell = row.getCells().find((cell) => cell.getElement() === cellElement);
+  const visibleCells = row.getCells().filter((cell) => !isTableGridInternalField(cell.getField()) && cell.getColumn().isVisible());
+  const rowHeader = !clickedCell || isTableGridInternalField(clickedCell.getField());
+  const cell = rowHeader ? visibleCells[0] : clickedCell;
+  if (!cell) return;
+  const alreadySelected = rowHeader
+    ? selectedRangeRows().includes(row) && selectedRangeColumns().length === visibleCells.length
+    : selectedRangeCells().some((selected) => selected.getElement() === cellElement);
+  if (!alreadySelected) {
+    for (const range of tableRanges()) range.remove();
+    const end = rowHeader ? visibleCells.at(-1)! : cell;
+    tableGrid.addRange(cell, end);
+    // Tabulator initializes a new range on the next task; finish that before exposing the menu.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    syncRangeSelection(row);
+  }
+  rowMenuCell = cell;
+  rowMenuVisible.value = false;
+  await nextTick();
+  rowMenuPosition.value = { x: event.clientX, y: event.clientY };
+  rowMenuVisible.value = true;
+}
+
+async function copyRowSelection(format: TableRowCopyFormat) {
+  const rows = selectedRangeRows().map((row) => row.getData() as Record<string, unknown>);
+  const selectedFields = new Set(selectedRangeColumns().map((column) => column.getField()));
+  const fields = format === "insert" || format === "update"
+    ? columns.value.map((column) => column.name)
+    : tableGrid?.getColumns().map((column) => column.getField()).filter((field) => selectedFields.has(field)) ?? [];
+  const text = copyTableRows(format, {
+    database: props.database, table: props.table, fields, rows, primaryKey: primaryKey.value,
+  });
+  await writeRowClipboard(text);
+}
+
+async function writeRowClipboard(text: string) {
+  if (!text) return ElMessage.warning(tr("没有可复制的数据"));
+  try {
+    await navigator.clipboard.writeText(text);
+    ElMessage.success(tr("已复制"));
+  } catch {
+    ElMessage.error(tr("复制失败，请检查剪贴板权限"));
+  }
+}
+
+async function pasteRowSelection() {
+  if (!tableGrid || !canEdit.value || !rowMenuCell) return;
+  let text: string;
+  try {
+    text = await navigator.clipboard.readText();
+  } catch {
+    return ElMessage.error(tr("无法读取剪贴板，请检查权限"));
+  }
+  if (!text) return ElMessage.warning(tr("剪贴板中没有可粘贴的数据"));
+  const matrix = parseTableClipboard(text);
+  const cells: Array<{ cell: CellComponent; value: unknown }> = [];
+  if (matrix.length === 1 && matrix[0].length === 1 && selectedRangeCells().length > 1) {
+    for (const cell of editableSelectedCells()) cells.push({ cell, value: tableGridFillStoredValue(matrix[0][0]) });
+  } else {
+    const rows = tableGrid.getRows("active");
+    const visibleFields = tableGrid.getColumns().filter((column) => column.isVisible()).map((column) => column.getField()).filter((field) => !isTableGridInternalField(field));
+    const startRow = rows.indexOf(rowMenuCell.getRow());
+    const startColumn = visibleFields.indexOf(rowMenuCell.getField());
+    for (let rowOffset = 0; rowOffset < matrix.length; rowOffset += 1) {
+      const row = rows[startRow + rowOffset];
+      if (!row) break;
+      for (let columnOffset = 0; columnOffset < matrix[rowOffset].length; columnOffset += 1) {
+        const field = visibleFields[startColumn + columnOffset];
+        if (!field || !canBatchApplyColumnEdit(field, primaryKey.value, autoIncrementFields())) continue;
+        const cell = row.getCell(field);
+        if (cell) cells.push({ cell, value: tableGridFillStoredValue(matrix[rowOffset][columnOffset]) });
+      }
+    }
+  }
+  if (!cells.length) return ElMessage.warning(tr("所选区域没有可编辑的单元格"));
+  const changedRows = new Set<RowComponent>();
+  applyingBatchEdit = true;
+  try {
+    for (const { cell, value } of cells) {
+      if (cell.getValue() === value) continue;
+      cell.setValue(value);
+      changedRows.add(cell.getRow());
+    }
+  } finally {
+    applyingBatchEdit = false;
+  }
+  for (const row of changedRows) trackUpdate(row);
+}
+
+async function setRowHeight() {
+  try {
+    const result = await ElMessageBox.prompt(tr("请输入行高（24–160 像素）"), tr("设置行高"), {
+      confirmButtonText: tr("确定"), cancelButtonText: tr("取消"), inputValue: String(rowHeight.value),
+      inputValidator: (value) => /^(?:2[4-9]|[3-9]\d|1[0-5]\d|160)$/.test(value.trim()) || tr("行高需为 24–160 像素"),
+    });
+    rowHeight.value = Number(result.value.trim());
+    await nextTick();
+    tableGrid?.redraw(true);
+  } catch {
+    // User cancelled the dialog.
+  }
+}
+
+function handleRowMenuAction(key: string) {
+  rowMenuVisible.value = false;
+  if (key === "delete") void deleteSelected();
+  else if (key === "paste") void pasteRowSelection();
+  else if (key === "row-height") void setRowHeight();
+  else if (key === "copy-names") void writeRowClipboard(rowMenuCell?.getField() ?? "");
+  else {
+    const formats: Record<string, TableRowCopyFormat> = {
+      copy: "values", "copy-insert": "insert", "copy-update": "update",
+      "copy-values": "values", "copy-field-names": "names", "copy-names-and-values": "names-and-values",
+    };
+    if (formats[key]) void copyRowSelection(formats[key]);
+  }
+}
+
 function remapMetaToCtrl(event: MouseEvent) {
   if (event.metaKey && !event.ctrlKey) Object.defineProperty(event, "ctrlKey", { configurable: true, get: () => true });
 }
@@ -630,6 +779,8 @@ function installTable(rows: Array<Record<string, unknown>>) {
     __envmanKey: Object.fromEntries(primaryKey.value.map((key) => [key, row[key]])),
   }));
   loadedRowCount.value = data.length;
+  rowMenuVisible.value = false;
+  rowMenuCell = null;
   selectedRow.value = null;
   selectedCount.value = 0;
   selectedColumnCount.value = 0;
@@ -701,6 +852,7 @@ function trackUpdate(rowComponent: RowComponent) {
 
 async function load() {
   clearFillSession();
+  rowMenuVisible.value = false;
   const generation = ++loadGeneration;
   loadController?.abort();
   const controller = new AbortController();
@@ -734,6 +886,7 @@ async function load() {
 }
 
 async function refreshTableContext() {
+  rowHeight.value = 31;
   page.value = 1;
   activeProfileId.value = "";
   closeFind();
@@ -1138,6 +1291,7 @@ async function changePage(value: number) {
 watch(() => [props.connectionId, props.database, props.table], () => { void refreshTableContext(); });
 watch(() => props.actionRequest?.id, () => { void handleActionRequest(); });
 watch(() => props.active, (active) => {
+  if (!active) rowMenuVisible.value = false;
   if (active) void nextTick(() => tableGrid?.redraw(true));
 });
 watch(viewMode, (mode) => {
@@ -1161,6 +1315,7 @@ onMounted(async () => {
 });
 onActivated(() => nextTick(() => tableGrid?.redraw(true)));
 onBeforeUnmount(() => {
+  rowMenuVisible.value = false;
   document.removeEventListener("keydown", handleDocumentKeydown);
   removeShortcutListener?.();
   stopLoading();
@@ -1241,7 +1396,7 @@ onBeforeUnmount(() => {
     </section>
 
     <div v-show="viewMode === 'grid'" class="table-grid-host">
-      <div ref="tableElement" class="editable-data-grid" @mousedown.capture="remapMetaToCtrl" @keydown.capture="handleGridKeydown" @dblclick.capture="handleGridDblClick"></div>
+      <div ref="tableElement" class="editable-data-grid" :style="{ '--table-data-row-height': `${rowHeight}px`, '--table-data-cell-padding-y': `${Math.max(2, Math.floor((rowHeight - 17) / 2))}px` }" @mousedown.capture="remapMetaToCtrl" @keydown.capture="handleGridKeydown" @dblclick.capture="handleGridDblClick" @contextmenu.capture="openRowMenu"></div>
       <input
         v-if="fillActive"
         ref="fillInputElement"
@@ -1253,6 +1408,7 @@ onBeforeUnmount(() => {
         @blur="commitFillSession"
       />
     </div>
+    <DatabaseNavigatorContextMenu :visible="rowMenuVisible" :x="rowMenuPosition.x" :y="rowMenuPosition.y" :items="rowMenuItems" menu-class="table-row-context-menu" :aria-label="$t('数据行操作')" @close="rowMenuVisible = false" @select="handleRowMenuAction" />
     <div v-if="viewMode === 'form'" class="table-form-view">
       <div v-if="selectedRow" class="table-form-fields">
         <label v-for="column in columns" :key="column.name"><span><strong>{{ column.name }}</strong><small>{{ column.columnType }}</small></span><el-input :model-value="selectedRow[column.name] === null ? '' : String(selectedRow[column.name] ?? '')" :disabled="!canEdit || column.autoIncrement" :placeholder="selectedRow[column.name] === null ? 'NULL' : ''" @update:model-value="updateFormValue(column, $event)" /></label>

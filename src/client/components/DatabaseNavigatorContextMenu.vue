@@ -8,6 +8,8 @@ const props = defineProps<{
   x: number;
   y: number;
   items: DatabaseNavigatorMenuItem[];
+  menuClass?: string;
+  ariaLabel?: string;
 }>();
 const emit = defineEmits<{ close: []; select: [key: string] }>();
 
@@ -103,10 +105,10 @@ onBeforeUnmount(() => {
       v-if="visible"
       ref="menu"
       class="database-navigator-menu"
-      :class="{ 'opens-left': opensLeft }"
+      :class="[menuClass, { 'opens-left': opensLeft }]"
       :style="menuStyle"
       role="menu"
-      :aria-label="$t('数据库对象操作')"
+      :aria-label="ariaLabel || $t('数据库对象操作')"
       @contextmenu.prevent
     >
       <DatabaseNavigatorMenuBranch :items="items" @select="selectItem" />

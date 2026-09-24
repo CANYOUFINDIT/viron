@@ -2447,17 +2447,17 @@ button { color: inherit; }
 .editable-data-grid.tabulator .tabulator-header .tabulator-col.tabulator-sortable[aria-sort="descending"] { background: #1d3532; color: #e8f4f0; }
 .editable-data-grid.tabulator .tabulator-tableholder,
 .editable-data-grid.tabulator .tabulator-tableholder .tabulator-table { background-color: #0c1719; }
-.editable-data-grid .tabulator-row { min-height: 31px; border-bottom: 1px solid #1e2d30; background: #0d181a; color: #a4b4b0; }
+.editable-data-grid .tabulator-row { min-height: var(--table-data-row-height, 31px); border-bottom: 1px solid #1e2d30; background: #0d181a; color: #a4b4b0; }
 .editable-data-grid .tabulator-row.tabulator-row-even { background: #101c1e; }
 .editable-data-grid .tabulator-row:hover { background: #172b27; }
 .editable-data-grid .tabulator-row.tabulator-selected,
 .editable-data-grid .tabulator-row.tabulator-selected.tabulator-row-even,
 .editable-data-grid .tabulator-row.tabulator-selected:hover { background: #173029; color: #e7f2ee; }
 .editable-data-grid .tabulator-row.is-pending-delete { opacity: .5; text-decoration: line-through; background: #2f1e1d; }
-.editable-data-grid .tabulator-cell { border-right: 1px solid #1f3032; padding: 7px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.editable-data-grid .tabulator-cell { border-right: 1px solid #1f3032; padding: var(--table-data-cell-padding-y, 7px) 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .editable-data-grid.tabulator .tabulator-col.table-row-header,
 .editable-data-grid.tabulator .tabulator-cell.table-row-header,
-.editable-data-grid.tabulator .tabulator-cell.tabulator-range-row-header { background: #121e20; color: #6d807b; text-align: center; padding: 0 4px; }
+.editable-data-grid.tabulator .tabulator-cell.tabulator-range-row-header { background: #121e20; color: #6d807b; text-align: center; padding: var(--table-data-cell-padding-y, 7px) 4px; }
 .editable-data-grid.tabulator .tabulator-header .tabulator-col.tabulator-range-highlight,
 .editable-data-grid.tabulator .tabulator-header .tabulator-col.tabulator-range-selected { background: #1d3532; color: #e8f4f0; }
 .editable-data-grid.tabulator .tabulator-row .tabulator-cell.tabulator-range-selected:not(.tabulator-range-row-header),
@@ -2471,6 +2471,17 @@ button { color: inherit; }
 .editable-data-grid .tabulator-cell.is-current-find-match { box-shadow: inset 0 0 0 2px #55b9f4; background: #173f59; color: #ffffff; }
 .editable-data-grid .tabulator-cell.tabulator-editing { border: 1px solid #4bc39d; background: #142a25; }
 .editable-data-grid .db-null { color: #667973; font-style: italic; }
+.database-navigator-menu.table-row-context-menu { min-width: 196px; max-width: none; padding: 5px; border-color: #62676a; border-radius: 10px; background: rgba(53, 55, 57, .98); color: #f0f1f2; box-shadow: 0 14px 35px rgba(0, 0, 0, .38); }
+.table-row-context-menu .database-navigator-menu__item { min-height: 30px; padding: 0 10px; font-size: 12px; font-weight: 600; }
+.table-row-context-menu .database-navigator-menu__item > svg { color: #d5d9db; }
+.table-row-context-menu .database-navigator-menu__item:disabled { color: #8b9295; }
+.table-row-context-menu .database-navigator-menu__item.is-danger:not(:disabled) { color: inherit; }
+.table-row-context-menu .database-navigator-menu__item:hover:not(:disabled),
+.table-row-context-menu .database-navigator-menu__item:focus-visible:not(:disabled),
+.table-row-context-menu .database-navigator-menu__item.is-danger:hover:not(:disabled),
+.table-row-context-menu .database-navigator-menu__item.is-danger:focus-visible:not(:disabled) { background: #2673c4; color: #fff; }
+.table-row-context-menu .database-navigator-menu__row.is-separated::before { background: #696d70; }
+.table-row-context-menu .database-navigator-menu__submenu { min-width: 290px; border-color: #62676a; border-radius: 10px; background: rgba(53, 55, 57, .98); box-shadow: 0 14px 35px rgba(0, 0, 0, .38); }
 .table-form-view { grid-row: 3; min-width: 0; min-height: 0; background: #181a1b; overflow: auto; }
 .table-form-fields { width: min(900px, 100%); padding: 18px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; }
 .table-form-fields label { min-width: 0; display: grid; grid-template-columns: minmax(110px, 34%) minmax(0, 1fr); align-items: center; gap: 10px; }
