@@ -120,10 +120,13 @@ interface Window {
     listWebExtensions(id: string): Promise<import("./desktop").DesktopWebExtensionInfo[]>;
     installWebExtension(id: string): Promise<{ canceled: boolean; items: import("./desktop").DesktopWebExtensionInfo[] }>;
     removeWebExtension(id: string, installId: string): Promise<import("./desktop").DesktopWebExtensionInfo[]>;
+    updateWebExtension(id: string, installId: string, change: { pinned?: boolean; enabled?: boolean }): Promise<import("./desktop").DesktopWebExtensionInfo[]>;
+    openWebExtensionPopup(id: string, installId: string, anchor: { right: number; bottom: number }): Promise<void>;
     scanChromeExtensions(): Promise<import("./desktop").DesktopChromeExtensionInfo[]>;
     importChromeExtension(id: string, token: string): Promise<import("./desktop").DesktopWebExtensionInfo[]>;
-    openChromeWebStore(): Promise<void>;
+    openChromeWebStore(id: string): Promise<import("./desktop").DesktopWebViewState>;
     onWebViewState(listener: (state: import("./desktop").DesktopWebViewState) => void): () => void;
+    onWebExtensionChanged(listener: (change: import("./desktop").DesktopWebExtensionChange) => void): () => void;
     updateImmersiveNavigation(state: import("../shared/immersive-navigation").ImmersiveNavigationState | null): Promise<void>;
     onImmersiveNavigationAction(listener: (action: import("../shared/immersive-navigation").ImmersiveNavigationAction) => void): () => void;
     listSshSessions(): Promise<{ items: import("./desktop").DesktopSshSessionState[] }>;

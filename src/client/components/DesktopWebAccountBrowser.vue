@@ -1,6 +1,6 @@
 <script setup lang="ts">import { translate as tr } from "../i18n";
 
-import { ArrowLeft, ArrowRight, ExternalLink, FolderPlus, Globe2, KeyRound, Laptop, LoaderCircle, Maximize2, Minimize2, Plus, Puzzle, RefreshCw, RotateCcw, ShieldAlert } from "@lucide/vue";
+import { ArrowLeft, ArrowRight, FileArchive, Globe2, KeyRound, Laptop, LoaderCircle, Maximize2, Minimize2, MoreVertical, Pin, PinOff, Plus, Puzzle, RefreshCw, RotateCcw, ShieldAlert } from "@lucide/vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from "vue";
 import { loadActiveConnections } from "../active-connections";
@@ -12,13 +12,16 @@ import {
   installDesktopWebExtension,
   listDesktopWebExtensions,
   onDesktopWebViewState,
+  onDesktopWebExtensionChanged,
   onDesktopNativeViewPointerDown,
   openDesktopWebView,
   openChromeWebStore,
+  openDesktopWebExtensionPopup,
   removeDesktopWebExtension,
   scanDesktopChromeExtensions,
   setDesktopWebViewVisible,
   setDesktopWebViewPreviewing,
+  updateDesktopWebExtension,
   updateDesktopWebViewBounds,
   type DesktopWebViewAction,
   type DesktopWebViewBounds,
@@ -70,6 +73,9 @@ const extensions = ref<DesktopWebExtensionInfo[]>([]);
 const extensionsLoading = ref(false);
 const chromeExtensions = ref<DesktopChromeExtensionInfo[]>([]);
 const chromeScanning = ref(false);
+const extensionPanel = ref<"installed" | "chrome">("installed");
+const extensionMenu = ref("");
+const pinnedExtensions = computed(() => extensions.value.filter((extension) => extension.pinned && extension.enabled && extension.loaded));
 const previewFrame = ref("");
 const overlayBlocking = ref(false);
 const overlayFrame = ref("");
@@ -78,6 +84,7 @@ const activePageId = computed(() => state.value?.activePageId ?? "");
 let resizeObserver: ResizeObserver | null = null;
 let overlayObserver: MutationObserver | null = null;
 let stopStateListener: (() => void) | null = null;
+let stopExtensionListener: (() => void) | null = null;
 let boundsFrame: number | undefined;
 let lastNativeBounds: { id: string; bounds: DesktopWebViewBounds } | null = null;
 let componentActive = true;
@@ -89,6 +96,8 @@ let pendingNewPage = false;
 let previewTimer: number | undefined;
 let previewSyncSequence = 0;
 let overlayFreezeSeq = 0;
+let overlayRestoring = false;
+let overlayHideTask: Promise<void> | null = null;
 const preloading = ref(false);
 let removeNativeViewPointerDownListener: (() => void) | null = null;
 let startRequestVersion = 0;
@@ -204,11 +213,42 @@ async function freezePageForOverlay(id: string) {
   if (!overlayFrame.value && previewFrame.value) overlayFrame.value = previewFrame.value;
   window.clearTimeout(previewTimer);
   syncNativeOverlay(false);
-  const pendingCapture = captureDesktopWebView(id, "page").catch(() => "");
-  void setDesktopWebViewVisible(id, false).then(applyState).catch(() => undefined);
-  const frame = await pendingCapture;
+  const frame = await captureDesktopWebView(id, "page").catch(() => "");
   if (seq !== overlayFreezeSeq || state.value?.id !== id) return;
-  if (frame) overlayFrame.value = frame;
+  if (frame) {
+    const image = new Image();
+    image.src = frame;
+    await image.decode().catch(() => undefined);
+    if (seq !== overlayFreezeSeq || state.value?.id !== id) return;
+    overlayFrame.value = frame;
+    await nextTick();
+  }
+  if (seq !== overlayFreezeSeq || state.value?.id !== id) return;
+  const hideTask = setDesktopWebViewVisible(id, false).then(applyState).catch(() => undefined);
+  overlayHideTask = hideTask;
+  void hideTask.finally(() => { if (overlayHideTask === hideTask) overlayHideTask = null; });
+}
+
+async function restorePageAfterOverlay(id: string) {
+  if (overlayRestoring) return;
+  overlayRestoring = true;
+  ++overlayFreezeSeq;
+  try {
+    await overlayHideTask;
+    applyState(await setDesktopWebViewVisible(id, true));
+    if (state.value?.id !== id) return;
+    if (rendererOverlayVisible()) {
+      applyState(await setDesktopWebViewVisible(id, false));
+      return;
+    }
+    clearOverlayFreeze();
+    syncNativeOverlay(true);
+    schedulePreviewCapture(120);
+  } catch {
+    clearOverlayFreeze();
+  } finally {
+    overlayRestoring = false;
+  }
 }
 
 function syncVisibility() {
@@ -229,6 +269,10 @@ function syncVisibility() {
   const canShow = componentActive && props.active && !preloading.value && Boolean(bounds);
   if (canShow && overlay) {
     void freezePageForOverlay(state.value.id);
+    return;
+  }
+  if (overlayBlocking.value && canShow) {
+    void restorePageAfterOverlay(state.value.id);
     return;
   }
   if (overlayBlocking.value) clearOverlayFreeze();
@@ -345,7 +389,8 @@ async function resetLogin() {
 
 async function openExtensions() {
   if (!state.value) return;
-  extensions.value = [];
+  extensionPanel.value = "installed";
+  extensionMenu.value = "";
   extensionsLoading.value = true;
   try {
     extensions.value = await listDesktopWebExtensions(state.value.id);
@@ -354,7 +399,39 @@ async function openExtensions() {
   } finally {
     extensionsLoading.value = false;
   }
-  await refreshChromeExtensions();
+}
+
+async function changeExtension(extension: DesktopWebExtensionInfo, change: { pinned?: boolean; enabled?: boolean }) {
+  if (!state.value || extensionsBusy.value) return;
+  extensionsBusy.value = true;
+  try {
+    extensions.value = await updateDesktopWebExtension(state.value.id, extension.installId, change);
+    extensionMenu.value = "";
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : tr("修改拓展失败"));
+  } finally {
+    extensionsBusy.value = false;
+  }
+}
+
+async function openExtensionPopup(extension: DesktopWebExtensionInfo, event: MouseEvent) {
+  if (!state.value) return;
+  if (!extension.enabled || !extension.loaded) return ElMessage.info(tr("此拓展尚未启用"));
+  if (!extension.hasPopup) return ElMessage.info(tr("此拓展没有可打开的弹窗"));
+  const target = event.currentTarget;
+  if (!(target instanceof HTMLElement)) return;
+  const rect = target.getBoundingClientRect();
+  extensionsOpen.value = false;
+  try {
+    await openDesktopWebExtensionPopup(state.value.id, extension.installId, { right: rect.right, bottom: rect.bottom });
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : tr("打开拓展弹窗失败"));
+  }
+}
+
+function showChromeExtensions() {
+  extensionPanel.value = "chrome";
+  void refreshChromeExtensions();
 }
 
 async function refreshChromeExtensions() {
@@ -391,9 +468,10 @@ function chromeProfileName(profile: string): string {
 }
 
 async function openChromeStore() {
+  if (!state.value) return;
   try {
-    await openChromeWebStore();
     extensionsOpen.value = false;
+    applyState(await openChromeWebStore(state.value.id));
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : tr("打开 Chrome 扩展商店失败"));
   }
@@ -494,6 +572,7 @@ async function start(initialPage: "entry" | "blank" = "entry", preload = false) 
         return;
       }
       applyState(opened);
+      void listDesktopWebExtensions(opened.id).then((items) => { if (state.value?.id === opened.id) extensions.value = items; }).catch(() => undefined);
       await syncPreviewMode();
       void loadActiveConnections().catch(() => undefined);
       if (pendingNewPage) {
@@ -557,6 +636,11 @@ function handleHistoryWheel(event: WheelEvent) {
 
 onMounted(() => {
   stopStateListener = onDesktopWebViewState(applyState);
+  stopExtensionListener = onDesktopWebExtensionChanged((change) => {
+    if (change.viewId !== state.value?.id) return;
+    ElMessage[change.type](change.message);
+    if (change.type === "success") void listDesktopWebExtensions(change.viewId).then((items) => { extensions.value = items; }).catch(() => undefined);
+  });
   removeNativeViewPointerDownListener = onDesktopNativeViewPointerDown(() => {
     if (props.active && state.value) claimPreloadedView();
   });
@@ -625,6 +709,7 @@ onBeforeUnmount(() => {
   resizeObserver?.disconnect();
   overlayObserver?.disconnect();
   stopStateListener?.();
+  stopExtensionListener?.();
   removeNativeViewPointerDownListener?.();
   window.removeEventListener("resize", syncVisibility);
   window.removeEventListener("scroll", scheduleBounds, true);
@@ -670,23 +755,38 @@ onBeforeUnmount(() => {
       </form>
       <div class="web-browser-tools">
         <button type="button" :aria-label="$t('新建空白标签页')" :title="$t('新建空白标签页')" @click="createBlankPage"><Plus :size="15" /></button>
-        <el-popover v-model:visible="extensionsOpen" placement="bottom-end" trigger="click" :width="360" :offset="8" @show="openExtensions">
+        <button v-for="extension in pinnedExtensions" :key="extension.installId" type="button" class="desktop-web-pinned-extension" :aria-label="extension.name" :title="extension.name" @click="openExtensionPopup(extension, $event)">
+          <img v-if="extension.iconDataUrl" :src="extension.iconDataUrl" alt="" />
+          <Puzzle v-else :size="15" />
+        </button>
+        <el-popover v-model:visible="extensionsOpen" placement="bottom-end" trigger="click" :width="320" :offset="8" @show="openExtensions">
           <template #reference>
             <button type="button" :aria-label="$t('本地拓展')" :title="$t('本地拓展')" :disabled="!state || Boolean(state.closedReason)"><Puzzle :size="15" /></button>
           </template>
           <div class="desktop-web-extensions">
-            <div class="desktop-web-extensions__heading"><strong>{{ $t('本地拓展') }}</strong><button type="button" :aria-label="$t('刷新 Chrome 拓展列表')" :title="$t('刷新 Chrome 拓展列表')" :disabled="chromeScanning" @click="refreshChromeExtensions"><RefreshCw :size="14" :class="{ 'is-spinning': chromeScanning }" /></button></div>
-            <div class="desktop-web-extensions__section">
-              <span class="desktop-web-extensions__label">{{ $t('当前账号') }}</span>
+            <div class="desktop-web-extensions__heading">
+              <button v-if="extensionPanel === 'chrome'" type="button" :aria-label="$t('返回')" @click="extensionPanel = 'installed'"><ArrowLeft :size="16" /></button>
+              <strong>{{ extensionPanel === 'chrome' ? $t('从 Chrome 导入') : $t('本地拓展') }}</strong>
+              <button v-if="extensionPanel === 'chrome'" type="button" :aria-label="$t('刷新')" :disabled="chromeScanning" @click="refreshChromeExtensions"><RefreshCw :size="14" :class="{ 'is-spinning': chromeScanning }" /></button>
+            </div>
+            <div v-if="extensionPanel === 'installed'" class="desktop-web-extensions__section">
               <span v-if="extensionsLoading" class="desktop-web-extensions__empty">{{ $t('正在加载…') }}</span>
               <span v-else-if="!extensions.length" class="desktop-web-extensions__empty">{{ $t('尚未添加拓展') }}</span>
               <div v-for="extension in extensions" :key="extension.installId" class="desktop-web-extensions__item">
-                <div><strong>{{ extension.name }}</strong><small>{{ extension.error || `v${extension.version}` }}</small></div>
-                <button type="button" :disabled="extensionsBusy" @click="removeExtension(extension)">{{ $t('移除') }}</button>
+                <button type="button" class="desktop-web-extensions__item-main" :disabled="!extension.enabled" @click="openExtensionPopup(extension, $event)">
+                  <img v-if="extension.iconDataUrl" :src="extension.iconDataUrl" alt="" />
+                  <Puzzle v-else :size="20" />
+                  <span><strong>{{ extension.name }}</strong><small>{{ extension.error || (extension.enabled ? `v${extension.version}` : $t('已停用')) }}</small></span>
+                </button>
+                <button type="button" class="desktop-web-extensions__icon-button" :aria-label="extension.pinned ? $t('取消固定') : $t('固定到工具栏')" :title="extension.pinned ? $t('取消固定') : $t('固定到工具栏')" :disabled="extensionsBusy" @click="changeExtension(extension, { pinned: !extension.pinned })"><PinOff v-if="extension.pinned" :size="16" /><Pin v-else :size="16" /></button>
+                <button type="button" class="desktop-web-extensions__icon-button" :aria-label="$t('更多操作')" :title="$t('更多操作')" @click="extensionMenu = extensionMenu === extension.installId ? '' : extension.installId"><MoreVertical :size="17" /></button>
+                <div v-if="extensionMenu === extension.installId" class="desktop-web-extensions__item-menu">
+                  <button type="button" :disabled="extensionsBusy" @click="changeExtension(extension, { enabled: !extension.enabled })">{{ extension.enabled ? $t('停用') : $t('启用') }}</button>
+                  <button type="button" :disabled="extensionsBusy" @click="extensionMenu = ''; removeExtension(extension)">{{ $t('移除') }}</button>
+                </div>
               </div>
             </div>
-            <div class="desktop-web-extensions__section desktop-web-extensions__chrome">
-              <span class="desktop-web-extensions__label">{{ $t('Chrome 中的拓展') }}</span>
+            <div v-else class="desktop-web-extensions__section desktop-web-extensions__chrome">
               <span v-if="chromeScanning" class="desktop-web-extensions__empty">{{ $t('正在扫描…') }}</span>
               <span v-else-if="!chromeExtensions.length" class="desktop-web-extensions__empty">{{ $t('未找到 Chrome 拓展') }}</span>
               <div v-for="extension in chromeExtensions" :key="extension.token" class="desktop-web-extensions__item">
@@ -694,9 +794,10 @@ onBeforeUnmount(() => {
                 <button type="button" :disabled="extensionsBusy || chromeExtensionAdded(extension.chromeId)" @click="importChromeExtension(extension)">{{ chromeExtensionAdded(extension.chromeId) ? $t('已添加') : $t('导入') }}</button>
               </div>
             </div>
-            <div class="desktop-web-extensions__actions">
-              <button type="button" :disabled="extensionsBusy" @click="installExtension"><FolderPlus :size="15" />{{ $t('导入文件夹') }}</button>
-              <button type="button" :title="$t('在 Chrome 安装后，返回刷新并导入')" @click="openChromeStore"><ExternalLink :size="14" />{{ $t('Chrome 商店') }}</button>
+            <div v-if="extensionPanel === 'installed'" class="desktop-web-extensions__actions">
+              <button type="button" @click="showChromeExtensions"><Puzzle :size="15" />{{ $t('从 Chrome 导入') }}</button>
+              <button type="button" :disabled="extensionsBusy" @click="installExtension"><FileArchive :size="15" />{{ $t('导入 ZIP / CRX') }}</button>
+              <button type="button" @click="openChromeStore"><Globe2 :size="15" />{{ $t('打开 Chrome 商店') }}</button>
             </div>
           </div>
         </el-popover>
@@ -747,6 +848,7 @@ onBeforeUnmount(() => {
 .desktop-web-browser-surface { background: #fff; }
 .desktop-web-browser-surface.is-preview,
 .desktop-web-browser-surface.is-overlay-frozen { cursor: default; }
+.desktop-web-pinned-extension img { width: 16px; height: 16px; object-fit: contain; }
 .desktop-web-view-status { width: 28px; height: 28px; color: var(--ink-400); display: grid; place-items: center; }
 .desktop-web-view-status.is-local { color: var(--teal-600); }
 .desktop-web-view-status.is-certificate-error-status { color: #d93025; }
@@ -758,22 +860,34 @@ onBeforeUnmount(() => {
 .web-browser-certificate-actions { display: flex; align-items: center; gap: 8px; }
 .web-browser-certificate-actions button.is-secondary { border-color: #9aa0a6; background: #fff; color: #5f6368; }
 .web-browser-certificate-actions button.is-secondary:hover { border-color: #5f6368; background: #f8f9fa; }
-.desktop-web-extensions { display: grid; gap: 12px; color: var(--ink-900); }
-.desktop-web-extensions__heading { display: flex; align-items: center; justify-content: space-between; padding: 2px 2px 0; }
+.desktop-web-extensions { display: grid; gap: 10px; color: var(--ink-900); }
+.desktop-web-extensions__heading { display: flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 2px; }
 .desktop-web-extensions__heading strong { font-size: 15px; }
+.desktop-web-extensions__heading button:last-child:not(:first-child) { margin-left: auto; }
 .desktop-web-extensions__heading button { display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 7px; background: transparent; color: var(--ink-500); cursor: pointer; }
 .desktop-web-extensions__heading button:hover { background: var(--surface-50, #f3f6f5); }
 .desktop-web-extensions__section { display: grid; gap: 5px; }
-.desktop-web-extensions__label { padding: 0 2px; color: var(--ink-400); font-size: 11px; font-weight: 600; }
 .desktop-web-extensions__empty { padding: 8px 2px; color: var(--ink-400); font-size: 12px; }
-.desktop-web-extensions__chrome { max-height: 250px; overflow-y: auto; border-top: 1px solid var(--line-200, #e1e8e5); padding-top: 10px; }
-.desktop-web-extensions__item { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 42px; padding: 5px 7px; border-radius: 7px; }
+.desktop-web-extensions__chrome { max-height: 310px; overflow-y: auto; }
+.desktop-web-extensions__item { position: relative; display: flex; align-items: center; gap: 4px; min-height: 48px; padding: 4px; border-radius: 7px; }
 .desktop-web-extensions__item:hover { background: var(--surface-50, #f3f6f5); }
-.desktop-web-extensions__item div { display: grid; gap: 2px; min-width: 0; }
+.desktop-web-extensions__item-main { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; padding: 4px; text-align: left; }
+.desktop-web-extensions__item-main img { flex: none; width: 22px; height: 22px; object-fit: contain; }
+.desktop-web-extensions__item-main > svg { flex: none; color: var(--ink-400); }
+.desktop-web-extensions__item-main span { display: grid; gap: 2px; min-width: 0; }
+.desktop-web-extensions__chrome .desktop-web-extensions__item > div:first-child { display: grid; gap: 2px; flex: 1; min-width: 0; }
+.desktop-web-extensions__chrome .desktop-web-extensions__item > button { color: var(--teal-600); }
 .desktop-web-extensions__item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; }
 .desktop-web-extensions__item small { overflow: hidden; color: var(--ink-400); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.desktop-web-extensions__item button { flex: none; border: 0; background: none; color: var(--teal-600); font-size: 12px; cursor: pointer; }
+.desktop-web-extensions__item button { flex: none; border: 0; background: none; color: var(--ink-600); font-size: 12px; cursor: pointer; }
+.desktop-web-extensions__item .desktop-web-extensions__item-main { flex: 1; }
+.desktop-web-extensions__icon-button { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 6px; }
+.desktop-web-extensions__icon-button:hover { background: var(--surface-100, #e8efec); }
+.desktop-web-extensions__item-menu { position: absolute; z-index: 2; top: calc(100% - 3px); right: 4px; display: grid; min-width: 110px; padding: 4px; border: 1px solid var(--line-200, #e1e8e5); border-radius: 8px; background: #fff; box-shadow: 0 8px 24px #112a2726; }
+.desktop-web-extensions__item-menu button { padding: 7px 9px; text-align: left; border-radius: 5px; }
+.desktop-web-extensions__item-menu button:hover { background: var(--surface-50, #f3f6f5); }
 .desktop-web-extensions__item button:disabled, .desktop-web-extensions__actions button:disabled { opacity: .45; cursor: not-allowed; }
-.desktop-web-extensions__actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; border-top: 1px solid var(--line-200, #e1e8e5); padding-top: 10px; }
-.desktop-web-extensions__actions button { display: inline-flex; align-items: center; gap: 5px; padding: 6px 2px; border: 0; background: none; color: var(--teal-600); font-size: 12px; font-weight: 600; cursor: pointer; }
+.desktop-web-extensions__actions { display: grid; gap: 2px; border-top: 1px solid var(--line-200, #e1e8e5); padding-top: 8px; }
+.desktop-web-extensions__actions button { display: inline-flex; align-items: center; gap: 9px; width: 100%; padding: 9px 7px; border: 0; border-radius: 7px; background: none; color: var(--teal-600); font-size: 12px; font-weight: 600; text-align: left; cursor: pointer; }
+.desktop-web-extensions__actions button:hover { background: var(--surface-50, #f3f6f5); }
 </style>

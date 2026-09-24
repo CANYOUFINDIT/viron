@@ -1,6 +1,8 @@
-import { basename } from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import { basename, join } from "node:path";
+import { app } from "electron";
 import { translate as tr } from "../i18n.js";
-import { importDesktopChromeExtension, listDesktopWebExtensions, removeDesktopWebExtension, scanDesktopChromeExtensions } from "../web-extensions.js";
+import { enableDesktopChromeWebStore, importDesktopChromeExtension, listDesktopWebExtensions, openDesktopWebExtensionPopup, removeDesktopWebExtension, scanDesktopChromeExtensions, updateDesktopWebExtension } from "../web-extensions.js";
 import {
   activeDesktopWebPage,
   closeDesktopWebView,
@@ -83,6 +85,7 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
   await closeDesktopWebView(blankState.id);
   const managedState = await openDesktopWebView(credentialId, { x: 40, y: 120, width: 900, height: 620 });
   const managed = localWebView(managedState.id);
+  await enableDesktopChromeWebStore(managed);
   await waitForDesktopWebTitle(managed, "Upload fixture");
   const lastLocationRestored = activeDesktopWebPage(managed).view.webContents.getURL() === `${managed.entryOrigin}/upload`;
   const sessionStatePersisted = await activeDesktopWebPage(managed).view.webContents.executeJavaScript(`localStorage.getItem("viron-persist-smoke") === "present"`) as boolean;
@@ -137,6 +140,15 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
     const installed = await importDesktopChromeExtension(managed.partition, managed.lastUrlKey, scanned.token);
     const added = installed.find((item) => !before.some((existing) => existing.installId === item.installId));
     if (!added) throw new Error("Desktop extension was not installed");
+    const pinned = (await updateDesktopWebExtension(managed.partition, managed.lastUrlKey, added.installId, { pinned: true }))
+      .find((item) => item.installId === added.installId)?.pinned === true;
+    const disabled = (await updateDesktopWebExtension(managed.partition, managed.lastUrlKey, added.installId, { enabled: false }))
+      .find((item) => item.installId === added.installId)?.loaded === false;
+    const enabled = (await updateDesktopWebExtension(managed.partition, managed.lastUrlKey, added.installId, { enabled: true }))
+      .find((item) => item.installId === added.installId)?.loaded === true;
+    const hasPopup = listDesktopWebExtensions(managed.partition, managed.lastUrlKey)
+      .find((item) => item.installId === added.installId)?.hasPopup === true;
+    if (hasPopup) await openDesktopWebExtensionPopup(managed.partition, managed.lastUrlKey, added.installId, { right: 800, bottom: 100 });
     await downloadPage.loadURL(`${managed.entryOrigin}/upload`);
     await waitForDesktopWebTitle(managed, "Upload fixture");
     const applied = await downloadPage.executeJavaScript('document.documentElement.dataset.vironInstalled === "loaded"') as boolean;
@@ -144,7 +156,21 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
     await downloadPage.loadURL(`${managed.entryOrigin}/upload`);
     await waitForDesktopWebTitle(managed, "Upload fixture");
     const removed = await downloadPage.executeJavaScript('document.documentElement.dataset.vironInstalled === undefined') as boolean;
-    extensionManaged = applied && removed;
+    const storeFixture = join(app.getPath("userData"), "web-store-downloads", managed.lastUrlKey, "store-smoke", "1.0.0_0");
+    await mkdir(storeFixture, { recursive: true });
+    await writeFile(join(storeFixture, "manifest.json"), JSON.stringify({ manifest_version: 3, name: "Store smoke extension", version: "1.0.0" }));
+    await managed.partition.extensions.loadExtension(storeFixture);
+    let storeImported = false;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const entry = listDesktopWebExtensions(managed.partition, managed.lastUrlKey).find((item) => item.name === "Store smoke extension");
+      if (entry?.loaded) {
+        storeImported = true;
+        await removeDesktopWebExtension(managed.partition, managed.lastUrlKey, entry.installId);
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    extensionManaged = pinned && disabled && enabled && hasPopup && applied && removed && storeImported;
   }
   return { opened: true, blankOpenedWithoutEntry: blankOpenedWithoutEntry && shorthandAddressLoaded && defaultAddressPreserved, manualRefillOnCurrentPage, sessionStatePersisted, lastLocationRestored, tabsReordered, inspectorOpened: true, resetCleared, extensionInjected: extensionLoaded && extensionOnFirstPage && extensionAfterReopen && extensionAfterReset, extensionManaged, uploadSelected, downloadTriggered: true };
 }

@@ -20,6 +20,7 @@ const desktopRuntimePackageRoots = [
   "csv-parse",
   "ws",
   "@modelcontextprotocol/sdk",
+  "electron-chrome-web-store",
 ];
 
 export function buildDesktop() {

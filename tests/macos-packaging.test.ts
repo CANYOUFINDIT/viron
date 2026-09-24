@@ -2,11 +2,11 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 describe("macOS packaging", () => {
-  it("selects the signing keychain through the user search list", () => {
+  it("selects the signing keychain through the user search list and passes it to codesign", () => {
     const source = readFileSync(new URL("../scripts/package-macos.mjs", import.meta.url), "utf8");
     const signFunction = source.match(/function sign\([\s\S]*?\n}\n/)?.[0] ?? "";
     expect(source).toContain('["list-keychains", "-d", "user", "-s", signing.keychain, ...originalKeychains]');
-    expect(signFunction).not.toContain('"--keychain"');
+    expect(signFunction).toContain('"--keychain", signing.keychain');
   });
 
   it("selects the Chromium backend that never opens macOS Keychain", () => {

@@ -3,6 +3,7 @@ import { session, type Rectangle, type Session } from "electron";
 import type * as Electron from "electron";
 import {
   cacheableDesktopWebUrl,
+  deceptiveChromeWebStoreUrl,
   desktopWebPartitionName,
   restorableDesktopWebUrl,
   shouldAttemptDesktopWebAutofill,
@@ -108,6 +109,7 @@ export function trackDesktopWebPartition(partition: Session): void {
   if (trackedWebPartitions.has(partition)) return;
   trackedWebPartitions.add(partition);
   partition.webRequest.onBeforeRequest((details, callback) => {
+    if (deceptiveChromeWebStoreUrl(details.url)) return callback({ cancel: true });
     for (const view of desktopWebViews.values()) {
       if (view.partition === partition && !view.closing && [...view.pages.values()].some((page) => page.view.webContents.id === details.webContentsId)) {
         touchDesktopWebView(view);

@@ -40,6 +40,15 @@ export function supportedDesktopWebUrl(value: string): boolean {
   }
 }
 
+export function deceptiveChromeWebStoreUrl(value: string): boolean {
+  if (!value.startsWith("https://chromewebstore.google.com")) return false;
+  try {
+    return new URL(value).origin !== "https://chromewebstore.google.com";
+  } catch {
+    return true;
+  }
+}
+
 export function supportedDesktopPopupUrl(value: string): boolean {
   return value === "about:blank" || supportedDesktopWebUrl(value);
 }

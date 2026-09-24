@@ -152,6 +152,16 @@ export interface DesktopWebExtensionInfo {
   chromeId?: string;
   loaded: boolean;
   error: string;
+  pinned: boolean;
+  enabled: boolean;
+  iconDataUrl: string;
+  hasPopup: boolean;
+}
+
+export interface DesktopWebExtensionChange {
+  viewId: string;
+  type: "success" | "error";
+  message: string;
 }
 
 export interface DesktopChromeExtensionInfo {
@@ -602,6 +612,14 @@ export function removeDesktopWebExtension(id: string, installId: string): Promis
   return desktopBridge().removeWebExtension(id, installId);
 }
 
+export function updateDesktopWebExtension(id: string, installId: string, change: { pinned?: boolean; enabled?: boolean }): Promise<DesktopWebExtensionInfo[]> {
+  return desktopBridge().updateWebExtension(id, installId, change);
+}
+
+export function openDesktopWebExtensionPopup(id: string, installId: string, anchor: { right: number; bottom: number }): Promise<void> {
+  return desktopBridge().openWebExtensionPopup(id, installId, anchor);
+}
+
 export function scanDesktopChromeExtensions(): Promise<DesktopChromeExtensionInfo[]> {
   return desktopBridge().scanChromeExtensions();
 }
@@ -610,12 +628,16 @@ export function importDesktopChromeExtension(id: string, token: string): Promise
   return desktopBridge().importChromeExtension(id, token);
 }
 
-export function openChromeWebStore(): Promise<void> {
-  return desktopBridge().openChromeWebStore();
+export function openChromeWebStore(id: string): Promise<DesktopWebViewState> {
+  return desktopBridge().openChromeWebStore(id);
 }
 
 export function onDesktopWebViewState(listener: (state: DesktopWebViewState) => void): () => void {
   return desktopBridge().onWebViewState(listener);
+}
+
+export function onDesktopWebExtensionChanged(listener: (change: DesktopWebExtensionChange) => void): () => void {
+  return desktopBridge().onWebExtensionChanged(listener);
 }
 
 export async function updateDesktopImmersiveNavigation(state: ImmersiveNavigationState | null): Promise<void> {

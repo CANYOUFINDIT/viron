@@ -5,6 +5,7 @@ import {
   desktopWebContextMenuGroups,
   desktopWebLastUrlKey,
   desktopWebPartitionName,
+  deceptiveChromeWebStoreUrl,
   pageAfterClose,
   restorableDesktopWebUrl,
   shouldAttemptDesktopWebAutofill,
@@ -24,6 +25,13 @@ describe("desktop Web pages", () => {
     expect(supportedDesktopPopupUrl("about:blank")).toBe(true);
     expect(supportedDesktopWebUrl("about:blank")).toBe(false);
     expect(supportedDesktopPopupUrl("data:text/html,test")).toBe(false);
+  });
+
+  it("rejects lookalike Web Store origins before the Store preload runs", () => {
+    expect(deceptiveChromeWebStoreUrl("https://chromewebstore.google.com/detail/example")).toBe(false);
+    expect(deceptiveChromeWebStoreUrl("https://chromewebstore.google.com.evil.example/detail/example")).toBe(true);
+    expect(deceptiveChromeWebStoreUrl("https://chromewebstore.google.com@evil.example/detail/example")).toBe(true);
+    expect(deceptiveChromeWebStoreUrl("https://example.com/")).toBe(false);
   });
 
   it("selects the adjacent page when the active page closes", () => {

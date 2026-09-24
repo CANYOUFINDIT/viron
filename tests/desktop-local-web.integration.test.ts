@@ -155,9 +155,11 @@ describe.skipIf(!enabled)("macOS local Web", () => {
       manifest_version: 3,
       name: "Viron installed extension",
       version: "1.0.0",
+      action: { default_popup: "popup.html" },
       content_scripts: [{ matches: ["http://127.0.0.1/*"], js: ["content.js"], run_at: "document_end" }],
     }));
     writeFileSync(join(sourceExtension, "content.js"), 'document.documentElement.dataset.vironInstalled = "loaded";');
+    writeFileSync(join(sourceExtension, "popup.html"), "<!doctype html><title>Viron extension popup</title><p>Ready</p>");
     const uploadPath = join(directory, "upload fixture.txt");
     const downloadPath = join(directory, "artifact.txt");
     writeFileSync(uploadPath, "desktop upload contents");

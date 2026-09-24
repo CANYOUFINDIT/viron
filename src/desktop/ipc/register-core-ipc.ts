@@ -48,7 +48,7 @@ import { DatabaseArtifactFileRuntime } from "../database-artifact-files.js";
 import { isDesktopDatabaseDownloadPath } from "../database-operations-runtime.js";
 import { probeDesktopTcpTarget } from "../connection-quality-probe.js";
 import { readState, shortcutPreferences, writeState } from "../app-state.js";
-import { importDesktopChromeExtension, installDesktopWebExtension, listDesktopWebExtensions, removeDesktopWebExtension, scanDesktopChromeExtensions } from "../web-extensions.js";
+import { enableDesktopChromeWebStore, importDesktopChromeExtension, installDesktopWebExtension, listDesktopWebExtensions, openDesktopWebExtensionPopup, removeDesktopWebExtension, scanDesktopChromeExtensions, updateDesktopWebExtension } from "../web-extensions.js";
 import { activeEndpoint, currentExecutionMode } from "../endpoint-context.js";
 import { mainWindow } from "../window-host.js";
 import { installApplicationMenu } from "../app-menu.js";
@@ -597,6 +597,21 @@ export function registerDesktopCoreIpc(desktopUpdater: DesktopUpdater): void {
     return await removeDesktopWebExtension(view.partition, view.lastUrlKey, installId);
   });
 
+  ipcMain.handle("viron:web-extension:update", async (event, id: string, installId: string, change: { pinned?: boolean; enabled?: boolean }) => {
+    trustedMainWindowSender(event);
+    if (!change || typeof change !== "object" || Object.keys(change).some((key) => !["pinned", "enabled"].includes(key))
+      || Object.values(change).some((value) => typeof value !== "boolean")) throw new Error(tr("本机扩展设置无效"));
+    const view = localWebView(id);
+    return await updateDesktopWebExtension(view.partition, view.lastUrlKey, installId, change);
+  });
+
+  ipcMain.handle("viron:web-extension:open-popup", async (event, id: string, installId: string, anchor: { right: number; bottom: number }) => {
+    trustedMainWindowSender(event);
+    if (!anchor || !Number.isFinite(anchor.right) || !Number.isFinite(anchor.bottom)) throw new Error(tr("扩展弹窗位置无效"));
+    const view = localWebView(id);
+    await openDesktopWebExtensionPopup(view.partition, view.lastUrlKey, installId, anchor);
+  });
+
   ipcMain.handle("viron:web-extension:scan-chrome", async (event) => {
     trustedMainWindowSender(event);
     return await scanDesktopChromeExtensions();
@@ -609,8 +624,10 @@ export function registerDesktopCoreIpc(desktopUpdater: DesktopUpdater): void {
     return await importDesktopChromeExtension(view.partition, view.lastUrlKey, token);
   });
 
-  ipcMain.handle("viron:web-extension:open-store", async (event) => {
+  ipcMain.handle("viron:web-extension:open-store", async (event, id: string) => {
     trustedMainWindowSender(event);
-    await shell.openExternal("https://chromewebstore.google.com/");
+    await enableDesktopChromeWebStore(localWebView(id));
+    await handleDesktopWebViewAction(id, { type: "new-page" });
+    return await handleDesktopWebViewAction(id, { type: "navigate", url: "https://chromewebstore.google.com/" });
   });
 }
