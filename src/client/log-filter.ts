@@ -29,6 +29,11 @@ export function countLogLines(output: string): number {
   return output ? output.split("\n").length : 0;
 }
 
+export function logLineBreakSuffix(output: string): string {
+  // Finish a partial line before leaving an empty line for the next chunk.
+  return output && !output.endsWith("\n") ? "\n\n" : "\n";
+}
+
 export function tailLogLines(output: string, maxLines: number): string {
   if (!output) return "";
   const limit = normalizeLogInteger(maxLines, MIN_LOG_DISPLAY_LINES, MAX_LOG_DISPLAY_LINES, DEFAULT_LOG_DISPLAY_LINES);

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   isLogPauseShortcut,
   isLogReconnectShortcut,
+  isLogLineBreakShortcut,
   shouldHandleLogLineBreakShortcut,
   shouldHandleLogPauseShortcut,
   shouldHandleLogReconnectShortcut,
@@ -62,8 +63,9 @@ describe("log pause shortcut", () => {
     expect(shouldHandleLogLineBreakShortcut(shortcut, { streamActive: true, dialogVisible: true })).toBe(false);
     expect(shouldHandleLogLineBreakShortcut(shortcut, { streamActive: true, interactiveTarget: true })).toBe(false);
     expect(shouldHandleLogLineBreakShortcut({ key: "Enter", control: true }, { streamActive: true })).toBe(false);
-    expect(shouldHandleLogLineBreakShortcut({ key: "Enter", repeat: true }, { streamActive: true })).toBe(false);
+    expect(shouldHandleLogLineBreakShortcut({ key: "Enter", repeat: true }, { streamActive: true })).toBe(true);
     expect(shouldHandleLogLineBreakShortcut({ key: "Enter", composing: true }, { streamActive: true })).toBe(false);
+    expect(isLogLineBreakShortcut({ key: "Enter", repeat: true })).toBe(true);
   });
 
   it("shows Enter directly in the reconnect button label", () => {

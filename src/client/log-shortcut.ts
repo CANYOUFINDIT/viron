@@ -55,6 +55,15 @@ export function isLogReconnectShortcut(input: LogShortcutInput): boolean {
     && !input.composing;
 }
 
+export function isLogLineBreakShortcut(input: LogShortcutInput): boolean {
+  return input.key === "Enter"
+    && !input.control
+    && !input.meta
+    && !input.alt
+    && !input.shift
+    && !input.composing;
+}
+
 export function shouldHandleLogReconnectShortcut(input: LogShortcutInput, context: LogReconnectShortcutContext): boolean {
   return isLogReconnectShortcut(input)
     && context.reconnectAvailable
@@ -63,7 +72,7 @@ export function shouldHandleLogReconnectShortcut(input: LogShortcutInput, contex
 }
 
 export function shouldHandleLogLineBreakShortcut(input: LogShortcutInput, context: LogLineBreakShortcutContext): boolean {
-  return isLogReconnectShortcut(input)
+  return isLogLineBreakShortcut(input)
     && context.streamActive
     && !context.dialogVisible
     && !context.interactiveTarget;

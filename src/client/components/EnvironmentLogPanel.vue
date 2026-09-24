@@ -32,6 +32,7 @@ import {
 import {
   countLogLines,
   filterLogOutput,
+  logLineBreakSuffix,
   MAX_LOG_CONTEXT_LINES,
   MAX_LOG_DISPLAY_LINES,
   normalizeLogInteger,
@@ -530,6 +531,7 @@ async function startLog(id: string) {
   await selectLog(id);
   if (!props.executionEnabled) return;
   await nextTick();
+  outputElement.value?.focus({ preventScroll: true });
   await startStream(id);
 }
 
@@ -591,7 +593,7 @@ function handleLogShortcut(event: KeyboardEvent) {
     interactiveTarget,
   })) {
     event.preventDefault();
-    appendOutput(selectedLogId.value, "\n");
+    appendOutput(selectedLogId.value, logLineBreakSuffix(output.value));
     return;
   }
   if (shouldHandleLogReconnectShortcut(input, {
@@ -775,7 +777,7 @@ onBeforeUnmount(() => {
         <span v-if="filteredLog.filtered" class="log-filter-summary">{{ filteredLog.matchLineCount }} {{ $t('个匹配 ·') }} {{ filteredLog.includedLineCount }} {{ $t('行上下文') }}</span>
       </section>
 
-      <div ref="outputElement" class="log-output" role="log" :aria-label="$t('实时日志输出')">
+      <div ref="outputElement" class="log-output" role="log" tabindex="0" :aria-label="$t('实时日志输出')">
         <pre v-if="displayOutput"><code v-if="highlightImportant || normalizedFilterKeyword" class="is-highlighted" v-html="highlightedOutput"></code><code v-else>{{ displayOutput }}</code></pre>
         <div v-else class="log-output__empty" :class="{ 'is-error': viewerStatus === 'error' }">
           <FileText :size="28" />

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filterLogOutput, normalizeLogInteger, tailLogLines } from "../src/client/log-filter";
+import { filterLogOutput, logLineBreakSuffix, normalizeLogInteger, tailLogLines } from "../src/client/log-filter";
 
 describe("log filtering", () => {
   it("keeps the newest lines inside the display limit", () => {
@@ -24,5 +24,18 @@ describe("log filtering", () => {
   it("honors case-sensitive matching", () => {
     expect(filterLogOutput("ERROR\nerror", { keyword: "error", caseSensitive: true, before: 0, after: 0 }).output).toBe("error");
     expect(filterLogOutput("ERROR\nerror", { keyword: "error", caseSensitive: false, before: 0, after: 0 }).matchLineCount).toBe(2);
+  });
+
+  it("keeps manual blank lines between partial or complete log output and later chunks", () => {
+    let partialOutput = "first";
+    partialOutput += logLineBreakSuffix(partialOutput);
+    partialOutput += "second\n";
+    expect(partialOutput).toBe("first\n\nsecond\n");
+
+    let completeOutput = "first\n";
+    completeOutput += logLineBreakSuffix(completeOutput);
+    completeOutput += logLineBreakSuffix(completeOutput);
+    completeOutput += "second\n";
+    expect(completeOutput).toBe("first\n\n\nsecond\n");
   });
 });
