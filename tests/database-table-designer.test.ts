@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildAlterTableSql,
   buildCreateTableSql,
+  tableFieldCapabilities,
   validateTableDesigner,
   type TableDesignerField,
   type TableDesignerState,
@@ -41,6 +42,14 @@ function state(overrides: Partial<TableDesignerState> = {}): TableDesignerState 
 }
 
 describe("database table designer", () => {
+  it("exposes only type-compatible field controls", () => {
+    expect(tableFieldCapabilities("CHAR")).toMatchObject({ length: true, decimals: false, charset: true, collation: true, binary: true, unsigned: false, autoIncrement: false, onUpdate: false });
+    expect(tableFieldCapabilities("BIGINT")).toMatchObject({ length: false, decimals: false, charset: false, unsigned: true, autoIncrement: true });
+    expect(tableFieldCapabilities("DECIMAL")).toMatchObject({ length: true, decimals: true, unsigned: true, autoIncrement: false });
+    expect(tableFieldCapabilities("TIMESTAMP")).toMatchObject({ length: true, decimals: false, onUpdate: true, charset: false });
+    expect(tableFieldCapabilities("JSON")).toMatchObject({ length: false, decimals: false, charset: false, unsigned: false, onUpdate: false });
+  });
+
   it("omits blank Navicat table options from the generated SQL", () => {
     const sql = buildCreateTableSql(state());
     expect(sql).not.toContain("MIN_ROWS=");

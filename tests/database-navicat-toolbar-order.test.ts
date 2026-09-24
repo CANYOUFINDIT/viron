@@ -260,7 +260,8 @@ describe("Navicat toolbar action order", () => {
     expect(styles).toContain(":root.bright .database-workbench,");
     expect(styles).toContain(":root.bright .database-workbench { --el-mask-color: #f4f7f7; }");
     expect(styles).toContain(".database-console-select-popper.el-select__popper.el-popper");
-    expect(tableData.match(/popper-class="database-console-select-popper"/g)).toHaveLength(6);
+    expect(tableData.match(/popper-class="database-console-select-popper"/g)).toHaveLength(4);
+    expect(tableData).toContain('menu-class="table-sort-context-menu"');
   });
 
   it("keeps the database loading indicator calm when reduced motion is requested", () => {

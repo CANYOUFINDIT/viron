@@ -27,6 +27,7 @@ import {
   buildAlterTableSql,
   buildCreateTableSql,
   TABLE_FIELD_TYPES,
+  tableFieldCapabilities,
   validateTableDesigner,
   type ForeignKeyAction,
   type TableDefaultKind,
@@ -114,6 +115,7 @@ const tabs = [
 
 const fieldNames = computed(() => fields.value.map((field) => field.name.trim()).filter(Boolean));
 const selectedField = computed(() => fields.value.find((field) => field.id === selectedFieldId.value) ?? null);
+const selectedFieldCapabilities = computed(() => selectedField.value ? tableFieldCapabilities(selectedField.value.type) : null);
 const selectedIndex = computed(() => indexes.value.find((item) => item.id === selectedIndexId.value) ?? null);
 const selectedTrigger = computed(() => triggers.value.find((item) => item.id === selectedTriggerId.value) ?? null);
 const designerState = computed<TableDesignerState>(() => ({
@@ -397,13 +399,34 @@ function updateCommaList(target: TableDesignerForeignKey, key: "columns" | "refe
 }
 
 function setFieldType(field: TableDesignerField, value: TableFieldType) {
+  const next = tableFieldCapabilities(value);
+  const stringLengthTypes = ["VARCHAR", "CHAR", "BINARY", "VARBINARY"];
+  if (field.type !== value && !(stringLengthTypes.includes(field.type) && stringLengthTypes.includes(value))) field.length = "";
   field.type = value;
   if (["VARCHAR", "CHAR", "BINARY", "VARBINARY", "BIT"].includes(value) && !field.length) field.length = value === "VARCHAR" ? "255" : "1";
-  if (!["VARCHAR", "CHAR", "BINARY", "VARBINARY", "BIT", "DECIMAL", "DOUBLE", "FLOAT", "DATETIME", "TIMESTAMP", "TIME", "ENUM", "SET"].includes(value)) {
-    field.length = "";
-    field.decimals = "";
+  if (!next.length) field.length = "";
+  if (!next.decimals) field.decimals = "";
+  if (!next.autoIncrement) field.autoIncrement = false;
+  if (!next.unsigned) field.unsigned = false;
+  if (!next.zerofill) field.zerofill = false;
+  if (!next.charset) field.charset = "";
+  if (!next.collation) field.collation = "";
+  if (!next.binary) field.binary = false;
+  if (!next.keyLength) field.keyLength = "";
+  if (!next.onUpdate) field.onUpdateExpression = "";
+}
+
+function setFieldGenerated(field: TableDesignerField, generated: boolean) {
+  field.generated = generated;
+  if (generated) {
+    field.defaultKind = "none";
+    field.defaultValue = "";
+    field.autoIncrement = false;
+    field.onUpdateExpression = "";
+  } else {
+    field.generatedExpression = "";
+    field.generatedStored = false;
   }
-  if (!["BIGINT", "INT", "MEDIUMINT", "SMALLINT", "TINYINT"].includes(value)) field.autoIncrement = false;
 }
 
 function setIndexColumns(index: TableDesignerIndex, columns: string[]) {
@@ -416,14 +439,6 @@ function indexColumnSetting(index: TableDesignerIndex, column: string) {
   index.columnSettings ??= {};
   index.columnSettings[column] ??= { length: "", order: "" };
   return index.columnSettings[column];
-}
-
-function numericField(field: TableDesignerField): boolean {
-  return ["BIGINT", "INT", "MEDIUMINT", "SMALLINT", "TINYINT", "DECIMAL", "DOUBLE", "FLOAT"].includes(field.type);
-}
-
-function characterField(field: TableDesignerField): boolean {
-  return ["VARCHAR", "CHAR", "TINYTEXT", "TEXT", "MEDIUMTEXT", "LONGTEXT", "ENUM", "SET"].includes(field.type);
 }
 
 function setTriggerEvent(trigger: TableDesignerTrigger, event: TriggerEvent) {
@@ -558,28 +573,28 @@ onBeforeUnmount(() => {
               <tr v-for="field in fields" :key="field.id" :class="{ 'is-selected': selectedFieldId === field.id }" @click="selectedFieldId = field.id">
                 <td><el-input v-model="field.name" maxlength="64" :placeholder="$t('字段名')" /></td>
                 <td><el-select :model-value="field.type" filterable @update:model-value="setFieldType(field, $event as TableFieldType)"><el-option v-for="type in TABLE_FIELD_TYPES" :key="type" :label="type" :value="type" /></el-select></td>
-                <td><el-input v-model="field.length" inputmode="numeric" /></td>
-                <td><el-input v-model="field.decimals" inputmode="numeric" /></td>
+                <td><el-input v-if="tableFieldCapabilities(field.type).length" v-model="field.length" :inputmode="field.type === 'ENUM' || field.type === 'SET' ? 'text' : 'numeric'" /></td>
+                <td><el-input v-if="tableFieldCapabilities(field.type).decimals" v-model="field.decimals" inputmode="numeric" /></td>
                 <td><el-checkbox v-model="field.notNull" /></td>
-                <td><el-checkbox v-model="field.generated" /></td>
+                <td><el-checkbox :model-value="field.generated" @update:model-value="setFieldGenerated(field, Boolean($event))" /></td>
                 <td><el-checkbox v-model="field.primaryKey" /></td>
                 <td><el-input v-model="field.comment" maxlength="1024" /></td>
               </tr>
             </tbody>
           </table>
           </div>
-          <section v-if="selectedField" class="table-designer-properties field-properties">
-            <label><span>{{ $t('默认值') }}</span><div class="table-default-editor"><el-select v-model="selectedField.defaultKind" :disabled="selectedField.generated"><el-option :label="$t('无')" value="none" /><el-option label="NULL" value="null" /><el-option :label="$t('值')" value="value" /><el-option :label="$t('表达式')" value="expression" /></el-select><el-input v-if="selectedField.defaultKind === 'value' || selectedField.defaultKind === 'expression'" v-model="selectedField.defaultValue" :disabled="selectedField.generated" :placeholder="selectedField.defaultKind === 'expression' ? 'CURRENT_TIMESTAMP' : $t('默认值')" /></div></label>
-            <label><span>{{ $t('无符号') }}</span><el-checkbox v-model="selectedField.unsigned" /></label>
-            <label><span>{{ $t('填充零') }}</span><el-checkbox v-model="selectedField.zerofill" :disabled="!numericField(selectedField)" /></label>
-            <label><span>{{ $t('键长度') }}</span><el-input v-model="selectedField.keyLength" inputmode="numeric" :disabled="!selectedField.primaryKey" /></label>
-            <label><span>{{ $t('字符集') }}</span><el-input v-model="selectedField.charset" :disabled="!characterField(selectedField)" :placeholder="$t('跟随表默认值')" /></label>
-            <label><span>{{ $t('排序规则') }}</span><el-input v-model="selectedField.collation" :disabled="!characterField(selectedField)" :placeholder="$t('跟随字符集')" /></label>
-            <label><span>{{ $t('二进制') }}</span><el-checkbox v-model="selectedField.binary" :disabled="!characterField(selectedField)" /></label>
-            <label><span>{{ $t('自动递增') }}</span><el-checkbox v-model="selectedField.autoIncrement" :disabled="selectedField.generated" /></label>
-            <label><span>{{ $t('列格式') }}</span><el-select v-model="selectedField.columnFormat"><el-option :label="$t('默认')" value="" /><el-option label="DEFAULT" value="DEFAULT" /><el-option label="FIXED" value="FIXED" /><el-option label="DYNAMIC" value="DYNAMIC" /></el-select></label>
-            <label><span>{{ $t('存储') }}</span><el-select v-model="selectedField.storage"><el-option :label="$t('默认')" value="" /><el-option label="DEFAULT" value="DEFAULT" /><el-option label="DISK" value="DISK" /><el-option label="MEMORY" value="MEMORY" /></el-select></label>
-            <label class="is-wide"><span>{{ $t('更新表达式') }}</span><el-input v-model="selectedField.onUpdateExpression" :disabled="selectedField.generated" :placeholder="$t('例如 CURRENT_TIMESTAMP')" /></label>
+          <section v-if="selectedField && selectedFieldCapabilities" class="table-designer-properties field-properties">
+            <label v-if="!selectedField.generated"><span>{{ $t('默认值') }}</span><div class="table-default-editor"><el-select v-model="selectedField.defaultKind"><el-option :label="$t('无')" value="none" /><el-option label="NULL" value="null" /><el-option :label="$t('值')" value="value" /><el-option :label="$t('表达式')" value="expression" /></el-select><el-input v-if="selectedField.defaultKind === 'value' || selectedField.defaultKind === 'expression'" v-model="selectedField.defaultValue" :placeholder="selectedField.defaultKind === 'expression' ? 'CURRENT_TIMESTAMP' : $t('默认值')" /></div></label>
+            <label v-if="selectedFieldCapabilities.unsigned"><span>{{ $t('无符号') }}</span><el-checkbox v-model="selectedField.unsigned" /></label>
+            <label v-if="selectedFieldCapabilities.zerofill"><span>{{ $t('填充零') }}</span><el-checkbox v-model="selectedField.zerofill" /></label>
+            <label v-if="selectedField.primaryKey && selectedFieldCapabilities.keyLength"><span>{{ $t('键长度') }}</span><el-input v-model="selectedField.keyLength" inputmode="numeric" /></label>
+            <label v-if="selectedFieldCapabilities.charset"><span>{{ $t('字符集') }}</span><el-input v-model="selectedField.charset" :placeholder="$t('跟随表默认值')" /></label>
+            <label v-if="selectedFieldCapabilities.collation"><span>{{ $t('排序规则') }}</span><el-input v-model="selectedField.collation" :placeholder="$t('跟随字符集')" /></label>
+            <label v-if="selectedFieldCapabilities.binary"><span>{{ $t('二进制') }}</span><el-checkbox v-model="selectedField.binary" /></label>
+            <label v-if="selectedFieldCapabilities.autoIncrement && !selectedField.generated"><span>{{ $t('自动递增') }}</span><el-checkbox v-model="selectedField.autoIncrement" /></label>
+            <label v-if="engine.toUpperCase() === 'NDB' || selectedField.columnFormat"><span>{{ $t('列格式') }}</span><el-select v-model="selectedField.columnFormat"><el-option :label="$t('默认')" value="" /><el-option label="DEFAULT" value="DEFAULT" /><el-option label="FIXED" value="FIXED" /><el-option label="DYNAMIC" value="DYNAMIC" /></el-select></label>
+            <label v-if="engine.toUpperCase() === 'NDB' || selectedField.storage"><span>{{ $t('存储') }}</span><el-select v-model="selectedField.storage"><el-option :label="$t('默认')" value="" /><el-option label="DEFAULT" value="DEFAULT" /><el-option label="DISK" value="DISK" /><el-option label="MEMORY" value="MEMORY" /></el-select></label>
+            <label v-if="selectedFieldCapabilities.onUpdate && !selectedField.generated" class="is-wide"><span>{{ $t('更新表达式') }}</span><el-input v-model="selectedField.onUpdateExpression" :placeholder="$t('例如 CURRENT_TIMESTAMP')" /></label>
             <label v-if="selectedField.generated" class="is-wide"><span>{{ $t('虚拟列表达式') }}</span><el-input v-model="selectedField.generatedExpression" :placeholder="$t('例如 price * quantity')" /></label>
             <label v-if="selectedField.generated"><span>{{ $t('存储方式') }}</span><el-select v-model="selectedField.generatedStored"><el-option label="VIRTUAL" :value="false" /><el-option label="STORED" :value="true" /></el-select></label>
           </section>

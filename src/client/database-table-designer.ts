@@ -169,6 +169,23 @@ const decimalTypes = new Set<TableFieldType>(["DECIMAL", "DOUBLE", "FLOAT"]);
 const precisionTypes = new Set<TableFieldType>(["DATETIME", "TIMESTAMP", "TIME"]);
 const valueListTypes = new Set<TableFieldType>(["ENUM", "SET"]);
 const characterTypes = new Set<TableFieldType>(["VARCHAR", "CHAR", "TINYTEXT", "TEXT", "MEDIUMTEXT", "LONGTEXT", "ENUM", "SET"]);
+
+export function tableFieldCapabilities(type: TableFieldType) {
+  const numeric = numericTypes.has(type) && type !== "BOOLEAN";
+  const character = characterTypes.has(type);
+  return {
+    length: lengthTypes.has(type) || decimalTypes.has(type) || precisionTypes.has(type) || valueListTypes.has(type),
+    decimals: decimalTypes.has(type),
+    unsigned: numeric,
+    zerofill: numeric,
+    autoIncrement: integerTypes.has(type),
+    charset: character,
+    collation: character,
+    binary: character,
+    keyLength: character || type === "BINARY" || type === "VARBINARY",
+    onUpdate: type === "DATETIME" || type === "TIMESTAMP",
+  };
+}
 const simpleOptionPattern = /^[A-Za-z0-9_$-]+$/;
 const unionTablePattern = /^(?:(?:`(?:``|[^`])+`|[A-Za-z0-9_$-]+)\.)?(?:`(?:``|[^`])+`|[A-Za-z0-9_$-]+)$/;
 
@@ -231,8 +248,8 @@ export function columnSql(field: TableDesignerField): string {
   }
   sql += field.notNull ? " NOT NULL" : " NULL";
   sql += fieldDefaultSql(field);
-  if (field.onUpdateExpression?.trim()) sql += ` ON UPDATE ${field.onUpdateExpression.trim()}`;
-  if (field.autoIncrement) sql += " AUTO_INCREMENT";
+  if (tableFieldCapabilities(field.type).onUpdate && field.onUpdateExpression?.trim()) sql += ` ON UPDATE ${field.onUpdateExpression.trim()}`;
+  if (field.autoIncrement && integerTypes.has(field.type)) sql += " AUTO_INCREMENT";
   if (field.columnFormat) sql += ` COLUMN_FORMAT ${field.columnFormat}`;
   if (field.storage) sql += ` STORAGE ${field.storage}`;
   if (field.comment.trim()) sql += ` COMMENT ${quoteSqlString(field.comment.trim())}`;

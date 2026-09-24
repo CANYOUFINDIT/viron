@@ -4171,6 +4171,16 @@ const generatedEnMessages: Record<string, string> = {
 };
 
 const enOverrides: Record<string, string> = {
+  "更改字段": "Change column",
+  "升序排序": "Sort ascending",
+  "降序排序": "Sort descending",
+  "左移": "Move left",
+  "右移": "Move right",
+  "复制所有排序": "Copy all sorts",
+  "清除所有排序": "Clear all sorts",
+  "清除所有筛选 & 排序": "Clear all filters and sorts",
+  "启用排序": "Enable sort",
+  "剪贴板中没有可用的排序规则": "No usable sort rules on the clipboard",
   "数据行操作": "Data row actions",
   "复制字段名称": "Copy field names",
   "复制为": "Copy as",

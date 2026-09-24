@@ -40,6 +40,7 @@ import { createClientId } from "../client-id";
 import { copyTextToClipboard } from "../clipboard";
 import { isBitFlagColumn } from "../../shared/database-cell-value";
 import { copyTableRows, parseTableClipboard, type TableRowCopyFormat } from "../database-table-row-actions";
+import { parseTableSortRules, serializeTableSortRules } from "../database-table-sort-actions";
 import { canBatchApplyColumnEdit, flattenTableGridRangeCells, isForeignTableGridInput, isTableGridInternalField, TABLE_GRID_LAYOUT, TABLE_GRID_ROW_HEADER_FIELD, tableGridColumnSize, tableGridFillAction, tableGridFillDisplayValue, tableGridFillStoredValue, tableGridSelectionLabel } from "../database-table-grid";
 import type { DatabaseNavigatorMenuItem } from "../database-navigator-menu";
 import { createTableFindMatch, resolveTableFindCell, type TableFindMatch } from "../database-table-find";
@@ -145,6 +146,10 @@ const rowHeight = ref(31);
 const rowMenuVisible = ref(false);
 const rowMenuPosition = ref({ x: 0, y: 0 });
 let rowMenuCell: CellComponent | null = null;
+const sortMenuVisible = ref(false);
+const sortMenuPosition = ref({ x: 0, y: 0 });
+const sortMenuRuleId = ref("");
+let sortClipboard = "";
 
 interface RangeFillSnapshot {
   cell: CellComponent;
@@ -194,6 +199,31 @@ const rowMenuItems = computed<DatabaseNavigatorMenuItem[]>(() => [
   { key: "paste", label: tr("粘贴"), disabled: !canEdit.value },
   { key: "row-height", label: tr("设置行高…"), separated: true },
 ]);
+const sortMenuItems = computed<DatabaseNavigatorMenuItem[]>(() => {
+  const rule = sortRules.value.find((item) => item.id === sortMenuRuleId.value);
+  const index = rule ? sortRules.value.indexOf(rule) : -1;
+  const valid = sortRules.value.filter((item) => item.column);
+  const fields: DatabaseNavigatorMenuItem[] = columns.value.map((column, columnIndex) => ({
+    key: `sort-field:${columnIndex}`,
+    label: column.name,
+    disabled: sortRules.value.some((item) => item.id !== rule?.id && item.column === column.name),
+  }));
+  if (!rule) return [...fields, { key: "sort-paste", label: tr("粘贴"), separated: true }];
+  return [
+    { key: "sort-change-field", label: tr("更改字段"), children: fields },
+    { key: "sort-asc", label: `${rule.direction === "asc" ? "✓ " : ""}${tr("升序排序")}` },
+    { key: "sort-desc", label: `${rule.direction === "desc" ? "✓ " : ""}${tr("降序排序")}` },
+    ...(!rule.enabled ? [{ key: "sort-enable", label: tr("启用排序") }] : []),
+    { key: "sort-left", label: tr("左移"), separated: true, disabled: index <= 0 },
+    { key: "sort-right", label: tr("右移"), disabled: index < 0 || index >= sortRules.value.length - 1 },
+    { key: "sort-copy", label: tr("复制"), separated: true },
+    { key: "sort-copy-all", label: tr("复制所有排序"), disabled: !valid.length },
+    { key: "sort-paste", label: tr("粘贴") },
+    { key: "sort-delete", label: tr("删除"), separated: true },
+    { key: "sort-clear", label: tr("清除所有排序"), disabled: !valid.length },
+    { key: "sort-clear-both", label: tr("清除所有筛选 & 排序") },
+  ];
+});
 const activeFilters = computed<TableDataFilterRule[]>(() => filterRules.value
   .filter((rule) => rule.column)
   .map(({ id: _id, ...rule }) => rule));
@@ -1041,8 +1071,85 @@ function removeFilterRule(id: string) {
   filterSuggestions.value = nextSuggestions;
 }
 
-function addSortRule() {
-  if (sortRules.value.length < 20) sortRules.value.push(createSortRule());
+async function openSortMenu(event: MouseEvent, ruleId = "") {
+  const target = event.currentTarget as HTMLElement;
+  const bounds = target.getBoundingClientRect();
+  sortMenuVisible.value = false;
+  sortMenuRuleId.value = ruleId;
+  sortMenuPosition.value = { x: bounds.left, y: bounds.bottom + 3 };
+  await nextTick();
+  sortMenuVisible.value = true;
+}
+
+async function copySortRules(rules: SortRuleDraft[]) {
+  sortClipboard = serializeTableSortRules(rules.map(({ id: _id, ...rule }) => rule));
+  try {
+    await copyTextToClipboard(sortClipboard);
+    ElMessage.success(tr("已复制"));
+  } catch {
+    ElMessage.error(tr("复制失败，请检查剪贴板权限"));
+  }
+}
+
+async function pasteSortRules() {
+  let text = sortClipboard;
+  try {
+    text = window.vironDesktop ? await window.vironDesktop.readClipboardText() : await navigator.clipboard.readText();
+  } catch {
+    // The in-session copy remains available when browser clipboard read is denied.
+  }
+  const parsed = parseTableSortRules(text, columns.value.map((column) => column.name));
+  if (!parsed.length) return ElMessage.warning(tr("剪贴板中没有可用的排序规则"));
+  const existing = sortRules.value.filter((rule) => rule.column);
+  const selected = sortRules.value.find((rule) => rule.id === sortMenuRuleId.value);
+  let insertAt = selected ? existing.findIndex((rule) => rule.id === selected.id) + 1 : existing.length;
+  for (const rule of parsed) {
+    const previous = existing.findIndex((item) => item.column === rule.column);
+    if (previous >= 0) {
+      existing.splice(previous, 1);
+      if (previous < insertAt) insertAt -= 1;
+    }
+    if (existing.length >= 20) break;
+    existing.splice(insertAt++, 0, createSortRule(rule));
+  }
+  sortRules.value = existing.length ? existing : [createSortRule()];
+}
+
+function handleSortMenuAction(key: string) {
+  const rule = sortRules.value.find((item) => item.id === sortMenuRuleId.value);
+  if (key === "sort-paste") return void pasteSortRules();
+  if (key.startsWith("sort-field:")) {
+    const column = columns.value[Number(key.slice("sort-field:".length))];
+    if (!column || sortRules.value.some((item) => item.id !== rule?.id && item.column === column.name)) return;
+    if (rule) rule.column = column.name;
+    else {
+      const empty = sortRules.value.find((item) => !item.column);
+      if (empty) empty.column = column.name;
+      else if (sortRules.value.length < 20) sortRules.value.push(createSortRule({ column: column.name }));
+    }
+    return;
+  }
+  if (!rule) return;
+  if (key === "sort-asc" || key === "sort-desc") rule.direction = key === "sort-asc" ? "asc" : "desc";
+  else if (key === "sort-enable") rule.enabled = true;
+  else if (key === "sort-left" || key === "sort-right") {
+    const index = sortRules.value.indexOf(rule);
+    const next = index + (key === "sort-left" ? -1 : 1);
+    if (next >= 0 && next < sortRules.value.length) {
+      sortRules.value.splice(index, 1);
+      sortRules.value.splice(next, 0, rule);
+    }
+  } else if (key === "sort-copy") void copySortRules([rule]);
+  else if (key === "sort-copy-all") void copySortRules(sortRules.value.filter((item) => item.column));
+  else if (key === "sort-delete") removeSortRule(rule.id);
+  else if (key === "sort-clear") sortRules.value = [createSortRule()];
+  else if (key === "sort-clear-both") {
+    sortRules.value = [createSortRule()];
+    filterRules.value = [createFilterRule()];
+    filterSuggestions.value = {};
+    suggestionGenerations.clear();
+    suggestionRequestKeys.clear();
+  }
 }
 
 function removeSortRule(id: string) {
@@ -1294,9 +1401,13 @@ async function changePage(value: number) {
 watch(() => [props.connectionId, props.database, props.table], () => { void refreshTableContext(); });
 watch(() => props.actionRequest?.id, () => { void handleActionRequest(); });
 watch(() => props.active, (active) => {
-  if (!active) rowMenuVisible.value = false;
+  if (!active) {
+    rowMenuVisible.value = false;
+    sortMenuVisible.value = false;
+  }
   if (active) void nextTick(() => tableGrid?.redraw(true));
 });
+watch(toolPanel, (panel) => { if (panel !== "filter") sortMenuVisible.value = false; });
 watch(viewMode, (mode) => {
   if (mode !== "grid") {
     if (fillSession && !fillSession.committed) cancelFillSession();
@@ -1378,14 +1489,12 @@ onBeforeUnmount(() => {
           </div>
         </section>
         <section class="table-rule-section">
-          <header><strong>{{ $t('排序方式') }}</strong><button type="button" :aria-label="$t('添加排序规则')" :title="$t('添加排序规则')" :disabled="sortRules.length >= 20" @click="addSortRule"><Plus :size="14" /></button></header>
-          <div class="table-rule-list">
-            <div v-for="rule in sortRules" :key="rule.id" class="table-rule-row is-sort">
-              <el-checkbox v-model="rule.enabled" :aria-label="$t('启用排序规则')" />
-              <el-select v-model="rule.column" clearable filterable :placeholder="$t('排序列')" size="small" popper-class="database-console-select-popper"><el-option v-for="column in columns" :key="column.name" :label="column.name" :value="column.name" :disabled="sortRules.some((candidate) => candidate.id !== rule.id && candidate.column === column.name)" /></el-select>
-              <el-select v-model="rule.direction" :disabled="!rule.column" size="small" popper-class="database-console-select-popper"><el-option :label="$t('升序')" value="asc" /><el-option :label="$t('降序')" value="desc" /></el-select>
-              <button type="button" class="table-rule-remove" :aria-label="$t('删除排序规则')" :title="$t('删除排序规则')" @click="removeSortRule(rule.id)"><Trash2 :size="14" /></button>
-            </div>
+          <header><strong>{{ $t('排序方式') }}</strong></header>
+          <div class="table-sort-chips">
+            <button v-for="rule in sortRules.filter((item) => item.column)" :key="rule.id" type="button" class="table-sort-chip" :class="{ 'is-disabled': !rule.enabled }" :aria-label="`${rule.column} ${rule.direction === 'asc' ? $t('升序') : $t('降序')}`" @click="openSortMenu($event, rule.id)">
+              <span>{{ rule.column }}</span><span class="table-sort-direction">{{ rule.direction === 'asc' ? '↑' : '↓' }}</span><ChevronDown :size="12" />
+            </button>
+            <button type="button" class="table-sort-add" :aria-label="$t('添加排序规则')" :title="$t('添加排序规则')" :disabled="sortRules.filter((item) => item.column).length >= 20 || !columns.length" @click="openSortMenu($event)"><Plus :size="14" /></button>
           </div>
         </section>
         <footer><button type="button" class="is-primary" @click="applyFilterSort"><Filter :size="14" />{{ $t('应用筛选与排序') }}</button><button type="button" @click="clearFilterSort"><RotateCcw :size="14" />{{ $t('清除规则') }}</button></footer>
@@ -1412,6 +1521,7 @@ onBeforeUnmount(() => {
       />
     </div>
     <DatabaseNavigatorContextMenu :visible="rowMenuVisible" :x="rowMenuPosition.x" :y="rowMenuPosition.y" :items="rowMenuItems" menu-class="table-row-context-menu" :aria-label="$t('数据行操作')" @close="rowMenuVisible = false" @select="handleRowMenuAction" />
+    <DatabaseNavigatorContextMenu :visible="sortMenuVisible" :x="sortMenuPosition.x" :y="sortMenuPosition.y" :items="sortMenuItems" menu-class="table-sort-context-menu" :aria-label="$t('排序方式')" @close="sortMenuVisible = false" @select="handleSortMenuAction" />
     <div v-if="viewMode === 'form'" class="table-form-view">
       <div v-if="selectedRow" class="table-form-fields">
         <label v-for="column in columns" :key="column.name"><span><strong>{{ column.name }}</strong><small>{{ column.columnType }}</small></span><el-input :model-value="selectedRow[column.name] === null ? '' : String(selectedRow[column.name] ?? '')" :disabled="!canEdit || column.autoIncrement" :placeholder="selectedRow[column.name] === null ? 'NULL' : ''" @update:model-value="updateFormValue(column, $event)" /></label>
