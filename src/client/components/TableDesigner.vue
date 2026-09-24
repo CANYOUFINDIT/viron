@@ -571,14 +571,14 @@ onBeforeUnmount(() => {
             <thead><tr><th>{{ $t('名称') }}</th><th>{{ $t('类型') }}</th><th>{{ $t('长度') }}</th><th>{{ $t('小数点') }}</th><th>{{ $t('不是 Null') }}</th><th>{{ $t('虚拟') }}</th><th>{{ $t('键') }}</th><th>{{ $t('注释') }}</th></tr></thead>
             <tbody>
               <tr v-for="field in fields" :key="field.id" :class="{ 'is-selected': selectedFieldId === field.id }" @click="selectedFieldId = field.id">
-                <td><el-input v-model="field.name" maxlength="64" :placeholder="$t('字段名')" /></td>
+                <td><el-input v-model="field.name" maxlength="64" :placeholder="$t('字段名')" :title="field.name" /></td>
                 <td><el-select :model-value="field.type" filterable @update:model-value="setFieldType(field, $event as TableFieldType)"><el-option v-for="type in TABLE_FIELD_TYPES" :key="type" :label="type" :value="type" /></el-select></td>
                 <td><el-input v-if="tableFieldCapabilities(field.type).length" v-model="field.length" :inputmode="field.type === 'ENUM' || field.type === 'SET' ? 'text' : 'numeric'" /></td>
                 <td><el-input v-if="tableFieldCapabilities(field.type).decimals" v-model="field.decimals" inputmode="numeric" /></td>
                 <td><el-checkbox v-model="field.notNull" /></td>
                 <td><el-checkbox :model-value="field.generated" @update:model-value="setFieldGenerated(field, Boolean($event))" /></td>
                 <td><el-checkbox v-model="field.primaryKey" /></td>
-                <td><el-input v-model="field.comment" maxlength="1024" /></td>
+                <td><el-input v-model="field.comment" maxlength="1024" :title="field.comment" /></td>
               </tr>
             </tbody>
           </table>

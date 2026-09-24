@@ -142,7 +142,7 @@ let fillCancelling = false;
 const fillActive = ref(false);
 const fillDraft = ref("");
 const fillInputElement = ref<HTMLInputElement | null>(null);
-const rowHeight = ref(31);
+const rowHeight = ref(27);
 const rowMenuVisible = ref(false);
 const rowMenuPosition = ref({ x: 0, y: 0 });
 let rowMenuCell: CellComponent | null = null;
@@ -919,7 +919,7 @@ async function load() {
 }
 
 async function refreshTableContext() {
-  rowHeight.value = 31;
+  rowHeight.value = 27;
   page.value = 1;
   activeProfileId.value = "";
   closeFind();
