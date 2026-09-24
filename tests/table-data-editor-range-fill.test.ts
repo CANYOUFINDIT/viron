@@ -22,6 +22,8 @@ let errors: unknown[];
 let clipboardWrite: ReturnType<typeof vi.fn>;
 let clipboardRead: ReturnType<typeof vi.fn>;
 const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+const originalSecureContext = Object.getOwnPropertyDescriptor(window, "isSecureContext");
+const originalDesktopBridge = Object.getOwnPropertyDescriptor(window, "vironDesktop");
 
 beforeEach(async () => {
   // Supply layout dimensions so the real Tabulator renders its rows in happy-dom.
@@ -49,6 +51,7 @@ beforeEach(async () => {
   clipboardWrite = vi.fn().mockResolvedValue(undefined);
   clipboardRead = vi.fn().mockResolvedValue("");
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: clipboardWrite, readText: clipboardRead } });
+  Object.defineProperty(window, "isSecureContext", { configurable: true, value: true });
   wrapper = mount(TableDataEditor, {
     attachTo: document.body,
     props: { connectionId: "fixture", database: "fixture", table: "images", active: true },
@@ -70,12 +73,18 @@ beforeEach(async () => {
   await vi.waitFor(() => expect(table.getRows()).toHaveLength(3));
 });
 
-afterEach(() => {
+afterEach(async () => {
+  // Tabulator schedules range layout on a timer even after the menu action resolves.
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
   wrapper?.unmount();
   wrapper = undefined;
   vi.restoreAllMocks();
   if (originalClipboard) Object.defineProperty(navigator, "clipboard", originalClipboard);
   else Reflect.deleteProperty(navigator, "clipboard");
+  if (originalSecureContext) Object.defineProperty(window, "isSecureContext", originalSecureContext);
+  else Reflect.deleteProperty(window, "isSecureContext");
+  if (originalDesktopBridge) Object.defineProperty(window, "vironDesktop", originalDesktopBridge);
+  else Reflect.deleteProperty(window, "vironDesktop");
 });
 
 async function selectRange(firstField = "update_time", lastField = firstField) {
@@ -231,5 +240,33 @@ describe("table data row context menu", () => {
     await flushPromises();
     const save = mockedApi.mock.calls.find(([path]) => path.endsWith("/changes"));
     expect(JSON.parse(save![1]!.body as string).changes).toEqual([{ type: "delete", values: {}, key: { id: originalRows[0].id } }]);
+  });
+
+  function installDesktopBridge() {
+    const desktopWrite = vi.fn().mockResolvedValue({ written: true });
+    const desktopRead = vi.fn().mockResolvedValue("native-value");
+    Object.defineProperty(window, "vironDesktop", { configurable: true, value: {
+      writeClipboardText: desktopWrite, readClipboardText: desktopRead,
+    } });
+    clipboardWrite.mockRejectedValue(new DOMException("denied", "NotAllowedError"));
+    clipboardRead.mockRejectedValue(new DOMException("denied", "NotAllowedError"));
+    return { desktopWrite, desktopRead };
+  }
+
+  it("copies through the desktop native clipboard bridge when browser access is denied", async () => {
+    const { desktopWrite } = installDesktopBridge();
+    await openMenu("id");
+    await choose("copy-names");
+    expect(desktopWrite).toHaveBeenCalledWith("id");
+    expect(clipboardWrite).not.toHaveBeenCalled();
+  });
+
+  it("pastes through the desktop native clipboard bridge when browser access is denied", async () => {
+    const { desktopRead } = installDesktopBridge();
+    await openMenu("update_time");
+    await choose("paste");
+    expect(desktopRead).toHaveBeenCalledOnce();
+    expect(clipboardRead).not.toHaveBeenCalled();
+    expect(values()[0]).toBe("native-value");
   });
 });

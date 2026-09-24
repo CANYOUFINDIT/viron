@@ -37,6 +37,7 @@ import "tabulator-tables/dist/css/tabulator_midnight.min.css";
 import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { api } from "../api";
 import { createClientId } from "../client-id";
+import { copyTextToClipboard } from "../clipboard";
 import { isBitFlagColumn } from "../../shared/database-cell-value";
 import { copyTableRows, parseTableClipboard, type TableRowCopyFormat } from "../database-table-row-actions";
 import { canBatchApplyColumnEdit, flattenTableGridRangeCells, isForeignTableGridInput, isTableGridInternalField, TABLE_GRID_LAYOUT, TABLE_GRID_ROW_HEADER_FIELD, tableGridColumnSize, tableGridFillAction, tableGridFillDisplayValue, tableGridFillStoredValue, tableGridSelectionLabel } from "../database-table-grid";
@@ -502,7 +503,7 @@ async function copyRowSelection(format: TableRowCopyFormat) {
 async function writeRowClipboard(text: string) {
   if (!text) return ElMessage.warning(tr("没有可复制的数据"));
   try {
-    await navigator.clipboard.writeText(text);
+    await copyTextToClipboard(text);
     ElMessage.success(tr("已复制"));
   } catch {
     ElMessage.error(tr("复制失败，请检查剪贴板权限"));
@@ -513,7 +514,9 @@ async function pasteRowSelection() {
   if (!tableGrid || !canEdit.value || !rowMenuCell) return;
   let text: string;
   try {
-    text = await navigator.clipboard.readText();
+    text = window.vironDesktop
+      ? await window.vironDesktop.readClipboardText()
+      : await navigator.clipboard.readText();
   } catch {
     return ElMessage.error(tr("无法读取剪贴板，请检查权限"));
   }
