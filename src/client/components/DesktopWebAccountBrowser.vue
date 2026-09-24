@@ -30,7 +30,7 @@ import {
   type DesktopChromeExtensionInfo,
 } from "../desktop";
 import { releaseAgentNativeOverlay, retainAgentNativeOverlay } from "../agent-host";
-import { desktopWebBoundsOutsideSidebar, rendererOverlayCoversSurface, type RectangleBounds } from "../desktop-web-overlay";
+import { registerNativeWebSurface, scheduleNativeDomOverlays } from "../native-dom-overlays";
 import { normalizeWebAddress } from "../../shared/web-address";
 import { historyNavigationFromMouseButton } from "../../shared/history-navigation-gesture";
 import { applyHistoryNavigationCommand, applyHistoryNavigationWheel } from "../history-navigation";
@@ -77,12 +77,10 @@ const extensionPanel = ref<"installed" | "chrome">("installed");
 const extensionMenu = ref("");
 const pinnedExtensions = computed(() => extensions.value.filter((extension) => extension.pinned && extension.enabled && extension.loaded));
 const previewFrame = ref("");
-const overlayBlocking = ref(false);
-const overlayFrame = ref("");
 const pageTabs = computed(() => state.value?.pages ?? []);
 const activePageId = computed(() => state.value?.activePageId ?? "");
 let resizeObserver: ResizeObserver | null = null;
-let overlayObserver: MutationObserver | null = null;
+let releaseNativeWebSurface: (() => void) | null = null;
 let stopStateListener: (() => void) | null = null;
 let stopExtensionListener: (() => void) | null = null;
 let boundsFrame: number | undefined;
@@ -95,42 +93,15 @@ let nativeOverlayHeld = false;
 let pendingNewPage = false;
 let previewTimer: number | undefined;
 let previewSyncSequence = 0;
-let overlayFreezeSeq = 0;
-let overlayRestoring = false;
-let overlayHideTask: Promise<void> | null = null;
 const preloading = ref(false);
 let removeNativeViewPointerDownListener: (() => void) | null = null;
 let startRequestVersion = 0;
 let startPromise: Promise<void> | null = null;
 let releasePromise: Promise<void> | null = null;
 
-function elementBounds(element: HTMLElement): RectangleBounds {
-  const rect = element.getBoundingClientRect();
-  return {
-    left: rect.left,
-    right: rect.right,
-    top: rect.top,
-    bottom: rect.bottom,
-    width: rect.width,
-    height: rect.height,
-  };
-}
-
 function surfaceBounds(): DesktopWebViewBounds | null {
   if (!surface.value) return null;
-  let surfaceRect: RectangleBounds | null = elementBounds(surface.value);
-  const appFrame = document.querySelector(".app-frame");
-  const sidebar = appFrame?.querySelector<HTMLElement>(".app-sidebar");
-  const sidebarPanel = sidebar?.querySelector<HTMLElement>(".app-sidebar__panel");
-  if (sidebar && sidebarPanel && window.getComputedStyle(sidebar).display !== "none") {
-    surfaceRect = desktopWebBoundsOutsideSidebar(
-      surfaceRect,
-      elementBounds(sidebar),
-      elementBounds(sidebarPanel),
-      appFrame?.classList.contains("is-sidebar-expanded") ?? false,
-    );
-  }
-  if (!surfaceRect) return null;
+  const surfaceRect = surface.value.getBoundingClientRect();
   if (surfaceRect.width < 2 || surfaceRect.height < 2) return null;
   return {
     x: Math.round(surfaceRect.left),
@@ -170,27 +141,8 @@ function scheduleBounds() {
     boundsFrame = undefined;
     const bounds = surfaceBounds();
     if (state.value && bounds) updateNativeBounds(state.value.id, bounds);
+    scheduleNativeDomOverlays();
   });
-}
-
-function rendererOverlayVisible() {
-  const surfaceRect = surface.value?.getBoundingClientRect();
-  if (!surfaceRect) return false;
-  return [...document.querySelectorAll<HTMLElement>(".el-overlay, .el-popper")].some((overlay) => {
-    const style = window.getComputedStyle(overlay);
-    const rect = overlay.getBoundingClientRect();
-    return rendererOverlayCoversSurface(surfaceRect, {
-      rect,
-      ariaHidden: overlay.getAttribute("aria-hidden") === "true",
-      display: style.display,
-      visibility: style.visibility,
-      ignored: overlay.classList.contains("sidebar-user-popper"),
-    });
-  });
-}
-
-function onSidebarTransitionEnd(event: TransitionEvent) {
-  if (event.propertyName === "width" && event.target instanceof Element && event.target.classList.contains("app-sidebar")) syncVisibility();
 }
 
 function syncNativeOverlay(needed: boolean) {
@@ -200,85 +152,25 @@ function syncNativeOverlay(needed: boolean) {
   else releaseAgentNativeOverlay();
 }
 
-function clearOverlayFreeze() {
-  overlayFreezeSeq += 1;
-  overlayBlocking.value = false;
-  overlayFrame.value = "";
-}
-
-async function freezePageForOverlay(id: string) {
-  if (overlayBlocking.value) return;
-  overlayBlocking.value = true;
-  const seq = ++overlayFreezeSeq;
-  if (!overlayFrame.value && previewFrame.value) overlayFrame.value = previewFrame.value;
-  window.clearTimeout(previewTimer);
-  syncNativeOverlay(false);
-  const frame = await captureDesktopWebView(id, "page").catch(() => "");
-  if (seq !== overlayFreezeSeq || state.value?.id !== id) return;
-  if (frame) {
-    const image = new Image();
-    image.src = frame;
-    await image.decode().catch(() => undefined);
-    if (seq !== overlayFreezeSeq || state.value?.id !== id) return;
-    overlayFrame.value = frame;
-    await nextTick();
-  }
-  if (seq !== overlayFreezeSeq || state.value?.id !== id) return;
-  const hideTask = setDesktopWebViewVisible(id, false).then(applyState).catch(() => undefined);
-  overlayHideTask = hideTask;
-  void hideTask.finally(() => { if (overlayHideTask === hideTask) overlayHideTask = null; });
-}
-
-async function restorePageAfterOverlay(id: string) {
-  if (overlayRestoring) return;
-  overlayRestoring = true;
-  ++overlayFreezeSeq;
-  try {
-    await overlayHideTask;
-    applyState(await setDesktopWebViewVisible(id, true));
-    if (state.value?.id !== id) return;
-    if (rendererOverlayVisible()) {
-      applyState(await setDesktopWebViewVisible(id, false));
-      return;
-    }
-    clearOverlayFreeze();
-    syncNativeOverlay(true);
-    schedulePreviewCapture(120);
-  } catch {
-    clearOverlayFreeze();
-  } finally {
-    overlayRestoring = false;
-  }
-}
-
 function syncVisibility() {
   if (!state.value || state.value.closedReason) {
-    clearOverlayFreeze();
     syncNativeOverlay(false);
+    scheduleNativeDomOverlays();
     return;
   }
   if (props.preview) {
-    clearOverlayFreeze();
     window.clearTimeout(previewTimer);
     syncNativeOverlay(false);
     void setDesktopWebViewVisible(state.value.id, false).then(applyState).catch(() => undefined);
+    scheduleNativeDomOverlays();
     return;
   }
   const bounds = surfaceBounds();
-  const overlay = rendererOverlayVisible();
   const canShow = componentActive && props.active && !preloading.value && Boolean(bounds);
-  if (canShow && overlay) {
-    void freezePageForOverlay(state.value.id);
-    return;
-  }
-  if (overlayBlocking.value && canShow) {
-    void restorePageAfterOverlay(state.value.id);
-    return;
-  }
-  if (overlayBlocking.value) clearOverlayFreeze();
   const visible = canShow;
   syncNativeOverlay(visible);
   if (visible && bounds) updateNativeBounds(state.value.id, bounds);
+  scheduleNativeDomOverlays();
   void setDesktopWebViewVisible(state.value.id, visible).then((next) => {
     applyState(next);
     if (visible) schedulePreviewCapture(120);
@@ -288,7 +180,7 @@ function syncVisibility() {
 
 function schedulePreviewCapture(delay = 900) {
   window.clearTimeout(previewTimer);
-  if (props.preview || overlayBlocking.value || !props.active || !state.value || state.value.closedReason || document.visibilityState === "hidden") return;
+  if (props.preview || !props.active || !state.value || state.value.closedReason || document.visibilityState === "hidden") return;
   previewTimer = window.setTimeout(() => void refreshPreviewFrame(), delay);
 }
 
@@ -304,7 +196,7 @@ async function refreshPreviewFrame() {
   } catch {
     // The normal disconnected state remains visible while capture is unavailable.
   } finally {
-    if (!props.preview && !overlayBlocking.value) schedulePreviewCapture();
+    if (!props.preview) schedulePreviewCapture();
   }
 }
 
@@ -646,16 +538,10 @@ onMounted(() => {
   });
   resizeObserver = new ResizeObserver(scheduleBounds);
   if (surface.value) resizeObserver.observe(surface.value);
-  overlayObserver = new MutationObserver(syncVisibility);
-  overlayObserver.observe(document.body, {
-    childList: true,
-    subtree: true,
-    attributes: true,
-    attributeFilter: ["aria-hidden", "class", "style"],
-  });
+  releaseNativeWebSurface = registerNativeWebSurface(() => surface.value,
+    () => componentActive && props.active && !props.preview && !preloading.value && Boolean(state.value && !state.value.closedReason));
   window.addEventListener("resize", syncVisibility);
   window.addEventListener("scroll", scheduleBounds, true);
-  document.addEventListener("transitionend", onSidebarTransitionEnd, true);
   document.addEventListener("visibilitychange", syncPreviewMode);
   if (props.autoStart) void start("entry", props.preloadStart);
 });
@@ -667,7 +553,7 @@ onActivated(() => {
 
 onDeactivated(() => {
   componentActive = false;
-  clearOverlayFreeze();
+  scheduleNativeDomOverlays();
   syncNativeOverlay(false);
   if (boundsFrame) {
     window.cancelAnimationFrame(boundsFrame);
@@ -702,18 +588,16 @@ watch(
 
 onBeforeUnmount(() => {
   closed = true;
-  clearOverlayFreeze();
   syncNativeOverlay(false);
   if (boundsFrame) window.cancelAnimationFrame(boundsFrame);
   window.clearTimeout(previewTimer);
   resizeObserver?.disconnect();
-  overlayObserver?.disconnect();
+  releaseNativeWebSurface?.();
   stopStateListener?.();
   stopExtensionListener?.();
   removeNativeViewPointerDownListener?.();
   window.removeEventListener("resize", syncVisibility);
   window.removeEventListener("scroll", scheduleBounds, true);
-  document.removeEventListener("transitionend", onSidebarTransitionEnd, true);
   document.removeEventListener("visibilitychange", syncPreviewMode);
   if (state.value) {
     void setDesktopWebViewPreviewing(state.value.id, false).catch(() => undefined);
@@ -809,9 +693,8 @@ onBeforeUnmount(() => {
         <button type="button" :aria-label="focused ? $t('退出沉浸模式') : $t('进入沉浸模式')" :title="focused ? $t('退出沉浸模式') : $t('进入沉浸模式')" @click="emit('focusChange', !focused)"><Minimize2 v-if="focused" :size="15" /><Maximize2 v-else :size="15" /></button>
       </div>
     </header>
-    <div ref="surface" class="web-browser-surface desktop-web-browser-surface" :class="{ 'is-preview': preview, 'is-overlay-frozen': overlayBlocking }">
+    <div ref="surface" class="web-browser-surface desktop-web-browser-surface" :class="{ 'is-preview': preview }">
       <img v-if="preview && previewFrame" :src="previewFrame" :alt="$t('{0} 的页面画面', [username])" draggable="false" />
-      <img v-else-if="overlayBlocking && (overlayFrame || previewFrame)" :src="overlayFrame || previewFrame" :alt="$t('{0} 的页面画面', [username])" draggable="false" />
       <div v-else-if="!started || preloading" class="web-browser-loading web-browser-idle" :title="$t('双击空白处访问页面')" @pointerdown.stop @mousedown.stop @dblclick="visitPage">
         <div class="web-browser-idle__icon"><Globe2 :size="24" /></div>
         <strong>{{ $t('准备访问此页面') }}</strong>
@@ -846,8 +729,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .desktop-web-account-browser { position: relative; }
 .desktop-web-browser-surface { background: #fff; }
-.desktop-web-browser-surface.is-preview,
-.desktop-web-browser-surface.is-overlay-frozen { cursor: default; }
+.desktop-web-browser-surface.is-preview { cursor: default; }
 .desktop-web-pinned-extension img { width: 16px; height: 16px; object-fit: contain; }
 .desktop-web-view-status { width: 28px; height: 28px; color: var(--ink-400); display: grid; place-items: center; }
 .desktop-web-view-status.is-local { color: var(--teal-600); }

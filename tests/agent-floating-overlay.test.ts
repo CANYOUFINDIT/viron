@@ -25,7 +25,8 @@ describe("AI Agent native overlay layout", () => {
     expect(nativeOverlay).toContain("opacity: 0;");
     expect(launcherOverlay).toContain("agentLauncherVisualWindow");
     expect(launcherOverlay).toContain("agentFloatingOverlayInteractionState");
-    expect(launcherOverlay).toContain("interaction.moveAbove(agentLauncherVisualWindow.getMediaSourceId())");
+    expect(launcherOverlay).toContain("registerNativeOverlayWindow(visual, 60)");
+    expect(launcherOverlay).toContain("registerNativeOverlayWindow(interaction, 61)");
     expect(launcherOverlay).not.toContain("agentLauncherHitTestTimer");
     expect(launcherOverlay).not.toContain("screen.getCursorScreenPoint()");
     expect(launcherOverlay).toContain("focusable: false");

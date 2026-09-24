@@ -64,6 +64,13 @@ import {
   updateActiveEnvironmentDockWindow,
 } from "./overlays/active-environment-dock-window.js";
 import {
+  closeAllDomOverlayWindows,
+  isDomOverlayRequest,
+  layoutDomOverlayWindows,
+  registerDomOverlayWindow,
+} from "./overlays/dom-overlay-windows.js";
+import { raiseNativeOverlayWindows } from "./overlays/native-window-stack.js";
+import {
   sendToAgentChat,
   setAgentChatNativeOverlay,
   updateAgentChatHost,
@@ -166,6 +173,7 @@ import {
   runDesktopImmersiveNavigationSmoke,
 } from "./smoke/static-overlay-smoke.js";
 import { runDesktopActiveEnvironmentDockSmoke } from "./smoke/active-environment-dock-smoke.js";
+import { runDesktopDomOverlayManagerSmoke, runDesktopDomOverlaySmoke } from "./smoke/dom-overlay-smoke.js";
 
 if (process.platform === "darwin") app.commandLine.appendSwitch("use-mock-keychain");
 
@@ -348,7 +356,36 @@ async function createWindow(): Promise<void> {
     },
   }));
   createdMainWindow.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
-  createdMainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  createdMainWindow.webContents.setWindowOpenHandler(({ url, frameName }) => {
+    if (!isDomOverlayRequest(url, frameName)) return { action: "deny" };
+    return {
+      action: "allow",
+      overrideBrowserWindowOptions: {
+        parent: createdMainWindow,
+        show: false,
+        frame: false,
+        transparent: true,
+        backgroundColor: "#00000000",
+        hasShadow: false,
+        resizable: false,
+        movable: false,
+        minimizable: false,
+        maximizable: false,
+        fullscreenable: false,
+        skipTaskbar: true,
+        roundedCorners: false,
+        webPreferences: {
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+          webSecurity: true,
+        },
+      },
+    };
+  });
+  createdMainWindow.webContents.on("did-create-window", (window, details) => {
+    registerDomOverlayWindow(details.frameName, window);
+  });
   createdMainWindow.webContents.on("before-input-event", (event, input) => {
     if (input.type !== "keyDown" || input.isAutoRepeat) return;
     if (shortcutCaptureActive) {
@@ -380,6 +417,7 @@ async function createWindow(): Promise<void> {
   attachDesktopHistoryNavigationListeners(createdMainWindow);
   createdMainWindow.once("ready-to-show", () => createdMainWindow.show());
   createdMainWindow.on("move", () => {
+    layoutDomOverlayWindows();
     layoutImmersiveNavigationWindow();
     layoutAgentLauncherWindow();
     layoutAgentChatWindow();
@@ -387,13 +425,16 @@ async function createWindow(): Promise<void> {
     layoutActiveEnvironmentDockWindow();
   });
   createdMainWindow.on("resize", () => {
+    layoutDomOverlayWindows();
     layoutImmersiveNavigationWindow();
     layoutAgentLauncherWindow();
     layoutAgentChatWindow();
     layoutConnectionQualityWindow();
     layoutActiveEnvironmentDockWindow();
   });
+  createdMainWindow.on("focus", raiseNativeOverlayWindows);
   createdMainWindow.on("closed", () => {
+    closeAllDomOverlayWindows();
     void closeAllDesktopWebViews();
     void updateImmersiveNavigationWindow(null);
     immersiveNavigationWindow?.close();
@@ -432,6 +473,7 @@ async function createWindow(): Promise<void> {
       const agentLauncher = await runDesktopAgentLauncherSmoke();
       const connectionQuality = await runDesktopConnectionQualitySmoke();
       const activeEnvironmentDock = await runDesktopActiveEnvironmentDockSmoke();
+      const domOverlay = await runDesktopDomOverlaySmoke();
       if (smokeEndpoint) {
         const endpointResult = await createdMainWindow.webContents.executeJavaScript(
           `window.vironDesktop.setEndpoint(${JSON.stringify(smokeEndpoint)})`,
@@ -483,7 +525,8 @@ async function createWindow(): Promise<void> {
         };
         inspect();
       })`);
-      const smokeResult = { ...result, endpointValidated, apiStatus, localWeb, localSsh, localLogs, localDatabase, localInspection, immersiveNavigation, agentLauncher, connectionQuality, activeEnvironmentDock };
+      const domOverlayManager = await runDesktopDomOverlayManagerSmoke();
+      const smokeResult = { ...result, endpointValidated, apiStatus, localWeb, localSsh, localLogs, localDatabase, localInspection, immersiveNavigation, agentLauncher, connectionQuality, activeEnvironmentDock, domOverlay, domOverlayManager };
       process.stdout.write(`VIRON_DESKTOP_SMOKE ${JSON.stringify(smokeResult)}\n`);
       desktopSmokeStage("complete");
       const endpointPassed = endpointValidated === null || (endpointValidated && apiStatus === 200);
@@ -516,7 +559,7 @@ async function createWindow(): Promise<void> {
         && activeEnvironmentDock.dragPositionDelivered && activeEnvironmentDock.closeActionDelivered && activeEnvironmentDock.closeStateRemoved
         && activeEnvironmentDock.webViewStayedVisible && activeEnvironmentDock.nativeAboveWebView
         && activeEnvironmentDock.actionDelivered && activeEnvironmentDock.hidden;
-      app.exit(result.loginVisible && result.endpointVisible && endpointPassed && localWebPassed && localSshPassed && localLogsPassed && localDatabasePassed && localInspectionPassed && immersiveNavigationPassed && agentLauncherPassed && connectionQualityPassed && activeEnvironmentDockPassed ? 0 : 1);
+      app.exit(result.loginVisible && result.endpointVisible && endpointPassed && localWebPassed && localSshPassed && localLogsPassed && localDatabasePassed && localInspectionPassed && immersiveNavigationPassed && agentLauncherPassed && connectionQualityPassed && activeEnvironmentDockPassed && domOverlay.nodeAdopted && domOverlay.childAboveWeb && domOverlay.pointerDelivered && domOverlay.webStayedLive && domOverlay.cleanup && domOverlayManager.sidebarPortaled && domOverlayManager.popoverPortaled && domOverlayManager.vueEventsPreserved && domOverlayManager.webStayedLive && domOverlayManager.restored ? 0 : 1);
     } catch (error) {
       process.stderr.write(`VIRON_DESKTOP_SMOKE_FAILED ${error instanceof Error ? error.message : String(error)}\n`);
       app.exit(1);

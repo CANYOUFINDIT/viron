@@ -27,6 +27,7 @@ export default defineConfig(({ mode }) => {
             "desktop-agent-chat": fileURLToPath(new URL("./desktop-agent-chat.html", import.meta.url)),
             "desktop-connection-quality": fileURLToPath(new URL("./desktop-connection-quality.html", import.meta.url)),
             "desktop-active-environment-dock": fileURLToPath(new URL("./desktop-active-environment-dock.html", import.meta.url)),
+            "desktop-dom-overlay-smoke": fileURLToPath(new URL("./desktop-dom-overlay-smoke.html", import.meta.url)),
           },
         },
       } : {}),

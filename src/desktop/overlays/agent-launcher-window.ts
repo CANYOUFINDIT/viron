@@ -6,6 +6,7 @@ import {
 } from "../../shared/agent-floating-overlay.js";
 import { translate as tr } from "../i18n.js";
 import { mainWindow } from "../window-host.js";
+import { raiseNativeOverlayWindows, registerNativeOverlayWindow } from "./native-window-stack.js";
 
 export let agentLauncherWindow: BrowserWindow | null = null;
 export let agentLauncherVisualWindow: BrowserWindow | null = null;
@@ -88,6 +89,8 @@ export async function ensureAgentLauncherWindow(): Promise<BrowserWindow> {
   const root = app.getAppPath();
   const visual = createAgentLauncherWindow();
   const interaction = createAgentLauncherWindow();
+  registerNativeOverlayWindow(visual, 60);
+  registerNativeOverlayWindow(interaction, 61);
   agentLauncherVisualWindow = visual;
   agentLauncherWindow = interaction;
   agentLauncherVisualLoaded = false;
@@ -134,5 +137,5 @@ export async function updateAgentLauncherWindow(state: AgentFloatingOverlayState
   publishAgentLauncherState();
   if (agentLauncherVisualWindow && !agentLauncherVisualWindow.isVisible()) agentLauncherVisualWindow.showInactive();
   if (!interaction.isVisible()) interaction.showInactive();
-  if (agentLauncherVisualWindow) interaction.moveAbove(agentLauncherVisualWindow.getMediaSourceId());
+  raiseNativeOverlayWindows();
 }

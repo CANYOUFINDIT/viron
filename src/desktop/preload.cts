@@ -1,6 +1,9 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 contextBridge.exposeInMainWorld("vironDesktop", {
+  layoutDomOverlay: (name: string, bounds: { x: number; y: number; width: number; height: number }, order: number, focus = false) => ipcRenderer.invoke("viron:dom-overlay:layout", name, bounds, order, focus),
+  hideDomOverlay: (name: string) => ipcRenderer.invoke("viron:dom-overlay:hide", name),
+  closeDomOverlay: (name: string) => ipcRenderer.invoke("viron:dom-overlay:close", name),
   getState: () => ipcRenderer.invoke("viron:state"),
   setLanguage: (language: "zh-CN" | "en") => ipcRenderer.invoke("viron:language:set", language),
   readClipboardText: () => ipcRenderer.invoke("viron:clipboard:read-text"),
@@ -137,7 +140,7 @@ contextBridge.exposeInMainWorld("vironDesktop", {
   updateWebViewBounds: (id: string, bounds: unknown) => ipcRenderer.invoke("viron:web-view:bounds", id, bounds),
   setWebViewVisible: (id: string, visible: boolean) => ipcRenderer.invoke("viron:web-view:visible", id, visible),
   setWebViewPreviewing: (id: string, previewing: boolean) => ipcRenderer.invoke("viron:web-view:previewing", id, previewing),
-  captureWebView: (id: string, mode?: string) => ipcRenderer.invoke("viron:web-view:capture", id, mode),
+  captureWebView: (id: string) => ipcRenderer.invoke("viron:web-view:capture", id),
   webViewAction: (id: string, action: unknown) => ipcRenderer.invoke("viron:web-view:action", id, action),
   closeWebView: (id: string) => ipcRenderer.invoke("viron:web-view:close", id),
   listWebExtensions: (id: string) => ipcRenderer.invoke("viron:web-extension:list", id),

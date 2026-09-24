@@ -25,6 +25,9 @@ interface Window {
     action(action: import("../shared/agent-floating-overlay").AgentFloatingOverlayAction): Promise<void>;
   };
   vironDesktop?: {
+    layoutDomOverlay(name: string, bounds: { x: number; y: number; width: number; height: number }, order: number, focus?: boolean): Promise<void>;
+    hideDomOverlay(name: string): Promise<void>;
+    closeDomOverlay(name: string): Promise<void>;
     setLanguage(language: import("../shared/i18n").Language): Promise<{ language: import("../shared/i18n").Language }>;
     getState(): Promise<import("./desktop").DesktopState>;
     readClipboardText(): Promise<string>;
@@ -114,7 +117,7 @@ interface Window {
     updateWebViewBounds(id: string, bounds: import("./desktop").DesktopWebViewBounds): Promise<import("./desktop").DesktopWebViewState>;
     setWebViewVisible(id: string, visible: boolean): Promise<import("./desktop").DesktopWebViewState>;
     setWebViewPreviewing(id: string, previewing: boolean): Promise<import("./desktop").DesktopWebViewState>;
-    captureWebView(id: string, mode?: "preview" | "page"): Promise<string>;
+    captureWebView(id: string): Promise<string>;
     webViewAction(id: string, action: import("./desktop").DesktopWebViewAction): Promise<import("./desktop").DesktopWebViewState>;
     closeWebView(id: string): Promise<{ closed: boolean }>;
     listWebExtensions(id: string): Promise<import("./desktop").DesktopWebExtensionInfo[]>;

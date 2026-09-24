@@ -10,6 +10,7 @@ import { translate as tr } from "./i18n.js";
 import { findChromeExtensions, type ChromeExtensionOnDisk } from "./chrome-extension-scan.js";
 import { extractWebExtensionArchive } from "./web-extension-archive.js";
 import { mainWindow } from "./window-host.js";
+import { registerNativeOverlayWindow } from "./overlays/native-window-stack.js";
 import type { ManagedDesktopWebView } from "./web-view-runtime.js";
 
 interface InstalledWebExtension {
@@ -207,6 +208,7 @@ export async function openDesktopWebExtensionPopup(partition: Session, scopeKey:
   const y = Math.max(workArea.y, Math.min(workArea.y + workArea.height - height, parentBounds.y + Math.round(anchor.bottom) + 6));
   const popup = new BrowserWindow({ parent: mainWindow, x, y, width, height, show: false, frame: false, resizable: false,
     webPreferences: { session: partition, contextIsolation: true, nodeIntegration: false, sandbox: true } });
+  registerNativeOverlayWindow(popup, 1500);
   extensionPopups.set(scopeKey, popup);
   popup.once("closed", () => { if (extensionPopups.get(scopeKey) === popup) extensionPopups.delete(scopeKey); });
   popup.webContents.setWindowOpenHandler(() => ({ action: "deny" }));

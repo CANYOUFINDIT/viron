@@ -10,6 +10,7 @@ import {
 } from "../../shared/immersive-navigation.js";
 import { translate as tr } from "../i18n.js";
 import { mainWindow } from "../window-host.js";
+import { registerNativeOverlayWindow } from "./native-window-stack.js";
 
 export let immersiveNavigationWindow: BrowserWindow | null = null;
 export let immersiveNavigationState: ImmersiveNavigationState | null = null;
@@ -82,6 +83,7 @@ export async function ensureImmersiveNavigationWindow(): Promise<BrowserWindow> 
     },
   });
   immersiveNavigationWindow = overlay;
+  registerNativeOverlayWindow(overlay, 20);
   immersiveNavigationLoaded = false;
   overlay.setMenuBarVisibility(false);
   overlay.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));

@@ -87,7 +87,8 @@ describe("connection quality monitor", () => {
     expect(overlay).toContain("state.interactionLayer");
     expect(overlay).toContain("opacity: 0;");
     expect(desktopOverlay).toContain("connectionQualityVisualWindow");
-    expect(desktopOverlay).toContain("interaction.moveAbove(connectionQualityVisualWindow.getMediaSourceId())");
+    expect(desktopOverlay).toContain("registerNativeOverlayWindow(visual, 40)");
+    expect(desktopOverlay).toContain("registerNativeOverlayWindow(interaction, 41)");
     expect(desktopSmoke).toContain("runDesktopConnectionQualitySmoke");
     expect(desktopSmoke).toContain("webViewStayedVisible");
     expect(card).not.toContain("connection-quality-card__header");

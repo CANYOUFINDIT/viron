@@ -6,6 +6,7 @@ import {
 } from "../../shared/history-navigation-gesture.js";
 import { HISTORY_NAVIGATION_OVERLAY_CSS } from "../history-navigation-overlay.js";
 import { mainWindow } from "../window-host.js";
+import { registerNativeOverlayWindow } from "./native-window-stack.js";
 
 export let historyNavigationOverlay: BrowserWindow | null = null;
 let historyNavigationOverlayHideTimer: NodeJS.Timeout | null = null;
@@ -67,6 +68,7 @@ export async function ensureHistoryNavigationOverlay(): Promise<BrowserWindow | 
     if (historyNavigationOverlay === overlay) historyNavigationOverlay = null;
   });
   historyNavigationOverlay = overlay;
+  registerNativeOverlayWindow(overlay, 10);
   await overlay.loadURL("about:blank");
   if (historyNavigationOverlay !== overlay) return null;
   await overlay.webContents.insertCSS(HISTORY_NAVIGATION_OVERLAY_CSS);

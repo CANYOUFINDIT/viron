@@ -6,6 +6,7 @@ import {
 } from "../../shared/connection-quality.js";
 import { translate as tr } from "../i18n.js";
 import { mainWindow } from "../window-host.js";
+import { raiseNativeOverlayWindows, registerNativeOverlayWindow } from "./native-window-stack.js";
 
 export let connectionQualityWindow: BrowserWindow | null = null;
 export let connectionQualityVisualWindow: BrowserWindow | null = null;
@@ -86,6 +87,8 @@ export async function ensureConnectionQualityWindow(): Promise<BrowserWindow> {
   const root = app.getAppPath();
   const visual = createConnectionQualityWindow();
   const interaction = createConnectionQualityWindow();
+  registerNativeOverlayWindow(visual, 40);
+  registerNativeOverlayWindow(interaction, 41);
   connectionQualityVisualWindow = visual;
   connectionQualityWindow = interaction;
   connectionQualityVisualLoaded = false;
@@ -132,5 +135,5 @@ export async function updateConnectionQualityWindow(state: ConnectionQualityOver
   publishConnectionQualityState();
   if (connectionQualityVisualWindow && !connectionQualityVisualWindow.isVisible()) connectionQualityVisualWindow.showInactive();
   if (!interaction.isVisible()) interaction.showInactive();
-  if (connectionQualityVisualWindow) interaction.moveAbove(connectionQualityVisualWindow.getMediaSourceId());
+  raiseNativeOverlayWindows();
 }

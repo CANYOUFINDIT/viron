@@ -31,6 +31,7 @@ import { session, switchWorkspace } from "../session";
 import { activeConnections, loadActiveConnections } from "../active-connections";
 import { immersiveModeKey } from "../immersive-mode";
 import { agentNativeOverlayActive } from "../agent-host";
+import { nativeSidebarPortalActive, nativeSidebarTransferInProgress } from "../native-dom-overlays";
 import { installHistoryNavigationGestures } from "../history-navigation";
 import { installVisitHistory, visitHistoryCanNavigate, visitHistoryNavigate } from "../visit-history";
 import AgentFloatingWindow from "./AgentFloatingWindow.vue";
@@ -196,13 +197,19 @@ function isHoverFlyoutTarget(target: EventTarget | null) {
 }
 
 function onSidebarPointerEnter() {
+  if (nativeSidebarTransferInProgress()) return;
   if (!canHoverExpandSidebar() || sidebarPinned.value) return;
   sidebarHoverOpen.value = true;
 }
 
 function onSidebarPointerLeave(event: PointerEvent) {
+  if (nativeSidebarPortalActive() || nativeSidebarTransferInProgress()) return;
   if (sidebarPinned.value || isHoverFlyoutTarget(event.relatedTarget)) return;
   sidebarHoverOpen.value = false;
+}
+
+function onNativeSidebarPointerLeave() {
+  if (!sidebarPinned.value && !workspaceMenuHoverTarget) sidebarHoverOpen.value = false;
 }
 
 function onWorkspaceMenuPointerEnter() {
@@ -294,6 +301,7 @@ onMounted(() => {
   });
   document.addEventListener("keydown", handleGlobalKeydown);
   window.addEventListener("viron:connection-limit", handleConnectionLimit);
+  window.addEventListener("viron:native-sidebar-pointerleave", onNativeSidebarPointerLeave);
 });
 onBeforeUnmount(() => {
   unbindWorkspaceMenuHover();
@@ -302,6 +310,7 @@ onBeforeUnmount(() => {
   removeVisitHistory?.();
   document.removeEventListener("keydown", handleGlobalKeydown);
   window.removeEventListener("viron:connection-limit", handleConnectionLimit);
+  window.removeEventListener("viron:native-sidebar-pointerleave", onNativeSidebarPointerLeave);
   window.clearInterval(connectionPollTimer);
 });
 </script>

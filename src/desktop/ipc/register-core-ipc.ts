@@ -51,6 +51,7 @@ import { readState, shortcutPreferences, writeState } from "../app-state.js";
 import { enableDesktopChromeWebStore, importDesktopChromeExtension, installDesktopWebExtension, listDesktopWebExtensions, openDesktopWebExtensionPopup, removeDesktopWebExtension, scanDesktopChromeExtensions, updateDesktopWebExtension } from "../web-extensions.js";
 import { activeEndpoint, currentExecutionMode } from "../endpoint-context.js";
 import { mainWindow } from "../window-host.js";
+import { closeDomOverlayWindow, hideDomOverlayWindow, layoutDomOverlayWindow } from "../overlays/dom-overlay-windows.js";
 import { installApplicationMenu } from "../app-menu.js";
 import {
   trustedAgentChatSender,
@@ -98,7 +99,6 @@ import { currentDesktopSshContext } from "../execution-router.js";
 import { endpointFetch, endpointJson, suggestedFilename } from "../http-proxy.js";
 import {
   captureDesktopRendererPreview,
-  captureDesktopWebViewPage,
   captureDesktopWebViewPreview,
   closeDesktopWebView,
   handleDesktopWebViewAction,
@@ -157,6 +157,18 @@ export function resetShortcutCapture(): void {
 }
 
 export function registerDesktopCoreIpc(desktopUpdater: DesktopUpdater): void {
+  ipcMain.handle("viron:dom-overlay:layout", (event, name: string, bounds: Electron.Rectangle, order: number, focus: boolean) => {
+    trustedMainWindowSender(event);
+    layoutDomOverlayWindow(name, bounds, order, focus === true);
+  });
+  ipcMain.handle("viron:dom-overlay:hide", (event, name: string) => {
+    trustedMainWindowSender(event);
+    hideDomOverlayWindow(name);
+  });
+  ipcMain.handle("viron:dom-overlay:close", (event, name: string) => {
+    trustedMainWindowSender(event);
+    closeDomOverlayWindow(name);
+  });
   const databaseArtifactFiles = new DatabaseArtifactFileRuntime(app.getPath("userData"));
   ipcMain.handle("viron:immersive-navigation:update", async (event, state: ImmersiveNavigationState | null) => {
     trustedSender(event);
@@ -559,10 +571,9 @@ export function registerDesktopCoreIpc(desktopUpdater: DesktopUpdater): void {
     return webViewState(view);
   });
 
-  ipcMain.handle("viron:web-view:capture", async (event, id: string, mode?: string) => {
+  ipcMain.handle("viron:web-view:capture", async (event, id: string) => {
     trustedSender(event);
     const view = localWebView(id);
-    if (mode === "page") return await captureDesktopWebViewPage(view);
     return await captureDesktopWebViewPreview(view);
   });
 

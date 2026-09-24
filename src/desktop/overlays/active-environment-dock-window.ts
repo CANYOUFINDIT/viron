@@ -11,6 +11,7 @@ import {
 } from "../../shared/active-environment-dock.js";
 import { translate as tr } from "../i18n.js";
 import { mainWindow } from "../window-host.js";
+import { registerNativeOverlayWindow } from "./native-window-stack.js";
 
 export let activeEnvironmentDockWindow: BrowserWindow | null = null;
 export let activeEnvironmentDockState: ActiveEnvironmentDockState | null = null;
@@ -195,6 +196,7 @@ export async function ensureActiveEnvironmentDockWindow(): Promise<BrowserWindow
     },
   });
   activeEnvironmentDockWindow = overlay;
+  registerNativeOverlayWindow(overlay, 30);
   activeEnvironmentDockLoaded = false;
   overlay.setMenuBarVisibility(false);
   overlay.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));

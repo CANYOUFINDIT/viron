@@ -9,7 +9,7 @@ import {
 } from "../../shared/agent-host.js";
 import { translate as tr } from "../i18n.js";
 import { mainWindow } from "../window-host.js";
-import { agentLauncherVisualWindow, agentLauncherWindow } from "./agent-launcher-window.js";
+import { raiseNativeOverlayWindows, registerNativeOverlayWindow } from "./native-window-stack.js";
 
 export let agentChatWindow: BrowserWindow | null = null;
 export let agentChatLoaded = false;
@@ -49,15 +49,8 @@ export function applyAgentChatIgnoreMouse(): void {
   else agentChatWindow.setIgnoreMouseEvents(false);
 }
 
-// z-order: chat, then visual launcher, then interaction launcher. Do not reverse.
 export function raiseAgentOverlayWindows(): void {
-  if (agentChatWindow && !agentChatWindow.isDestroyed() && agentChatWindow.isVisible()) agentChatWindow.moveTop();
-  if (agentLauncherVisualWindow && !agentLauncherVisualWindow.isDestroyed() && agentLauncherVisualWindow.isVisible()) {
-    agentLauncherVisualWindow.moveTop();
-  }
-  if (agentLauncherWindow && !agentLauncherWindow.isDestroyed() && agentLauncherWindow.isVisible()) {
-    agentLauncherWindow.moveTop();
-  }
+  raiseNativeOverlayWindows();
 }
 
 export function applyAgentChatChromeVisibility(): void {
@@ -118,6 +111,7 @@ export async function ensureAgentChatWindow(): Promise<BrowserWindow> {
     },
   });
   agentChatWindow = overlay;
+  registerNativeOverlayWindow(overlay, 50);
   agentChatLoaded = false;
   overlay.setMenuBarVisibility(false);
   overlay.setIgnoreMouseEvents(false);
