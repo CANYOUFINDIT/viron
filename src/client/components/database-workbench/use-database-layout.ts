@@ -1,4 +1,4 @@
-import { computed, ref } from "vue";
+import { computed, onScopeDispose, ref } from "vue";
 import type { DatabaseWorkbenchProps } from "./types";
 
 export function useDatabaseLayout(props: Readonly<DatabaseWorkbenchProps>) {
@@ -10,6 +10,7 @@ export function useDatabaseLayout(props: Readonly<DatabaseWorkbenchProps>) {
   const queryResultLayout = ref<"below" | "right">("below");
   const queryFocused = ref(false);
   const workbenchElement = ref<HTMLElement | null>(null);
+  let stopConnectionPaneResize: (() => void) | null = null;
   const persistenceKey = computed(() => `envman:database-workbench:${props.workspaceKey}:${props.environmentId ?? "global"}`);
   const workbenchStyle = computed(() => ({
     "--connection-pane-width": `${connectionPaneWidth.value}px`,
@@ -42,24 +43,70 @@ export function useDatabaseLayout(props: Readonly<DatabaseWorkbenchProps>) {
     }
   }
 
-  function setConnectionPaneWidth(value: number) {
+  function clampConnectionPaneWidth(value: number) {
     const maxWidth = Math.min(520, (workbenchElement.value?.getBoundingClientRect().width ?? 1040) * .5);
-    connectionPaneWidth.value = Math.round(Math.max(220, Math.min(maxWidth, value)));
+    return Math.round(Math.max(220, Math.min(maxWidth, value)));
+  }
+
+  function setConnectionPaneWidth(value: number) {
+    connectionPaneWidth.value = clampConnectionPaneWidth(value);
   }
 
   function startConnectionPaneResize(event: PointerEvent) {
+    if (!event.isPrimary || event.button !== 0) return;
     event.preventDefault();
     const bounds = workbenchElement.value?.getBoundingClientRect();
-    if (!bounds) return;
-    const move = (moveEvent: PointerEvent) => setConnectionPaneWidth(moveEvent.clientX - bounds.left);
-    const finish = () => {
+    const handle = event.currentTarget as HTMLElement | null;
+    if (!bounds || !handle) return;
+    stopConnectionPaneResize?.();
+
+    const pointerId = event.pointerId;
+    const maxWidth = Math.min(520, bounds.width * .5);
+    const widthAt = (clientX: number) => Math.round(Math.max(220, Math.min(maxWidth, clientX - bounds.left)));
+    const indicator = handle.querySelector<HTMLElement>("span");
+    let previewWidth = connectionPaneWidth.value;
+    let frame = 0;
+    const paintPreview = () => {
+      frame = 0;
+      // Override the handle's inherited variable without resizing the grid or rendering Vue on every move.
+      handle.style.setProperty("--connection-pane-width", `${previewWidth}px`);
+    };
+    indicator?.style.setProperty("height", "100%");
+    indicator?.style.setProperty("opacity", "1");
+    indicator?.style.setProperty("background", "#56c9a5");
+    const move = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId !== pointerId) return;
+      previewWidth = widthAt(moveEvent.clientX);
+      if (!frame) frame = requestAnimationFrame(paintPreview);
+    };
+    const cleanup = () => {
+      if (frame) cancelAnimationFrame(frame);
+      handle.style.removeProperty("--connection-pane-width");
+      indicator?.style.removeProperty("height");
+      indicator?.style.removeProperty("opacity");
+      indicator?.style.removeProperty("background");
       document.removeEventListener("pointermove", move);
       document.removeEventListener("pointerup", finish);
+      document.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("blur", cancel);
+      stopConnectionPaneResize = null;
+    };
+    const finish = (upEvent: PointerEvent) => {
+      if (upEvent.pointerId !== pointerId) return;
+      const width = widthAt(upEvent.clientX);
+      cleanup();
+      setConnectionPaneWidth(width);
       persistWorkbenchPreferences();
     };
+    const cancel = () => cleanup();
+    stopConnectionPaneResize = cancel;
     document.addEventListener("pointermove", move);
-    document.addEventListener("pointerup", finish, { once: true });
+    document.addEventListener("pointerup", finish);
+    document.addEventListener("pointercancel", cancel, { once: true });
+    window.addEventListener("blur", cancel, { once: true });
   }
+
+  onScopeDispose(() => stopConnectionPaneResize?.());
 
   function resizeConnectionPane(delta: number) {
     setConnectionPaneWidth(connectionPaneWidth.value + delta);
