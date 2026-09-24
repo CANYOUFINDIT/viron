@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { desktopWebBoundsAboveOverlay, desktopWebBoundsBesideOverlay, rendererOverlayCoversSurface, rendererSidebarCoversSurface, type RectangleBounds } from "../src/client/desktop-web-overlay.js";
+import { desktopWebBoundsAboveOverlay, desktopWebBoundsBesideOverlay, desktopWebBoundsOutsideSidebar, rendererOverlayCoversSurface, type RectangleBounds } from "../src/client/desktop-web-overlay.js";
 
 const surface: RectangleBounds = { left: 224, right: 1440, top: 0, bottom: 900, width: 1216, height: 900 };
 
@@ -114,14 +114,17 @@ describe("desktop Web renderer overlays", () => {
     )).toBe(false);
   });
 
-  it("hides the native page during sidebar expansion and restores it after collapse", () => {
+  it("keeps the native page live outside the sidebar during expansion and collapse", () => {
     const webSurface = { left: 100, right: 1440, top: 300, bottom: 900, width: 1340, height: 600 };
     const collapsedSidebar = { left: 0, right: 68, top: 0, bottom: 900, width: 68, height: 900 };
     const expandedSidebar = { left: 0, right: 224, top: 0, bottom: 900, width: 224, height: 900 };
-    expect(rendererSidebarCoversSurface(webSurface, collapsedSidebar, expandedSidebar, false)).toBe(false);
-    expect(rendererSidebarCoversSurface(webSurface, collapsedSidebar, expandedSidebar, true)).toBe(true);
-    expect(rendererSidebarCoversSurface(webSurface, expandedSidebar, expandedSidebar, false)).toBe(true);
-    expect(rendererSidebarCoversSurface(webSurface, collapsedSidebar, expandedSidebar, false)).toBe(false);
+    const clipped = { ...webSurface, left: 224, width: 1216 };
+    expect(desktopWebBoundsOutsideSidebar(webSurface, collapsedSidebar, expandedSidebar, false)).toEqual(webSurface);
+    expect(desktopWebBoundsOutsideSidebar(webSurface, collapsedSidebar, expandedSidebar, true)).toEqual(clipped);
+    expect(desktopWebBoundsOutsideSidebar(webSurface, expandedSidebar, expandedSidebar, false)).toEqual(clipped);
+    expect(desktopWebBoundsOutsideSidebar(webSurface, collapsedSidebar, expandedSidebar, false)).toEqual(webSurface);
+    expect(desktopWebBoundsOutsideSidebar({ ...webSurface, left: 224, width: 1216 }, expandedSidebar, expandedSidebar, true)).toEqual(clipped);
+    expect(desktopWebBoundsOutsideSidebar({ ...webSurface, right: 180, width: 80 }, collapsedSidebar, expandedSidebar, true)).toBeNull();
   });
 
   it("hides the native page for a renderer overlay that covers its surface", () => {

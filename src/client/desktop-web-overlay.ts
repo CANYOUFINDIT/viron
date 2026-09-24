@@ -15,20 +15,18 @@ export interface RendererOverlayCandidate {
   ignored: boolean;
 }
 
-export function rendererSidebarCoversSurface(
+export function desktopWebBoundsOutsideSidebar(
   surface: RectangleBounds,
   sidebar: RectangleBounds,
   expandedPanel: RectangleBounds,
   expanded: boolean,
-): boolean {
-  return rendererOverlayCoversSurface(surface, {
-    // The sidebar's width animates, so reserve its full target width as soon as it opens.
-    rect: expanded ? expandedPanel : sidebar,
-    ariaHidden: false,
-    display: "block",
-    visibility: "visible",
-    ignored: false,
-  });
+): RectangleBounds | null {
+  // Reserve the target width before the sidebar animation can cross the native view.
+  const sidebarRight = expanded ? Math.max(sidebar.right, expandedPanel.right) : sidebar.right;
+  if (sidebarRight <= surface.left) return surface;
+  const left = Math.max(surface.left, Math.ceil(sidebarRight));
+  const width = surface.right - left;
+  return width >= 2 ? { ...surface, left, width } : null;
 }
 
 export function desktopWebBoundsBesideOverlay(

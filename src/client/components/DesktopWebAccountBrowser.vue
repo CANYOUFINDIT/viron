@@ -23,7 +23,7 @@ import {
   type DesktopWebExtensionInfo,
 } from "../desktop";
 import { releaseAgentNativeOverlay, retainAgentNativeOverlay } from "../agent-host";
-import { rendererOverlayCoversSurface, rendererSidebarCoversSurface, type RectangleBounds } from "../desktop-web-overlay";
+import { desktopWebBoundsOutsideSidebar, rendererOverlayCoversSurface, type RectangleBounds } from "../desktop-web-overlay";
 import { normalizeWebAddress } from "../../shared/web-address";
 import { historyNavigationFromMouseButton } from "../../shared/history-navigation-gesture";
 import { applyHistoryNavigationCommand, applyHistoryNavigationWheel } from "../history-navigation";
@@ -72,6 +72,7 @@ let resizeObserver: ResizeObserver | null = null;
 let overlayObserver: MutationObserver | null = null;
 let stopStateListener: (() => void) | null = null;
 let boundsFrame: number | undefined;
+let lastNativeBounds: { id: string; bounds: DesktopWebViewBounds } | null = null;
 let componentActive = true;
 let closed = false;
 let lastNoticeId = "";
@@ -101,7 +102,19 @@ function elementBounds(element: HTMLElement): RectangleBounds {
 
 function surfaceBounds(): DesktopWebViewBounds | null {
   if (!surface.value) return null;
-  const surfaceRect = elementBounds(surface.value);
+  let surfaceRect: RectangleBounds | null = elementBounds(surface.value);
+  const appFrame = document.querySelector(".app-frame");
+  const sidebar = appFrame?.querySelector<HTMLElement>(".app-sidebar");
+  const sidebarPanel = sidebar?.querySelector<HTMLElement>(".app-sidebar__panel");
+  if (sidebar && sidebarPanel && window.getComputedStyle(sidebar).display !== "none") {
+    surfaceRect = desktopWebBoundsOutsideSidebar(
+      surfaceRect,
+      elementBounds(sidebar),
+      elementBounds(sidebarPanel),
+      appFrame?.classList.contains("is-sidebar-expanded") ?? false,
+    );
+  }
+  if (!surfaceRect) return null;
   if (surfaceRect.width < 2 || surfaceRect.height < 2) return null;
   return {
     x: Math.round(surfaceRect.left),
@@ -109,6 +122,14 @@ function surfaceBounds(): DesktopWebViewBounds | null {
     width: Math.round(surfaceRect.width),
     height: Math.round(surfaceRect.height),
   };
+}
+
+function updateNativeBounds(id: string, bounds: DesktopWebViewBounds) {
+  const previous = lastNativeBounds;
+  if (previous?.id === id && previous.bounds.x === bounds.x && previous.bounds.y === bounds.y
+    && previous.bounds.width === bounds.width && previous.bounds.height === bounds.height) return;
+  lastNativeBounds = { id, bounds };
+  void updateDesktopWebViewBounds(id, bounds).catch(() => { lastNativeBounds = null; });
 }
 
 function applyState(next: DesktopWebViewState) {
@@ -132,23 +153,13 @@ function scheduleBounds() {
   boundsFrame = window.requestAnimationFrame(() => {
     boundsFrame = undefined;
     const bounds = surfaceBounds();
-    if (state.value && bounds) void updateDesktopWebViewBounds(state.value.id, bounds).catch(() => undefined);
+    if (state.value && bounds) updateNativeBounds(state.value.id, bounds);
   });
 }
 
 function rendererOverlayVisible() {
   const surfaceRect = surface.value?.getBoundingClientRect();
   if (!surfaceRect) return false;
-  const appFrame = document.querySelector(".app-frame");
-  const sidebar = appFrame?.querySelector<HTMLElement>(".app-sidebar");
-  const sidebarPanel = sidebar?.querySelector<HTMLElement>(".app-sidebar__panel");
-  if (appFrame && sidebar && sidebarPanel && window.getComputedStyle(sidebar).display !== "none"
-    && rendererSidebarCoversSurface(
-      surfaceRect,
-      elementBounds(sidebar),
-      elementBounds(sidebarPanel),
-      appFrame.classList.contains("is-sidebar-expanded"),
-    )) return true;
   return [...document.querySelectorAll<HTMLElement>(".el-overlay, .el-popper")].some((overlay) => {
     const style = window.getComputedStyle(overlay);
     const rect = overlay.getBoundingClientRect();
@@ -216,12 +227,12 @@ function syncVisibility() {
   if (overlayBlocking.value) clearOverlayFreeze();
   const visible = canShow;
   syncNativeOverlay(visible);
+  if (visible && bounds) updateNativeBounds(state.value.id, bounds);
   void setDesktopWebViewVisible(state.value.id, visible).then((next) => {
     applyState(next);
     if (visible) schedulePreviewCapture(120);
     else window.clearTimeout(previewTimer);
   }).catch(() => undefined);
-  if (visible && bounds) scheduleBounds();
 }
 
 function schedulePreviewCapture(delay = 900) {
@@ -505,7 +516,7 @@ onMounted(() => {
     attributes: true,
     attributeFilter: ["aria-hidden", "class", "style"],
   });
-  window.addEventListener("resize", scheduleBounds);
+  window.addEventListener("resize", syncVisibility);
   window.addEventListener("scroll", scheduleBounds, true);
   document.addEventListener("transitionend", onSidebarTransitionEnd, true);
   document.addEventListener("visibilitychange", syncPreviewMode);
@@ -562,7 +573,7 @@ onBeforeUnmount(() => {
   overlayObserver?.disconnect();
   stopStateListener?.();
   removeNativeViewPointerDownListener?.();
-  window.removeEventListener("resize", scheduleBounds);
+  window.removeEventListener("resize", syncVisibility);
   window.removeEventListener("scroll", scheduleBounds, true);
   document.removeEventListener("transitionend", onSidebarTransitionEnd, true);
   document.removeEventListener("visibilitychange", syncPreviewMode);
