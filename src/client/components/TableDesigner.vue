@@ -3,19 +3,19 @@
 import {
   AlertTriangle,
   BadgeCheck,
+  CircleArrowLeft,
+  CircleMinus,
+  CirclePlus,
   Columns3,
   FileCode2,
   KeyRound,
   Link2,
-  ListPlus,
   Maximize2,
   MessageSquareText,
   Minimize2,
-  Plus,
   RefreshCw,
   Save,
   Settings2,
-  Trash2,
   Zap,
 } from "@lucide/vue";
 import { ElMessage, ElMessageBox } from "element-plus";
@@ -545,11 +545,11 @@ onBeforeUnmount(() => {
     <section ref="designerElement" class="table-designer" :class="{ 'is-focused': focused }" v-loading="loading" :element-loading-text="loadingMessage">
       <header class="table-designer-toolbar">
         <div class="table-designer-actions">
-          <button class="is-primary" data-navicat-action="save" :disabled="saving || loading || Boolean(loadError)" :title="$t('保存表 ({0})', [shortcutLabel('workspace.save')])" @click="saveTable"><Save :size="17" />{{ $t('保存') }}</button>
+          <button class="is-primary" data-navicat-action="save" :disabled="saving || loading || Boolean(loadError)" :title="$t('保存表 ({0})', [shortcutLabel('workspace.save')])" :aria-label="$t('保存')" @click="saveTable"><Save :size="19" /></button>
           <span></span>
-          <button data-navicat-action="add" :disabled="loading || Boolean(loadError) || !canModifyRows()" :title="$t('添加')" @click="addCurrent"><Plus :size="17" />{{ $t('添加') }}</button>
-          <button data-navicat-action="insert" :disabled="loading || Boolean(loadError) || !canModifyRows()" :title="$t('插入')" @click="insertCurrent"><ListPlus :size="17" />{{ $t('插入') }}</button>
-          <button class="is-danger" data-navicat-action="delete" :disabled="loading || Boolean(loadError) || !selectedRowExists()" :title="$t('删除')" @click="deleteCurrent"><Trash2 :size="17" />{{ $t('删除') }}</button>
+          <button data-navicat-action="add" :disabled="loading || Boolean(loadError) || !canModifyRows()" :title="$t('添加')" :aria-label="$t('添加')" @click="addCurrent"><CirclePlus :size="20" /></button>
+          <button data-navicat-action="insert" :disabled="loading || Boolean(loadError) || !canModifyRows()" :title="$t('插入')" :aria-label="$t('插入')" @click="insertCurrent"><CircleArrowLeft :size="20" /></button>
+          <button class="is-danger" data-navicat-action="delete" :disabled="loading || Boolean(loadError) || !selectedRowExists()" :title="$t('删除')" :aria-label="$t('删除')" @click="deleteCurrent"><CircleMinus :size="20" /></button>
         </div>
         <button class="table-designer-focus" data-navicat-action="focus" :title="focused ? $t('退出专注模式') : $t('进入专注模式')" @click="toggleFocused"><Minimize2 v-if="focused" :size="18" /><Maximize2 v-else :size="18" /></button>
       </header>
@@ -565,19 +565,19 @@ onBeforeUnmount(() => {
           <p>{{ loadError }}</p>
           <button type="button" @click="loadExistingTable"><RefreshCw :size="14" />{{ $t('重试') }}</button>
         </section>
-        <div v-else-if="activeTab === 'fields'" class="table-designer-fields-layout">
+        <div v-else-if="activeTab === 'fields'" class="table-designer-fields-layout is-fields">
           <div class="table-designer-grid-wrap">
           <table class="table-designer-grid table-designer-fields">
             <thead><tr><th>{{ $t('名称') }}</th><th>{{ $t('类型') }}</th><th>{{ $t('长度') }}</th><th>{{ $t('小数点') }}</th><th>{{ $t('不是 Null') }}</th><th>{{ $t('虚拟') }}</th><th>{{ $t('键') }}</th><th>{{ $t('注释') }}</th></tr></thead>
             <tbody>
               <tr v-for="field in fields" :key="field.id" :class="{ 'is-selected': selectedFieldId === field.id }" @click="selectedFieldId = field.id">
                 <td><el-input v-model="field.name" maxlength="64" :placeholder="$t('字段名')" :title="field.name" /></td>
-                <td><el-select :model-value="field.type" filterable @update:model-value="setFieldType(field, $event as TableFieldType)"><el-option v-for="type in TABLE_FIELD_TYPES" :key="type" :label="type" :value="type" /></el-select></td>
+                <td><el-select :model-value="field.type" filterable @update:model-value="setFieldType(field, $event as TableFieldType)"><el-option v-for="type in TABLE_FIELD_TYPES" :key="type" :label="type.toLowerCase()" :value="type" /></el-select></td>
                 <td><el-input v-if="tableFieldCapabilities(field.type).length" v-model="field.length" :inputmode="field.type === 'ENUM' || field.type === 'SET' ? 'text' : 'numeric'" /></td>
                 <td><el-input v-if="tableFieldCapabilities(field.type).decimals" v-model="field.decimals" inputmode="numeric" /></td>
                 <td><el-checkbox v-model="field.notNull" /></td>
                 <td><el-checkbox :model-value="field.generated" @update:model-value="setFieldGenerated(field, Boolean($event))" /></td>
-                <td><el-checkbox v-model="field.primaryKey" /></td>
+                <td><button type="button" class="table-designer-key" :class="{ 'is-active': field.primaryKey }" :aria-label="$t('主键')" :aria-pressed="field.primaryKey" :title="$t('主键')" @click.stop="selectedFieldId = field.id; field.primaryKey = !field.primaryKey"><KeyRound :size="16" /></button></td>
                 <td><el-input v-model="field.comment" maxlength="1024" :title="field.comment" /></td>
               </tr>
             </tbody>
@@ -585,13 +585,13 @@ onBeforeUnmount(() => {
           </div>
           <section v-if="selectedField && selectedFieldCapabilities" class="table-designer-properties field-properties">
             <label v-if="!selectedField.generated"><span>{{ $t('默认值') }}</span><div class="table-default-editor"><el-select v-model="selectedField.defaultKind"><el-option :label="$t('无')" value="none" /><el-option label="NULL" value="null" /><el-option :label="$t('值')" value="value" /><el-option :label="$t('表达式')" value="expression" /></el-select><el-input v-if="selectedField.defaultKind === 'value' || selectedField.defaultKind === 'expression'" v-model="selectedField.defaultValue" :placeholder="selectedField.defaultKind === 'expression' ? 'CURRENT_TIMESTAMP' : $t('默认值')" /></div></label>
-            <label v-if="selectedFieldCapabilities.unsigned"><span>{{ $t('无符号') }}</span><el-checkbox v-model="selectedField.unsigned" /></label>
-            <label v-if="selectedFieldCapabilities.zerofill"><span>{{ $t('填充零') }}</span><el-checkbox v-model="selectedField.zerofill" /></label>
+            <label v-if="selectedFieldCapabilities.autoIncrement && !selectedField.generated" class="is-toggle"><span>{{ $t('自动递增') }}</span><el-checkbox v-model="selectedField.autoIncrement" /></label>
+            <label v-if="selectedFieldCapabilities.unsigned" class="is-toggle"><span>{{ $t('无符号') }}</span><el-checkbox v-model="selectedField.unsigned" /></label>
+            <label v-if="selectedFieldCapabilities.zerofill" class="is-toggle"><span>{{ $t('填充零') }}</span><el-checkbox v-model="selectedField.zerofill" /></label>
             <label v-if="selectedField.primaryKey && selectedFieldCapabilities.keyLength"><span>{{ $t('键长度') }}</span><el-input v-model="selectedField.keyLength" inputmode="numeric" /></label>
             <label v-if="selectedFieldCapabilities.charset"><span>{{ $t('字符集') }}</span><el-input v-model="selectedField.charset" :placeholder="$t('跟随表默认值')" /></label>
             <label v-if="selectedFieldCapabilities.collation"><span>{{ $t('排序规则') }}</span><el-input v-model="selectedField.collation" :placeholder="$t('跟随字符集')" /></label>
-            <label v-if="selectedFieldCapabilities.binary"><span>{{ $t('二进制') }}</span><el-checkbox v-model="selectedField.binary" /></label>
-            <label v-if="selectedFieldCapabilities.autoIncrement && !selectedField.generated"><span>{{ $t('自动递增') }}</span><el-checkbox v-model="selectedField.autoIncrement" /></label>
+            <label v-if="selectedFieldCapabilities.binary" class="is-toggle"><span>{{ $t('二进制') }}</span><el-checkbox v-model="selectedField.binary" /></label>
             <label v-if="engine.toUpperCase() === 'NDB' || selectedField.columnFormat"><span>{{ $t('列格式') }}</span><el-select v-model="selectedField.columnFormat"><el-option :label="$t('默认')" value="" /><el-option label="DEFAULT" value="DEFAULT" /><el-option label="FIXED" value="FIXED" /><el-option label="DYNAMIC" value="DYNAMIC" /></el-select></label>
             <label v-if="engine.toUpperCase() === 'NDB' || selectedField.storage"><span>{{ $t('存储') }}</span><el-select v-model="selectedField.storage"><el-option :label="$t('默认')" value="" /><el-option label="DEFAULT" value="DEFAULT" /><el-option label="DISK" value="DISK" /><el-option label="MEMORY" value="MEMORY" /></el-select></label>
             <label v-if="selectedFieldCapabilities.onUpdate && !selectedField.generated" class="is-wide"><span>{{ $t('更新表达式') }}</span><el-input v-model="selectedField.onUpdateExpression" :placeholder="$t('例如 CURRENT_TIMESTAMP')" /></label>

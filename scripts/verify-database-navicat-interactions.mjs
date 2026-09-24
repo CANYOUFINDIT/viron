@@ -51,11 +51,13 @@ async function assertControlPalette(locator, theme, label) {
     const input = item.querySelector("input, textarea");
     return {
       background: getComputedStyle(item).backgroundColor,
+      selectedDesignerRow: Boolean(item.closest(".table-designer-grid tr.is-selected")),
       name: field?.getAttribute("aria-label") || input?.getAttribute("aria-label") || input?.getAttribute("placeholder") || item.className,
     };
   }));
   assert(controls.length, `${label}没有可检查的输入控件`);
   const offenders = controls.filter((control) => {
+    if (control.selectedDesignerRow) return false;
     const channels = control.background.match(/[\d.]+/g)?.slice(0, 3).map(Number) ?? [];
     if (channels.length !== 3) return true;
     const scale = control.background.startsWith("color(srgb ") ? 255 : 1;
