@@ -534,6 +534,7 @@ onMounted(() => {
     if (change.type === "success") void listDesktopWebExtensions(change.viewId).then((items) => { extensions.value = items; }).catch(() => undefined);
   });
   removeNativeViewPointerDownListener = onDesktopNativeViewPointerDown(() => {
+    extensionsOpen.value = false;
     if (props.active && state.value) claimPreloadedView();
   });
   resizeObserver = new ResizeObserver(scheduleBounds);

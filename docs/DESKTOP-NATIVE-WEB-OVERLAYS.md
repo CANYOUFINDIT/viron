@@ -9,6 +9,7 @@
 - Element Plus 的 `.el-overlay`、`.el-popper`、`.el-message`、`.el-notification` 自动接入。自定义覆盖组件在最外层加 `data-native-overlay="popover"` 或 `data-native-overlay="modal"`。`modal` 占据整个主窗口内容区并获得键盘焦点；`popover` 使用贴合内容的窗口，避免拦截其余网页区域。
 - 主进程的 `src/desktop/overlays/dom-overlay-windows.ts` 验证浮层窗口与位置；`src/desktop/overlays/native-window-stack.ts` 统一排序所有桌面原生浮层。新增原生浮层必须注册到此排序器，视觉层的优先级低于其交互层。
 - 浏览器原生内容和应用浮层的鼠标事件属于不同窗口。网页内点击会转发给主页面，用于关闭应用菜单；浮层关闭时节点返回原位置，子窗口随之销毁。
+- 如果浮层使用 `v-model:visible` 等受控状态，需要在 `viron:native-web-pointer-down` 事件中关闭该状态；Element Plus 在受控模式下不会自动响应网页窗口里的点外部操作。
 
 ## 新增浮层时
 

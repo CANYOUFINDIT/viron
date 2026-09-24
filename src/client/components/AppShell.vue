@@ -212,6 +212,11 @@ function onNativeSidebarPointerLeave() {
   if (!sidebarPinned.value && !workspaceMenuHoverTarget) sidebarHoverOpen.value = false;
 }
 
+function onNativeWebPointerDown() {
+  workspaceSwitcherDropdown.value?.handleClose();
+  if (!sidebarPinned.value) sidebarHoverOpen.value = false;
+}
+
 function onWorkspaceMenuPointerEnter() {
   if (!canHoverExpandSidebar() || sidebarPinned.value) return;
   sidebarHoverOpen.value = true;
@@ -302,6 +307,7 @@ onMounted(() => {
   document.addEventListener("keydown", handleGlobalKeydown);
   window.addEventListener("viron:connection-limit", handleConnectionLimit);
   window.addEventListener("viron:native-sidebar-pointerleave", onNativeSidebarPointerLeave);
+  window.addEventListener("viron:native-web-pointer-down", onNativeWebPointerDown);
 });
 onBeforeUnmount(() => {
   unbindWorkspaceMenuHover();
@@ -311,6 +317,7 @@ onBeforeUnmount(() => {
   document.removeEventListener("keydown", handleGlobalKeydown);
   window.removeEventListener("viron:connection-limit", handleConnectionLimit);
   window.removeEventListener("viron:native-sidebar-pointerleave", onNativeSidebarPointerLeave);
+  window.removeEventListener("viron:native-web-pointer-down", onNativeWebPointerDown);
   window.clearInterval(connectionPollTimer);
 });
 </script>

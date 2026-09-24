@@ -65,6 +65,8 @@ async function waitUntil(check: () => Promise<boolean> | boolean, label: string)
 export async function runDesktopDomOverlayManagerSmoke(): Promise<{
   sidebarPortaled: boolean;
   popoverPortaled: boolean;
+  elementPopoverPortaled: boolean;
+  outsideDismissed: boolean;
   vueEventsPreserved: boolean;
   webStayedLive: boolean;
   restored: boolean;
@@ -77,25 +79,32 @@ export async function runDesktopDomOverlayManagerSmoke(): Promise<{
   host.contentView.addChildView(web);
   try {
     await web.webContents.loadURL("data:text/html,<html><body><script>window.ticks=0;setInterval(()=>window.ticks++,20)</script>Live page</body></html>");
-    await waitUntil(() => domOverlayWindows().length === 2 && domOverlayWindows().every((window) => window.isVisible()), "native DOM overlays");
+    await waitUntil(() => domOverlayWindows().length === 3 && domOverlayWindows().every((window) => window.isVisible()), "native DOM overlays");
     const windows = domOverlayWindows();
     const sidebar = windows.find((window) => window.getBounds().x === host.getContentBounds().x);
-    const popover = windows.find((window) => window !== sidebar);
-    if (!sidebar || !popover) throw new Error("Sidebar or popover window missing");
+    const popover = windows.find((window) => window !== sidebar && window.getBounds().x < host.getContentBounds().x + 300);
+    const elementPopover = windows.find((window) => window !== sidebar && window !== popover);
+    if (!sidebar || !popover || !elementPopover) throw new Error("Sidebar or popover window missing");
     const sidebarPortaled = await sidebar.webContents.executeJavaScript('Boolean(document.querySelector(".app-sidebar #sidebar-action"))') as boolean;
     const popoverPortaled = await popover.webContents.executeJavaScript('Boolean(document.querySelector(".el-popper #popover-action"))') as boolean;
+    const elementPopoverPortaled = await elementPopover.webContents.executeJavaScript('Boolean(document.querySelector(".smoke-element-popper #element-popover-action"))') as boolean;
     const before = await web.webContents.executeJavaScript("window.ticks") as number;
     await sidebar.webContents.executeJavaScript('document.querySelector("#sidebar-action").click()');
     await popover.webContents.executeJavaScript('document.querySelector("#popover-action").click()');
-    const vueEventsPreserved = await host.webContents.executeJavaScript('window.vironDomOverlaySmoke.clicks.join(",") === "sidebar,popover"') as boolean;
+    await elementPopover.webContents.executeJavaScript('document.querySelector("#element-popover-action").click()');
+    const vueEventsPreserved = await host.webContents.executeJavaScript('window.vironDomOverlaySmoke.clicks.join(",") === "sidebar,popover,element"') as boolean;
     await new Promise((resolve) => setTimeout(resolve, 100));
     const webStayedLive = (await web.webContents.executeJavaScript("window.ticks") as number) > before;
+    host.webContents.send("viron:native-view-pointer-down");
+    await waitUntil(() => domOverlayWindows().length === 2, "Element Plus popover outside click");
+    const outsideDismissed = await host.webContents.executeJavaScript('!document.querySelector(".smoke-element-popper") || getComputedStyle(document.querySelector(".smoke-element-popper")).display === "none"') as boolean;
     await host.webContents.executeJavaScript('document.querySelector(".app-frame").classList.remove("is-sidebar-expanded")');
     await popover.webContents.executeJavaScript('document.querySelector(".el-popper").style.display = "none"');
+    await host.webContents.executeJavaScript('window.vironDomOverlaySmoke.hideElementPopover()');
     await waitUntil(() => domOverlayWindows().length === 0, "overlay cleanup");
     const restored = await host.webContents.executeJavaScript('Boolean(document.querySelector(".app-sidebar #sidebar-action")) && Boolean(document.querySelector(".el-popper #popover-action"))') as boolean;
     await host.webContents.executeJavaScript('window.vironDomOverlaySmoke.close()');
-    return { sidebarPortaled, popoverPortaled, vueEventsPreserved, webStayedLive, restored };
+    return { sidebarPortaled, popoverPortaled, elementPopoverPortaled, outsideDismissed, vueEventsPreserved, webStayedLive, restored };
   } finally {
     await host.webContents.executeJavaScript('window.vironDomOverlaySmoke?.close()').catch(() => undefined);
     host.contentView.removeChildView(web);

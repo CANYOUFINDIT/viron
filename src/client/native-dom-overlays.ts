@@ -238,9 +238,12 @@ function schedule(): void {
 }
 
 function onNativePointerDown(): void {
+  window.dispatchEvent(new Event("viron:native-web-pointer-down"));
   if (![...overlays.values()].some((record) => record.kind === "popper")) return;
   document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
   document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+  document.body.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+  document.body.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
   document.body.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 }
 

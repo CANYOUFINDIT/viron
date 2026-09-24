@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Link2, Lock, LockOpen, Pencil, RefreshCw, Server, Shield, ShieldAlert, ShieldCheck, ShieldOff } from "@lucide/vue";
 import { ElMessage } from "element-plus";
-import { computed, reactive, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 import { api } from "../../api";
 import { copyTextToClipboard } from "../../clipboard";
@@ -188,6 +188,9 @@ async function copyFingerprint() {
 function dismiss() {
   open.value = false;
 }
+
+onMounted(() => window.addEventListener("viron:native-web-pointer-down", dismiss));
+onBeforeUnmount(() => window.removeEventListener("viron:native-web-pointer-down", dismiss));
 
 function configureHttps() {
   dismiss();
