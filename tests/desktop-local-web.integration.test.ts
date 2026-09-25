@@ -155,10 +155,13 @@ describe.skipIf(!enabled)("macOS local Web", () => {
       manifest_version: 3,
       name: "Viron installed extension",
       version: "1.0.0",
+      permissions: ["contextMenus", "storage"],
+      background: { service_worker: "background.js" },
       action: { default_popup: "popup.html" },
       content_scripts: [{ matches: ["http://127.0.0.1/*"], js: ["content.js"], run_at: "document_end" }],
     }));
     writeFileSync(join(sourceExtension, "content.js"), 'document.documentElement.dataset.vironInstalled = "loaded";');
+    writeFileSync(join(sourceExtension, "background.js"), 'chrome.runtime.onInstalled.addListener(() => chrome.contextMenus.create({ id: "fixture-menu", title: "Fixture command", contexts: ["page"] })); chrome.contextMenus.onClicked.addListener((info) => { if (info.menuItemId === "fixture-menu") chrome.storage.local.set({ vironMenuClicked: true }); });');
     writeFileSync(join(sourceExtension, "popup.html"), "<!doctype html><title>Viron extension popup</title><p>Ready</p>");
     const uploadPath = join(directory, "upload fixture.txt");
     const downloadPath = join(directory, "artifact.txt");
@@ -182,7 +185,7 @@ describe.skipIf(!enabled)("macOS local Web", () => {
     const line = result.stdout.split("\n").find((item) => item.startsWith("VIRON_DESKTOP_SMOKE "));
     expect(line, result.stdout).toBeTruthy();
     const smoke = JSON.parse(line!.slice("VIRON_DESKTOP_SMOKE ".length));
-    expect(smoke.localWeb).toEqual({ opened: true, blankOpenedWithoutEntry: true, manualRefillOnCurrentPage: true, sessionStatePersisted: true, lastLocationRestored: true, tabsReordered: true, inspectorOpened: true, resetCleared: true, extensionInjected: true, extensionManaged: true, uploadSelected: true, downloadTriggered: true });
+    expect(smoke.localWeb, result.stdout).toEqual({ opened: true, blankOpenedWithoutEntry: true, manualRefillOnCurrentPage: true, sessionStatePersisted: true, lastLocationRestored: true, tabsReordered: true, inspectorOpened: true, resetCleared: true, extensionInjected: true, extensionManaged: true, uploadSelected: true, downloadTriggered: true });
     expect(JSON.parse(readFileSync(join(userData, "desktop-state.json"), "utf8")).webExtensions[scopeKey][0].extensionId).not.toBe("pending");
     expect(basename(uploadPath)).toBe("upload fixture.txt");
     expect(readFileSync(downloadPath, "utf8")).toBe("desktop download contents");

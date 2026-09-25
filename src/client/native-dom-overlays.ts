@@ -61,7 +61,8 @@ function popperAnchor(element: HTMLElement): Element | null {
 function overlayCandidates(rects: DOMRect[]): HTMLElement[] {
   if (!rects.length) return [];
   const candidates = [...document.querySelectorAll<HTMLElement>(".el-overlay, .el-popper, .el-message, .el-notification, [data-native-overlay]")]
-    .filter((element) => visible(element) && !element.parentElement?.closest(".el-overlay, .app-sidebar, [data-native-overlay]")
+    .filter((element) => visible(element) && !element.classList.contains("desktop-web-extension-list-popper")
+      && !element.parentElement?.closest(".el-overlay, .app-sidebar, [data-native-overlay]")
       && rects.some((rect) => intersects(element.getBoundingClientRect(), rect)));
   const frame = document.querySelector(".app-frame.is-sidebar-expanded:not(.is-sidebar-pinned)");
   const sidebar = frame?.querySelector<HTMLElement>(".app-sidebar");

@@ -140,7 +140,7 @@ contextBridge.exposeInMainWorld("vironDesktop", {
   updateWebViewBounds: (id: string, bounds: unknown) => ipcRenderer.invoke("viron:web-view:bounds", id, bounds),
   setWebViewVisible: (id: string, visible: boolean) => ipcRenderer.invoke("viron:web-view:visible", id, visible),
   setWebViewPreviewing: (id: string, previewing: boolean) => ipcRenderer.invoke("viron:web-view:previewing", id, previewing),
-  captureWebView: (id: string) => ipcRenderer.invoke("viron:web-view:capture", id),
+  captureWebView: (id: string, mode?: "page") => ipcRenderer.invoke("viron:web-view:capture", id, mode),
   webViewAction: (id: string, action: unknown) => ipcRenderer.invoke("viron:web-view:action", id, action),
   closeWebView: (id: string) => ipcRenderer.invoke("viron:web-view:close", id),
   listWebExtensions: (id: string) => ipcRenderer.invoke("viron:web-extension:list", id),

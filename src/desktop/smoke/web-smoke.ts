@@ -1,8 +1,10 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { app } from "electron";
+import { app, BrowserWindow } from "electron";
+import { readState } from "../app-state.js";
 import { translate as tr } from "../i18n.js";
-import { enableDesktopChromeWebStore, importDesktopChromeExtension, listDesktopWebExtensions, openDesktopWebExtensionPopup, removeDesktopWebExtension, scanDesktopChromeExtensions, updateDesktopWebExtension } from "../web-extensions.js";
+import { closeDesktopWebExtensionPopup, desktopWebExtensionPopupContents, enableDesktopChromeWebStore, importDesktopChromeExtension, listDesktopWebExtensions, openDesktopWebExtensionPopup, removeDesktopWebExtension, scanDesktopChromeExtensions, updateDesktopWebExtension } from "../web-extensions.js";
+import { desktopWebExtensionContextMenuItems } from "../web-extension-context-menus.js";
 import {
   activeDesktopWebPage,
   closeDesktopWebView,
@@ -148,11 +150,40 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
       .find((item) => item.installId === added.installId)?.loaded === true;
     const hasPopup = listDesktopWebExtensions(managed.partition, managed.lastUrlKey)
       .find((item) => item.installId === added.installId)?.hasPopup === true;
+    const windowsBeforePopup = BrowserWindow.getAllWindows().length;
     if (hasPopup) await openDesktopWebExtensionPopup(managed.partition, managed.lastUrlKey, added.installId, { right: 800, bottom: 100 });
+    const popupContents = desktopWebExtensionPopupContents(managed.lastUrlKey);
+    const popupRendered = Boolean(popupContents && !popupContents.isDestroyed()
+      && await popupContents.executeJavaScript('document.body?.textContent?.includes("Ready")')
+      && BrowserWindow.getAllWindows().length === windowsBeforePopup);
+    let extensionMenuRendered = false;
+    let extensionMenuCommand: (() => void) | undefined;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const menus = desktopWebExtensionContextMenuItems(managed.partition, downloadPage, {
+        pageURL: downloadPage.getURL(), frameURL: downloadPage.getURL(), linkURL: "", srcURL: "", mediaType: "none", selectionText: "", isEditable: false,
+      });
+      const submenu = menus.find((menu) => menu.label === "Viron installed extension")?.submenu;
+      const command = Array.isArray(submenu) ? submenu.find((item) => item.label === "Fixture command") : undefined;
+      if (command) { extensionMenuRendered = true; extensionMenuCommand = command.click as (() => void) | undefined; break; }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    closeDesktopWebExtensionPopup(managed.lastUrlKey);
+    extensionMenuCommand?.();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    if (hasPopup) await openDesktopWebExtensionPopup(managed.partition, managed.lastUrlKey, added.installId, { right: 800, bottom: 100 });
+    const clickedContents = desktopWebExtensionPopupContents(managed.lastUrlKey);
+    let extensionMenuClicked = false;
+    for (let attempt = 0; attempt < 60 && clickedContents && !clickedContents.isDestroyed(); attempt += 1) {
+      extensionMenuClicked = Boolean(await clickedContents.executeJavaScript('chrome.storage.local.get("vironMenuClicked").then((value) => value.vironMenuClicked)').catch(() => false));
+      if (extensionMenuClicked) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const menuPersisted = readState().webExtensionMenus?.[managed.lastUrlKey]?.[added.extensionId]?.some((item) => item.id === "fixture-menu") === true;
     await downloadPage.loadURL(`${managed.entryOrigin}/upload`);
     await waitForDesktopWebTitle(managed, "Upload fixture");
     const applied = await downloadPage.executeJavaScript('document.documentElement.dataset.vironInstalled === "loaded"') as boolean;
     await removeDesktopWebExtension(managed.partition, managed.lastUrlKey, added.installId);
+    const menuRemoved = !readState().webExtensionMenus?.[managed.lastUrlKey]?.[added.extensionId];
     await downloadPage.loadURL(`${managed.entryOrigin}/upload`);
     await waitForDesktopWebTitle(managed, "Upload fixture");
     const removed = await downloadPage.executeJavaScript('document.documentElement.dataset.vironInstalled === undefined') as boolean;
@@ -170,7 +201,8 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
       }
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    extensionManaged = pinned && disabled && enabled && hasPopup && applied && removed && storeImported;
+    extensionManaged = pinned && disabled && enabled && hasPopup && popupRendered && extensionMenuRendered && extensionMenuClicked && menuPersisted && menuRemoved && applied && removed && storeImported;
+    if (!extensionManaged) console.log("VIRON_EXTENSION_DIAGNOSTIC", JSON.stringify({ pinned, disabled, enabled, hasPopup, popupRendered, extensionMenuRendered, extensionMenuClicked, menuPersisted, menuRemoved, applied, removed, storeImported }));
   }
   return { opened: true, blankOpenedWithoutEntry: blankOpenedWithoutEntry && shorthandAddressLoaded && defaultAddressPreserved, manualRefillOnCurrentPage, sessionStatePersisted, lastLocationRestored, tabsReordered, inspectorOpened: true, resetCleared, extensionInjected: extensionLoaded && extensionOnFirstPage && extensionAfterReopen && extensionAfterReset, extensionManaged, uploadSelected, downloadTriggered: true };
 }

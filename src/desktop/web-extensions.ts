@@ -3,15 +3,15 @@ import { readFileSync, statSync } from "node:fs";
 import { cp, lstat, mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import { app, BrowserWindow, dialog, nativeImage, screen, type Session } from "electron";
+import { app, dialog, nativeImage, WebContentsView, type Session } from "electron";
 import { installChromeWebStore } from "electron-chrome-web-store";
 import { readState, writeState } from "./app-state.js";
 import { translate as tr } from "./i18n.js";
 import { findChromeExtensions, type ChromeExtensionOnDisk } from "./chrome-extension-scan.js";
 import { extractWebExtensionArchive } from "./web-extension-archive.js";
 import { mainWindow } from "./window-host.js";
-import { registerNativeOverlayWindow } from "./overlays/native-window-stack.js";
 import type { ManagedDesktopWebView } from "./web-view-runtime.js";
+import { clearDesktopWebExtensionContextMenus, restoreDesktopWebExtensionContextMenus } from "./web-extension-context-menus.js";
 
 interface InstalledWebExtension {
   installId: string;
@@ -43,7 +43,8 @@ export interface DesktopChromeExtensionInfo {
 const failedLoads = new Map<string, string>();
 const loadingSessions = new WeakMap<Session, Promise<void>>();
 const scannedChromeExtensions = new Map<string, { extension: ChromeExtensionOnDisk; expiresAt: number }>();
-const extensionPopups = new Map<string, BrowserWindow>();
+const extensionPopups = new Map<string, WebContentsView>();
+const popupResizeTimers = new WeakMap<WebContentsView, ReturnType<typeof setInterval>>();
 const storeSessions = new WeakSet<Session>();
 const storeViews = new WeakMap<Session, ManagedDesktopWebView>();
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -135,13 +136,16 @@ export async function loadDesktopWebExtensions(partition: Session, scopeKey: str
       if (item.enabled === false) continue;
       const errorKey = `${scopeKey}:${item.installId}`;
       if (partition.extensions.getExtension(item.extensionId)) {
+        restoreDesktopWebExtensionContextMenus(partition, scopeKey, item.extensionId);
         failedLoads.delete(errorKey);
         continue;
       }
       try {
         const extension = await partition.extensions.loadExtension(join(extensionRoot(scopeKey), item.installId));
+        restoreDesktopWebExtensionContextMenus(partition, scopeKey, extension.id);
         failedLoads.delete(errorKey);
         if (extension.id !== item.extensionId) {
+          clearDesktopWebExtensionContextMenus(partition, item.extensionId, true);
           saveInstalledExtensions(scopeKey, installedExtensions(scopeKey).map((stored) =>
             stored.installId === item.installId ? { ...stored, extensionId: extension.id } : stored));
         }
@@ -176,11 +180,13 @@ export async function updateDesktopWebExtension(partition: Session, scopeKey: st
   if (!item) throw new Error(tr("本机扩展不存在"));
   if (typeof change.enabled === "boolean" && change.enabled !== (item.enabled !== false)) {
     if (!change.enabled) {
-      extensionPopups.get(scopeKey)?.close();
+      closeDesktopWebExtensionPopup(scopeKey);
+      clearDesktopWebExtensionContextMenus(partition, item.extensionId);
       if (partition.extensions.getExtension(item.extensionId)) partition.extensions.removeExtension(item.extensionId);
     } else {
       const extension = await partition.extensions.loadExtension(join(extensionRoot(scopeKey), installId));
       item.extensionId = extension.id;
+      restoreDesktopWebExtensionContextMenus(partition, scopeKey, extension.id);
       failedLoads.delete(`${scopeKey}:${installId}`);
     }
     item.enabled = change.enabled;
@@ -199,28 +205,60 @@ export async function openDesktopWebExtensionPopup(partition: Session, scopeKey:
   if (!mainWindow) throw new Error(tr("主窗口不可用"));
   const popupUrl = new URL(popupPath, `chrome-extension://${item.extensionId}/`).href;
   if (!popupUrl.startsWith(`chrome-extension://${item.extensionId}/`)) throw new Error(tr("扩展弹窗地址无效"));
-  extensionPopups.get(scopeKey)?.close();
-  const parentBounds = mainWindow.getContentBounds();
-  const workArea = screen.getDisplayMatching(mainWindow.getBounds()).workArea;
-  const width = 360;
-  const height = 480;
-  const x = Math.max(workArea.x, Math.min(workArea.x + workArea.width - width, parentBounds.x + Math.round(anchor.right) - width));
-  const y = Math.max(workArea.y, Math.min(workArea.y + workArea.height - height, parentBounds.y + Math.round(anchor.bottom) + 6));
-  const popup = new BrowserWindow({ parent: mainWindow, x, y, width, height, show: false, frame: false, resizable: false,
-    webPreferences: { session: partition, contextIsolation: true, nodeIntegration: false, sandbox: true } });
-  registerNativeOverlayWindow(popup, 1500);
+  closeDesktopWebExtensionPopup();
+  const content = mainWindow.getContentSize();
+  const width = Math.min(400, Math.max(280, content[0] - 16));
+  const height = Math.min(600, Math.max(120, content[1] - 16));
+  const x = Math.max(8, Math.min(content[0] - width - 8, Math.round(anchor.right) - width));
+  const y = Math.max(8, Math.min(content[1] - height - 8, Math.round(anchor.bottom) + 6));
+  const popup = new WebContentsView({ webPreferences: { session: partition, contextIsolation: true, nodeIntegration: false, sandbox: true } });
+  popup.setBackgroundColor("#ffffff");
+  popup.setBounds({ x, y, width, height });
+  popup.setVisible(false);
+  mainWindow.contentView.addChildView(popup);
   extensionPopups.set(scopeKey, popup);
-  popup.once("closed", () => { if (extensionPopups.get(scopeKey) === popup) extensionPopups.delete(scopeKey); });
   popup.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   popup.webContents.on("will-navigate", (event, url) => { if (!url.startsWith(`chrome-extension://${item.extensionId}/`)) event.preventDefault(); });
+  popup.webContents.on("before-input-event", (event, input) => {
+    if (input.type === "keyDown" && input.key === "Escape") { event.preventDefault(); closeDesktopWebExtensionPopup(scopeKey); }
+  });
+  popup.webContents.once("blur", () => closeDesktopWebExtensionPopup(scopeKey));
   try {
-    await popup.loadURL(popupUrl);
-    popup.show();
-    popup.once("blur", () => { if (!popup.isDestroyed()) popup.close(); });
+    await popup.webContents.loadURL(popupUrl);
+    if (extensionPopups.get(scopeKey) !== popup || !mainWindow || mainWindow.isDestroyed()) return;
+    popup.setVisible(true);
+    popup.webContents.focus();
+    const resize = () => {
+      if (popup.webContents.isDestroyed()) return;
+      void popup.webContents.executeJavaScript("({ width: Math.max(document.body?.scrollWidth || 0, document.documentElement.scrollWidth), height: Math.max(document.body?.scrollHeight || 0, document.documentElement.scrollHeight) })")
+        .then((size: { width: number; height: number }) => {
+        if (extensionPopups.get(scopeKey) !== popup || !mainWindow || mainWindow.isDestroyed()) return;
+        const nextWidth = Math.min(width, Math.max(280, Math.ceil(size.width || width)));
+        const nextHeight = Math.min(height, Math.max(120, Math.ceil(size.height || height)));
+        popup.setBounds({ x: Math.max(8, Math.min(content[0] - nextWidth - 8, Math.round(anchor.right) - nextWidth)), y, width: nextWidth, height: nextHeight });
+        }).catch(() => undefined);
+    };
+    resize();
+    popupResizeTimers.set(popup, setInterval(resize, 400));
   } catch (error) {
-    popup.close();
+    closeDesktopWebExtensionPopup(scopeKey);
     throw error;
   }
+}
+
+export function closeDesktopWebExtensionPopup(scopeKey?: string): void {
+  for (const [key, popup] of extensionPopups) {
+    if (scopeKey && key !== scopeKey) continue;
+    extensionPopups.delete(key);
+    const resizeTimer = popupResizeTimers.get(popup);
+    if (resizeTimer) clearInterval(resizeTimer);
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.contentView.removeChildView(popup);
+    if (!popup.webContents.isDestroyed()) popup.webContents.close();
+  }
+}
+
+export function desktopWebExtensionPopupContents(scopeKey: string): Electron.WebContents | null {
+  return extensionPopups.get(scopeKey)?.webContents ?? null;
 }
 
 export async function enableDesktopChromeWebStore(view: ManagedDesktopWebView): Promise<void> {
@@ -355,7 +393,8 @@ export async function removeDesktopWebExtension(partition: Session, scopeKey: st
   const items = installedExtensions(scopeKey);
   const item = items.find((candidate) => candidate.installId === installId);
   if (!item) throw new Error(tr("本机扩展不存在"));
-  extensionPopups.get(scopeKey)?.close();
+  closeDesktopWebExtensionPopup(scopeKey);
+  clearDesktopWebExtensionContextMenus(partition, item.extensionId, true);
   if (partition.extensions.getExtension(item.extensionId)) partition.extensions.removeExtension(item.extensionId);
   saveInstalledExtensions(scopeKey, items.filter((candidate) => candidate.installId !== installId));
   failedLoads.delete(`${scopeKey}:${installId}`);
@@ -364,8 +403,9 @@ export async function removeDesktopWebExtension(partition: Session, scopeKey: st
 }
 
 export async function forgetDesktopWebExtensions(partition: Session, scopeKey: string): Promise<void> {
-  extensionPopups.get(scopeKey)?.close();
+  closeDesktopWebExtensionPopup(scopeKey);
   for (const item of installedExtensions(scopeKey)) {
+    clearDesktopWebExtensionContextMenus(partition, item.extensionId, true);
     if (partition.extensions.getExtension(item.extensionId)) partition.extensions.removeExtension(item.extensionId);
     failedLoads.delete(`${scopeKey}:${item.installId}`);
   }

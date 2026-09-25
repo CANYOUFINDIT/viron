@@ -588,8 +588,8 @@ export function setDesktopWebViewPreviewing(id: string, previewing: boolean): Pr
   return desktopBridge().setWebViewPreviewing(id, previewing);
 }
 
-export function captureDesktopWebView(id: string): Promise<string> {
-  return desktopBridge().captureWebView(id);
+export function captureDesktopWebView(id: string, mode?: "page"): Promise<string> {
+  return desktopBridge().captureWebView(id, mode);
 }
 
 export function desktopWebViewAction(id: string, action: DesktopWebViewAction): Promise<DesktopWebViewState> {

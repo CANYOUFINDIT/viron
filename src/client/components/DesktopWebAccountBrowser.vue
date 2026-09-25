@@ -61,6 +61,7 @@ const emit = defineEmits<{
 }>();
 
 const surface = ref<HTMLElement | null>(null);
+const extensionsButton = ref<HTMLElement | null>(null);
 const state = ref<DesktopWebViewState | null>(null);
 const address = ref(props.entryUrl);
 const startError = ref("");
@@ -68,6 +69,8 @@ const started = ref(false);
 const starting = ref(false);
 const resetting = ref(false);
 const extensionsOpen = ref(false);
+const extensionPageFrame = ref("");
+const extensionPageHidden = ref(false);
 const extensionsBusy = ref(false);
 const extensions = ref<DesktopWebExtensionInfo[]>([]);
 const extensionsLoading = ref(false);
@@ -98,6 +101,8 @@ let removeNativeViewPointerDownListener: (() => void) | null = null;
 let startRequestVersion = 0;
 let startPromise: Promise<void> | null = null;
 let releasePromise: Promise<void> | null = null;
+let extensionOverlayTask: Promise<void> = Promise.resolve();
+let extensionOpenRequest = 0;
 
 function surfaceBounds(): DesktopWebViewBounds | null {
   if (!surface.value) return null;
@@ -167,7 +172,7 @@ function syncVisibility() {
   }
   const bounds = surfaceBounds();
   const canShow = componentActive && props.active && !preloading.value && Boolean(bounds);
-  const visible = canShow;
+  const visible = canShow && !extensionPageHidden.value;
   syncNativeOverlay(visible);
   if (visible && bounds) updateNativeBounds(state.value.id, bounds);
   scheduleNativeDomOverlays();
@@ -293,6 +298,34 @@ async function openExtensions() {
   }
 }
 
+async function toggleExtensions() {
+  if (extensionsOpen.value) { extensionsOpen.value = false; return; }
+  const id = state.value?.id;
+  if (!id || props.preview) return;
+  const request = ++extensionOpenRequest;
+  await extensionOverlayTask;
+  if (request !== extensionOpenRequest) return;
+  const frame = await captureDesktopWebView(id, "page").catch(() => "");
+  if (request !== extensionOpenRequest || state.value?.id !== id || !componentActive || !props.active) return;
+  if (frame) {
+    const image = new Image();
+    image.src = frame;
+    await image.decode().catch(() => undefined);
+  }
+  if (request !== extensionOpenRequest || state.value?.id !== id) return;
+  extensionPageFrame.value = frame || previewFrame.value;
+  extensionPageHidden.value = true;
+  await nextTick();
+  await setDesktopWebViewVisible(id, false).then(applyState).catch(() => undefined);
+  if (request !== extensionOpenRequest || state.value?.id !== id || !componentActive || !props.active) {
+    extensionPageHidden.value = false;
+    extensionPageFrame.value = "";
+    if (state.value?.id === id && componentActive && props.active) await setDesktopWebViewVisible(id, true).then(applyState).catch(() => undefined);
+    return;
+  }
+  extensionsOpen.value = true;
+}
+
 async function changeExtension(extension: DesktopWebExtensionInfo, change: { pinned?: boolean; enabled?: boolean }) {
   if (!state.value || extensionsBusy.value) return;
   extensionsBusy.value = true;
@@ -312,9 +345,11 @@ async function openExtensionPopup(extension: DesktopWebExtensionInfo, event: Mou
   if (!extension.hasPopup) return ElMessage.info(tr("此拓展没有可打开的弹窗"));
   const target = event.currentTarget;
   if (!(target instanceof HTMLElement)) return;
-  const rect = target.getBoundingClientRect();
+  const anchor = target.classList.contains("desktop-web-pinned-extension") ? target : extensionsButton.value ?? target;
+  const rect = anchor.getBoundingClientRect();
   extensionsOpen.value = false;
   try {
+    await extensionOverlayTask;
     await openDesktopWebExtensionPopup(state.value.id, extension.installId, { right: rect.right, bottom: rect.bottom });
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : tr("打开拓展弹窗失败"));
@@ -510,6 +545,12 @@ function handleBrowserInteraction(event: Event) {
   claimPreloadedView();
 }
 
+function closeExtensionsOnOutsidePointer(event: PointerEvent) {
+  if (!extensionsOpen.value || !(event.target instanceof Element)) return;
+  if (extensionsButton.value?.contains(event.target) || event.target.closest(".desktop-web-extension-list-popper")) return;
+  extensionsOpen.value = false;
+}
+
 function handleHistoryMouseButton(event: MouseEvent) {
   const direction = historyNavigationFromMouseButton(event.button);
   if (!direction) return;
@@ -527,6 +568,7 @@ function handleHistoryWheel(event: WheelEvent) {
 }
 
 onMounted(() => {
+  document.addEventListener("pointerdown", closeExtensionsOnOutsidePointer, true);
   stopStateListener = onDesktopWebViewState(applyState);
   stopExtensionListener = onDesktopWebExtensionChanged((change) => {
     if (change.viewId !== state.value?.id) return;
@@ -554,6 +596,8 @@ onActivated(() => {
 
 onDeactivated(() => {
   componentActive = false;
+  extensionsOpen.value = false;
+  extensionOpenRequest += 1;
   scheduleNativeDomOverlays();
   syncNativeOverlay(false);
   if (boundsFrame) {
@@ -578,6 +622,20 @@ watch(
   { immediate: true },
 );
 
+watch(extensionsOpen, (open) => {
+  const id = state.value?.id;
+  extensionOverlayTask = extensionOverlayTask.catch(() => undefined).then(async () => {
+    if (!open && extensionPageHidden.value) {
+      if (id && componentActive && props.active && state.value?.id === id) {
+        await setDesktopWebViewVisible(id, true).then(applyState).catch(() => undefined);
+      }
+      extensionPageHidden.value = false;
+      extensionPageFrame.value = "";
+      if (id && componentActive && props.active && state.value?.id === id) syncVisibility();
+    }
+  });
+}, { flush: "sync" });
+
 watch(
   [() => props.autoStart, () => props.preloadStart],
   ([autoStart, preloadStart]) => {
@@ -589,6 +647,8 @@ watch(
 
 onBeforeUnmount(() => {
   closed = true;
+  extensionsOpen.value = false;
+  extensionOpenRequest += 1;
   syncNativeOverlay(false);
   if (boundsFrame) window.cancelAnimationFrame(boundsFrame);
   window.clearTimeout(previewTimer);
@@ -597,6 +657,7 @@ onBeforeUnmount(() => {
   stopStateListener?.();
   stopExtensionListener?.();
   removeNativeViewPointerDownListener?.();
+  document.removeEventListener("pointerdown", closeExtensionsOnOutsidePointer, true);
   window.removeEventListener("resize", syncVisibility);
   window.removeEventListener("scroll", scheduleBounds, true);
   document.removeEventListener("visibilitychange", syncPreviewMode);
@@ -644,9 +705,9 @@ onBeforeUnmount(() => {
           <img v-if="extension.iconDataUrl" :src="extension.iconDataUrl" alt="" />
           <Puzzle v-else :size="15" />
         </button>
-        <el-popover v-model:visible="extensionsOpen" placement="bottom-end" trigger="click" :width="320" :offset="8" @show="openExtensions">
+        <el-popover v-model:visible="extensionsOpen" placement="bottom-end" trigger="manual" popper-class="desktop-web-extension-list-popper" :width="320" :offset="8" @show="openExtensions">
           <template #reference>
-            <button type="button" :aria-label="$t('本地拓展')" :title="$t('本地拓展')" :disabled="!state || Boolean(state.closedReason)"><Puzzle :size="15" /></button>
+            <button ref="extensionsButton" type="button" :aria-label="$t('本地拓展')" :title="$t('本地拓展')" :disabled="!state || Boolean(state.closedReason)" @click="toggleExtensions"><Puzzle :size="15" /></button>
           </template>
           <div class="desktop-web-extensions">
             <div class="desktop-web-extensions__heading">
@@ -695,6 +756,7 @@ onBeforeUnmount(() => {
       </div>
     </header>
     <div ref="surface" class="web-browser-surface desktop-web-browser-surface" :class="{ 'is-preview': preview }">
+      <img v-if="extensionPageFrame" class="desktop-web-extension-page-frame" :src="extensionPageFrame" alt="" aria-hidden="true" />
       <img v-if="preview && previewFrame" :src="previewFrame" :alt="$t('{0} 的页面画面', [username])" draggable="false" />
       <div v-else-if="!started || preloading" class="web-browser-loading web-browser-idle" :title="$t('双击空白处访问页面')" @pointerdown.stop @mousedown.stop @dblclick="visitPage">
         <div class="web-browser-idle__icon"><Globe2 :size="24" /></div>
@@ -730,6 +792,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .desktop-web-account-browser { position: relative; }
 .desktop-web-browser-surface { background: #fff; }
+.desktop-web-extension-page-frame { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; object-fit: fill; pointer-events: none; }
 .desktop-web-browser-surface.is-preview { cursor: default; }
 .desktop-web-pinned-extension img { width: 16px; height: 16px; object-fit: contain; }
 .desktop-web-view-status { width: 28px; height: 28px; color: var(--ink-400); display: grid; place-items: center; }

@@ -27,6 +27,11 @@ export interface DesktopStateFile {
   shortcutOverrides?: ShortcutOverrides;
   webLastUrls?: Record<string, string>;
   webExtensions?: Record<string, Array<{ installId: string; extensionId: string; name: string; version: string; chromeId?: string; pinned?: boolean; enabled?: boolean }>>;
+  webExtensionMenus?: Record<string, Record<string, Array<{
+    id: string | number; title: string; type: "normal" | "separator" | "checkbox" | "radio";
+    contexts: string[]; parentId?: string | number; visible: boolean; enabled: boolean; checked: boolean;
+    documentUrlPatterns: string[]; targetUrlPatterns: string[];
+  }>>>;
 }
 
 export function statePath(): string {

@@ -49,6 +49,7 @@ import { isDesktopDatabaseDownloadPath } from "../database-operations-runtime.js
 import { probeDesktopTcpTarget } from "../connection-quality-probe.js";
 import { readState, shortcutPreferences, writeState } from "../app-state.js";
 import { enableDesktopChromeWebStore, importDesktopChromeExtension, installDesktopWebExtension, listDesktopWebExtensions, openDesktopWebExtensionPopup, removeDesktopWebExtension, scanDesktopChromeExtensions, updateDesktopWebExtension } from "../web-extensions.js";
+import { registerDesktopWebExtensionContextMenus } from "../web-extension-context-menus.js";
 import { activeEndpoint, currentExecutionMode } from "../endpoint-context.js";
 import { mainWindow } from "../window-host.js";
 import { closeDomOverlayWindow, hideDomOverlayWindow, layoutDomOverlayWindow } from "../overlays/dom-overlay-windows.js";
@@ -101,6 +102,7 @@ import { endpointFetch, endpointJson, suggestedFilename } from "../http-proxy.js
 import {
   captureDesktopRendererPreview,
   captureDesktopWebViewPreview,
+  captureDesktopWebViewPage,
   closeDesktopWebView,
   handleDesktopWebViewAction,
   layoutDesktopWebViewPages,
@@ -158,6 +160,7 @@ export function resetShortcutCapture(): void {
 }
 
 export function registerDesktopCoreIpc(desktopUpdater: DesktopUpdater): void {
+  registerDesktopWebExtensionContextMenus();
   ipcMain.handle("viron:dom-overlay:layout", (event, name: string, bounds: Electron.Rectangle, order: number, focus: boolean) => {
     trustedMainWindowSender(event);
     layoutDomOverlayWindow(name, bounds, order, focus === true);
@@ -574,10 +577,10 @@ export function registerDesktopCoreIpc(desktopUpdater: DesktopUpdater): void {
     return webViewState(view);
   });
 
-  ipcMain.handle("viron:web-view:capture", async (event, id: string) => {
+  ipcMain.handle("viron:web-view:capture", async (event, id: string, mode?: "page") => {
     trustedSender(event);
     const view = localWebView(id);
-    return await captureDesktopWebViewPreview(view);
+    return mode === "page" ? await captureDesktopWebViewPage(view) : await captureDesktopWebViewPreview(view);
   });
 
   ipcMain.handle("viron:web-view:action", async (event, id: string, action: { type?: string; url?: string; pageId?: string; orderedPageIds?: string[] }) => {

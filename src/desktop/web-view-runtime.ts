@@ -50,7 +50,8 @@ import {
   handleDesktopHistoryNavigationMouse,
 } from "./history-navigation-runtime.js";
 import { mainWindow } from "./window-host.js";
-import { forgetDesktopWebExtensions, loadDesktopWebExtensions } from "./web-extensions.js";
+import { closeDesktopWebExtensionPopup, forgetDesktopWebExtensions, loadDesktopWebExtensions } from "./web-extensions.js";
+import { desktopWebExtensionContextMenuItems } from "./web-extension-context-menus.js";
 import {
   desktopWebActionScript,
   desktopWebSnapshotScript,
@@ -181,6 +182,12 @@ export async function captureWebContentsPreview(webContents: Electron.WebContent
 export async function captureDesktopWebViewPreview(view: ManagedDesktopWebView): Promise<string> {
   if (!view.visible) return "";
   return await captureWebContentsPreview(activeDesktopWebPage(view).view.webContents);
+}
+
+export async function captureDesktopWebViewPage(view: ManagedDesktopWebView): Promise<string> {
+  if (!view.visible) return "";
+  const image = await activeDesktopWebPage(view).view.webContents.capturePage();
+  return image.isEmpty() ? "" : image.toDataURL();
 }
 
 export function desktopRendererPreviewBounds(value: unknown): Rectangle {
@@ -333,6 +340,7 @@ export function createDesktopWebPage(
   nativeView.webContents.on("before-mouse-event", (event, mouse) => {
     if (handleDesktopHistoryNavigationMouse(event, mouse, view, nativeView.webContents)) return;
     if (mouse.type !== "mouseDown") return;
+    closeDesktopWebExtensionPopup(view.lastUrlKey);
     if (!mainWindow || mainWindow.isDestroyed()) return;
     mainWindow.webContents.send("viron:native-view-pointer-down");
     sendToAgentChat("viron:native-view-pointer-down");
@@ -348,6 +356,11 @@ export function createDesktopWebPage(
       ...(index > 0 ? [{ type: "separator" as const }] : []),
       ...group.map((action) => desktopWebContextMenuItem(view, nativeView.webContents, params, action)),
     ]);
+    const extensionItems = desktopWebExtensionContextMenuItems(view.partition, nativeView.webContents, params);
+    if (extensionItems.length) {
+      if (template.length) template.push({ type: "separator" });
+      template.push(...extensionItems);
+    }
     Menu.buildFromTemplate(template).popup({ window: mainWindow });
   });
   nativeView.webContents.on("before-input-event", (event, input) => {
@@ -696,6 +709,7 @@ export async function uploadDesktopWebCredential(credentialId: string, filenameV
 export async function closeDesktopWebView(id: string, reason = tr("用户主动关闭连接")): Promise<void> {
   const managed = desktopWebViews.get(id);
   if (!managed) return;
+  closeDesktopWebExtensionPopup(managed.lastUrlKey);
   managed.closedReason = reason;
   sendWebViewState(managed);
   managed.closing = true;

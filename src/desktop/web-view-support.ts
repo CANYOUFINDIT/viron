@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { session, type Rectangle, type Session } from "electron";
 import type * as Electron from "electron";
 import {
   cacheableDesktopWebUrl,
   deceptiveChromeWebStoreUrl,
+  desktopWebLastUrlKey,
   desktopWebPartitionName,
   restorableDesktopWebUrl,
   shouldAttemptDesktopWebAutofill,
@@ -18,6 +20,7 @@ import type { DesktopWebCredential } from "./device-identity.js";
 import { localWebCredential } from "./execution-router.js";
 import { translate as tr } from "./i18n.js";
 import { mainWindow } from "./window-host.js";
+import { registerDesktopWebExtensionWorkerMenus } from "./web-extension-context-menus.js";
 import type {
   DesktopWebViewBounds,
   DesktopWebViewState,
@@ -27,6 +30,7 @@ import type {
 
 export const desktopWebViews = new Map<string, ManagedDesktopWebView>();
 const trackedWebPartitions = new WeakSet<Session>();
+const extensionCompatSessions = new WeakSet<Session>();
 
 export function cachedDesktopWebUrl(entryUrl: string, key: string): string {
   return restorableDesktopWebUrl(entryUrl, readState().webLastUrls?.[key]);
@@ -55,6 +59,13 @@ export function forgetDesktopWebLastUrl(key: string): void {
 
 export function desktopWebSession(endpoint: string, userId: string, credentialId: string): Session {
   const webPartition = session.fromPartition(desktopWebPartitionName(endpoint, userId, credentialId));
+  if (!extensionCompatSessions.has(webPartition)) {
+    const preload = fileURLToPath(new URL("./web-extension-compat-preload.cjs", import.meta.url));
+    webPartition.registerPreloadScript({ type: "frame", filePath: preload });
+    webPartition.registerPreloadScript({ type: "service-worker", filePath: preload });
+    registerDesktopWebExtensionWorkerMenus(webPartition, desktopWebLastUrlKey(endpoint, userId, credentialId));
+    extensionCompatSessions.add(webPartition);
+  }
   webPartition.setPermissionCheckHandler(() => false);
   webPartition.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   return webPartition;
