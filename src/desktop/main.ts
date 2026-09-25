@@ -260,6 +260,7 @@ function registerIpc(): void {
     if (value === "disabled") desktopAgentRuntime?.stopAll(tr("Viron Agent 已关闭"));
     const state = readState();
     writeState({ ...state, agentEntryMode: value });
+    installApplicationMenu();
     return publishDesktopAppState();
   });
   ipcMain.handle("viron:execution-mode:set", async (event, mode: DesktopExecutionMode) => {
@@ -392,6 +393,7 @@ async function createWindow(): Promise<void> {
       event.preventDefault();
       createdMainWindow.webContents.send("viron:shortcut-capture-input", {
         key: input.key,
+        code: input.code,
         meta: input.meta,
         control: input.control,
         alt: input.alt,
@@ -401,6 +403,7 @@ async function createWindow(): Promise<void> {
     }
     const action = shortcutActionForInput(shortcutPreferences().bindings, {
       key: input.key,
+      code: input.code,
       meta: input.meta,
       control: input.control,
       alt: input.alt,
@@ -538,9 +541,11 @@ async function createWindow(): Promise<void> {
       const immersiveNavigationPassed = immersiveNavigation.immediateExpand && immersiveNavigation.rendered && immersiveNavigation.snapshot && immersiveNavigation.webViewStayedVisible && immersiveNavigation.snappedTop && immersiveNavigation.hidden;
       const agentLauncherPassed = agentLauncher.rendered && agentLauncher.exactButtonSize && agentLauncher.glowClearance && agentLauncher.compactInteraction
         && agentLauncher.nonFocusable && agentLauncher.passivePointerStable
-        && agentLauncher.snapshot && agentLauncher.webViewStayedVisible && agentLauncher.actionDelivered && agentLauncher.hidden;
+        && agentLauncher.snapshot && agentLauncher.webViewStayedVisible && agentLauncher.actionDelivered
+        && agentLauncher.staleMainHideIgnored && agentLauncher.hidden;
       const connectionQualityPassed = connectionQuality.rendered && connectionQuality.exactPanelSize && connectionQuality.compactInteraction
-        && connectionQuality.noHeader && connectionQuality.expandedContentFits && connectionQuality.testButtonClearance
+        && connectionQuality.noHeader && connectionQuality.shadowClearance && connectionQuality.noBackdropFilter
+        && connectionQuality.expandedContentFits && connectionQuality.testButtonClearance
         && connectionQuality.nonFocusable && connectionQuality.snapshot && connectionQuality.webViewStayedVisible
         && connectionQuality.actionDelivered && connectionQuality.hidden;
       const activeEnvironmentDockPassed = activeEnvironmentDock.rendered && activeEnvironmentDock.collapsedPanelSize

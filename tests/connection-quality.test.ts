@@ -47,9 +47,13 @@ describe("connection quality monitor", () => {
     expect(clampConnectionQualityPosition({ x: 2_000, y: -100 }, viewport, false)).toEqual({ x: 858, y: 16 });
     expect(snapConnectionQualityPosition({ x: 840, y: 210 }, viewport, false)).toEqual({ x: 858, y: 210 });
     expect(connectionQualityOverlayLayout({ x: 858, y: 16 }, viewport, false)).toEqual({
-      bounds: { x: 822, y: 0, width: 378, height: 156 },
-      rootOffset: { x: 36, y: 16 },
+      bounds: { x: 762, y: 0, width: 438, height: 216 },
+      rootOffset: { x: 96, y: 16 },
       panelSize: { width: 326, height: CONNECTION_QUALITY_PANEL_COLLAPSED_HEIGHT },
+    });
+    expect(connectionQualityOverlayLayout({ x: 300, y: 300 }, viewport, false)).toMatchObject({
+      bounds: { x: 204, y: 204, width: 518, height: 296 },
+      rootOffset: { x: 96, y: 96 },
     });
     expect(connectionQualityOverlayLayout({ x: 858, y: 16 }, viewport, true).panelSize.height).toBe(CONNECTION_QUALITY_PANEL_EXPANDED_HEIGHT);
   });

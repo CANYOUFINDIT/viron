@@ -25,6 +25,8 @@ describe("keyboard shortcuts", () => {
     expect(defaultShortcutBindings("win32")["app.agentQuickInput"]).toBe("Mod+Shift+A");
     expect(shortcutActionForInput(defaultShortcutBindings("darwin"), { key: " ", alt: true }, "darwin")).toBe("app.agentQuickInput");
     expect(shortcutActionForInput(defaultShortcutBindings("darwin"), { key: "\u00a0", alt: true }, "darwin")).toBe("app.agentQuickInput");
+    expect(shortcutActionForInput(defaultShortcutBindings("darwin"), { key: "Dead", code: "Space", alt: true }, "darwin")).toBe("app.agentQuickInput");
+    expect(shortcutBindingFromInput({ key: "Dead", code: "Space", alt: true }, "darwin")).toBe("Alt+Space");
     expect(shortcutActionForInput(defaultShortcutBindings("win32"), { key: "a", control: true, shift: true }, "win32")).toBe("app.agentQuickInput");
   });
 
@@ -49,6 +51,7 @@ describe("keyboard shortcuts", () => {
   it("sanitizes stored values and formats native labels", () => {
     expect(sanitizeShortcutOverrides({ "workspace.refresh": "Mod+Shift+R", bad: "Mod+K", "workspace.save": 12 })).toEqual({ "workspace.refresh": "Mod+Shift+R" });
     expect(formatShortcutBinding("Mod+Shift+R", "darwin")).toBe("⌘⇧R");
+    expect(formatShortcutBinding("Alt+Space", "darwin")).toBe("⌥Space");
     expect(formatShortcutBinding("Mod+Shift+R", "win32")).toBe("Ctrl+Shift+R");
     expect(formatShortcutBinding("", "darwin")).toBe("未设置");
   });

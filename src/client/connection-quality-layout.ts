@@ -8,7 +8,9 @@ export interface ConnectionQualityPosition { x: number; y: number }
 export interface ConnectionQualityViewport { width: number; height: number }
 
 const margin = 16;
-const overlayPadding = 36;
+// The dragged card casts a 60px blur with a 26px vertical offset. Keep that
+// shadow inside the transparent visual window so its edge never becomes a box.
+const overlayPadding = 96;
 const snapDistance = 72;
 
 export function connectionQualityPanelSize(expanded: boolean) {

@@ -17,6 +17,10 @@ export let agentChatHostState: AgentHostState | null = null;
 let agentChatChromeVisible = false;
 let agentChatIgnoreMouse = false;
 let agentChatNativeOverlay = false;
+
+export function agentChatNativeOverlayActive(): boolean {
+  return agentChatNativeOverlay;
+}
 const pendingAgentHostActions = new Map<string, {
   resolve: (result: AgentHostActionResult) => void;
   reject: (error: Error) => void;

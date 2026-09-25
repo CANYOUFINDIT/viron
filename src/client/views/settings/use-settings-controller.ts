@@ -495,6 +495,8 @@ export function useSettingsController() {
   async function startShortcutRecording(action: ShortcutActionId) {
     shortcutError.value = "";
     shortcutRecording.value = action;
+    // A focused button treats Space as another click; leave it before recording.
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     try {
       await setShortcutCapture(true);
     } catch (error) {

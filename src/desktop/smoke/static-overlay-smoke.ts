@@ -24,6 +24,7 @@ import {
   agentLauncherWindow,
   updateAgentLauncherWindow,
 } from "../overlays/agent-launcher-window.js";
+import { agentChatWindow, setAgentChatNativeOverlay } from "../overlays/agent-chat-window.js";
 import {
   connectionQualityVisualWindow,
   connectionQualityWindow,
@@ -127,6 +128,7 @@ export async function runDesktopAgentLauncherSmoke(): Promise<{
   snapshot: boolean;
   webViewStayedVisible: boolean;
   actionDelivered: boolean;
+  staleMainHideIgnored: boolean;
   hidden: boolean;
 }> {
   if (!mainWindow) throw new Error(tr("主窗口不可用"));
@@ -194,7 +196,12 @@ export async function runDesktopAgentLauncherSmoke(): Promise<{
     const interactionBounds = agentLauncherWindow!.getBounds();
     const compactInteraction = interactionBounds.width === 64 && interactionBounds.height === 64;
     const nonFocusable = !agentLauncherWindow!.isFocusable() && !agentLauncherVisualWindow!.isFocusable();
-    await updateAgentLauncherWindow(null);
+    await setAgentChatNativeOverlay(true);
+    await agentChatWindow!.webContents.executeJavaScript(`window.vironDesktop.updateAgentLauncher(${JSON.stringify(state)})`);
+    await mainWindow.webContents.executeJavaScript("window.vironDesktop.updateAgentLauncher(null)");
+    const staleMainHideIgnored = agentLauncherWindow!.isVisible() && agentLauncherVisualWindow!.isVisible();
+    await setAgentChatNativeOverlay(false);
+    await mainWindow.webContents.executeJavaScript("window.vironDesktop.updateAgentLauncher(null)");
     return {
       ...inspected,
       compactInteraction,
@@ -203,12 +210,14 @@ export async function runDesktopAgentLauncherSmoke(): Promise<{
       snapshot,
       webViewStayedVisible,
       actionDelivered,
+      staleMainHideIgnored,
       hidden: !agentLauncherWindow!.isVisible() && !agentLauncherVisualWindow!.isVisible(),
     };
   } finally {
     mainWindow.contentView.removeChildView(testView);
     if (!testView.webContents.isDestroyed()) testView.webContents.close();
     await updateAgentLauncherWindow(null);
+    await setAgentChatNativeOverlay(false);
   }
 }
 
@@ -216,6 +225,8 @@ export async function runDesktopConnectionQualitySmoke(): Promise<{
   rendered: boolean;
   exactPanelSize: boolean;
   noHeader: boolean;
+  shadowClearance: boolean;
+  noBackdropFilter: boolean;
   expandedContentFits: boolean;
   testButtonClearance: boolean;
   compactInteraction: boolean;
@@ -240,8 +251,8 @@ export async function runDesktopConnectionQualitySmoke(): Promise<{
     downloadBytesPerSecond: 48_000,
   };
   const state: ConnectionQualityOverlayState = {
-    bounds: { x: 814, y: 44, width: CONNECTION_QUALITY_PANEL_WIDTH + 72, height: CONNECTION_QUALITY_PANEL_COLLAPSED_HEIGHT + 72 },
-    rootOffset: { x: 36, y: 36 },
+    bounds: { x: 814, y: 44, width: CONNECTION_QUALITY_PANEL_WIDTH + 192, height: CONNECTION_QUALITY_PANEL_COLLAPSED_HEIGHT + 192 },
+    rootOffset: { x: 96, y: 96 },
     panelSize: { width: CONNECTION_QUALITY_PANEL_WIDTH, height: CONNECTION_QUALITY_PANEL_COLLAPSED_HEIGHT },
     expanded: false,
     dragging: false,
@@ -267,13 +278,15 @@ export async function runDesktopConnectionQualitySmoke(): Promise<{
             rendered: document.body.innerText.includes(${JSON.stringify(tr("烟测目标"))}),
             exactPanelSize: rect.width === ${CONNECTION_QUALITY_PANEL_WIDTH} && rect.height === ${CONNECTION_QUALITY_PANEL_COLLAPSED_HEIGHT},
             noHeader: !document.querySelector('.connection-quality-card__header'),
+            shadowClearance: rect.left >= 90 && rect.top >= 90 && window.innerWidth - rect.right >= 90 && window.innerHeight - rect.bottom >= 90,
+            noBackdropFilter: getComputedStyle(panel).backdropFilter === 'none',
           });
         }
         if (Date.now() >= deadline) return reject(new Error('连接质量面板未完成渲染'));
         setTimeout(inspect, 20);
       };
       inspect();
-    })`) as { rendered: boolean; exactPanelSize: boolean; noHeader: boolean };
+    })`) as { rendered: boolean; exactPanelSize: boolean; noHeader: boolean; shadowClearance: boolean; noBackdropFilter: boolean };
     const actionPromise = mainWindow.webContents.executeJavaScript(`new Promise((resolve) => {
       const stop = window.vironDesktop.onConnectionQualityAction((action) => {
         if (action.type === 'toggle-details') { stop(); resolve(true); }
@@ -306,7 +319,7 @@ export async function runDesktopConnectionQualitySmoke(): Promise<{
       expanded: true,
       bounds: {
         ...state.bounds,
-        height: CONNECTION_QUALITY_PANEL_EXPANDED_HEIGHT + 72,
+        height: CONNECTION_QUALITY_PANEL_EXPANDED_HEIGHT + 192,
       },
       panelSize: {
         width: CONNECTION_QUALITY_PANEL_WIDTH,
@@ -352,4 +365,3 @@ export async function runDesktopConnectionQualitySmoke(): Promise<{
     await updateConnectionQualityWindow(null);
   }
 }
-

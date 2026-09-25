@@ -2,6 +2,7 @@ import { app, Menu } from "electron";
 import { translate as tr } from "./i18n.js";
 import {
   electronAccelerator,
+  currentAgentEntryMode,
   sendShortcutAction,
   shortcutPreferences,
 } from "./app-state.js";
@@ -47,6 +48,8 @@ export function installApplicationMenu(): void {
     {
       label: tr("显示"),
       submenu: [
+        { label: tr("唤起 Viron Agent 快捷输入"), enabled: currentAgentEntryMode() === "quick", accelerator: electronAccelerator(bindings["app.agentQuickInput"]), click: () => sendShortcutAction("app.agentQuickInput") },
+        { type: "separator" },
         { label: tr("搜索当前内容"), accelerator: electronAccelerator(bindings["workspace.search"]), click: () => sendShortcutAction("workspace.search") },
         { label: tr("刷新当前内容"), accelerator: electronAccelerator(bindings["workspace.refresh"]), click: () => sendShortcutAction("workspace.refresh") },
         { type: "separator" },

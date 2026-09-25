@@ -76,6 +76,7 @@ import {
   setAgentChatChromeVisible,
   setAgentChatIgnoreMouse,
   setAgentChatNativeOverlay,
+  agentChatNativeOverlayActive,
   settleAgentHostAction,
   updateAgentChatHost,
 } from "../overlays/agent-chat-window.js";
@@ -231,6 +232,8 @@ export function registerDesktopCoreIpc(desktopUpdater: DesktopUpdater): void {
   });
   ipcMain.handle("viron:agent-launcher:update", async (event, value: AgentFloatingOverlayState | null) => {
     trustedSender(event);
+    const owner = agentChatNativeOverlayActive() ? agentChatWindow?.webContents : mainWindow?.webContents;
+    if (event.sender !== owner) return;
     if (value !== null) {
       const edge = value?.snappedEdge;
       const numbers = [value?.bounds?.x, value?.bounds?.y, value?.bounds?.width, value?.bounds?.height, value?.rootOffset?.x, value?.rootOffset?.y];

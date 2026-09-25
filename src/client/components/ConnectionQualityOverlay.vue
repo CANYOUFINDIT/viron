@@ -123,6 +123,13 @@ onBeforeUnmount(() => {
 <style>
 * { box-sizing: border-box; }
 html, body, #app { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; }
-.native-connection-quality { position: absolute !important; }
-.native-connection-quality.is-interaction-layer { opacity: 0; }
+.native-connection-quality {
+  position: absolute !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+.native-connection-quality.is-interaction-layer {
+  opacity: 0;
+  box-shadow: none !important;
+}
 </style>

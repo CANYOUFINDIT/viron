@@ -23,6 +23,7 @@ export type ShortcutOverrides = Partial<Record<ShortcutActionId, string>>;
 
 export interface ShortcutInput {
   key: string;
+  code?: string;
   meta?: boolean;
   control?: boolean;
   alt?: boolean;
@@ -72,7 +73,8 @@ function runtimeShortcutPlatform(): string {
   return "win32";
 }
 
-function normalizedKey(key: string): string {
+function normalizedKey(key: string, code?: string): string {
+  if (code === "Space") return "Space";
   if (key === " " || key === "\u00a0") return "Space";
   if (key === "Esc") return "Escape";
   if (key.length === 1) return key.toUpperCase();
@@ -109,7 +111,7 @@ export function shortcutOverridesFromBindings(bindings: ShortcutBindings, platfo
 }
 
 export function shortcutBindingFromInput(input: ShortcutInput, platform: NodeJS.Platform | string): string | null {
-  const key = normalizedKey(input.key);
+  const key = normalizedKey(input.key, input.code);
   if (!key || modifierKeys.has(key)) return null;
   const modifiers: string[] = [];
   const modPressed = platform === "darwin" ? input.meta : input.control;

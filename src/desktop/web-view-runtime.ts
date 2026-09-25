@@ -361,6 +361,7 @@ export function createDesktopWebPage(
     }
     const shortcutAction = shortcutActionForInput(shortcutPreferences().bindings, {
       key: input.key,
+      code: input.code,
       meta: input.meta,
       control: input.control,
       alt: input.alt,
