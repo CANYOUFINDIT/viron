@@ -62,6 +62,7 @@ const emit = defineEmits<{
 
 const surface = ref<HTMLElement | null>(null);
 const extensionsButton = ref<HTMLElement | null>(null);
+const extensionPageImage = ref<HTMLImageElement | null>(null);
 const state = ref<DesktopWebViewState | null>(null);
 const address = ref(props.entryUrl);
 const startError = ref("");
@@ -305,17 +306,36 @@ async function toggleExtensions() {
   const request = ++extensionOpenRequest;
   await extensionOverlayTask;
   if (request !== extensionOpenRequest) return;
+  const extensionsTask = openExtensions();
   const frame = await captureDesktopWebView(id, "page").catch(() => "");
   if (request !== extensionOpenRequest || state.value?.id !== id || !componentActive || !props.active) return;
-  if (frame) {
-    const image = new Image();
-    image.src = frame;
-    await image.decode().catch(() => undefined);
-  }
+  const snapshot = frame || previewFrame.value;
+  await extensionsTask;
   if (request !== extensionOpenRequest || state.value?.id !== id) return;
-  extensionPageFrame.value = frame || previewFrame.value;
-  extensionPageHidden.value = true;
+  if (!snapshot) {
+    ElMessage.warning(tr("无法获取当前网页画面，请重试打开拓展列表"));
+    return;
+  }
+  extensionPageFrame.value = snapshot;
   await nextTick();
+  const snapshotReady = await extensionPageImage.value?.decode().then(() => true).catch(() => false);
+  if (request !== extensionOpenRequest || state.value?.id !== id || !componentActive || !props.active) {
+    extensionPageFrame.value = "";
+    return;
+  }
+  if (!snapshotReady) {
+    extensionPageFrame.value = "";
+    ElMessage.warning(tr("无法获取当前网页画面，请重试打开拓展列表"));
+    return;
+  }
+  // Let the decoded snapshot reach the renderer before hiding the native view.
+  await new Promise<void>((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())));
+  if (request !== extensionOpenRequest || state.value?.id !== id || !componentActive || !props.active) {
+    extensionPageHidden.value = false;
+    extensionPageFrame.value = "";
+    return;
+  }
+  extensionPageHidden.value = true;
   await setDesktopWebViewVisible(id, false).then(applyState).catch(() => undefined);
   if (request !== extensionOpenRequest || state.value?.id !== id || !componentActive || !props.active) {
     extensionPageHidden.value = false;
@@ -705,7 +725,7 @@ onBeforeUnmount(() => {
           <img v-if="extension.iconDataUrl" :src="extension.iconDataUrl" alt="" />
           <Puzzle v-else :size="15" />
         </button>
-        <el-popover v-model:visible="extensionsOpen" placement="bottom-end" trigger="manual" popper-class="desktop-web-extension-list-popper" :width="320" :offset="8" @show="openExtensions">
+        <el-popover v-model:visible="extensionsOpen" placement="bottom-end" trigger="manual" popper-class="desktop-web-extension-list-popper" :width="320" :offset="8">
           <template #reference>
             <button ref="extensionsButton" type="button" :aria-label="$t('本地拓展')" :title="$t('本地拓展')" :disabled="!state || Boolean(state.closedReason)" @click="toggleExtensions"><Puzzle :size="15" /></button>
           </template>
@@ -756,7 +776,7 @@ onBeforeUnmount(() => {
       </div>
     </header>
     <div ref="surface" class="web-browser-surface desktop-web-browser-surface" :class="{ 'is-preview': preview }">
-      <img v-if="extensionPageFrame" class="desktop-web-extension-page-frame" :src="extensionPageFrame" alt="" aria-hidden="true" />
+      <img v-if="extensionPageFrame" ref="extensionPageImage" class="desktop-web-extension-page-frame" :src="extensionPageFrame" alt="" aria-hidden="true" />
       <img v-if="preview && previewFrame" :src="previewFrame" :alt="$t('{0} 的页面画面', [username])" draggable="false" />
       <div v-else-if="!started || preloading" class="web-browser-loading web-browser-idle" :title="$t('双击空白处访问页面')" @pointerdown.stop @mousedown.stop @dblclick="visitPage">
         <div class="web-browser-idle__icon"><Globe2 :size="24" /></div>

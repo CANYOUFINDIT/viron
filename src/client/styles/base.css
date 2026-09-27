@@ -675,14 +675,14 @@ button { color: inherit; }
 .web-page-tabs__add > span { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; transition: background-color var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out); }
 .web-page-tabs__add:hover > span { background: var(--browser-account-action-hover); }
 .web-page-tab__main:focus-visible, .web-page-tab__close:focus-visible, .web-page-tabs__add:focus-visible { position: relative; z-index: 2; outline-offset: -2px; }
-.web-browser-toolbar { min-height: 43px; padding: 5px 6px; border-bottom: 1px solid #d9e2df; background: #f7faf9; display: grid; grid-template-columns: auto minmax(120px, 1fr) auto; align-items: center; gap: 6px; }
+.web-browser-toolbar { min-height: 43px; padding: 5px 6px; border-bottom: 1px solid var(--browser-account-divider); background: var(--browser-account-surface); display: grid; grid-template-columns: auto minmax(120px, 1fr) auto; align-items: center; gap: 6px; }
 .web-browser-nav, .web-browser-tools { display: flex; align-items: center; gap: 3px; }
-.web-browser-toolbar button, .web-browser-toolbar a { width: 29px; height: 29px; padding: 0; border: 1px solid transparent; border-radius: 5px; background: transparent; color: #536762; display: grid; place-items: center; cursor: pointer; }
-.web-browser-toolbar button:hover, .web-browser-toolbar a:hover { border-color: #cbd8d4; background: white; color: #16735f; }
+.web-browser-toolbar button, .web-browser-toolbar a { width: 29px; height: 29px; padding: 0; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--browser-account-muted); display: grid; place-items: center; cursor: pointer; }
+.web-browser-toolbar button:hover, .web-browser-toolbar a:hover { border-color: var(--color-rule-strong); background: var(--browser-account-hover); color: var(--color-accent-strong); }
 .web-browser-toolbar button:disabled { opacity: .34; cursor: not-allowed; }
-.web-browser-toolbar button:disabled:hover { border-color: transparent; background: transparent; color: #536762; }
-.web-browser-address { min-width: 0; height: 31px; padding: 0 8px; border: 1px solid #d5dfdc; border-radius: 6px; background: white; display: flex; align-items: center; gap: 7px; }
-.web-browser-address input { min-width: 0; flex: 1; width: 0; padding: 0; border: 0; outline: 0; background: transparent; color: #33433f; font-family: var(--font-mono); font-size: 11px; }
+.web-browser-toolbar button:disabled:hover { border-color: transparent; background: transparent; color: var(--browser-account-muted); }
+.web-browser-address { min-width: 0; height: 31px; padding: 0 8px; border: 1px solid var(--color-rule-strong); border-radius: 6px; background: var(--color-paper-raised); display: flex; align-items: center; gap: 7px; }
+.web-browser-address input { min-width: 0; flex: 1; width: 0; padding: 0; border: 0; outline: 0; background: transparent; color: var(--color-ink-soft); font-family: var(--font-mono); font-size: 11px; }
 .web-browser-surface { position: relative; min-height: 0; flex: 1; background: #f5f7f6; overflow: hidden; cursor: default; }
 .web-browser-surface > img { width: 100%; height: 100%; object-fit: fill; display: block; user-select: none; }
 .web-browser-loading { position: absolute; inset: 0; color: #6d7d79; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; }
@@ -1759,25 +1759,25 @@ button { color: inherit; }
 .db-explorer-resizer:hover span, .db-explorer-resizer:focus-visible span, .db-explorer-resizer:active span { height: 72px; background: #56c9a5; opacity: 1; }
 .explorer-empty { height: 100%; color: #526661; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; font-size: 12px; }
 .explorer-empty.is-compact { height: auto; min-height: 90px; margin-top: 8px; border: 1px dashed #2b4042; border-radius: 7px; }
-.database-global-toolbar { grid-column: 1 / -1; grid-row: 1; min-width: 0; padding: 3px 8px; border-bottom: 1px solid #344245; background: #e8ebec; color: #273438; display: flex; align-items: center; justify-content: space-between; gap: 8px; overflow: hidden; }
+.database-global-toolbar { grid-column: 1 / -1; grid-row: 1; min-width: 0; padding: 3px 8px; border-bottom: 1px solid #2d4244; background: #142326; color: #c2cfcc; display: flex; align-items: center; justify-content: space-between; gap: 8px; overflow: hidden; }
 .database-global-tools { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 2px; overflow-x: auto; scrollbar-width: none; }
 .database-global-tools::-webkit-scrollbar { display: none; }
 .database-global-tools > .el-dropdown { display: inline-flex; flex: 0 0 auto; }
-.database-global-tool--tools > svg:first-child { color: #238c78 !important; }
-.database-global-tool { width: auto; min-width: 55px; height: 34px; padding: 0 7px; border: 0; border-radius: 4px; background: transparent; color: #415056; display: inline-flex; align-items: center; justify-content: center; gap: 5px; cursor: pointer; font-size: 11px; line-height: 1; white-space: nowrap; }
-.database-global-tool > svg:first-child { width: 17px; height: 17px; flex: 0 0 auto; color: #287cb2; }
+.database-global-tool--tools > svg:first-child { color: #65b69a !important; }
+.database-global-tool { width: auto; min-width: 55px; height: 34px; padding: 0 7px; border: 0; border-radius: 4px; background: transparent; color: #a9bab6; display: inline-flex; align-items: center; justify-content: center; gap: 5px; cursor: pointer; font-size: 11px; line-height: 1; white-space: nowrap; }
+.database-global-tool > svg:first-child { width: 17px; height: 17px; flex: 0 0 auto; color: #6ca6cc; }
 .database-global-tool > span { min-width: 0; display: block; overflow: hidden; text-overflow: ellipsis; }
-.database-global-tool > svg:last-child:not(:first-child) { width: 11px; height: 11px; flex: 0 0 auto; margin-left: -3px; color: #6f797d; }
-.database-global-tool:hover:not(:disabled), .database-global-tool:focus-visible { background: #d4d9da; color: #152126; outline: none; }
-.database-global-tool:disabled { color: #9ea6a8; cursor: default; opacity: .58; }
-.database-global-tools > :nth-child(3n+2) .database-global-tool > svg:first-child, .database-global-tools > .database-global-tool:nth-child(3n+2) > svg:first-child { color: #3d9b75; }
-.database-global-tools > :nth-child(3n) .database-global-tool > svg:first-child, .database-global-tools > .database-global-tool:nth-child(3n) > svg:first-child { color: #d08048; }
+.database-global-tool > svg:last-child:not(:first-child) { width: 11px; height: 11px; flex: 0 0 auto; margin-left: -3px; color: #819894; }
+.database-global-tool:hover:not(:disabled), .database-global-tool:focus-visible { background: #21383b; color: #e0e9e6; outline: none; }
+.database-global-tool:disabled { color: #718581; cursor: default; opacity: .58; }
+.database-global-tools > :nth-child(3n+2) .database-global-tool > svg:first-child, .database-global-tools > .database-global-tool:nth-child(3n+2) > svg:first-child { color: #65b69a; }
+.database-global-tools > :nth-child(3n) .database-global-tool > svg:first-child, .database-global-tools > .database-global-tool:nth-child(3n) > svg:first-child { color: #d0986e; }
 .database-global-trailing-tools { flex: 0 0 auto; display: flex; align-items: stretch; }
-.database-view-tools { flex: 0 0 auto; padding-left: 7px; border-left: 1px solid #c6cccd; display: flex; align-items: center; gap: 3px; }
-.database-view-tools button { width: 27px; height: 27px; padding: 0; border: 1px solid transparent; border-radius: 3px; background: transparent; color: #69767a; display: grid; place-items: center; cursor: pointer; }
-.database-view-tools button:hover, .database-view-tools button.is-active { border-color: #aeb9bb; background: #d6dcdd; color: #287cb2; }
+.database-view-tools { flex: 0 0 auto; padding-left: 7px; border-left: 1px solid #2d4244; display: flex; align-items: center; gap: 3px; }
+.database-view-tools button { width: 27px; height: 27px; padding: 0; border: 1px solid transparent; border-radius: 3px; background: transparent; color: #91a5a1; display: grid; place-items: center; cursor: pointer; }
+.database-view-tools button:hover, .database-view-tools button.is-active { border-color: #3f5d5c; background: #294144; color: #81bde3; }
 .database-view-tools span { display: none; }
-.database-global-extension-tools { flex: 0 0 auto; margin-left: 5px; padding-left: 7px; border-left: 1px solid #c6cccd; display: flex; align-items: center; }
+.database-global-extension-tools { flex: 0 0 auto; margin-left: 5px; padding-left: 7px; border-left: 1px solid #2d4244; display: flex; align-items: center; }
 .database-global-extension-tools > .el-dropdown { display: inline-flex; }
 .database-global-extension-tools .database-global-tool { min-width: 55px; }
 .database-navigator { grid-column: 1; grid-row: 2; min-width: 0; min-height: 0; border-right: 1px solid #293a3d; background: #101c1f; color: #dbe6e3; display: grid; grid-template-rows: minmax(0, 1fr) 35px; overflow: hidden; }
@@ -3213,10 +3213,19 @@ button { color: inherit; }
 :root.bright .database-workbench .explorer-empty.is-compact { border-color: #cbd7d8; }
 :root.bright .database-global-toolbar { border-color: #cbd4d5; background: #f3f4f4; color: #2c3b40; }
 :root.bright .database-global-tool { color: #44575c; }
+:root.bright .database-global-tool--tools > svg:first-child { color: #238c78 !important; }
+:root.bright .database-global-tool > svg:first-child { color: #287cb2; }
+:root.bright .database-global-tool > svg:last-child:not(:first-child) { color: #6f797d; }
+:root.bright .database-global-tool:disabled { color: #9ea6a8; }
+:root.bright .database-global-tools > :nth-child(3n+2) .database-global-tool > svg:first-child,
+:root.bright .database-global-tools > .database-global-tool:nth-child(3n+2) > svg:first-child { color: #3d9b75; }
+:root.bright .database-global-tools > :nth-child(3n) .database-global-tool > svg:first-child,
+:root.bright .database-global-tools > .database-global-tool:nth-child(3n) > svg:first-child { color: #d08048; }
 :root.bright .database-global-tool:hover:not(:disabled),
 :root.bright .database-global-tool:focus-visible { background: #e0e4e4; color: #1d2d32; }
 :root.bright .database-view-tools { border-color: #d0d7d8; }
 :root.bright .database-global-extension-tools { border-color: #d0d7d8; }
+:root.bright .database-view-tools button { color: #69767a; }
 :root.bright .database-view-tools button:hover,
 :root.bright .database-view-tools button.is-active { border-color: #b8c5c7; background: #e0e5e5; color: #1d78ad; }
 :root.bright .database-navigator { border-color: #d3dbdc; background: #f2f3f3; color: #33484d; }
