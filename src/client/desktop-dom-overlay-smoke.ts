@@ -13,6 +13,7 @@ declare global {
       setSidebarExpanded: (expanded: boolean) => void;
       setSidebarPinned: (pinned: boolean) => void;
       sidebar: () => HTMLElement | null;
+      enableNativeHover: () => void;
     };
   }
 }
@@ -24,11 +25,14 @@ createApp({
     const sidebarExpanded = ref(false);
     const sidebarPinned = ref(false);
     const sidebar = ref<HTMLElement | null>(null);
+    let nativeHoverEnabled = false;
     let unregister: (() => void) | null = null;
     onMounted(() => {
       unregister = registerNativeWebSurface(() => document.querySelector<HTMLElement>("#surface"), () => true);
       window.setTimeout(() => { sidebarExpanded.value = true; }, 30);
       window.addEventListener("viron:native-web-pointer-down", hideElementPopover);
+      window.addEventListener("viron:native-sidebar-pointerenter", enterSidebar);
+      window.addEventListener("viron:native-sidebar-pointerleave", leaveSidebar);
       window.vironDomOverlaySmoke = {
         clicks,
         close: () => unregister?.(),
@@ -36,12 +40,17 @@ createApp({
         setSidebarExpanded: (expanded) => { sidebarExpanded.value = expanded; },
         setSidebarPinned: (pinned) => { sidebarPinned.value = pinned; },
         sidebar: () => sidebar.value,
+        enableNativeHover: () => { nativeHoverEnabled = true; },
       };
     });
     function hideElementPopover() { elementPopoverOpen.value = false; }
+    function enterSidebar() { if (nativeHoverEnabled && !sidebarPinned.value) sidebarExpanded.value = true; }
+    function leaveSidebar() { if (nativeHoverEnabled && !sidebarPinned.value) sidebarExpanded.value = false; }
     onBeforeUnmount(() => {
       unregister?.();
       window.removeEventListener("viron:native-web-pointer-down", hideElementPopover);
+      window.removeEventListener("viron:native-sidebar-pointerenter", enterSidebar);
+      window.removeEventListener("viron:native-sidebar-pointerleave", leaveSidebar);
     });
     return () => [
       h("div", { class: ["app-frame", { "is-sidebar-expanded": sidebarExpanded.value, "is-sidebar-pinned": sidebarPinned.value }] }, [

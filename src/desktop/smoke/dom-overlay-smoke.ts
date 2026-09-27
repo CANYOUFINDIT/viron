@@ -1,7 +1,8 @@
 import { join } from "node:path";
-import { app, WebContentsView } from "electron";
+import { app, BrowserWindow, screen, WebContentsView } from "electron";
 import { closeDomOverlayWindow, domOverlayWindow, domOverlayWindows } from "../overlays/dom-overlay-windows.js";
 import { mainWindow } from "../window-host.js";
+import { sidebarOverlayViews } from "../overlays/sidebar-overlay-view.js";
 
 export async function runDesktopDomOverlaySmoke(): Promise<{
   nodeAdopted: boolean;
@@ -65,9 +66,10 @@ async function waitUntil(check: () => Promise<boolean> | boolean, label: string)
 export async function runDesktopDomOverlayManagerSmoke(): Promise<{
   sidebarPortaled: boolean;
   sidebarFullWidth: boolean;
-  sidebarHoverTransferStable: boolean;
   sidebarAnimationStable: boolean;
   sidebarPinRestored: boolean;
+  sidebarPassiveInteraction: boolean;
+  sidebarNativeAutoCollapse: boolean;
   popoverPortaled: boolean;
   elementPopoverPortaled: boolean;
   elementPopoverArrowAligned: boolean;
@@ -84,25 +86,16 @@ export async function runDesktopDomOverlayManagerSmoke(): Promise<{
   host.contentView.addChildView(web);
   try {
     await web.webContents.loadURL("data:text/html,<html><body><script>window.ticks=0;setInterval(()=>window.ticks++,20)</script>Live page</body></html>");
-    await waitUntil(() => domOverlayWindows().length === 3 && domOverlayWindows().every((window) => window.isVisible()), "native DOM overlays");
+    await waitUntil(() => domOverlayWindows().length === 2 && sidebarOverlayViews().length === 1 && sidebarOverlayViews()[0].getVisible() && domOverlayWindows().every((window) => window.isVisible()), "native DOM overlays");
     const windows = domOverlayWindows();
-    const sidebar = windows.find((window) => window.getBounds().x === host.getContentBounds().x);
-    const popover = windows.find((window) => window !== sidebar && window.getBounds().x < host.getContentBounds().x + 300);
-    const elementPopover = windows.find((window) => window !== sidebar && window !== popover);
+    const sidebar = sidebarOverlayViews()[0];
+    const popover = windows.find((window) => window.getBounds().x < host.getContentBounds().x + 300);
+    const elementPopover = windows.find((window) => window !== popover);
     if (!sidebar || !popover || !elementPopover) throw new Error("Sidebar or popover window missing");
     const sidebarDocument = '(document.querySelector("iframe")?.contentDocument ?? document)';
     const sidebarPortaled = await sidebar.webContents.executeJavaScript(`Boolean(${sidebarDocument}.querySelector(".app-sidebar #sidebar-action"))`) as boolean;
     await new Promise((resolve) => setTimeout(resolve, 350));
     const sidebarFullWidth = sidebar.getBounds().width === 224;
-    const sidebarScreen = sidebar.getBounds();
-    await host.webContents.executeJavaScript('window.__nativeSidebarLeaves = 0; window.addEventListener("viron:native-sidebar-pointerleave", () => window.__nativeSidebarLeaves++);');
-    await sidebar.webContents.executeJavaScript(`${sidebarDocument}.dispatchEvent(new PointerEvent("pointerleave", { screenX: ${sidebarScreen.x + 40}, screenY: ${sidebarScreen.y + 80} }))`);
-    const ignoredTransferLeave = await host.webContents.executeJavaScript('window.__nativeSidebarLeaves === 0') as boolean;
-    await sidebar.webContents.executeJavaScript(`${sidebarDocument}.dispatchEvent(new PointerEvent("pointerleave", { screenX: ${sidebarScreen.x + 200}, screenY: ${sidebarScreen.y + 80} }))`);
-    const ignoredExpandedAreaLeave = await host.webContents.executeJavaScript('window.__nativeSidebarLeaves === 0') as boolean;
-    await sidebar.webContents.executeJavaScript(`${sidebarDocument}.dispatchEvent(new PointerEvent("pointerleave", { screenX: ${sidebarScreen.x + 260}, screenY: ${sidebarScreen.y + 80} }))`);
-    const deliveredRealLeave = await host.webContents.executeJavaScript('window.__nativeSidebarLeaves === 1') as boolean;
-    const sidebarHoverTransferStable = ignoredTransferLeave && ignoredExpandedAreaLeave && deliveredRealLeave;
     const popoverPortaled = await popover.webContents.executeJavaScript('Boolean(document.querySelector(".el-popper #popover-action"))') as boolean;
     const elementPopoverPortaled = await elementPopover.webContents.executeJavaScript('Boolean(document.querySelector(".smoke-element-popper #element-popover-action"))') as boolean;
     const anchorCenter = await host.webContents.executeJavaScript('(() => { const rect = document.querySelector("#element-popover-anchor").getBoundingClientRect(); return rect.left + rect.width / 2; })()') as number;
@@ -117,7 +110,7 @@ export async function runDesktopDomOverlayManagerSmoke(): Promise<{
     await new Promise((resolve) => setTimeout(resolve, 100));
     const webStayedLive = (await web.webContents.executeJavaScript("window.ticks") as number) > before;
     host.webContents.send("viron:native-view-pointer-down");
-    await waitUntil(() => domOverlayWindows().length === 2, "Element Plus popover outside click");
+    await waitUntil(() => domOverlayWindows().length === 1, "Element Plus popover outside click");
     const outsideDismissed = await host.webContents.executeJavaScript('!document.querySelector(".smoke-element-popper") || getComputedStyle(document.querySelector(".smoke-element-popper")).display === "none"') as boolean;
     const sidebarAnimationStable = await host.webContents.executeJavaScript(`(async () => {
       const api = window.vironDomOverlaySmoke;
@@ -152,16 +145,65 @@ export async function runDesktopDomOverlayManagerSmoke(): Promise<{
         && intermediate(recollapse) && monotonic(recollapse, false) && final(recollapse, 68, false);
     })()` ) as boolean;
     await host.webContents.executeJavaScript('window.vironDomOverlaySmoke.setSidebarExpanded(true)');
-    await waitUntil(() => domOverlayWindows().length === 2, "sidebar reopened");
+    await waitUntil(() => sidebarOverlayViews().length === 1, "sidebar reopened");
     await host.webContents.executeJavaScript('window.vironDomOverlaySmoke.setSidebarPinned(true)');
-    await waitUntil(() => domOverlayWindows().length === 1, "pinned sidebar restored");
+    await waitUntil(() => sidebarOverlayViews().length === 0, "pinned sidebar restored");
     const sidebarPinRestored = await host.webContents.executeJavaScript('Boolean(document.querySelector(".app-sidebar #sidebar-action"))') as boolean;
     await popover.webContents.executeJavaScript('document.querySelector(".el-popper").style.display = "none"');
     await host.webContents.executeJavaScript('window.vironDomOverlaySmoke.hideElementPopover()');
     await waitUntil(() => domOverlayWindows().length === 0, "overlay cleanup");
     const restored = await host.webContents.executeJavaScript('Boolean(document.querySelector(".app-sidebar #sidebar-action")) && Boolean(document.querySelector(".el-popper #popover-action"))') as boolean;
+    await host.webContents.executeJavaScript('window.vironDomOverlaySmoke.setSidebarPinned(false); window.vironDomOverlaySmoke.setSidebarExpanded(true)');
+    await waitUntil(() => sidebarOverlayViews().length === 1 && sidebarOverlayViews()[0].getVisible(), "passive sidebar");
+    const passiveSidebar = sidebarOverlayViews()[0];
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    // Move the sidebar view around the real OS cursor, without synthesizing
+    // DOM enter/leave events. This also works while the web page has focus.
+    const point = screen.getCursorScreenPoint();
+    const area = screen.getDisplayNearestPoint(point).workArea;
+    const hostSize = host.getBounds();
+    host.setPosition(Math.max(area.x, Math.min(area.x + area.width - hostSize.width, point.x - 100)),
+      Math.max(area.y, Math.min(area.y + area.height - hostSize.height, point.y - 100)), false);
+    const origin = host.getContentBounds();
+    passiveSidebar.setBounds({
+      x: Math.max(0, Math.min(origin.width - 224, point.x - origin.x - 40)),
+      y: Math.max(0, Math.min(origin.height - 300, point.y - origin.y - 40)),
+      width: 224, height: 300,
+    });
+    host.show();
+    app.focus({ steal: true });
+    host.focus();
+    web.webContents.focus();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    await host.webContents.executeJavaScript('window.vironDomOverlaySmoke.enableNativeHover()');
+    const webFocusedBefore = web.webContents.isFocused();
+    const clicksBefore = await host.webContents.executeJavaScript('window.vironDomOverlaySmoke.clicks.length') as number;
+    const buttonPoint = await passiveSidebar.webContents.executeJavaScript(`(() => {
+      const rect = ${sidebarDocument}.querySelector("#sidebar-action").getBoundingClientRect();
+      return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+    })()`) as { x: number; y: number };
+    // Exercise native input with the page still focused. DOM .click() would
+    // bypass the activation boundary that caused the original regression.
+    await passiveSidebar.webContents.executeJavaScript(`(() => {
+      window.__sidebarPointerDelivered = false;
+      ${sidebarDocument}.querySelector("#sidebar-action").addEventListener("pointermove", (event) => {
+        window.__sidebarPointerDelivered = event.isTrusted;
+      }, { once: true });
+    })()`);
+    passiveSidebar.webContents.sendInputEvent({ type: "mouseEnter", ...buttonPoint });
+    passiveSidebar.webContents.sendInputEvent({ type: "mouseMove", ...buttonPoint });
+    await waitUntil(() => passiveSidebar.webContents.executeJavaScript('window.__sidebarPointerDelivered'), "sidebar hover input without activation");
+    const hoveredWithoutActivation = web.webContents.isFocused();
+    passiveSidebar.webContents.sendInputEvent({ type: "mouseDown", button: "left", clickCount: 1, ...buttonPoint });
+    passiveSidebar.webContents.sendInputEvent({ type: "mouseUp", button: "left", clickCount: 1, ...buttonPoint });
+    await waitUntil(() => host.webContents.executeJavaScript(`window.vironDomOverlaySmoke.clicks.length === ${clicksBefore + 1}`), "first sidebar click without activation");
+    const sidebarPassiveInteraction = BrowserWindow.fromWebContents(passiveSidebar.webContents) === host
+      && webFocusedBefore && host.isFocused() && hoveredWithoutActivation;
+    passiveSidebar.setBounds({ x: point.x - origin.x < origin.width / 2 ? origin.width - 224 : 0, y: 0, width: 224, height: 300 });
+    await waitUntil(() => sidebarOverlayViews().length === 0, "sidebar collapse without activation or DOM leave");
+    const sidebarNativeAutoCollapse = await host.webContents.executeJavaScript('!document.querySelector(".app-frame").classList.contains("is-sidebar-expanded") && document.querySelector(".app-sidebar").getBoundingClientRect().width === 68') as boolean;
     await host.webContents.executeJavaScript('window.vironDomOverlaySmoke.close()');
-    return { sidebarPortaled, sidebarFullWidth, sidebarHoverTransferStable, sidebarAnimationStable, sidebarPinRestored, popoverPortaled, elementPopoverPortaled, elementPopoverArrowAligned, outsideDismissed, vueEventsPreserved, webStayedLive, restored };
+    return { sidebarPortaled, sidebarFullWidth, sidebarAnimationStable, sidebarPinRestored, sidebarPassiveInteraction, sidebarNativeAutoCollapse, popoverPortaled, elementPopoverPortaled, elementPopoverArrowAligned, outsideDismissed, vueEventsPreserved, webStayedLive, restored };
   } finally {
     await host.webContents.executeJavaScript('window.vironDomOverlaySmoke?.close()').catch(() => undefined);
     host.contentView.removeChildView(web);

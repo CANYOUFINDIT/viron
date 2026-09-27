@@ -1,6 +1,7 @@
 import { BrowserWindow, type Rectangle } from "electron";
 import { mainWindow } from "../window-host.js";
 import { raiseNativeOverlayWindows, registerNativeOverlayWindow, updateNativeOverlayPriority } from "./native-window-stack.js";
+import { closeAllSidebarOverlays, closeSidebarOverlay, hideSidebarOverlay, isSidebarDomOverlay, layoutSidebarOverlay } from "./sidebar-overlay-view.js";
 
 const overlayName = /^viron-dom-overlay-[a-z0-9-]{1,64}$/;
 const windows = new Map<string, { window: BrowserWindow; order: number; bounds: Rectangle | null }>();
@@ -40,6 +41,7 @@ function checkedBounds(input: Rectangle): Rectangle {
 }
 
 export function layoutDomOverlayWindow(frameName: string, bounds: Rectangle, order: number, focus = false): void {
+  if (isSidebarDomOverlay(frameName)) return layoutSidebarOverlay(frameName, bounds);
   const entry = windows.get(frameName);
   if (!entry || entry.window.isDestroyed()) return;
   entry.order = Number.isFinite(order) ? Math.max(-1_000_000, Math.min(1_000_000, order)) : 0;
@@ -54,11 +56,13 @@ export function layoutDomOverlayWindow(frameName: string, bounds: Rectangle, ord
 }
 
 export function hideDomOverlayWindow(frameName: string): void {
+  if (isSidebarDomOverlay(frameName)) return hideSidebarOverlay(frameName);
   const entry = windows.get(frameName);
   if (entry?.window && !entry.window.isDestroyed()) entry.window.hide();
 }
 
 export function closeDomOverlayWindow(frameName: string): void {
+  if (isSidebarDomOverlay(frameName)) return closeSidebarOverlay(frameName);
   const entry = windows.get(frameName);
   if (entry?.window && !entry.window.isDestroyed()) {
     const focused = entry.window.isFocused();
@@ -88,5 +92,6 @@ export function raiseDomOverlayWindows(): void {
 }
 
 export function closeAllDomOverlayWindows(): void {
+  closeAllSidebarOverlays();
   for (const frameName of [...windows.keys()]) closeDomOverlayWindow(frameName);
 }

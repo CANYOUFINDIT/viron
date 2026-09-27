@@ -41,6 +41,7 @@ import {
 import { endpointJson } from "./http-proxy.js";
 import { translate as tr } from "./i18n.js";
 import { sendToAgentChat } from "./overlays/agent-chat-window.js";
+import { raiseSidebarOverlays } from "./overlays/sidebar-overlay-view.js";
 import {
   immersiveNavigationState,
   sendImmersiveNavigationAction,
@@ -216,6 +217,7 @@ export function layoutDesktopWebViewPages(view: ManagedDesktopWebView, focus = f
     page.view.setVisible(active && view.visible && !page.certificateError);
   }
   if (focus && view.visible && !activeDesktopWebPage(view).certificateError) activeDesktopWebPage(view).view.webContents.focus();
+  raiseSidebarOverlays();
 }
 
 export function activateDesktopWebPage(view: ManagedDesktopWebView, pageId: string): void {

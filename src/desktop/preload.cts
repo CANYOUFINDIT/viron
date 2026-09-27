@@ -4,6 +4,11 @@ contextBridge.exposeInMainWorld("vironDesktop", {
   layoutDomOverlay: (name: string, bounds: { x: number; y: number; width: number; height: number }, order: number, focus = false) => ipcRenderer.invoke("viron:dom-overlay:layout", name, bounds, order, focus),
   hideDomOverlay: (name: string) => ipcRenderer.invoke("viron:dom-overlay:hide", name),
   closeDomOverlay: (name: string) => ipcRenderer.invoke("viron:dom-overlay:close", name),
+  onDomOverlayPointer: (listener: (name: string, inside: boolean) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, name: string, inside: boolean) => listener(name, inside);
+    ipcRenderer.on("viron:dom-overlay:pointer", handler);
+    return () => ipcRenderer.off("viron:dom-overlay:pointer", handler);
+  },
   getState: () => ipcRenderer.invoke("viron:state"),
   setLanguage: (language: "zh-CN" | "en") => ipcRenderer.invoke("viron:language:set", language),
   readClipboardText: () => ipcRenderer.invoke("viron:clipboard:read-text"),

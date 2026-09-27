@@ -162,7 +162,8 @@ describe("collapsed sidebar hover expand", () => {
       window.dispatchEvent(new Event("viron:native-sidebar-pointerleave"));
       await flushPromises();
       expect(wrapper.get(".app-frame").classes()).not.toContain("is-sidebar-expanded");
-      await wrapper.get(".app-sidebar").trigger("pointerenter");
+      window.dispatchEvent(new Event("viron:native-sidebar-pointerenter"));
+      await flushPromises();
       expect(wrapper.get(".app-frame").classes()).toContain("is-sidebar-expanded");
     } finally {
       wrapper.unmount();

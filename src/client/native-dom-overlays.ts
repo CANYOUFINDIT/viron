@@ -24,6 +24,7 @@ const surfaces = new Set<Surface>();
 const overlays = new Map<HTMLElement, OverlayRecord>();
 let bodyObserver: MutationObserver | null = null;
 let stopNativePointerDown: (() => void) | null = null;
+let stopNativeOverlayPointer: (() => void) | null = null;
 let frame = 0;
 let nextId = 0;
 let sidebarTransferUntil = 0;
@@ -191,7 +192,7 @@ function makeOverlay(element: HTMLElement): void {
   const anchorOffset = anchorRect ? { x: rect.x - anchorRect.left, y: rect.y - anchorRect.top } : null;
   const arrowSide = kind === "popper" ? nativeArrowSide(element, anchor) : null;
   const order = kind === "sidebar" ? 40 : Number.parseInt(getComputedStyle(element).zIndex, 10) || 2000;
-  const name = `viron-dom-overlay-${++nextId}`;
+  const name = `viron-dom-overlay-${kind === "sidebar" ? "sidebar-" : ""}${++nextId}`;
   const child = window.open("about:blank", name, `width=${rect.width},height=${rect.height}`);
   if (!child) return;
   try {
@@ -223,17 +224,6 @@ function makeOverlay(element: HTMLElement): void {
       }
     }
     if (kind !== "sidebar") root.appendChild(element);
-    if (kind === "sidebar") {
-      contentWindow.document.addEventListener("pointerleave", (event) => {
-        // Moving the sidebar into its native window can emit a leave even though
-        // the pointer is still over the sidebar in the host window.
-        const left = child.screenX;
-        const top = child.screenY;
-        if (event.screenX >= left && event.screenX < left + rect.width
-          && event.screenY >= top && event.screenY < top + rect.height) return;
-        window.dispatchEvent(new Event("viron:native-sidebar-pointerleave"));
-      });
-    }
     contentWindow.document.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
         document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
@@ -365,6 +355,10 @@ function start(): void {
   window.addEventListener("resize", schedule);
   window.addEventListener("scroll", schedule, true);
   stopNativePointerDown = onDesktopNativeViewPointerDown(onNativePointerDown);
+  stopNativeOverlayPointer = bridge()?.onDomOverlayPointer((name, inside) => {
+    if (![...overlays.values()].some((record) => record.kind === "sidebar" && record.name === name && record.ready)) return;
+    window.dispatchEvent(new Event(inside ? "viron:native-sidebar-pointerenter" : "viron:native-sidebar-pointerleave"));
+  }) ?? null;
   schedule();
 }
 
@@ -373,6 +367,8 @@ function stop(): void {
   bodyObserver = null;
   stopNativePointerDown?.();
   stopNativePointerDown = null;
+  stopNativeOverlayPointer?.();
+  stopNativeOverlayPointer = null;
   window.removeEventListener("resize", schedule);
   window.removeEventListener("scroll", schedule, true);
   if (frame) window.cancelAnimationFrame(frame);
