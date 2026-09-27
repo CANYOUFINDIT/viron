@@ -4,6 +4,7 @@ import { contextBridge, ipcRenderer } from "electron";
 if (globalThis.location?.protocol === "chrome-extension:" || !globalThis.location) {
   contextBridge.exposeInMainWorld("__vironExtensionMenus", {
     mutate: (operation: string, extensionId: string, value?: unknown) => ipcRenderer.send("viron:extension-menu:mutate", operation, extensionId, value),
+    activeTabId: () => ipcRenderer.invoke("viron:web-extension:active-tab") as Promise<number | null>,
   });
   contextBridge.executeInMainWorld({ func: () => {
     const root = globalThis as typeof globalThis & {
@@ -14,14 +15,35 @@ if (globalThis.location?.protocol === "chrome-extension:" || !globalThis.locatio
       }; storage?: { local?: {
         get: (key: string) => Promise<Record<string, unknown>>;
         set: (items: Record<string, unknown>) => Promise<void>;
-      }; sync?: unknown }; contextMenus?: unknown };
-      __vironExtensionMenus?: { mutate: (operation: string, id: string, value?: unknown) => void };
+      }; sync?: unknown }; contextMenus?: unknown; tabs?: {
+        query?: (queryInfo: Record<string, unknown>, callback?: (tabs: Array<{ id: number; url?: string; active?: boolean }>) => void) => Promise<Array<{ id: number; url?: string; active?: boolean }>>;
+      } };
+      __vironExtensionMenus?: { mutate: (operation: string, id: string, value?: unknown) => void; activeTabId: () => Promise<number | null> };
     };
     const chrome = root.chrome;
     if (globalThis.location?.protocol !== "chrome-extension:" || !chrome?.runtime?.id) return;
     if (chrome.storage?.local) {
       try { Object.defineProperty(chrome.storage, "sync", { configurable: true, value: chrome.storage.local }); }
       catch { /* A future Electron version may provide this storage area itself. */ }
+    }
+    if (chrome.tabs?.query) {
+      const nativeQuery = chrome.tabs.query.bind(chrome.tabs);
+      try {
+        chrome.tabs.query = (queryInfo, callback) => {
+          if (queryInfo?.active !== true) return nativeQuery(queryInfo, callback);
+          const result = nativeQuery({}).then(async (tabs) => {
+            let activeTabId: number | null = null;
+            try { activeTabId = await root.__vironExtensionMenus?.activeTabId() ?? null; }
+            catch { /* Background workers may query before a popup is open. */ }
+            const webPages = tabs.filter((tab) => /^https?:\/\//i.test(tab.url ?? ""));
+            const active = tabs.find((tab) => tab.id === activeTabId)
+              ?? webPages.find((tab) => tab.active) ?? webPages.at(-1);
+            return active ? [{ ...active, active: true }] : [];
+          });
+          if (callback) void result.then(callback);
+          return result;
+        };
+      } catch { /* Keep Electron's native implementation if the API is immutable. */ }
     }
     // Electron loads an unpacked extension without Chrome's first-install event.
     // Deliver it once for this local extension profile so onInstalled menu setup runs.

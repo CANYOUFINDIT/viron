@@ -181,7 +181,13 @@ function makeOverlay(element: HTMLElement): void {
     if (kind === "sidebar") sidebarTransferUntil = performance.now() + 120;
     root.appendChild(element);
     if (kind === "sidebar") {
-      child.document.addEventListener("pointerleave", () => {
+      child.document.addEventListener("pointerleave", (event) => {
+        // Moving the sidebar into its native window can emit a leave even though
+        // the pointer is still over the sidebar in the host window.
+        const left = window.screenX + rect.x;
+        const top = window.screenY + rect.y;
+        if (event.screenX >= left && event.screenX < left + rect.width
+          && event.screenY >= top && event.screenY < top + rect.height) return;
         window.dispatchEvent(new Event("viron:native-sidebar-pointerleave"));
       });
     }

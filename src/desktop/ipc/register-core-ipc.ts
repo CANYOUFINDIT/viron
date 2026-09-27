@@ -48,7 +48,7 @@ import { DatabaseArtifactFileRuntime } from "../database-artifact-files.js";
 import { isDesktopDatabaseDownloadPath } from "../database-operations-runtime.js";
 import { probeDesktopTcpTarget } from "../connection-quality-probe.js";
 import { readState, shortcutPreferences, writeState } from "../app-state.js";
-import { enableDesktopChromeWebStore, importDesktopChromeExtension, installDesktopWebExtension, listDesktopWebExtensions, openDesktopWebExtensionPopup, removeDesktopWebExtension, scanDesktopChromeExtensions, updateDesktopWebExtension } from "../web-extensions.js";
+import { desktopWebExtensionActiveTabId, enableDesktopChromeWebStore, importDesktopChromeExtension, installDesktopWebExtension, listDesktopWebExtensions, openDesktopWebExtensionPopup, removeDesktopWebExtension, scanDesktopChromeExtensions, updateDesktopWebExtension } from "../web-extensions.js";
 import { registerDesktopWebExtensionContextMenus } from "../web-extension-context-menus.js";
 import { activeEndpoint, currentExecutionMode } from "../endpoint-context.js";
 import { mainWindow } from "../window-host.js";
@@ -626,7 +626,13 @@ export function registerDesktopCoreIpc(desktopUpdater: DesktopUpdater): void {
     trustedMainWindowSender(event);
     if (!anchor || !Number.isFinite(anchor.right) || !Number.isFinite(anchor.bottom)) throw new Error(tr("扩展弹窗位置无效"));
     const view = localWebView(id);
-    await openDesktopWebExtensionPopup(view.partition, view.lastUrlKey, installId, anchor);
+    await openDesktopWebExtensionPopup(view.partition, view.lastUrlKey, installId, anchor, view.pages.get(view.activePageId)?.view.webContents.id);
+  });
+
+  ipcMain.handle("viron:web-extension:active-tab", (event) => {
+    const origin = event.senderFrame?.url ?? "";
+    const extensionId = /^chrome-extension:\/\/([a-p]{32})\//.exec(origin)?.[1];
+    return extensionId ? desktopWebExtensionActiveTabId(event.sender.session, extensionId) : null;
   });
 
   ipcMain.handle("viron:web-extension:scan-chrome", async (event) => {

@@ -3,6 +3,7 @@ import { basename, join } from "node:path";
 import { app, BrowserWindow } from "electron";
 import { readState } from "../app-state.js";
 import { translate as tr } from "../i18n.js";
+import { mainWindow } from "../window-host.js";
 import { closeDesktopWebExtensionPopup, desktopWebExtensionPopupContents, enableDesktopChromeWebStore, importDesktopChromeExtension, listDesktopWebExtensions, openDesktopWebExtensionPopup, removeDesktopWebExtension, scanDesktopChromeExtensions, updateDesktopWebExtension } from "../web-extensions.js";
 import { desktopWebExtensionContextMenuItems } from "../web-extension-context-menus.js";
 import {
@@ -36,6 +37,14 @@ export async function waitForDesktopWebNotice(view: ManagedDesktopWebView, type:
   throw new Error(tr("等待本机网页下载完成超时"));
 }
 
+async function extensionMarkerLoaded(view: ManagedDesktopWebView): Promise<boolean> {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    if (await activeDesktopWebPage(view).view.webContents.executeJavaScript('document.documentElement.dataset.vironExtension === "loaded"') as boolean) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return false;
+}
+
 export async function runDesktopWebSmoke(credentialId: string, username: string, uploadPath?: string, chromeExtensionId?: string): Promise<{
   opened: boolean;
   blankOpenedWithoutEntry: boolean;
@@ -64,7 +73,7 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
   const blankTarget = new URL(blankView.entryUrl);
   await handleDesktopWebViewAction(blankState.id, { type: "navigate", url: `${blankTarget.host}/upload` });
   await waitForDesktopWebTitle(blankView, "Upload fixture");
-  const extensionOnFirstPage = await activeDesktopWebPage(blankView).view.webContents.executeJavaScript('document.documentElement.dataset.vironExtension === "loaded"') as boolean;
+  const extensionOnFirstPage = await extensionMarkerLoaded(blankView);
   const shorthandAddressLoaded = activeDesktopWebPage(blankView).view.webContents.getURL() === `${blankView.entryOrigin}/upload`;
   const reorderedBlankState = await handleDesktopWebViewAction(blankState.id, {
     type: "reorder-pages",
@@ -91,7 +100,7 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
   await waitForDesktopWebTitle(managed, "Upload fixture");
   const lastLocationRestored = activeDesktopWebPage(managed).view.webContents.getURL() === `${managed.entryOrigin}/upload`;
   const sessionStatePersisted = await activeDesktopWebPage(managed).view.webContents.executeJavaScript(`localStorage.getItem("viron-persist-smoke") === "present"`) as boolean;
-  const extensionAfterReopen = await activeDesktopWebPage(managed).view.webContents.executeJavaScript('document.documentElement.dataset.vironExtension === "loaded"') as boolean;
+  const extensionAfterReopen = await extensionMarkerLoaded(managed);
   const initialPage = activeDesktopWebPage(managed).view.webContents;
   const devToolsOpened = initialPage.isDevToolsOpened()
     ? Promise.resolve()
@@ -109,7 +118,7 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
   await resetDesktopWebView(managed);
   await waitForDesktopWebTitle(managed, `Logged ${username}`);
   const resetCleared = await activeDesktopWebPage(managed).view.webContents.executeJavaScript(`localStorage.getItem("viron-reset-smoke") === null`) as boolean;
-  const extensionAfterReset = await activeDesktopWebPage(managed).view.webContents.executeJavaScript('document.documentElement.dataset.vironExtension === "loaded"') as boolean;
+  const extensionAfterReset = await extensionMarkerLoaded(managed);
 
   let uploadSelected: boolean | null = null;
   if (uploadPath) {
@@ -150,12 +159,27 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
       .find((item) => item.installId === added.installId)?.loaded === true;
     const hasPopup = listDesktopWebExtensions(managed.partition, managed.lastUrlKey)
       .find((item) => item.installId === added.installId)?.hasPopup === true;
+    await downloadPage.loadURL(downloadPage.getURL());
+    await waitForDesktopWebTitle(managed, "Download fixture");
     const windowsBeforePopup = BrowserWindow.getAllWindows().length;
-    if (hasPopup) await openDesktopWebExtensionPopup(managed.partition, managed.lastUrlKey, added.installId, { right: 800, bottom: 100 });
+    const activeTabId = activeDesktopWebPage(managed).view.webContents.id;
+    if (hasPopup) await openDesktopWebExtensionPopup(managed.partition, managed.lastUrlKey, added.installId, { right: 800, bottom: 100 }, activeTabId);
     const popupContents = desktopWebExtensionPopupContents(managed.lastUrlKey);
     const popupRendered = Boolean(popupContents && !popupContents.isDestroyed()
       && await popupContents.executeJavaScript('document.body?.textContent?.includes("Ready")')
-      && BrowserWindow.getAllWindows().length === windowsBeforePopup);
+      && BrowserWindow.getAllWindows().length === windowsBeforePopup + 1
+      && BrowserWindow.fromWebContents(popupContents)?.getParentWindow() === mainWindow);
+    const popupTargetsWebPage = Boolean(await popupContents?.executeJavaScript(`chrome.tabs.query({ active: true, currentWindow: true }).then((tabs) => tabs.length === 1 && tabs[0].id === ${activeTabId})`).catch(() => false));
+    await popupContents?.executeJavaScript('document.querySelector("#translate")?.click()').catch(() => undefined);
+    let translationApplied = false;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      translationApplied = await downloadPage.executeJavaScript('document.documentElement.dataset.vironTranslated === "yes"') as boolean;
+      if (translationApplied) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    mainWindow?.webContents.focus();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const popupClosedOnBlur = desktopWebExtensionPopupContents(managed.lastUrlKey) === null;
     let extensionMenuRendered = false;
     let extensionMenuCommand: (() => void) | undefined;
     for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -170,7 +194,7 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
     closeDesktopWebExtensionPopup(managed.lastUrlKey);
     extensionMenuCommand?.();
     await new Promise((resolve) => setTimeout(resolve, 200));
-    if (hasPopup) await openDesktopWebExtensionPopup(managed.partition, managed.lastUrlKey, added.installId, { right: 800, bottom: 100 });
+    if (hasPopup) await openDesktopWebExtensionPopup(managed.partition, managed.lastUrlKey, added.installId, { right: 800, bottom: 100 }, activeTabId);
     const clickedContents = desktopWebExtensionPopupContents(managed.lastUrlKey);
     let extensionMenuClicked = false;
     for (let attempt = 0; attempt < 60 && clickedContents && !clickedContents.isDestroyed(); attempt += 1) {
@@ -201,8 +225,12 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
       }
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    extensionManaged = pinned && disabled && enabled && hasPopup && popupRendered && extensionMenuRendered && extensionMenuClicked && menuPersisted && menuRemoved && applied && removed && storeImported;
-    if (!extensionManaged) console.log("VIRON_EXTENSION_DIAGNOSTIC", JSON.stringify({ pinned, disabled, enabled, hasPopup, popupRendered, extensionMenuRendered, extensionMenuClicked, menuPersisted, menuRemoved, applied, removed, storeImported }));
+    extensionManaged = pinned && disabled && enabled && hasPopup && popupRendered && popupTargetsWebPage && translationApplied && popupClosedOnBlur && extensionMenuRendered && extensionMenuClicked && menuPersisted && menuRemoved && applied && removed && storeImported;
+    if (!extensionManaged) console.log("VIRON_EXTENSION_DIAGNOSTIC", JSON.stringify({ pinned, disabled, enabled, hasPopup, popupRendered, popupTargetsWebPage, translationApplied, popupClosedOnBlur, extensionMenuRendered, extensionMenuClicked, menuPersisted, menuRemoved, applied, removed, storeImported }));
+  }
+  if (!(extensionLoaded && extensionOnFirstPage && extensionAfterReopen && extensionAfterReset)) {
+    const error = await activeDesktopWebPage(managed).view.webContents.executeJavaScript('document.documentElement.dataset.vironExtensionError') as string | undefined;
+    console.log("VIRON_EXTENSION_MARKER", JSON.stringify({ extensionLoaded, extensionOnFirstPage, extensionAfterReopen, extensionAfterReset, error }));
   }
   return { opened: true, blankOpenedWithoutEntry: blankOpenedWithoutEntry && shorthandAddressLoaded && defaultAddressPreserved, manualRefillOnCurrentPage, sessionStatePersisted, lastLocationRestored, tabsReordered, inspectorOpened: true, resetCleared, extensionInjected: extensionLoaded && extensionOnFirstPage && extensionAfterReopen && extensionAfterReset, extensionManaged, uploadSelected, downloadTriggered: true };
 }
