@@ -398,7 +398,7 @@ async function importChromeExtension(extension: DesktopChromeExtensionInfo) {
   extensionsBusy.value = true;
   try {
     extensions.value = await importDesktopChromeExtension(state.value.id, extension.token);
-    ElMessage.success(tr("扩展已安装；刷新页面后生效"));
+    ElMessage.success(tr("扩展已安装到本机全部环境；刷新页面后生效"));
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : tr("导入 Chrome 扩展失败"));
   } finally {
@@ -430,7 +430,7 @@ async function installExtension() {
   try {
     const result = await installDesktopWebExtension(state.value.id);
     extensions.value = result.items;
-    if (!result.canceled) ElMessage.success(tr("扩展已安装；刷新页面后生效"));
+    if (!result.canceled) ElMessage.success(tr("扩展已安装到本机全部环境；刷新页面后生效"));
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : tr("安装本机扩展失败"));
   } finally {
@@ -441,7 +441,7 @@ async function installExtension() {
 async function removeExtension(extension: DesktopWebExtensionInfo) {
   if (!state.value || extensionsBusy.value) return;
   try {
-    await ElMessageBox.confirm(tr("从当前 Web 账号移除扩展「{0}」及其本机文件？", [extension.name]), tr("移除扩展"), {
+    await ElMessageBox.confirm(tr("从本机全部环境移除扩展「{0}」及其本机文件？", [extension.name]), tr("移除扩展"), {
       type: "warning",
       confirmButtonText: tr("移除"),
       cancelButtonText: tr("取消"),
@@ -591,6 +591,13 @@ onMounted(() => {
   document.addEventListener("pointerdown", closeExtensionsOnOutsidePointer, true);
   stopStateListener = onDesktopWebViewState(applyState);
   stopExtensionListener = onDesktopWebExtensionChanged((change) => {
+    if (change.type === "refresh") {
+      const id = state.value?.id;
+      if (id) void listDesktopWebExtensions(id).then((items) => {
+        if (state.value?.id === id) extensions.value = items;
+      }).catch(() => undefined);
+      return;
+    }
     if (change.viewId !== state.value?.id) return;
     ElMessage[change.type](change.message);
     if (change.type === "success") void listDesktopWebExtensions(change.viewId).then((items) => { extensions.value = items; }).catch(() => undefined);
@@ -732,7 +739,7 @@ onBeforeUnmount(() => {
           <div class="desktop-web-extensions">
             <div class="desktop-web-extensions__heading">
               <button v-if="extensionPanel === 'chrome'" type="button" :aria-label="$t('返回')" @click="extensionPanel = 'installed'"><ArrowLeft :size="16" /></button>
-              <strong>{{ extensionPanel === 'chrome' ? $t('从 Chrome 导入') : $t('本地拓展') }}</strong>
+              <strong>{{ extensionPanel === 'chrome' ? $t('从 Chrome 导入') : $t('本机全局拓展') }}</strong>
               <button v-if="extensionPanel === 'chrome'" type="button" :aria-label="$t('刷新')" :disabled="chromeScanning" @click="refreshChromeExtensions"><RefreshCw :size="14" :class="{ 'is-spinning': chromeScanning }" /></button>
             </div>
             <div v-if="extensionPanel === 'installed'" class="desktop-web-extensions__section">

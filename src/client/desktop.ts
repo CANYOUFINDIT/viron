@@ -158,11 +158,11 @@ export interface DesktopWebExtensionInfo {
   hasPopup: boolean;
 }
 
-export interface DesktopWebExtensionChange {
+export type DesktopWebExtensionChange = { type: "refresh" } | {
   viewId: string;
   type: "success" | "error";
   message: string;
-}
+};
 
 export interface DesktopChromeExtensionInfo {
   token: string;

@@ -132,6 +132,11 @@ describe.skipIf(!enabled)("macOS local Web", () => {
     const entry = await app.inject({ method: "POST", url: `/api/v1/environments/${environment.json().id}/web-entries`, cookies, payload: { name: "Fixture", url: `http://127.0.0.1:${targetPort}/` } });
     const credential = await app.inject({ method: "POST", url: `/api/v1/web-entries/${entry.json().id}/credentials`, cookies, payload: { username: config.adminUsername, password: "target-password", note: "", customFields: {} } });
 
+    const secondEnvironment = await app.inject({ method: "POST", url: "/api/v1/environments", cookies, payload: { name: "Second Web environment" } });
+    const secondEntry = await app.inject({ method: "POST", url: `/api/v1/environments/${secondEnvironment.json().id}/web-entries`, cookies, payload: { name: "Other fixture", url: `http://127.0.0.1:${targetPort}/` } });
+    const secondCredential = await app.inject({ method: "POST", url: `/api/v1/web-entries/${secondEntry.json().id}/credentials`, cookies, payload: { username: "second-account", password: "fixture-password", note: "", customFields: {} } });
+    expect(secondCredential.statusCode).toBe(201);
+
     const userData = join(directory, "electron-user-data");
     const scopeKey = createHash("sha256").update(`http://127.0.0.1:${appPort}\0${login.json().user.id}\0${credential.json().id}`).digest("hex");
     const installId = "f852548a-2c59-42fa-a089-18b647b97bc8";
@@ -178,6 +183,7 @@ describe.skipIf(!enabled)("macOS local Web", () => {
       VIRON_DESKTOP_SMOKE_USERNAME: config.adminUsername,
       VIRON_DESKTOP_SMOKE_PASSWORD: config.adminPassword,
       VIRON_DESKTOP_SMOKE_WEB_CREDENTIAL_ID: credential.json().id,
+      VIRON_DESKTOP_SMOKE_SECOND_WEB_CREDENTIAL_ID: secondCredential.json().id,
       VIRON_DESKTOP_SMOKE_UPLOAD_PATH: uploadPath,
       VIRON_DESKTOP_SMOKE_DOWNLOAD_PATH: downloadPath,
       VIRON_DESKTOP_SMOKE_CHROME_ROOT: chromeRoot,
@@ -187,8 +193,12 @@ describe.skipIf(!enabled)("macOS local Web", () => {
     const line = result.stdout.split("\n").find((item) => item.startsWith("VIRON_DESKTOP_SMOKE "));
     expect(line, result.stdout).toBeTruthy();
     const smoke = JSON.parse(line!.slice("VIRON_DESKTOP_SMOKE ".length));
-    expect(smoke.localWeb, result.stdout).toEqual({ opened: true, blankOpenedWithoutEntry: true, manualRefillOnCurrentPage: true, sessionStatePersisted: true, lastLocationRestored: true, tabsReordered: true, inspectorOpened: true, resetCleared: true, extensionInjected: true, extensionManaged: true, uploadSelected: true, downloadTriggered: true });
-    expect(JSON.parse(readFileSync(join(userData, "desktop-state.json"), "utf8")).webExtensions[scopeKey][0].extensionId).not.toBe("pending");
+    expect(smoke.localWeb, result.stdout).toEqual({ opened: true, blankOpenedWithoutEntry: true, manualRefillOnCurrentPage: true, sessionStatePersisted: true, lastLocationRestored: true, tabsReordered: true, inspectorOpened: true, resetCleared: true, extensionInjected: true, extensionManaged: true, extensionGlobal: true, uploadSelected: true, downloadTriggered: true });
+    const saved = JSON.parse(readFileSync(join(userData, "desktop-state.json"), "utf8"));
+    expect(saved.webExtensions).toBeUndefined();
+    expect(saved.globalWebExtensions).toHaveLength(1);
+    expect(saved.globalWebExtensions[0].extensionId).not.toBe("pending");
+    expect(saved.globalWebExtensions[0].sourceScope).toBe(scopeKey);
     expect(basename(uploadPath)).toBe("upload fixture.txt");
     expect(readFileSync(downloadPath, "utf8")).toBe("desktop download contents");
   }, 120_000);

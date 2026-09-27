@@ -15,6 +15,18 @@ import type { McpApprovalMode } from "../shared/mcp-settings.js";
 import { agentChatLoaded, agentChatWindow } from "./overlays/agent-chat-window.js";
 import { mainWindow } from "./window-host.js";
 
+export interface InstalledWebExtension {
+  installId: string;
+  extensionId: string;
+  name: string;
+  version: string;
+  chromeId?: string;
+  pinned?: boolean;
+  enabled?: boolean;
+  /** Keep migrated unpacked extensions at their original path to preserve their ID and data. */
+  sourceScope?: string;
+}
+
 export interface DesktopStateFile {
   language?: Language;
   recentEndpoint?: string;
@@ -26,7 +38,9 @@ export interface DesktopStateFile {
   systemKeyAccessConsentVersion?: number;
   shortcutOverrides?: ShortcutOverrides;
   webLastUrls?: Record<string, string>;
-  webExtensions?: Record<string, Array<{ installId: string; extensionId: string; name: string; version: string; chromeId?: string; pinned?: boolean; enabled?: boolean }>>;
+  globalWebExtensions?: InstalledWebExtension[];
+  /** Legacy per-account installs, migrated into globalWebExtensions on first access. */
+  webExtensions?: Record<string, InstalledWebExtension[]>;
   webExtensionMenus?: Record<string, Record<string, Array<{
     id: string | number; title: string; type: "normal" | "separator" | "checkbox" | "radio";
     contexts: string[]; parentId?: string | number; visible: boolean; enabled: boolean; checked: boolean;

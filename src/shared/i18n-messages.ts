@@ -4172,6 +4172,10 @@ const generatedEnMessages: Record<string, string> = {
 };
 
 const enOverrides: Record<string, string> = {
+  "本机全局拓展": "Extensions for all environments",
+  "本机已添加此 Chrome 扩展": "This Chrome extension is already installed on this computer",
+  "从本机全部环境移除扩展「{{0}}」及其本机文件？": "Remove extension “{{0}}” and its local files from all environments on this computer?",
+  "扩展已安装到本机全部环境；刷新页面后生效": "Extension installed for all environments on this computer. Reload the page to apply it.",
   "本地拓展": "Local extensions",
   "当前账号": "Current account",
   "尚未添加拓展": "No extensions added",

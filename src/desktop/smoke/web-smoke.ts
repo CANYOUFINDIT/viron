@@ -4,7 +4,7 @@ import { app, BrowserWindow } from "electron";
 import { readState } from "../app-state.js";
 import { translate as tr } from "../i18n.js";
 import { mainWindow } from "../window-host.js";
-import { closeDesktopWebExtensionPopup, desktopWebExtensionPopupContents, enableDesktopChromeWebStore, importDesktopChromeExtension, listDesktopWebExtensions, openDesktopWebExtensionPopup, removeDesktopWebExtension, scanDesktopChromeExtensions, updateDesktopWebExtension } from "../web-extensions.js";
+import { closeDesktopWebExtensionPopup, desktopWebExtensionPopupContents, enableDesktopChromeWebStore, forgetDesktopWebExtensions, importDesktopChromeExtension, listDesktopWebExtensions, loadDesktopWebExtensions, openDesktopWebExtensionPopup, removeDesktopWebExtension, scanDesktopChromeExtensions, updateDesktopWebExtension } from "../web-extensions.js";
 import { desktopWebExtensionContextMenuItems } from "../web-extension-context-menus.js";
 import {
   activeDesktopWebPage,
@@ -56,6 +56,7 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
   resetCleared: boolean;
   extensionInjected: boolean;
   extensionManaged: boolean | null;
+  extensionGlobal: boolean | null;
   uploadSelected: boolean | null;
   downloadTriggered: boolean;
 }> {
@@ -144,19 +145,37 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
   await downloadPage.executeJavaScript(`document.querySelector("a[download]").click()`);
   await waitForDesktopWebNotice(managed, "success");
   let extensionManaged: boolean | null = null;
+  let extensionGlobal: boolean | null = null;
   if (chromeExtensionId) {
+    const secondCredentialId = process.env.VIRON_DESKTOP_SMOKE_SECOND_WEB_CREDENTIAL_ID;
+    const second = secondCredentialId ? localWebView((await openDesktopWebView(secondCredentialId, managed.bounds, "blank", false)).id) : null;
+    const legacyShared = second ? listDesktopWebExtensions(second.partition, second.lastUrlKey).some((item) => item.loaded) : false;
     const before = listDesktopWebExtensions(managed.partition, managed.lastUrlKey);
     const scanned = (await scanDesktopChromeExtensions()).find((item) => item.chromeId === chromeExtensionId);
     if (!scanned) throw new Error("Chrome extension was not found");
     const installed = await importDesktopChromeExtension(managed.partition, managed.lastUrlKey, scanned.token);
     const added = installed.find((item) => !before.some((existing) => existing.installId === item.installId));
     if (!added) throw new Error("Desktop extension was not installed");
+    const secondExtension = () => second && listDesktopWebExtensions(second.partition, second.lastUrlKey).find((item) => item.installId === added.installId);
+    const sharedInstall = secondExtension()?.loaded === true;
+    let sharedContent = false;
+    let isolatedSessions = false;
+    if (second) {
+      const page = activeDesktopWebPage(second).view.webContents;
+      await page.loadURL(`${managed.entryOrigin}/upload`);
+      sharedContent = await page.executeJavaScript('document.documentElement.dataset.vironInstalled === "loaded"') as boolean;
+      await downloadPage.executeJavaScript('localStorage.setItem("global-extension-isolation", "first")');
+      isolatedSessions = second.partition !== managed.partition && await page.executeJavaScript('localStorage.getItem("global-extension-isolation") === null') as boolean;
+    }
     const pinned = (await updateDesktopWebExtension(managed.partition, managed.lastUrlKey, added.installId, { pinned: true }))
       .find((item) => item.installId === added.installId)?.pinned === true;
+    const sharedPinned = secondExtension()?.pinned === true;
     const disabled = (await updateDesktopWebExtension(managed.partition, managed.lastUrlKey, added.installId, { enabled: false }))
       .find((item) => item.installId === added.installId)?.loaded === false;
+    const sharedDisabled = secondExtension()?.enabled === false && secondExtension()?.loaded === false;
     const enabled = (await updateDesktopWebExtension(managed.partition, managed.lastUrlKey, added.installId, { enabled: true }))
       .find((item) => item.installId === added.installId)?.loaded === true;
+    const sharedEnabled = secondExtension()?.loaded === true;
     const hasPopup = listDesktopWebExtensions(managed.partition, managed.lastUrlKey)
       .find((item) => item.installId === added.installId)?.hasPopup === true;
     await downloadPage.loadURL(downloadPage.getURL());
@@ -218,7 +237,15 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
     await downloadPage.loadURL(`${managed.entryOrigin}/upload`);
     await waitForDesktopWebTitle(managed, "Upload fixture");
     const applied = await downloadPage.executeJavaScript('document.documentElement.dataset.vironInstalled === "loaded"') as boolean;
+    await forgetDesktopWebExtensions(managed.partition, managed.lastUrlKey);
+    const survivesAccountDeletion = secondExtension()?.loaded === true && readState().globalWebExtensions?.some((item) => item.installId === added.installId) === true;
+    await loadDesktopWebExtensions(managed.partition, managed.lastUrlKey);
+    const survivesReopen = listDesktopWebExtensions(managed.partition, managed.lastUrlKey).find((item) => item.installId === added.installId)?.loaded === true;
     await removeDesktopWebExtension(managed.partition, managed.lastUrlKey, added.installId);
+    const sharedRemoved = !secondExtension() && !second?.partition.extensions.getExtension(added.extensionId);
+    extensionGlobal = legacyShared && sharedInstall && sharedContent && isolatedSessions && sharedPinned && sharedDisabled && sharedEnabled && survivesAccountDeletion && survivesReopen && sharedRemoved;
+    if (!extensionGlobal) console.log("VIRON_GLOBAL_EXTENSION_DIAGNOSTIC", JSON.stringify({ legacyShared, sharedInstall, sharedContent, isolatedSessions, sharedPinned, sharedDisabled, sharedEnabled, survivesAccountDeletion, survivesReopen, sharedRemoved }));
+    if (second) await closeDesktopWebView(second.id);
     const menuRemoved = !readState().webExtensionMenus?.[managed.lastUrlKey]?.[added.extensionId];
     await downloadPage.loadURL(`${managed.entryOrigin}/upload`);
     await waitForDesktopWebTitle(managed, "Upload fixture");
@@ -244,5 +271,5 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
     const error = await activeDesktopWebPage(managed).view.webContents.executeJavaScript('document.documentElement.dataset.vironExtensionError') as string | undefined;
     console.log("VIRON_EXTENSION_MARKER", JSON.stringify({ extensionLoaded, extensionOnFirstPage, extensionAfterReopen, extensionAfterReset, error }));
   }
-  return { opened: true, blankOpenedWithoutEntry: blankOpenedWithoutEntry && shorthandAddressLoaded && defaultAddressPreserved, manualRefillOnCurrentPage, sessionStatePersisted, lastLocationRestored, tabsReordered, inspectorOpened: true, resetCleared, extensionInjected: extensionLoaded && extensionOnFirstPage && extensionAfterReopen && extensionAfterReset, extensionManaged, uploadSelected, downloadTriggered: true };
+  return { opened: true, blankOpenedWithoutEntry: blankOpenedWithoutEntry && shorthandAddressLoaded && defaultAddressPreserved, manualRefillOnCurrentPage, sessionStatePersisted, lastLocationRestored, tabsReordered, inspectorOpened: true, resetCleared, extensionInjected: extensionLoaded && extensionOnFirstPage && extensionAfterReopen && extensionAfterReset, extensionManaged, extensionGlobal, uploadSelected, downloadTriggered: true };
 }
