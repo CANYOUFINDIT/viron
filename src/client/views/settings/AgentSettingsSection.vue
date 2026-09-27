@@ -161,7 +161,7 @@ const { activeSection, agentAuditClearing, agentDeleting, agentDraft, agentEntry
 }
 .agent-entry-options > button:hover:not(:disabled) { border-color: var(--ink-200); color: var(--ink-700); transform: translateY(-1px); }
 .agent-entry-options > button:active:not(:disabled) { transform: translateY(0); }
-.agent-entry-options > button.is-active { border-color: color-mix(in srgb, var(--teal-500) 38%, var(--ink-100)); background: var(--surface); color: var(--teal-700); box-shadow: inset 3px 0 var(--teal-500); }
+.agent-entry-options > button.is-active { border-color: color-mix(in srgb, var(--teal-500) 48%, var(--ink-100)); background: var(--teal-50); color: var(--teal-700); }
 .agent-entry-options > button:disabled { opacity: .56; cursor: wait; }
 .agent-entry-options > button > svg { justify-self: center; }
 .agent-entry-options > button span, .agent-entry-options > button strong, .agent-entry-options > button small { min-width: 0; display: block; }
