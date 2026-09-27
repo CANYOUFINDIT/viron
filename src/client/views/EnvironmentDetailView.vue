@@ -943,7 +943,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-loading="loading" class="environment-workspace" :class="{ 'is-focused-web-workspace': focusedWebView, 'is-immersive-workspace': environmentImmersive, 'is-preview-workspace': preview }">
+  <div v-loading="loading" class="environment-workspace" :class="{ 'is-native-web-workspace': desktop && webTarget === 'local' && activeTab === 'web', 'is-focused-web-workspace': focusedWebView, 'is-immersive-workspace': environmentImmersive, 'is-preview-workspace': preview }">
     <EnvironmentImmersiveNavigation
       v-if="environment && environmentImmersive"
       :native="desktop"
