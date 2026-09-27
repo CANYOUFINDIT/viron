@@ -95,6 +95,14 @@ function copyDocumentStyle(child: Window): Promise<void> {
     .viron-native-overlay-root { position: relative; width: 100%; height: 100%; background: transparent; }
     .viron-native-overlay-root.app-frame { padding: 0 !important; min-height: 0 !important; isolation: isolate; }
     .viron-native-overlay-popper { position: absolute !important; inset: 8px auto auto 8px !important; margin: 0 !important; transform: none !important; }
+    .viron-native-overlay-popper[data-viron-native-arrow-side="bottom"] > .el-popper__arrow { top: -5px !important; bottom: auto !important; left: var(--viron-native-arrow-offset) !important; right: auto !important; }
+    .viron-native-overlay-popper[data-viron-native-arrow-side="bottom"] > .el-popper__arrow::before { border-color: var(--viron-native-arrow-border) !important; border-right-color: transparent !important; border-bottom-color: transparent !important; }
+    .viron-native-overlay-popper[data-viron-native-arrow-side="top"] > .el-popper__arrow { bottom: -5px !important; top: auto !important; left: var(--viron-native-arrow-offset) !important; right: auto !important; }
+    .viron-native-overlay-popper[data-viron-native-arrow-side="top"] > .el-popper__arrow::before { border-color: var(--viron-native-arrow-border) !important; border-top-color: transparent !important; border-left-color: transparent !important; }
+    .viron-native-overlay-popper[data-viron-native-arrow-side="left"] > .el-popper__arrow { right: -5px !important; left: auto !important; top: var(--viron-native-arrow-offset) !important; bottom: auto !important; }
+    .viron-native-overlay-popper[data-viron-native-arrow-side="left"] > .el-popper__arrow::before { border-color: var(--viron-native-arrow-border) !important; border-bottom-color: transparent !important; border-left-color: transparent !important; }
+    .viron-native-overlay-popper[data-viron-native-arrow-side="right"] > .el-popper__arrow { left: -5px !important; right: auto !important; top: var(--viron-native-arrow-offset) !important; bottom: auto !important; }
+    .viron-native-overlay-popper[data-viron-native-arrow-side="right"] > .el-popper__arrow::before { border-color: var(--viron-native-arrow-border) !important; border-top-color: transparent !important; border-right-color: transparent !important; }
     .viron-native-overlay-root .app-sidebar { inset: 0 auto 0 0 !important; }
   `;
   target.head.appendChild(style);
@@ -115,6 +123,33 @@ function boundsFor(element: HTMLElement, kind: OverlayKind) {
   };
 }
 
+function nativeArrowSide(element: HTMLElement, anchor: Element | null): string | null {
+  // Popper recalculates placement against the small child window after the node moves.
+  // Keep the side chosen while the reference and popper still share a viewport.
+  if (!anchor || !element.querySelector(":scope > .el-popper__arrow")) return null;
+  const popper = element.getBoundingClientRect();
+  const reference = anchor.getBoundingClientRect();
+  if (popper.top >= reference.bottom - 2) return "bottom";
+  if (popper.bottom <= reference.top + 2) return "top";
+  if (popper.left >= reference.right - 2) return "right";
+  if (popper.right <= reference.left + 2) return "left";
+  return element.dataset.popperPlacement?.split("-")[0] ?? null;
+}
+
+function positionNativeArrow(record: OverlayRecord): void {
+  const side = record.element.dataset.vironNativeArrowSide;
+  if (!side || !record.anchor?.isConnected) return;
+  const anchor = record.anchor.getBoundingClientRect();
+  const horizontal = side === "top" || side === "bottom";
+  const center = horizontal ? (anchor.left + anchor.right) / 2 : (anchor.top + anchor.bottom) / 2;
+  const start = horizontal ? record.rect.x : record.rect.y;
+  const size = horizontal ? record.element.offsetWidth : record.element.offsetHeight;
+  const offset = `${Math.round(Math.max(5, Math.min(size - 15, center - start - 13)))}px`;
+  if (record.element.style.getPropertyValue("--viron-native-arrow-offset") !== offset) {
+    record.element.style.setProperty("--viron-native-arrow-offset", offset);
+  }
+}
+
 function makeOverlay(element: HTMLElement): void {
   if (!element.parentNode || overlays.has(element) || !bridge()) return;
   const kind = overlayKind(element);
@@ -122,6 +157,7 @@ function makeOverlay(element: HTMLElement): void {
   const anchor = kind === "popper" ? popperAnchor(element) : null;
   const anchorRect = anchor?.getBoundingClientRect();
   const anchorOffset = anchorRect ? { x: rect.x - anchorRect.left, y: rect.y - anchorRect.top } : null;
+  const arrowSide = kind === "popper" ? nativeArrowSide(element, anchor) : null;
   const order = kind === "sidebar" ? 40 : Number.parseInt(getComputedStyle(element).zIndex, 10) || 2000;
   const name = `viron-dom-overlay-${++nextId}`;
   const child = window.open("about:blank", name, `width=${rect.width},height=${rect.height}`);
@@ -135,7 +171,13 @@ function makeOverlay(element: HTMLElement): void {
     child.document.body.appendChild(root);
     const placeholder = document.createComment(`native overlay ${name}`);
     element.parentNode.insertBefore(placeholder, element);
-    if (kind === "popper") element.classList.add("viron-native-overlay-popper");
+    if (kind === "popper") {
+      element.classList.add("viron-native-overlay-popper");
+      if (arrowSide) {
+        element.dataset.vironNativeArrowSide = arrowSide;
+        element.style.setProperty("--viron-native-arrow-border", getComputedStyle(element).borderTopColor);
+      }
+    }
     if (kind === "sidebar") sidebarTransferUntil = performance.now() + 120;
     root.appendChild(element);
     if (kind === "sidebar") {
@@ -156,6 +198,7 @@ function makeOverlay(element: HTMLElement): void {
     if (anchor instanceof HTMLElement) resizeObserver.observe(anchor);
     const record: OverlayRecord = { element, placeholder, child, name, kind, rect, order, anchor, anchorOffset, observer, resizeObserver, lastLayout: "", ready: false };
     overlays.set(element, record);
+    positionNativeArrow(record);
     void stylesReady.then(() => {
       if (overlays.get(element) !== record) return;
       record.ready = true;
@@ -172,6 +215,9 @@ function restoreOverlay(record: OverlayRecord): void {
   record.resizeObserver.disconnect();
   overlays.delete(record.element);
   record.element.classList.remove("viron-native-overlay-popper");
+  delete record.element.dataset.vironNativeArrowSide;
+  record.element.style.removeProperty("--viron-native-arrow-offset");
+  record.element.style.removeProperty("--viron-native-arrow-border");
   if (record.kind === "sidebar") sidebarTransferUntil = performance.now() + 120;
   if (record.element.isConnected && record.placeholder.parentNode) {
     record.placeholder.parentNode.insertBefore(record.element, record.placeholder);
@@ -202,6 +248,7 @@ function positionOverlay(record: OverlayRecord): void {
       record.rect.x = Math.max(0, Math.min(window.innerWidth - record.rect.width, Math.round(anchor.left + record.anchorOffset.x)));
       record.rect.y = Math.max(0, Math.min(window.innerHeight - record.rect.height, Math.round(anchor.top + record.anchorOffset.y)));
     }
+    positionNativeArrow(record);
   }
   const layout = JSON.stringify([record.rect, record.order]);
   if (record.lastLayout === layout) return;

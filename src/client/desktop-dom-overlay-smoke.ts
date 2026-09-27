@@ -1,5 +1,6 @@
 import { createApp, h, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { ElPopover } from "element-plus";
+import "element-plus/dist/index.css";
 import { registerNativeWebSurface } from "./native-dom-overlays";
 
 declare global {

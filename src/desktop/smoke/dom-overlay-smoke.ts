@@ -66,6 +66,7 @@ export async function runDesktopDomOverlayManagerSmoke(): Promise<{
   sidebarPortaled: boolean;
   popoverPortaled: boolean;
   elementPopoverPortaled: boolean;
+  elementPopoverArrowAligned: boolean;
   outsideDismissed: boolean;
   vueEventsPreserved: boolean;
   webStayedLive: boolean;
@@ -88,6 +89,10 @@ export async function runDesktopDomOverlayManagerSmoke(): Promise<{
     const sidebarPortaled = await sidebar.webContents.executeJavaScript('Boolean(document.querySelector(".app-sidebar #sidebar-action"))') as boolean;
     const popoverPortaled = await popover.webContents.executeJavaScript('Boolean(document.querySelector(".el-popper #popover-action"))') as boolean;
     const elementPopoverPortaled = await elementPopover.webContents.executeJavaScript('Boolean(document.querySelector(".smoke-element-popper #element-popover-action"))') as boolean;
+    const anchorCenter = await host.webContents.executeJavaScript('(() => { const rect = document.querySelector("#element-popover-anchor").getBoundingClientRect(); return rect.left + rect.width / 2; })()') as number;
+    const arrowPosition = await elementPopover.webContents.executeJavaScript('(() => { const popper = document.querySelector(".smoke-element-popper"); const arrow = popper?.querySelector(":scope > .el-popper__arrow"); if (!arrow) return null; const rect = arrow.getBoundingClientRect(); return { center: rect.left + rect.width / 2, side: popper.dataset.vironNativeArrowSide, top: getComputedStyle(arrow).top }; })()') as { center: number; side: string; top: string } | null;
+    const elementPopoverArrowAligned = Boolean(arrowPosition && arrowPosition.side === "bottom" && arrowPosition.top === "-5px"
+      && Math.abs(elementPopover.getBounds().x - host.getContentBounds().x + arrowPosition.center - anchorCenter) <= 4);
     const before = await web.webContents.executeJavaScript("window.ticks") as number;
     await sidebar.webContents.executeJavaScript('document.querySelector("#sidebar-action").click()');
     await popover.webContents.executeJavaScript('document.querySelector("#popover-action").click()');
@@ -104,7 +109,7 @@ export async function runDesktopDomOverlayManagerSmoke(): Promise<{
     await waitUntil(() => domOverlayWindows().length === 0, "overlay cleanup");
     const restored = await host.webContents.executeJavaScript('Boolean(document.querySelector(".app-sidebar #sidebar-action")) && Boolean(document.querySelector(".el-popper #popover-action"))') as boolean;
     await host.webContents.executeJavaScript('window.vironDomOverlaySmoke.close()');
-    return { sidebarPortaled, popoverPortaled, elementPopoverPortaled, outsideDismissed, vueEventsPreserved, webStayedLive, restored };
+    return { sidebarPortaled, popoverPortaled, elementPopoverPortaled, elementPopoverArrowAligned, outsideDismissed, vueEventsPreserved, webStayedLive, restored };
   } finally {
     await host.webContents.executeJavaScript('window.vironDomOverlaySmoke?.close()').catch(() => undefined);
     host.contentView.removeChildView(web);
