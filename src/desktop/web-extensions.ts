@@ -239,12 +239,32 @@ export async function openDesktopWebExtensionPopup(partition: Session, scopeKey:
   closeDesktopWebExtensionPopup();
   const content = mainWindow.getContentBounds();
   const workArea = screen.getDisplayMatching(mainWindow.getBounds()).workArea;
-  const width = Math.min(400, Math.max(280, content.width - 16));
-  const height = Math.min(600, Math.max(120, content.height - 16));
-  const x = Math.max(workArea.x, Math.min(workArea.x + workArea.width - width, content.x + Math.round(anchor.right) - width));
-  const y = Math.max(workArea.y, Math.min(workArea.y + workArea.height - height, content.y + Math.round(anchor.bottom) + 6));
-  const popup = new BrowserWindow({ parent: mainWindow, x, y, width, height, show: false, frame: false, resizable: false, skipTaskbar: true,
-    backgroundColor: "#ffffff", webPreferences: { session: partition, contextIsolation: true, nodeIntegration: false, sandbox: true } });
+  const anchorRight = content.x + Math.round(anchor.right);
+  const anchorBottom = content.y + Math.round(anchor.bottom) + 6;
+  const popupBounds = (requestedWidth: number, requestedHeight: number) => {
+    const width = Math.max(1, Math.min(Math.ceil(requestedWidth), workArea.width));
+    const height = Math.max(1, Math.min(Math.ceil(requestedHeight), workArea.height));
+    return {
+      x: Math.max(workArea.x, Math.min(workArea.x + workArea.width - width, anchorRight - width)),
+      y: Math.max(workArea.y, Math.min(workArea.y + workArea.height - height, anchorBottom)),
+      width,
+      height,
+    };
+  };
+  const popup = new BrowserWindow({ parent: mainWindow, ...popupBounds(400, 600), show: false, frame: false, resizable: false, skipTaskbar: true,
+    backgroundColor: "#ffffff", webPreferences: { session: partition, contextIsolation: true, nodeIntegration: false, sandbox: true, enablePreferredSizeMode: true } });
+  let preferredSize: Electron.Size | null = null;
+  let resolvePreferredSize: (() => void) | undefined;
+  const firstPreferredSize = new Promise<void>((resolve) => { resolvePreferredSize = resolve; });
+  popup.webContents.on("preferred-size-changed", (_event, size) => {
+    if (size.width <= 0 || size.height <= 0 || popup.isDestroyed()) return;
+    preferredSize = size;
+    resolvePreferredSize?.();
+    resolvePreferredSize = undefined;
+    const bounds = popupBounds(size.width, size.height);
+    const current = popup.getBounds();
+    if (current.x !== bounds.x || current.y !== bounds.y || current.width !== bounds.width || current.height !== bounds.height) popup.setBounds(bounds);
+  });
   registerNativeOverlayWindow(popup, 2500);
   extensionPopups.set(scopeKey, popup);
   if (Number.isInteger(activeTabId)) popupActiveTabs.set(scopeKey, { partition, extensionId: item.extensionId, tabId: activeTabId! });
@@ -261,6 +281,7 @@ export async function openDesktopWebExtensionPopup(partition: Session, scopeKey:
   });
   try {
     await popup.loadURL(popupUrl);
+    if (!preferredSize) await Promise.race([firstPreferredSize, new Promise<void>((resolve) => setTimeout(resolve, 300))]);
     if (extensionPopups.get(scopeKey) !== popup || !mainWindow || mainWindow.isDestroyed()) return;
     popup.show();
     // Extension actions may change focus while native view callbacks are on the

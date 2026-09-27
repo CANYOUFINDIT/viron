@@ -169,6 +169,18 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
       && await popupContents.executeJavaScript('document.body?.textContent?.includes("Ready")')
       && BrowserWindow.getAllWindows().length === windowsBeforePopup + 1
       && BrowserWindow.fromWebContents(popupContents)?.getParentWindow() === mainWindow);
+    const popupWindow = popupContents ? BrowserWindow.fromWebContents(popupContents) : null;
+    const compactPopupSize = popupWindow?.getContentSize();
+    const compactPopupFits = Boolean(compactPopupSize && Math.abs(compactPopupSize[0] - 320) <= 2 && Math.abs(compactPopupSize[1] - 260) <= 2);
+    await popupContents?.executeJavaScript('document.querySelector("#resize")?.click()');
+    let expandedPopupFits = false;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const size = popupWindow?.getContentSize();
+      expandedPopupFits = Boolean(size && Math.abs(size[0] - 540) <= 2 && Math.abs(size[1] - 420) <= 2);
+      if (expandedPopupFits) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const expandedPopupSize = popupWindow?.getContentSize();
     const popupTargetsWebPage = Boolean(await popupContents?.executeJavaScript(`chrome.tabs.query({ active: true, currentWindow: true }).then((tabs) => tabs.length === 1 && tabs[0].id === ${activeTabId})`).catch(() => false));
     await popupContents?.executeJavaScript('document.querySelector("#translate")?.click()').catch(() => undefined);
     let translationApplied = false;
@@ -225,8 +237,8 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
       }
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    extensionManaged = pinned && disabled && enabled && hasPopup && popupRendered && popupTargetsWebPage && translationApplied && popupClosedOnBlur && extensionMenuRendered && extensionMenuClicked && menuPersisted && menuRemoved && applied && removed && storeImported;
-    if (!extensionManaged) console.log("VIRON_EXTENSION_DIAGNOSTIC", JSON.stringify({ pinned, disabled, enabled, hasPopup, popupRendered, popupTargetsWebPage, translationApplied, popupClosedOnBlur, extensionMenuRendered, extensionMenuClicked, menuPersisted, menuRemoved, applied, removed, storeImported }));
+    extensionManaged = pinned && disabled && enabled && hasPopup && popupRendered && compactPopupFits && expandedPopupFits && popupTargetsWebPage && translationApplied && popupClosedOnBlur && extensionMenuRendered && extensionMenuClicked && menuPersisted && menuRemoved && applied && removed && storeImported;
+    if (!extensionManaged) console.log("VIRON_EXTENSION_DIAGNOSTIC", JSON.stringify({ pinned, disabled, enabled, hasPopup, popupRendered, compactPopupSize, compactPopupFits, expandedPopupSize, expandedPopupFits, popupTargetsWebPage, translationApplied, popupClosedOnBlur, extensionMenuRendered, extensionMenuClicked, menuPersisted, menuRemoved, applied, removed, storeImported }));
   }
   if (!(extensionLoaded && extensionOnFirstPage && extensionAfterReopen && extensionAfterReset)) {
     const error = await activeDesktopWebPage(managed).view.webContents.executeJavaScript('document.documentElement.dataset.vironExtensionError') as string | undefined;
