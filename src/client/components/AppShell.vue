@@ -197,7 +197,7 @@ function isHoverFlyoutTarget(target: EventTarget | null) {
 }
 
 function onSidebarPointerEnter() {
-  if (nativeSidebarTransferInProgress()) return;
+  if (nativeSidebarTransferInProgress() && !nativeSidebarPortalActive()) return;
   if (!canHoverExpandSidebar() || sidebarPinned.value) return;
   sidebarHoverOpen.value = true;
 }

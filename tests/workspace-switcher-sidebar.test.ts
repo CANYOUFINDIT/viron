@@ -58,6 +58,7 @@ vi.mock("../src/client/session", () => ({
 
 import { i18nPlugin, translate } from "../src/client/i18n";
 import AppShell from "../src/client/components/AppShell.vue";
+import * as nativeOverlays from "../src/client/native-dom-overlays";
 
 function mockMatchMedia({
   reducedMotion = false,
@@ -148,6 +149,24 @@ describe("collapsed sidebar hover expand", () => {
     await flushPromises();
     expect(wrapper.get(".app-frame").classes()).toContain("is-sidebar-expanded");
     wrapper.unmount();
+  });
+
+  it("reopens a native sidebar when the pointer returns during the transfer guard", async () => {
+    mockMatchMedia();
+    const wrapper = await mountShell(vi.fn(), vi.fn());
+    try {
+      await wrapper.get(".sidebar-toggle").trigger("click");
+      await wrapper.get(".app-sidebar").trigger("pointerenter");
+      vi.spyOn(nativeOverlays, "nativeSidebarPortalActive").mockReturnValue(true);
+      vi.spyOn(nativeOverlays, "nativeSidebarTransferInProgress").mockReturnValue(true);
+      window.dispatchEvent(new Event("viron:native-sidebar-pointerleave"));
+      await flushPromises();
+      expect(wrapper.get(".app-frame").classes()).not.toContain("is-sidebar-expanded");
+      await wrapper.get(".app-sidebar").trigger("pointerenter");
+      expect(wrapper.get(".app-frame").classes()).toContain("is-sidebar-expanded");
+    } finally {
+      wrapper.unmount();
+    }
   });
 
   it("pins a hover-expanded sidebar when clicking the toggle and keeps it open on leave", async () => {

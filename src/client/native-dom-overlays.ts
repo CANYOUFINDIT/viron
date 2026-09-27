@@ -6,6 +6,8 @@ type OverlayRecord = {
   element: HTMLElement;
   placeholder: Comment;
   child: Window;
+  root: HTMLElement;
+  viewport: HTMLIFrameElement | null;
   name: string;
   kind: OverlayKind;
   rect: { x: number; y: number; width: number; height: number };
@@ -141,6 +143,31 @@ function nativeArrowSide(element: HTMLElement, anchor: Element | null): string |
   return element.dataset.popperPlacement?.split("-")[0] ?? null;
 }
 
+function moveSidebar(element: HTMLElement, root: HTMLElement): void {
+  // Preserve every in-flight CSS transition (panel clipping, labels and button
+  // widths included). Adoption cancels them; restarting from the collapsed
+  // style would visibly rewind an expansion that has already begun in the host.
+  const transitions = element.getAnimations({ subtree: true }).flatMap((animation) => {
+    if (!(animation instanceof CSSTransition) || !(animation.effect instanceof KeyframeEffect)) return [];
+    const target = animation.effect.target;
+    if (!(target instanceof HTMLElement) || animation.effect.pseudoElement) return [];
+    const property = animation.transitionProperty;
+    return [{
+      target, property,
+      current: getComputedStyle(target).getPropertyValue(property),
+      original: target.style.getPropertyValue(property),
+      priority: target.style.getPropertyPriority(property),
+    }];
+  });
+  for (const { target, property, current } of transitions) target.style.setProperty(property, current, "important");
+  root.appendChild(element);
+  element.getBoundingClientRect();
+  for (const { target, property, original, priority } of transitions) {
+    if (original) target.style.setProperty(property, original, priority);
+    else target.style.removeProperty(property);
+  }
+}
+
 function positionNativeArrow(record: OverlayRecord): void {
   const side = record.element.dataset.vironNativeArrowSide;
   if (!side || !record.anchor?.isConnected) return;
@@ -168,12 +195,24 @@ function makeOverlay(element: HTMLElement): void {
   const child = window.open("about:blank", name, `width=${rect.width},height=${rect.height}`);
   if (!child) return;
   try {
-    const stylesReady = copyDocumentStyle(child);
-    const root = child.document.createElement("div");
+    // A sidebar-sized window otherwise activates the mobile media queries and
+    // makes vw-based widths shrink again on every native window resize.
+    let viewport: HTMLIFrameElement | null = null;
+    let contentWindow = child;
+    if (kind === "sidebar") {
+      child.document.body.style.cssText = "margin:0;overflow:hidden;background:transparent";
+      viewport = child.document.createElement("iframe");
+      viewport.title = element.getAttribute("aria-label") ?? "Sidebar";
+      viewport.style.cssText = `display:block;border:0;width:${window.innerWidth}px;height:${window.innerHeight}px`;
+      child.document.body.appendChild(viewport);
+      contentWindow = viewport.contentWindow!;
+    }
+    const stylesReady = copyDocumentStyle(contentWindow);
+    const root = contentWindow.document.createElement("div");
     root.className = kind === "sidebar"
       ? `${document.querySelector(".app-frame")?.className ?? "app-frame"} viron-native-overlay-root`
       : "viron-native-overlay-root";
-    child.document.body.appendChild(root);
+    contentWindow.document.body.appendChild(root);
     const placeholder = document.createComment(`native overlay ${name}`);
     element.parentNode.insertBefore(placeholder, element);
     if (kind === "popper") {
@@ -183,35 +222,38 @@ function makeOverlay(element: HTMLElement): void {
         element.style.setProperty("--viron-native-arrow-border", getComputedStyle(element).borderTopColor);
       }
     }
-    if (kind === "sidebar") sidebarTransferUntil = performance.now() + 120;
-    root.appendChild(element);
+    if (kind !== "sidebar") root.appendChild(element);
     if (kind === "sidebar") {
-      child.document.addEventListener("pointerleave", (event) => {
+      contentWindow.document.addEventListener("pointerleave", (event) => {
         // Moving the sidebar into its native window can emit a leave even though
         // the pointer is still over the sidebar in the host window.
-        const left = window.screenX + rect.x;
-        const top = window.screenY + rect.y;
+        const left = child.screenX;
+        const top = child.screenY;
         if (event.screenX >= left && event.screenX < left + rect.width
           && event.screenY >= top && event.screenY < top + rect.height) return;
         window.dispatchEvent(new Event("viron:native-sidebar-pointerleave"));
       });
     }
-    child.document.addEventListener("keydown", (event) => {
+    contentWindow.document.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
         document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
       }
     });
     child.addEventListener("beforeunload", schedule);
     const observer = new MutationObserver(schedule);
-    observer.observe(child.document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "style", "aria-hidden"] });
+    observer.observe(contentWindow.document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "style", "aria-hidden"] });
     const resizeObserver = new ResizeObserver(schedule);
     resizeObserver.observe(element);
     if (anchor instanceof HTMLElement) resizeObserver.observe(anchor);
-    const record: OverlayRecord = { element, placeholder, child, name, kind, rect, order, anchor, anchorOffset, observer, resizeObserver, lastLayout: "", ready: false };
+    const record: OverlayRecord = { element, placeholder, child, root, viewport, name, kind, rect, order, anchor, anchorOffset, observer, resizeObserver, lastLayout: "", ready: false };
     overlays.set(element, record);
     positionNativeArrow(record);
     void stylesReady.then(() => {
       if (overlays.get(element) !== record) return;
+      if (kind === "sidebar") {
+        sidebarTransferUntil = performance.now() + 120;
+        moveSidebar(element, root);
+      }
       record.ready = true;
       schedule();
     });
@@ -242,7 +284,11 @@ function positionOverlay(record: OverlayRecord): void {
   if (!record.ready) return;
   if (record.kind === "sidebar") {
     const frame = document.querySelector(".app-frame");
-    const root = record.child.document.querySelector<HTMLElement>(".viron-native-overlay-root");
+    const { root, viewport } = record;
+    if (viewport) {
+      viewport.style.width = `${window.innerWidth}px`;
+      viewport.style.height = `${window.innerHeight}px`;
+    }
     if (root && frame) {
       const classes = `${frame.className} viron-native-overlay-root`;
       if (root.className !== classes) root.className = classes;
@@ -275,10 +321,9 @@ function sync(): void {
   const rects = activeSurfaceRects();
   const candidates = new Set(overlayCandidates(rects));
   for (const record of [...overlays.values()]) {
-    const sidebarNeeded = record.kind === "sidebar"
-      && Boolean(document.querySelector(".app-frame.is-sidebar-expanded:not(.is-sidebar-pinned)")) && rects.length > 0;
+    const sidebarFrame = record.kind === "sidebar" ? document.querySelector(".app-frame:not(.is-sidebar-pinned):not(.is-immersive)") : null;
     if (record.child.closed || !visible(record.element)
-      || (record.kind === "sidebar" ? !sidebarNeeded : !rects.length)) {
+      || !rects.length || (record.kind === "sidebar" && !sidebarFrame)) {
       restoreOverlay(record);
       continue;
     }
@@ -289,6 +334,12 @@ function sync(): void {
       continue;
     }
     positionOverlay(record);
+    if (record.kind === "sidebar" && !sidebarFrame?.classList.contains("is-sidebar-expanded")) {
+      // Keep the node in the same document until the closing transition ends.
+      // Re-entry can reverse that transition without closing/reopening a window.
+      if (record.ready && record.element.getAnimations().some((animation) => animation.playState === "running")) schedule();
+      else restoreOverlay(record);
+    }
   }
   for (const element of candidates) if (!overlays.has(element)) makeOverlay(element);
 }
@@ -342,7 +393,7 @@ export function registerNativeWebSurface(element: () => HTMLElement | null, visi
 }
 
 export function nativeSidebarPortalActive(): boolean {
-  return [...overlays.values()].some((record) => record.kind === "sidebar");
+  return [...overlays.values()].some((record) => record.kind === "sidebar" && record.element.ownerDocument !== document);
 }
 
 export function nativeSidebarTransferInProgress(): boolean {
