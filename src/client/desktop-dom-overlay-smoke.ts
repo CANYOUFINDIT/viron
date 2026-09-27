@@ -13,9 +13,11 @@ createApp({
   setup() {
     const clicks = reactive<string[]>([]);
     const elementPopoverOpen = ref(true);
+    const sidebarExpanded = ref(false);
     let unregister: (() => void) | null = null;
     onMounted(() => {
       unregister = registerNativeWebSurface(() => document.querySelector<HTMLElement>("#surface"), () => true);
+      window.setTimeout(() => { sidebarExpanded.value = true; }, 30);
       window.addEventListener("viron:native-web-pointer-down", hideElementPopover);
       window.vironDomOverlaySmoke = {
         clicks,
@@ -29,9 +31,11 @@ createApp({
       window.removeEventListener("viron:native-web-pointer-down", hideElementPopover);
     });
     return () => [
-      h("div", { class: "app-frame is-sidebar-expanded" }, [
+      h("div", { class: ["app-frame", { "is-sidebar-expanded": sidebarExpanded.value }] }, [
         h("aside", { class: "app-sidebar" }, [
-          h("button", { id: "sidebar-action", onClick: () => clicks.push("sidebar") }, `Sidebar ${clicks.length}`),
+          h("div", { class: "app-sidebar__panel" }, [
+            h("button", { id: "sidebar-action", onClick: () => clicks.push("sidebar") }, `Sidebar ${clicks.length}`),
+          ]),
         ]),
         h("div", { id: "surface" }),
         h(ElPopover, {

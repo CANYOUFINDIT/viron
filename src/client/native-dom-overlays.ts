@@ -115,10 +115,15 @@ function copyDocumentStyle(child: Window): Promise<void> {
 function boundsFor(element: HTMLElement, kind: OverlayKind) {
   const rect = element.getBoundingClientRect();
   const padding = kind === "popper" ? 8 : 0;
+  // The sidebar's outer width is animated. Its panel already has the final
+  // width, so size the native window for the complete flyout from the start.
+  const sidebarPanelWidth = kind === "sidebar"
+    ? element.querySelector<HTMLElement>(".app-sidebar__panel")?.getBoundingClientRect().width ?? 0
+    : 0;
   return {
     x: Math.max(0, Math.floor(rect.left - padding)),
     y: Math.max(0, Math.floor(rect.top - padding)),
-    width: Math.max(1, Math.ceil(rect.width + padding * 2)),
+    width: Math.max(1, Math.ceil(Math.max(rect.width, sidebarPanelWidth) + padding * 2)),
     height: Math.max(1, Math.ceil(rect.height + padding * 2)),
   };
 }
@@ -242,6 +247,7 @@ function positionOverlay(record: OverlayRecord): void {
       const classes = `${frame.className} viron-native-overlay-root`;
       if (root.className !== classes) root.className = classes;
     }
+    record.rect.width = boundsFor(record.element, "sidebar").width;
     record.rect.height = window.innerHeight;
   } else if (record.kind === "modal") {
     record.rect = { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight };
