@@ -1,6 +1,6 @@
 <script setup lang="ts">import { translate as tr } from "../i18n";
 
-import { ArrowLeft, ArrowRight, FileArchive, Globe2, KeyRound, Laptop, LoaderCircle, Maximize2, Minimize2, Minus, MoreVertical, Pin, PinOff, Plus, Puzzle, RefreshCw, RotateCcw, ShieldAlert } from "@lucide/vue";
+import { ArrowLeft, ArrowRight, EllipsisVertical, FileArchive, Globe2, KeyRound, Laptop, LoaderCircle, Maximize2, Minimize2, Minus, MoreVertical, Pin, PinOff, Plus, Puzzle, RefreshCw, RotateCcw, ShieldAlert } from "@lucide/vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from "vue";
 import { loadActiveConnections } from "../active-connections";
@@ -65,6 +65,7 @@ const emit = defineEmits<{
 
 const surface = ref<HTMLElement | null>(null);
 const extensionsButton = ref<HTMLElement | null>(null);
+const pageMenuButton = ref<HTMLElement | null>(null);
 const extensionPageImage = ref<HTMLImageElement | null>(null);
 const state = ref<DesktopWebViewState | null>(null);
 const address = ref(props.entryUrl);
@@ -73,6 +74,7 @@ const started = ref(false);
 const starting = ref(false);
 const resetting = ref(false);
 const extensionsOpen = ref(false);
+const pageMenuOpen = ref(false);
 const extensionPageFrame = ref("");
 const extensionPageHidden = ref(false);
 const extensionsBusy = ref(false);
@@ -90,6 +92,11 @@ const zoomLabel = computed(() => pageZoomLabel(state.value?.zoomFactor ?? 1));
 const zoomCanChange = computed(() => Boolean(state.value) && !state.value?.closedReason);
 const zoomOutDisabled = computed(() => !zoomCanChange.value || pageZoomIndex(state.value?.zoomFactor ?? 1) === 0);
 const zoomInDisabled = computed(() => !zoomCanChange.value || pageZoomIndex(state.value?.zoomFactor ?? 1) === PAGE_ZOOM_FACTORS.length - 1);
+const pageMenuStatus = computed(() => {
+  if (state.value?.certificateError) return tr("页面证书校验失败");
+  if (state.value?.loading) return tr("本机页面加载中");
+  return state.value?.autofillMessage || tr("页面由当前电脑本机直接访问");
+});
 let resizeObserver: ResizeObserver | null = null;
 let releaseNativeWebSurface: (() => void) | null = null;
 let stopStateListener: (() => void) | null = null;
@@ -111,6 +118,9 @@ let startPromise: Promise<void> | null = null;
 let releasePromise: Promise<void> | null = null;
 let extensionOverlayTask: Promise<void> = Promise.resolve();
 let extensionOpenRequest = 0;
+let pageMenuRequest = 0;
+let pageMenuOpening = false;
+let retainPageCover = false;
 let toolbarZoomWheel = 0;
 let toolbarZoomWheelAt = 0;
 
@@ -320,7 +330,72 @@ async function openExtensions() {
   }
 }
 
+function releasePageCover() {
+  if (retainPageCover || extensionsOpen.value || pageMenuOpen.value || pageMenuOpening) return;
+  const id = state.value?.id;
+  extensionPageHidden.value = false;
+  extensionPageFrame.value = "";
+  if (id && componentActive && props.active && state.value?.id === id) {
+    void setDesktopWebViewVisible(id, true).then(applyState).catch(() => undefined);
+    syncVisibility();
+  }
+}
+
+async function coverPageForMenu(id: string, request: number) {
+  const frame = await captureDesktopWebView(id, "page").catch(() => "");
+  if (request !== pageMenuRequest || state.value?.id !== id || !componentActive || !props.active) return false;
+  const snapshot = frame || previewFrame.value;
+  if (!snapshot) return true;
+  extensionPageFrame.value = snapshot;
+  await nextTick();
+  await extensionPageImage.value?.decode().catch(() => undefined);
+  if (request !== pageMenuRequest || state.value?.id !== id || !componentActive || !props.active) return false;
+  extensionPageHidden.value = true;
+  await setDesktopWebViewVisible(id, false).then(applyState).catch(() => undefined);
+  return request === pageMenuRequest && state.value?.id === id;
+}
+
+async function togglePageMenu() {
+  if (pageMenuOpen.value) {
+    pageMenuOpen.value = false;
+    return;
+  }
+  const id = state.value?.id;
+  const request = ++pageMenuRequest;
+  pageMenuOpening = true;
+  extensionsOpen.value = false;
+  pageMenuOpen.value = true;
+  try {
+    if (id && !props.preview && !state.value?.closedReason && !(extensionPageHidden.value && extensionPageFrame.value)) {
+      await coverPageForMenu(id, request);
+    }
+  } finally {
+    pageMenuOpening = false;
+    if (!pageMenuOpen.value) releasePageCover();
+  }
+}
+
+function refillFromMenu() {
+  pageMenuOpen.value = false;
+  void runAction("refill");
+}
+
+function reloginFromMenu() {
+  pageMenuOpen.value = false;
+  void resetLogin();
+}
+
+function toggleImmersiveFromMenu() {
+  pageMenuOpen.value = false;
+  emit("focusChange", !props.focused);
+}
+
 async function toggleExtensions() {
+  const keepCover = pageMenuOpen.value;
+  pageMenuRequest += 1;
+  if (keepCover) retainPageCover = true;
+  pageMenuOpen.value = false;
+  try {
   if (extensionsOpen.value) { extensionsOpen.value = false; return; }
   const id = state.value?.id;
   if (!id || props.preview) return;
@@ -365,6 +440,11 @@ async function toggleExtensions() {
     return;
   }
   extensionsOpen.value = true;
+  } finally {
+    const shouldRelease = retainPageCover && !extensionsOpen.value && !pageMenuOpen.value;
+    retainPageCover = false;
+    if (shouldRelease) releasePageCover();
+  }
 }
 
 async function changeExtension(extension: DesktopWebExtensionInfo, change: { pinned?: boolean; enabled?: boolean }) {
@@ -588,9 +668,13 @@ function handleBrowserInteraction(event: Event) {
 }
 
 function closeExtensionsOnOutsidePointer(event: PointerEvent) {
-  if (!extensionsOpen.value || !(event.target instanceof Element)) return;
-  if (extensionsButton.value?.contains(event.target) || event.target.closest(".desktop-web-extension-list-popper")) return;
-  extensionsOpen.value = false;
+  if (!(event.target instanceof Element)) return;
+  if (extensionsOpen.value && !extensionsButton.value?.contains(event.target) && !event.target.closest(".desktop-web-extension-list-popper")) {
+    extensionsOpen.value = false;
+  }
+  if (pageMenuOpen.value && !pageMenuButton.value?.contains(event.target) && !event.target.closest(".desktop-web-page-menu-popper")) {
+    pageMenuOpen.value = false;
+  }
 }
 
 function handleHistoryMouseButton(event: MouseEvent) {
@@ -648,6 +732,7 @@ onMounted(() => {
   });
   removeNativeViewPointerDownListener = onDesktopNativeViewPointerDown(() => {
     extensionsOpen.value = false;
+    pageMenuOpen.value = false;
     if (props.active && state.value) claimPreloadedView();
   });
   resizeObserver = new ResizeObserver(scheduleBounds);
@@ -696,7 +781,7 @@ watch(
 watch(extensionsOpen, (open) => {
   const id = state.value?.id;
   extensionOverlayTask = extensionOverlayTask.catch(() => undefined).then(async () => {
-    if (!open && extensionPageHidden.value) {
+    if (!open && extensionPageHidden.value && !pageMenuOpen.value && !pageMenuOpening) {
       if (id && componentActive && props.active && state.value?.id === id) {
         await setDesktopWebViewVisible(id, true).then(applyState).catch(() => undefined);
       }
@@ -706,6 +791,12 @@ watch(extensionsOpen, (open) => {
     }
   });
 }, { flush: "sync" });
+
+watch(pageMenuOpen, (open) => {
+  if (open) return;
+  pageMenuRequest += 1;
+  releasePageCover();
+});
 
 watch(
   [() => props.autoStart, () => props.preloadStart],
@@ -719,6 +810,7 @@ watch(
 onBeforeUnmount(() => {
   closed = true;
   extensionsOpen.value = false;
+  pageMenuOpen.value = false;
   extensionOpenRequest += 1;
   syncNativeOverlay(false);
   if (boundsFrame) window.cancelAnimationFrame(boundsFrame);
@@ -820,15 +912,32 @@ onBeforeUnmount(() => {
         </el-popover>
         <span v-if="state?.certificateError" class="desktop-web-view-status is-certificate-error-status" :title="$t('页面证书校验失败')"><ShieldAlert :size="15" /></span>
         <span v-else-if="state?.loading" class="desktop-web-view-status" :title="$t('本机页面加载中')"><LoaderCircle :size="14" class="is-spinning" /></span>
-        <span v-else class="desktop-web-view-status is-local" :title="state?.autofillMessage || $t('页面由当前电脑本机直接访问')"><Laptop :size="14" /></span>
-        <button type="button" :aria-label="$t('重新填充账号密码')" :title="$t('在入口原始域名的当前页面重新填充账号密码')" :disabled="!state" @click="runAction('refill')"><KeyRound :size="15" /></button>
-        <button type="button" :aria-label="$t('重新登录')" :title="$t('清除本机登录状态并重新登录')" :disabled="!state || resetting" @click="resetLogin"><RotateCcw :size="15" /></button>
-        <div class="web-page-zoom" role="group" :aria-label="$t('页面缩放')">
-          <button type="button" :aria-label="$t('缩小')" :title="$t('缩小')" :disabled="zoomOutDisabled" @click="runAction('zoom-out')"><Minus :size="15" /></button>
-          <button type="button" class="web-page-zoom__level" :aria-label="$t('重置为 100%')" :title="$t('重置为 100%')" :disabled="!zoomCanChange" @click="runAction('zoom-reset')">{{ zoomLabel }}</button>
-          <button type="button" :aria-label="$t('放大')" :title="$t('放大')" :disabled="zoomInDisabled" @click="runAction('zoom-in')"><Plus :size="15" /></button>
-        </div>
-        <button type="button" :aria-label="focused ? $t('退出沉浸模式') : $t('进入沉浸模式')" :title="focused ? $t('退出沉浸模式') : $t('进入沉浸模式')" @click="emit('focusChange', !focused)"><Minimize2 v-if="focused" :size="15" /><Maximize2 v-else :size="15" /></button>
+        <button v-if="zoomCanChange && zoomLabel !== '100%'" type="button" class="web-page-zoom-chip" :aria-label="$t('重置为 100%')" :title="$t('重置为 100%')" @click="runAction('zoom-reset')">{{ zoomLabel }}</button>
+        <el-popover v-model:visible="pageMenuOpen" placement="bottom-end" trigger="manual" popper-class="desktop-web-page-menu-popper" :width="268" :offset="6" :show-arrow="false">
+          <template #reference>
+            <button ref="pageMenuButton" type="button" :aria-label="$t('更多操作')" :title="$t('更多操作')" :aria-expanded="pageMenuOpen" @click="togglePageMenu"><EllipsisVertical :size="15" /></button>
+          </template>
+          <div class="web-page-menu">
+            <div class="web-page-menu__zoom">
+              <span>{{ $t('缩放') }}</span>
+              <div class="web-page-zoom" role="group" :aria-label="$t('页面缩放')">
+                <button type="button" :aria-label="$t('缩小')" :title="$t('缩小')" :disabled="zoomOutDisabled" @click="runAction('zoom-out')"><Minus :size="15" /></button>
+                <button type="button" class="web-page-zoom__level" :aria-label="$t('重置为 100%')" :title="$t('重置为 100%')" :disabled="!zoomCanChange" @click="runAction('zoom-reset')">{{ zoomLabel }}</button>
+                <button type="button" :aria-label="$t('放大')" :title="$t('放大')" :disabled="zoomInDisabled" @click="runAction('zoom-in')"><Plus :size="15" /></button>
+              </div>
+              <span class="web-page-menu__rule" aria-hidden="true"></span>
+              <button type="button" class="web-page-menu__immersive" :aria-label="focused ? $t('退出沉浸模式') : $t('进入沉浸模式')" :title="focused ? $t('退出沉浸模式') : $t('进入沉浸模式')" @click="toggleImmersiveFromMenu"><Minimize2 v-if="focused" :size="15" /><Maximize2 v-else :size="15" /></button>
+            </div>
+            <button type="button" class="web-page-menu__item" :disabled="!state" @click="refillFromMenu"><KeyRound :size="15" />{{ $t('重新填充账号密码') }}</button>
+            <button type="button" class="web-page-menu__item" :disabled="!state || resetting" @click="reloginFromMenu"><RotateCcw :size="15" />{{ $t('重新登录') }}</button>
+            <p class="web-page-menu__status">
+              <ShieldAlert v-if="state?.certificateError" :size="14" />
+              <LoaderCircle v-else-if="state?.loading" :size="14" class="is-spinning" />
+              <Laptop v-else :size="14" />
+              <span>{{ pageMenuStatus }}</span>
+            </p>
+          </div>
+        </el-popover>
       </div>
     </header>
     <div ref="surface" class="web-browser-surface desktop-web-browser-surface" :class="{ 'is-preview': preview }">
@@ -867,10 +976,24 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .desktop-web-account-browser { position: relative; }
-.web-page-zoom { height: 28px; margin-inline: 1px; padding: 0 1px; border: 1px solid var(--browser-account-divider); border-radius: 7px; display: flex; flex: none; align-items: center; }
-.desktop-web-account-browser .web-page-zoom button { width: 24px; height: 24px; border-color: transparent; }
-.desktop-web-account-browser .web-page-zoom button.web-page-zoom__level { width: 48px; color: var(--browser-account-text); font-size: 12px; font-weight: 650; font-variant-numeric: tabular-nums; letter-spacing: 0; }
-.desktop-web-account-browser .web-page-zoom button.web-page-zoom__level:hover { border-color: transparent; background: var(--browser-account-hover); color: var(--browser-account-text); }
+.desktop-web-account-browser .web-browser-tools button.web-page-zoom-chip { width: auto; min-width: 42px; height: 24px; padding: 0 6px; border-radius: 5px; color: var(--browser-account-text); font-size: 12px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.web-page-menu { display: grid; gap: 2px; color: var(--ink-800); }
+.web-page-menu__zoom { min-height: 36px; padding: 2px 4px 2px 10px; display: flex; align-items: center; gap: 8px; }
+.web-page-menu__zoom > span:first-child { flex: 1; font-size: 13px; font-weight: 600; }
+.web-page-zoom { height: 28px; display: flex; flex: none; align-items: center; }
+.web-page-zoom button, .web-page-menu__immersive { width: 26px; height: 26px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--ink-600); display: grid; place-items: center; cursor: pointer; }
+.web-page-zoom button:hover, .web-page-menu__immersive:hover { background: color-mix(in srgb, var(--ink-100) 72%, transparent); color: var(--ink-900); }
+.web-page-zoom button:disabled { opacity: .35; cursor: not-allowed; }
+.web-page-zoom button:disabled:hover { background: transparent; color: var(--ink-600); }
+.web-page-zoom__level { width: 46px; color: var(--ink-900); font-size: 12px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.web-page-menu__rule { width: 1px; height: 16px; flex: none; background: var(--ink-100); }
+.web-page-menu__item { width: 100%; min-height: 32px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: var(--ink-800); display: flex; align-items: center; gap: 10px; font-size: 13px; text-align: left; cursor: pointer; }
+.web-page-menu__item:hover { background: color-mix(in srgb, var(--ink-100) 72%, transparent); }
+.web-page-menu__item:disabled { opacity: .4; cursor: not-allowed; }
+.web-page-menu__item:disabled:hover { background: transparent; }
+.web-page-menu__status { margin: 2px 2px 0; padding: 8px 8px 4px; border-top: 1px solid var(--ink-100); display: flex; align-items: flex-start; gap: 8px; color: var(--ink-400); font-size: 12px; line-height: 1.45; }
+.web-page-menu__status svg { flex: none; margin-top: 1px; }
+.web-page-menu__status span { min-width: 0; }
 .desktop-web-browser-surface { background: #fff; }
 .desktop-web-extension-page-frame { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; object-fit: fill; pointer-events: none; }
 .desktop-web-browser-surface.is-preview { cursor: default; }
@@ -916,4 +1039,9 @@ onBeforeUnmount(() => {
 .desktop-web-extensions__actions { display: grid; gap: 2px; border-top: 1px solid var(--line-200, #e1e8e5); padding-top: 8px; }
 .desktop-web-extensions__actions button { display: inline-flex; align-items: center; gap: 9px; width: 100%; padding: 9px 7px; border: 0; border-radius: 7px; background: none; color: var(--teal-600); font-size: 12px; font-weight: 600; text-align: left; cursor: pointer; }
 .desktop-web-extensions__actions button:hover { background: var(--surface-50, #f3f6f5); }
+</style>
+
+<style>
+.desktop-web-page-menu-popper.el-popper { padding: 4px; border: 1px solid var(--ink-100); border-radius: 10px; background: var(--surface); box-shadow: 0 12px 32px rgba(8, 22, 25, .18); }
+.desktop-web-page-menu-popper .el-popper__arrow { display: none; }
 </style>

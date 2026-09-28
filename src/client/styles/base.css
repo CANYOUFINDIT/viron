@@ -637,9 +637,7 @@ button { color: inherit; }
 .web-view-grid.is-split .web-browser-toolbar { padding-inline: 3px; grid-template-columns: auto minmax(48px, 1fr) auto; gap: 2px; }
 .web-view-grid.is-split .web-browser-nav, .web-view-grid.is-split .web-browser-tools { gap: 0; }
 .web-view-grid.is-split .web-browser-toolbar button, .web-view-grid.is-split .web-browser-toolbar a { width: 24px; height: 27px; }
-.web-view-grid.is-split .web-browser-toolbar .web-page-zoom { height: 26px; margin-inline: 0; }
-.web-view-grid.is-split .web-browser-toolbar .web-page-zoom button { width: 22px; height: 22px; }
-.web-view-grid.is-split .web-browser-toolbar .web-page-zoom button.web-page-zoom__level { width: 42px; }
+.web-view-grid.is-split .web-browser-toolbar .web-page-zoom-chip { width: auto; min-width: 36px; height: 22px; padding-inline: 4px; }
 .web-view-grid.is-split .web-page-tab { min-width: 112px; max-width: 176px; }
 .web-view-pane { min-width: 0; min-height: 0; border: 2px solid transparent; background: var(--surface); overflow: hidden; }
 .web-view-pane.is-active { border-color: var(--teal-500); }
