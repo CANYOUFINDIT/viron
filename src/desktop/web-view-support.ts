@@ -20,6 +20,7 @@ import type { DesktopWebCredential } from "./device-identity.js";
 import { localWebCredential } from "./execution-router.js";
 import { translate as tr } from "./i18n.js";
 import { mainWindow } from "./window-host.js";
+import { resolveWebViewBounds } from "./web-view-bounds.js";
 import { registerDesktopWebExtensionWorkerMenus } from "./web-extension-context-menus.js";
 import type {
   DesktopWebViewBounds,
@@ -73,13 +74,9 @@ export function desktopWebSession(endpoint: string, userId: string, credentialId
 
 export function webViewBounds(input: DesktopWebViewBounds): Rectangle {
   if (!mainWindow) throw new Error(tr("主窗口不可用"));
-  const content = mainWindow.getContentBounds();
-  const x = Math.max(0, Math.min(content.width - 1, Math.round(input.x)));
-  const y = Math.max(0, Math.min(content.height - 1, Math.round(input.y)));
-  const width = Math.max(1, Math.min(content.width - x, Math.round(input.width)));
-  const height = Math.max(1, Math.min(content.height - y, Math.round(input.height)));
-  if (![x, y, width, height].every(Number.isFinite)) throw new Error(tr("本机页面区域无效"));
-  return { x, y, width, height };
+  const bounds = resolveWebViewBounds(input, mainWindow.getContentBounds());
+  if (!bounds) throw new Error(tr("本机页面区域无效"));
+  return bounds;
 }
 
 export function webViewState(view: ManagedDesktopWebView): DesktopWebViewState {

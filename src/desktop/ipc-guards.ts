@@ -14,7 +14,7 @@ export function trustedSender(event: IpcMainInvokeEvent): void {
   if (!isTrustedAppSender(event)) throw new Error(tr("拒绝来自非主窗口的请求"));
 }
 
-export function trustedMainWindowSender(event: IpcMainInvokeEvent): void {
+export function trustedMainWindowSender(event: Pick<IpcMainInvokeEvent, "sender">): void {
   if (!mainWindow || event.sender !== mainWindow.webContents) throw new Error(tr("拒绝来自非主窗口的请求"));
 }
 

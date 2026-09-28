@@ -100,6 +100,7 @@ import { desktopDatabaseOperationRuntime } from "../desktop-runtime-context.js";
 import { currentDesktopSshContext } from "../execution-router.js";
 import { endpointFetch, endpointJson, suggestedFilename } from "../http-proxy.js";
 import {
+  activeDesktopWebPage,
   captureDesktopRendererPreview,
   captureDesktopWebViewPreview,
   captureDesktopWebViewPage,
@@ -557,6 +558,20 @@ export function registerDesktopCoreIpc(desktopUpdater: DesktopUpdater): void {
     view.bounds = webViewBounds(bounds);
     layoutDesktopWebViewPages(view);
     return webViewState(view);
+  });
+
+  ipcMain.on("viron:web-view:bounds-sync", (event, id: string, bounds: DesktopWebViewBounds) => {
+    // Scroll layout must finish before the host renderer paints. Keep this
+    // synchronous path limited to cached geometry and one native bounds update.
+    try {
+      trustedMainWindowSender(event);
+      const view = localWebView(id);
+      view.bounds = webViewBounds(bounds);
+      activeDesktopWebPage(view).view.setBounds(view.bounds);
+      event.returnValue = null;
+    } catch (error) {
+      event.returnValue = { error: error instanceof Error ? error.message : tr("本机页面区域无效") };
+    }
   });
 
   ipcMain.handle("viron:web-view:visible", (event, id: string, visible: boolean) => {

@@ -143,6 +143,10 @@ contextBridge.exposeInMainWorld("vironDesktop", {
   revealDatabaseBackup: (input: unknown) => ipcRenderer.invoke("viron:database-artifact:reveal-backup", input),
   openWebView: (input: unknown) => ipcRenderer.invoke("viron:web-view:open", input),
   updateWebViewBounds: (id: string, bounds: unknown) => ipcRenderer.invoke("viron:web-view:bounds", id, bounds),
+  syncWebViewBounds: (id: string, bounds: unknown) => {
+    const result = ipcRenderer.sendSync("viron:web-view:bounds-sync", id, bounds) as { error: string } | null;
+    if (result) throw new Error(result.error);
+  },
   setWebViewVisible: (id: string, visible: boolean) => ipcRenderer.invoke("viron:web-view:visible", id, visible),
   setWebViewPreviewing: (id: string, previewing: boolean) => ipcRenderer.invoke("viron:web-view:previewing", id, previewing),
   captureWebView: (id: string, mode?: "page") => ipcRenderer.invoke("viron:web-view:capture", id, mode),

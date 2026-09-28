@@ -21,6 +21,7 @@ import {
   scanDesktopChromeExtensions,
   setDesktopWebViewVisible,
   setDesktopWebViewPreviewing,
+  syncDesktopWebViewBounds,
   updateDesktopWebExtension,
   updateDesktopWebViewBounds,
   type DesktopWebViewAction,
@@ -117,12 +118,24 @@ function surfaceBounds(): DesktopWebViewBounds | null {
   };
 }
 
-function updateNativeBounds(id: string, bounds: DesktopWebViewBounds) {
+function updateNativeBounds(id: string, bounds: DesktopWebViewBounds, synchronous = false) {
   const previous = lastNativeBounds;
   if (previous?.id === id && previous.bounds.x === bounds.x && previous.bounds.y === bounds.y
     && previous.bounds.width === bounds.width && previous.bounds.height === bounds.height) return;
   lastNativeBounds = { id, bounds };
-  void updateDesktopWebViewBounds(id, bounds).catch(() => { lastNativeBounds = null; });
+  if (synchronous) {
+    try { syncDesktopWebViewBounds(id, bounds); }
+    catch { lastNativeBounds = null; }
+  } else {
+    void updateDesktopWebViewBounds(id, bounds).catch(() => { lastNativeBounds = null; });
+  }
+}
+
+function syncScrollBounds() {
+  if (props.preview || !props.active || !componentActive || !state.value || state.value.closedReason) return;
+  const bounds = surfaceBounds();
+  if (bounds) updateNativeBounds(state.value.id, bounds, true);
+  scheduleNativeDomOverlays();
 }
 
 function applyState(next: DesktopWebViewState) {
@@ -611,7 +624,7 @@ onMounted(() => {
   releaseNativeWebSurface = registerNativeWebSurface(() => surface.value,
     () => componentActive && props.active && !props.preview && !preloading.value && Boolean(state.value && !state.value.closedReason));
   window.addEventListener("resize", syncVisibility);
-  window.addEventListener("scroll", scheduleBounds, true);
+  window.addEventListener("scroll", syncScrollBounds, true);
   document.addEventListener("visibilitychange", syncPreviewMode);
   if (props.autoStart) void start("entry", props.preloadStart);
 });
@@ -686,7 +699,7 @@ onBeforeUnmount(() => {
   removeNativeViewPointerDownListener?.();
   document.removeEventListener("pointerdown", closeExtensionsOnOutsidePointer, true);
   window.removeEventListener("resize", syncVisibility);
-  window.removeEventListener("scroll", scheduleBounds, true);
+  window.removeEventListener("scroll", syncScrollBounds, true);
   document.removeEventListener("visibilitychange", syncPreviewMode);
   if (state.value) {
     void setDesktopWebViewPreviewing(state.value.id, false).catch(() => undefined);

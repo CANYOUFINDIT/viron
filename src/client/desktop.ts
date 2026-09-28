@@ -580,6 +580,10 @@ export function updateDesktopWebViewBounds(id: string, bounds: DesktopWebViewBou
   return desktopBridge().updateWebViewBounds(id, bounds);
 }
 
+export function syncDesktopWebViewBounds(id: string, bounds: DesktopWebViewBounds): void {
+  desktopBridge().syncWebViewBounds(id, bounds);
+}
+
 export function setDesktopWebViewVisible(id: string, visible: boolean): Promise<DesktopWebViewState> {
   return desktopBridge().setWebViewVisible(id, visible);
 }

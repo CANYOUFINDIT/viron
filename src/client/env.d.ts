@@ -116,6 +116,7 @@ interface Window {
     revealDatabaseBackup(input: { id: string; path: string; filename: string }): Promise<{ revealed: true; filePath: string }>;
     openWebView(input: { credentialId: string; bounds: import("./desktop").DesktopWebViewBounds; initialPage?: import("./desktop").DesktopWebInitialPage; originEnvironmentId?: string }): Promise<import("./desktop").DesktopWebViewState>;
     updateWebViewBounds(id: string, bounds: import("./desktop").DesktopWebViewBounds): Promise<import("./desktop").DesktopWebViewState>;
+    syncWebViewBounds(id: string, bounds: import("./desktop").DesktopWebViewBounds): void;
     setWebViewVisible(id: string, visible: boolean): Promise<import("./desktop").DesktopWebViewState>;
     setWebViewPreviewing(id: string, previewing: boolean): Promise<import("./desktop").DesktopWebViewState>;
     captureWebView(id: string, mode?: "page"): Promise<string>;
