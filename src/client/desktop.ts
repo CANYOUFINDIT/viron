@@ -135,10 +135,11 @@ export interface DesktopWebViewState {
     type: "success" | "info" | "error";
     message: string;
   } | null;
+  zoomFactor: number;
 }
 
 export interface DesktopWebViewAction {
-  type: "back" | "forward" | "reload" | "navigate" | "refill" | "reset" | "continue-certificate" | "new-page" | "activate-page" | "close-page" | "reorder-pages";
+  type: "back" | "forward" | "reload" | "navigate" | "refill" | "reset" | "continue-certificate" | "new-page" | "activate-page" | "close-page" | "reorder-pages" | "zoom-in" | "zoom-out" | "zoom-reset";
   url?: string;
   pageId?: string;
   orderedPageIds?: string[];
@@ -598,6 +599,11 @@ export function captureDesktopWebView(id: string, mode?: "page"): Promise<string
 
 export function desktopWebViewAction(id: string, action: DesktopWebViewAction): Promise<DesktopWebViewState> {
   return desktopBridge().webViewAction(id, action);
+}
+
+export function noteDesktopWebZoomTarget(id: string): void {
+  if (!window.vironDesktop) return;
+  window.vironDesktop.noteWebZoomTarget(id);
 }
 
 export async function closeDesktopWebView(id: string): Promise<void> {

@@ -133,6 +133,7 @@ import { endpointFetch, endpointJson } from "./http-proxy.js";
 import {
   closeAllDesktopWebViews,
   desktopWebViews,
+  handleDesktopShellPageZoom,
 } from "./web-view-runtime.js";
 import {
   closeDesktopMcpOperations,
@@ -396,31 +397,44 @@ async function createWindow(): Promise<void> {
     registerDomOverlayWindow(details.frameName, window);
   });
   createdMainWindow.webContents.on("before-input-event", (event, input) => {
-    if (input.type !== "keyDown" || input.isAutoRepeat) return;
+    if (input.type !== "keyDown") return;
     if (shortcutCaptureActive) {
-      event.preventDefault();
-      createdMainWindow.webContents.send("viron:shortcut-capture-input", {
+      if (!input.isAutoRepeat) {
+        event.preventDefault();
+        createdMainWindow.webContents.send("viron:shortcut-capture-input", {
+          key: input.key,
+          code: input.code,
+          meta: input.meta,
+          control: input.control,
+          alt: input.alt,
+          shift: input.shift,
+        });
+      }
+      return;
+    }
+    if (!input.isAutoRepeat) {
+      const action = shortcutActionForInput(shortcutPreferences().bindings, {
         key: input.key,
         code: input.code,
         meta: input.meta,
         control: input.control,
         alt: input.alt,
         shift: input.shift,
-      });
-      return;
+      }, process.platform);
+      if (action && !(action === "app.agentQuickInput" && currentAgentEntryMode() !== "quick")) {
+        event.preventDefault();
+        sendShortcutAction(action);
+        return;
+      }
     }
-    const action = shortcutActionForInput(shortcutPreferences().bindings, {
+    if (handleDesktopShellPageZoom({
       key: input.key,
       code: input.code,
       meta: input.meta,
       control: input.control,
       alt: input.alt,
       shift: input.shift,
-    }, process.platform);
-    if (!action) return;
-    if (action === "app.agentQuickInput" && currentAgentEntryMode() !== "quick") return;
-    event.preventDefault();
-    sendShortcutAction(action);
+    })) event.preventDefault();
   });
   createdMainWindow.webContents.on("will-navigate", (event, url) => {
     if (url !== createdMainWindow.webContents.getURL()) event.preventDefault();

@@ -38,6 +38,7 @@ export interface DesktopStateFile {
   systemKeyAccessConsentVersion?: number;
   shortcutOverrides?: ShortcutOverrides;
   webLastUrls?: Record<string, string>;
+  webZoomFactors?: Record<string, number>;
   globalWebExtensions?: InstalledWebExtension[];
   /** Legacy per-account installs, migrated into globalWebExtensions on first access. */
   webExtensions?: Record<string, InstalledWebExtension[]>;

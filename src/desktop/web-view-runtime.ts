@@ -24,6 +24,14 @@ import { reorderMap } from "../shared/tab-order.js";
 import { WEB_CREDENTIAL_AUTOFILL_DELAYS_MS } from "../shared/web-credential-autofill.js";
 import { immersiveNavigationEscapeAction } from "../shared/immersive-navigation.js";
 import { shortcutActionForInput } from "../shared/keyboard-shortcuts.js";
+import {
+  pageZoomCommandFromKey,
+  pageZoomFactor,
+  pageZoomWheelShouldHandle,
+  reducePageZoomWheel,
+  selectPageZoomTarget,
+  stepPageZoomBy,
+} from "../shared/page-zoom.js";
 import type { DesktopWebCredential } from "./device-identity.js";
 import {
   currentAgentEntryMode,
@@ -62,17 +70,21 @@ import {
 import {
   activeDesktopWebPage,
   applyDesktopWebCredential,
+  applyDesktopWebPageZoom,
   autoFillWebPage,
   cachedDesktopWebUrl,
+  changeDesktopWebPageZoom,
   clearDesktopWebSession,
   desktopWebPreferences,
   desktopWebSession,
   desktopWebViews,
   forgetDesktopWebLastUrl,
+  forgetDesktopWebZoom,
   inspectDesktopWebElement,
   latestDesktopWebCredential,
   notifyWebView,
   rememberDesktopWebLastUrl,
+  restoreDesktopWebPageZoom,
   sendWebViewState,
   touchDesktopWebView,
   trackDesktopWebPartition,
@@ -118,6 +130,7 @@ export interface DesktopWebViewState {
     type: "success" | "info" | "error";
     message: string;
   } | null;
+  zoomFactor: number;
 }
 
 export interface ManagedDesktopWebPage {
@@ -134,6 +147,9 @@ export interface ManagedDesktopWebPage {
     callback: (isTrusted: boolean) => void;
   } | null;
   closing: boolean;
+  zoomFactor: number;
+  zoomWheelAccumulated: number;
+  zoomWheelAt: number;
 }
 
 export interface ManagedDesktopWebView {
@@ -314,6 +330,75 @@ export function desktopWebContextMenuItem(
   }
 }
 
+let desktopWebZoomTargetId = "";
+
+export function noteDesktopWebZoomTarget(id: string): void {
+  if (!id || !desktopWebViews.has(id)) return;
+  desktopWebZoomTargetId = id;
+}
+
+export function handleDesktopShellPageZoom(input: {
+  key: string;
+  code?: string;
+  meta: boolean;
+  control: boolean;
+  alt: boolean;
+  shift: boolean;
+}): boolean {
+  const command = pageZoomCommandFromKey(input);
+  if (!command) return false;
+  const view = selectPageZoomTarget([...desktopWebViews.values()].map((candidate) => ({
+    id: candidate.id,
+    visible: candidate.visible,
+    closing: candidate.closing,
+    closedReason: candidate.closedReason,
+    lastActivityAt: candidate.lastActivityAt,
+    hasActivePage: candidate.pages.has(candidate.activePageId),
+    view: candidate,
+  })), desktopWebZoomTargetId);
+  if (!view) return false;
+  noteDesktopWebZoomTarget(view.id);
+  changeDesktopWebPageZoom(view.view, activeDesktopWebPage(view.view), command);
+  return true;
+}
+
+function zoomWheelModifiers(mouse: Electron.MouseInputEvent): { control: boolean; meta: boolean; alt: boolean; shift: boolean } {
+  const modifiers = new Set(mouse.modifiers ?? []);
+  const record = mouse as Electron.MouseInputEvent & { control?: boolean; meta?: boolean; alt?: boolean; shift?: boolean };
+  return {
+    control: modifiers.has("control") || modifiers.has("ctrl") || record.control === true,
+    meta: modifiers.has("meta") || modifiers.has("command") || modifiers.has("cmd") || record.meta === true,
+    alt: modifiers.has("alt") || record.alt === true,
+    shift: modifiers.has("shift") || record.shift === true,
+  };
+}
+
+function handleDesktopWebPageZoomWheel(
+  event: Electron.Event,
+  mouse: Electron.MouseInputEvent,
+  view: ManagedDesktopWebView,
+  page: ManagedDesktopWebPage,
+): boolean {
+  if (mouse.type !== "mouseWheel" || page.closing) return false;
+  const wheel = mouse as Electron.MouseWheelInputEvent;
+  const modifiers = zoomWheelModifiers(mouse);
+  const deltaX = Number(wheel.deltaX ?? 0) || Number(wheel.wheelTicksX ?? 0) * 100;
+  const deltaY = Number(wheel.deltaY ?? 0) || Number(wheel.wheelTicksY ?? 0) * 100;
+  if (!pageZoomWheelShouldHandle({ ...modifiers, deltaX, deltaY })) return false;
+  event.preventDefault();
+  noteDesktopWebZoomTarget(view.id);
+  const now = Date.now();
+  if (now - page.zoomWheelAt > 180) page.zoomWheelAccumulated = 0;
+  const reduced = reducePageZoomWheel(page.zoomWheelAccumulated, deltaY);
+  page.zoomWheelAccumulated = reduced.accumulated;
+  page.zoomWheelAt = now;
+  if (reduced.steps !== 0) {
+    const next = stepPageZoomBy(page.zoomFactor, reduced.steps);
+    if (next !== page.zoomFactor) applyDesktopWebPageZoom(view, page, next, { persist: true });
+  }
+  return true;
+}
+
 export function createDesktopWebPage(
   view: ManagedDesktopWebView,
   allowAutofill: boolean,
@@ -337,6 +422,9 @@ export function createDesktopWebPage(
     error: "",
     certificateError: null,
     closing: false,
+    zoomFactor: 1,
+    zoomWheelAccumulated: 0,
+    zoomWheelAt: 0,
   };
   view.pages.set(page.id, page);
   registerExtensionTab(nativeView.webContents, {
@@ -348,6 +436,7 @@ export function createDesktopWebPage(
   mainWindow.contentView.addChildView(nativeView);
   attachHistoryNavigationTouchTracking(nativeView.webContents);
   nativeView.webContents.on("before-mouse-event", (event, mouse) => {
+    if (handleDesktopWebPageZoomWheel(event, mouse, view, page)) return;
     if (handleDesktopHistoryNavigationMouse(event, mouse, view, nativeView.webContents)) return;
     if (mouse.type !== "mouseDown") return;
     closeDesktopWebExtensionPopup(view.lastUrlKey);
@@ -375,6 +464,22 @@ export function createDesktopWebPage(
   });
   nativeView.webContents.on("before-input-event", (event, input) => {
     if (handleExtensionShortcut(nativeView.webContents, input)) { event.preventDefault(); return; }
+    if (input.type === "keyDown") {
+      const command = pageZoomCommandFromKey({
+        key: input.key,
+        code: input.code,
+        meta: input.meta,
+        control: input.control,
+        alt: input.alt,
+        shift: input.shift,
+      });
+      if (command) {
+        event.preventDefault();
+        noteDesktopWebZoomTarget(view.id);
+        changeDesktopWebPageZoom(view, page, command);
+        return;
+      }
+    }
     if (input.type !== "keyDown" || input.isAutoRepeat) return;
     if (input.key === "Escape") {
       const action = immersiveNavigationEscapeAction(immersiveNavigationState);
@@ -422,7 +527,11 @@ export function createDesktopWebPage(
     };
   });
   nativeView.webContents.on("will-navigate", (event, url) => {
-    if (!supportedDesktopPopupUrl(url)) event.preventDefault();
+    if (!supportedDesktopPopupUrl(url)) {
+      event.preventDefault();
+      return;
+    }
+    restoreDesktopWebPageZoom(view, page, url);
   });
   nativeView.webContents.on("certificate-error", (event, url, error, _certificate, callback, isMainFrame) => {
     if (!isMainFrame || !supportedDesktopWebUrl(url)) return;
@@ -436,7 +545,14 @@ export function createDesktopWebPage(
   nativeView.webContents.on("did-start-loading", () => { touchDesktopWebView(view); sendWebViewState(view); });
   nativeView.webContents.on("did-stop-loading", () => { touchDesktopWebView(view); sendWebViewState(view); });
   nativeView.webContents.on("page-title-updated", () => sendWebViewState(view));
+  nativeView.webContents.on("zoom-changed", () => {
+    if (page.closing || nativeView.webContents.isDestroyed()) return;
+    const snapped = pageZoomFactor(nativeView.webContents.getZoomFactor());
+    if (snapped === page.zoomFactor) return;
+    applyDesktopWebPageZoom(view, page, snapped, { persist: true });
+  });
   nativeView.webContents.on("did-navigate", (_event, url) => {
+    restoreDesktopWebPageZoom(view, page, url);
     if (view.activePageId === page.id) rememberDesktopWebLastUrl(view, url);
     sendWebViewState(view);
   });
@@ -789,6 +905,11 @@ export async function handleDesktopWebViewAction(id: string, action: { type: str
   }
   if (action.type === "reset") return await resetDesktopWebView(managed);
   const page = activeDesktopWebPage(managed);
+  if (action.type === "zoom-in" || action.type === "zoom-out" || action.type === "zoom-reset") {
+    noteDesktopWebZoomTarget(managed.id);
+    changeDesktopWebPageZoom(managed, page, action.type === "zoom-in" ? "in" : action.type === "zoom-out" ? "out" : "reset");
+    return webViewState(managed);
+  }
   const navigation = page.view.webContents.navigationHistory;
   if (action.type === "continue-certificate") {
     if (!resolveDesktopWebCertificateError(page, true)) throw new Error(tr("当前页面没有待确认的证书异常"));
@@ -867,7 +988,10 @@ export async function reconcileDesktopWebMutation(context: DesktopWebMutationCon
       continue;
     }
     await Promise.all(activeViews.map((view) => closeDesktopWebView(view.id)));
-    if (method === "DELETE") forgetDesktopWebLastUrl(lastUrlKey);
+    if (method === "DELETE") {
+      forgetDesktopWebLastUrl(lastUrlKey);
+      forgetDesktopWebZoom(lastUrlKey);
+    }
     const partition = desktopWebSession(context.endpoint, context.userId, credentialId);
     if (method === "DELETE") await forgetDesktopWebExtensions(partition, lastUrlKey);
     await clearDesktopWebSession(partition);

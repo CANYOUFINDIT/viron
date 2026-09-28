@@ -20,6 +20,13 @@ import type { DesktopWebCredential } from "./device-identity.js";
 import { localWebCredential } from "./execution-router.js";
 import { translate as tr } from "./i18n.js";
 import { mainWindow } from "./window-host.js";
+import {
+  desktopWebZoomStorageKey,
+  pageZoomFactor,
+  pageZoomOrigin,
+  stepPageZoom,
+  type PageZoomCommand,
+} from "../shared/page-zoom.js";
 import { resolveWebViewBounds } from "./web-view-bounds.js";
 import { registerDesktopWebExtensionWorkerMenus } from "./web-extension-context-menus.js";
 import type {
@@ -56,6 +63,96 @@ export function forgetDesktopWebLastUrl(key: string): void {
   if (Object.keys(webLastUrls).length) state.webLastUrls = webLastUrls;
   else delete state.webLastUrls;
   writeState(state);
+}
+
+export function rememberedDesktopWebZoom(scope: string, origin: string): number {
+  const stored = readState().webZoomFactors?.[desktopWebZoomStorageKey(scope, origin)];
+  return typeof stored === "number" ? pageZoomFactor(stored) : 1;
+}
+
+export function rememberDesktopWebZoom(scope: string, origin: string, factor: number): void {
+  const key = desktopWebZoomStorageKey(scope, origin);
+  const normalized = pageZoomFactor(factor);
+  const state = readState();
+  const current = state.webZoomFactors?.[key];
+  if (normalized === 1) {
+    if (current === undefined) return;
+    const webZoomFactors = { ...state.webZoomFactors };
+    delete webZoomFactors[key];
+    if (Object.keys(webZoomFactors).length) state.webZoomFactors = webZoomFactors;
+    else delete state.webZoomFactors;
+    writeState(state);
+    return;
+  }
+  if (current === normalized) return;
+  state.webZoomFactors = { ...state.webZoomFactors, [key]: normalized };
+  writeState(state);
+}
+
+export function forgetDesktopWebZoom(scope: string): void {
+  const state = readState();
+  if (!state.webZoomFactors) return;
+  const prefix = `${scope}\n`;
+  const entries = Object.entries(state.webZoomFactors).filter(([key]) => !key.startsWith(prefix));
+  if (entries.length === Object.keys(state.webZoomFactors).length) return;
+  if (entries.length) state.webZoomFactors = Object.fromEntries(entries);
+  else delete state.webZoomFactors;
+  writeState(state);
+}
+
+let applyingDesktopWebPageZoom = false;
+
+function writeWebContentsZoom(page: ManagedDesktopWebPage, factor: number): void {
+  page.zoomFactor = factor;
+  const contents = page.view.webContents;
+  if (contents.isDestroyed()) return;
+  if (Math.abs(contents.getZoomFactor() - factor) <= 0.001) return;
+  contents.setZoomFactor(factor);
+}
+
+export function applyDesktopWebPageZoom(
+  view: ManagedDesktopWebView,
+  page: ManagedDesktopWebPage,
+  factor: number,
+  options: { persist?: boolean; notify?: boolean } = {},
+): void {
+  if (applyingDesktopWebPageZoom) return;
+  const next = pageZoomFactor(factor);
+  const contents = page.view.webContents;
+  const contentsDiffer = !contents.isDestroyed() && Math.abs(contents.getZoomFactor() - next) > 0.001;
+  const changed = page.zoomFactor !== next || contentsDiffer;
+  applyingDesktopWebPageZoom = true;
+  try {
+    if (changed) writeWebContentsZoom(page, next);
+    if (options.persist) {
+      const url = contents.isDestroyed() ? page.pendingUrl : (contents.getURL() || page.pendingUrl);
+      const origin = pageZoomOrigin(url);
+      if (origin) {
+        rememberDesktopWebZoom(view.lastUrlKey, origin, next);
+        for (const other of view.pages.values()) {
+          if (other.id === page.id || other.view.webContents.isDestroyed()) continue;
+          const otherOrigin = pageZoomOrigin(other.view.webContents.getURL() || other.pendingUrl);
+          if (otherOrigin === origin) writeWebContentsZoom(other, next);
+        }
+      }
+    }
+  } finally {
+    applyingDesktopWebPageZoom = false;
+  }
+  if (options.notify !== false && changed) sendWebViewState(view);
+}
+
+export function restoreDesktopWebPageZoom(view: ManagedDesktopWebView, page: ManagedDesktopWebPage, url: string): void {
+  const origin = pageZoomOrigin(url);
+  if (!origin) return;
+  applyDesktopWebPageZoom(view, page, rememberedDesktopWebZoom(view.lastUrlKey, origin), { persist: false, notify: false });
+}
+
+export function changeDesktopWebPageZoom(view: ManagedDesktopWebView, page: ManagedDesktopWebPage, command: PageZoomCommand): void {
+  const current = pageZoomFactor(page.zoomFactor || 1);
+  const next = stepPageZoom(current, command);
+  if (next === current) return;
+  applyDesktopWebPageZoom(view, page, next, { persist: true });
 }
 
 export function desktopWebSession(endpoint: string, userId: string, credentialId: string): Session {
@@ -105,6 +202,7 @@ export function webViewState(view: ManagedDesktopWebView): DesktopWebViewState {
       : null,
     closedReason: view.closedReason,
     notice: view.notice,
+    zoomFactor: pageZoomFactor(active.zoomFactor || 1),
   };
 }
 

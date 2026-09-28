@@ -151,6 +151,7 @@ contextBridge.exposeInMainWorld("vironDesktop", {
   setWebViewPreviewing: (id: string, previewing: boolean) => ipcRenderer.invoke("viron:web-view:previewing", id, previewing),
   captureWebView: (id: string, mode?: "page") => ipcRenderer.invoke("viron:web-view:capture", id, mode),
   webViewAction: (id: string, action: unknown) => ipcRenderer.invoke("viron:web-view:action", id, action),
+  noteWebZoomTarget: (id: string) => ipcRenderer.send("viron:web-view:zoom-target", id),
   closeWebView: (id: string) => ipcRenderer.invoke("viron:web-view:close", id),
   listWebExtensions: (id: string) => ipcRenderer.invoke("viron:web-extension:list", id),
   installWebExtension: (id: string) => ipcRenderer.invoke("viron:web-extension:install", id),

@@ -108,6 +108,7 @@ import {
   handleDesktopWebViewAction,
   layoutDesktopWebViewPages,
   localWebView,
+  noteDesktopWebZoomTarget,
   openDesktopWebView,
   webViewBounds,
   webViewState,
@@ -596,6 +597,11 @@ export function registerDesktopCoreIpc(desktopUpdater: DesktopUpdater): void {
     trustedSender(event);
     const view = localWebView(id);
     return mode === "page" ? await captureDesktopWebViewPage(view) : await captureDesktopWebViewPreview(view);
+  });
+
+  ipcMain.on("viron:web-view:zoom-target", (event, id: string) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents || typeof id !== "string") return;
+    noteDesktopWebZoomTarget(id);
   });
 
   ipcMain.handle("viron:web-view:action", async (event, id: string, action: { type?: string; url?: string; pageId?: string; orderedPageIds?: string[] }) => {

@@ -1,6 +1,6 @@
 <script setup lang="ts">import { translate as tr } from "../i18n";
 
-import { ArrowLeft, ArrowRight, FileArchive, Globe2, KeyRound, Laptop, LoaderCircle, Maximize2, Minimize2, MoreVertical, Pin, PinOff, Plus, Puzzle, RefreshCw, RotateCcw, ShieldAlert } from "@lucide/vue";
+import { ArrowLeft, ArrowRight, FileArchive, Globe2, KeyRound, Laptop, LoaderCircle, Maximize2, Minimize2, Minus, MoreVertical, Pin, PinOff, Plus, Puzzle, RefreshCw, RotateCcw, ShieldAlert } from "@lucide/vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from "vue";
 import { loadActiveConnections } from "../active-connections";
@@ -8,6 +8,7 @@ import {
   captureDesktopWebView,
   closeDesktopWebView,
   desktopWebViewAction,
+  noteDesktopWebZoomTarget,
   importDesktopChromeExtension,
   installDesktopWebExtension,
   listDesktopWebExtensions,
@@ -32,6 +33,7 @@ import {
 } from "../desktop";
 import { releaseAgentNativeOverlay, retainAgentNativeOverlay } from "../agent-host";
 import { registerNativeWebSurface, scheduleNativeDomOverlays } from "../native-dom-overlays";
+import { pageZoomIndex, pageZoomLabel, pageZoomWheelShouldHandle, PAGE_ZOOM_FACTORS, reducePageZoomWheel } from "../../shared/page-zoom";
 import { normalizeWebAddress } from "../../shared/web-address";
 import { historyNavigationFromMouseButton } from "../../shared/history-navigation-gesture";
 import { applyHistoryNavigationCommand, applyHistoryNavigationWheel } from "../history-navigation";
@@ -84,6 +86,10 @@ const pinnedExtensions = computed(() => extensions.value.filter((extension) => e
 const previewFrame = ref("");
 const pageTabs = computed(() => state.value?.pages ?? []);
 const activePageId = computed(() => state.value?.activePageId ?? "");
+const zoomLabel = computed(() => pageZoomLabel(state.value?.zoomFactor ?? 1));
+const zoomCanChange = computed(() => Boolean(state.value) && !state.value?.closedReason);
+const zoomOutDisabled = computed(() => !zoomCanChange.value || pageZoomIndex(state.value?.zoomFactor ?? 1) === 0);
+const zoomInDisabled = computed(() => !zoomCanChange.value || pageZoomIndex(state.value?.zoomFactor ?? 1) === PAGE_ZOOM_FACTORS.length - 1);
 let resizeObserver: ResizeObserver | null = null;
 let releaseNativeWebSurface: (() => void) | null = null;
 let stopStateListener: (() => void) | null = null;
@@ -105,6 +111,8 @@ let startPromise: Promise<void> | null = null;
 let releasePromise: Promise<void> | null = null;
 let extensionOverlayTask: Promise<void> = Promise.resolve();
 let extensionOpenRequest = 0;
+let toolbarZoomWheel = 0;
+let toolbarZoomWheelAt = 0;
 
 function surfaceBounds(): DesktopWebViewBounds | null {
   if (!surface.value) return null;
@@ -575,6 +583,7 @@ function shouldIgnoreIdleSurfaceEvent(event: Event) {
 
 function handleBrowserInteraction(event: Event) {
   if (shouldIgnoreIdleSurfaceEvent(event)) return;
+  if (state.value) noteDesktopWebZoomTarget(state.value.id);
   claimPreloadedView();
 }
 
@@ -592,6 +601,28 @@ function handleHistoryMouseButton(event: MouseEvent) {
 }
 
 function handleHistoryWheel(event: WheelEvent) {
+  if (pageZoomWheelShouldHandle({
+    control: event.ctrlKey,
+    meta: event.metaKey,
+    alt: event.altKey,
+    shift: event.shiftKey,
+    deltaX: event.deltaX,
+    deltaY: event.deltaY,
+  })) {
+    event.preventDefault();
+    if (!state.value || state.value.closedReason) return;
+    const now = performance.now();
+    if (now - toolbarZoomWheelAt > 180) toolbarZoomWheel = 0;
+    const reduced = reducePageZoomWheel(toolbarZoomWheel, event.deltaY);
+    toolbarZoomWheel = reduced.accumulated;
+    toolbarZoomWheelAt = now;
+    if (reduced.steps === 0) return;
+    const command = reduced.steps > 0 ? "zoom-out" : "zoom-in";
+    void (async () => {
+      for (let step = 0; step < Math.abs(reduced.steps); step += 1) await runAction(command);
+    })();
+    return;
+  }
   if (event.target instanceof Element && event.target.closest("input, textarea, button, .web-page-tabs")) return;
   const next = applyHistoryNavigationWheel(event, performance.now(), { ignoreBlockedTargets: true });
   if (next.status !== "idle") {
@@ -711,7 +742,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="web-account-browser desktop-web-account-browser" @pointerdown.capture="handleBrowserInteraction" @keydown.capture="handleBrowserInteraction" @mousedown.capture="handleHistoryMouseButton" @mouseup.capture="handleHistoryMouseButton" @wheel.capture="handleHistoryWheel">
+  <section class="web-account-browser desktop-web-account-browser" @pointerdown.capture="handleBrowserInteraction" @focusin="handleBrowserInteraction" @keydown.capture="handleBrowserInteraction" @mousedown.capture="handleHistoryMouseButton" @mouseup.capture="handleHistoryMouseButton" @wheel.capture="handleHistoryWheel">
     <WebPageTabStrip
       :pages="pageTabs"
       :active-page-id="activePageId"
@@ -792,6 +823,11 @@ onBeforeUnmount(() => {
         <span v-else class="desktop-web-view-status is-local" :title="state?.autofillMessage || $t('页面由当前电脑本机直接访问')"><Laptop :size="14" /></span>
         <button type="button" :aria-label="$t('重新填充账号密码')" :title="$t('在入口原始域名的当前页面重新填充账号密码')" :disabled="!state" @click="runAction('refill')"><KeyRound :size="15" /></button>
         <button type="button" :aria-label="$t('重新登录')" :title="$t('清除本机登录状态并重新登录')" :disabled="!state || resetting" @click="resetLogin"><RotateCcw :size="15" /></button>
+        <div class="web-page-zoom" role="group" :aria-label="$t('页面缩放')">
+          <button type="button" :aria-label="$t('缩小')" :title="$t('缩小')" :disabled="zoomOutDisabled" @click="runAction('zoom-out')"><Minus :size="15" /></button>
+          <button type="button" class="web-page-zoom__level" :aria-label="$t('重置为 100%')" :title="$t('重置为 100%')" :disabled="!zoomCanChange" @click="runAction('zoom-reset')">{{ zoomLabel }}</button>
+          <button type="button" :aria-label="$t('放大')" :title="$t('放大')" :disabled="zoomInDisabled" @click="runAction('zoom-in')"><Plus :size="15" /></button>
+        </div>
         <button type="button" :aria-label="focused ? $t('退出沉浸模式') : $t('进入沉浸模式')" :title="focused ? $t('退出沉浸模式') : $t('进入沉浸模式')" @click="emit('focusChange', !focused)"><Minimize2 v-if="focused" :size="15" /><Maximize2 v-else :size="15" /></button>
       </div>
     </header>
@@ -831,6 +867,10 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .desktop-web-account-browser { position: relative; }
+.web-page-zoom { height: 28px; margin-inline: 1px; padding: 0 1px; border: 1px solid var(--browser-account-divider); border-radius: 7px; display: flex; flex: none; align-items: center; }
+.desktop-web-account-browser .web-page-zoom button { width: 24px; height: 24px; border-color: transparent; }
+.desktop-web-account-browser .web-page-zoom button.web-page-zoom__level { width: 48px; color: var(--browser-account-text); font-size: 12px; font-weight: 650; font-variant-numeric: tabular-nums; letter-spacing: 0; }
+.desktop-web-account-browser .web-page-zoom button.web-page-zoom__level:hover { border-color: transparent; background: var(--browser-account-hover); color: var(--browser-account-text); }
 .desktop-web-browser-surface { background: #fff; }
 .desktop-web-extension-page-frame { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; object-fit: fill; pointer-events: none; }
 .desktop-web-browser-surface.is-preview { cursor: default; }

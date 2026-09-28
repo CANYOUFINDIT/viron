@@ -121,6 +121,7 @@ interface Window {
     setWebViewPreviewing(id: string, previewing: boolean): Promise<import("./desktop").DesktopWebViewState>;
     captureWebView(id: string, mode?: "page"): Promise<string>;
     webViewAction(id: string, action: import("./desktop").DesktopWebViewAction): Promise<import("./desktop").DesktopWebViewState>;
+    noteWebZoomTarget(id: string): void;
     closeWebView(id: string): Promise<{ closed: boolean }>;
     listWebExtensions(id: string): Promise<import("./desktop").DesktopWebExtensionInfo[]>;
     installWebExtension(id: string): Promise<{ canceled: boolean; items: import("./desktop").DesktopWebExtensionInfo[] }>;

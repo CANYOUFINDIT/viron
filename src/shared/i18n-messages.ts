@@ -5628,6 +5628,10 @@ const enOverrides: Record<string, string> = {
   "\r\n\u001b[31m[Viron] 无法解析 SSH 终端数据：{{0}}\u001b[0m": "\r\n\u001b[31m[Viron] Could not parse SSH terminal data: {{0}}\u001b[0m",
   "\r\n\u001b[31m[Viron] 终端通信失败：{{0}}\u001b[0m": "\r\n\u001b[31m[Viron] Terminal communication failed: {{0}}\u001b[0m",
   "\r\n\u001b[33m[Viron] 终端连接已断开：{{0}}\u001b[0m": "\r\n\u001b[33m[Viron] Terminal disconnected: {{0}}\u001b[0m",
+  "页面缩放": "Zoom",
+  "缩小": "Zoom out",
+  "放大": "Zoom in",
+  "重置为 100%": "Reset to 100%",
 };
 
 export const enMessages: Readonly<Record<string, string>> = { ...generatedEnMessages, ...enOverrides };
