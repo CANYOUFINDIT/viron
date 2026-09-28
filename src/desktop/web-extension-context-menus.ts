@@ -97,30 +97,51 @@ function checkedMenu(value: unknown, previous?: ExtensionMenu): ExtensionMenu | 
   };
 }
 
-function applyMutation(partition: Session, origin: string, operation: string, extensionId: string, value?: unknown): void {
-  if (typeof extensionId !== "string" || !origin.startsWith(`chrome-extension://${extensionId}/`)) return;
+type MutationResult = { error?: string };
+
+function applyMutation(partition: Session, origin: string, operation: string, extensionId: string, value?: unknown): MutationResult {
+  if (typeof extensionId !== "string" || !origin.startsWith(`chrome-extension://${extensionId}/`)) return { error: "Invalid extension origin" };
   const loaded = partition.extensions.getExtension(extensionId);
-  if (!loaded || !Array.isArray(loaded.manifest.permissions) || !loaded.manifest.permissions.includes("contextMenus")) return;
+  if (!loaded || !Array.isArray(loaded.manifest.permissions) || !loaded.manifest.permissions.includes("contextMenus")) return { error: "The contextMenus permission is required" };
   const items = menuStore(partition, extensionId);
-  if (operation === "removeAll") { items.clear(); persistMenus(partition, extensionId); return; }
+  if (operation === "removeAll") { items.clear(); persistMenus(partition, extensionId); return {}; }
   const input = value && typeof value === "object" ? value as Record<string, unknown> : {};
   const id = checkedId(input.id);
-  if (id === null) return;
-  if (operation === "remove") { items.delete(id); persistMenus(partition, extensionId); return; }
-  if (operation !== "create" && operation !== "update") return;
-  const next = checkedMenu(input, operation === "update" ? items.get(id) : undefined);
-  if (next && (items.size < 100 || items.has(id))) {
-    items.set(id, next);
+  if (id === null) return { error: "Invalid menu item ID" };
+  if ((operation === "update" || operation === "remove") && !items.has(id)) return { error: `Cannot find menu item with id ${id}` };
+  if (operation === "remove") {
+    const remove = (target: MenuId) => {
+      items.delete(target);
+      for (const child of items.values()) if (child.parentId === target) remove(child.id);
+    };
+    remove(id);
     persistMenus(partition, extensionId);
+    return {};
   }
+  if (operation !== "create" && operation !== "update") return { error: "Unknown menu operation" };
+  if (operation === "create" && items.has(id)) return { error: `Cannot create item with duplicate id ${id}` };
+  const next = checkedMenu(input, operation === "update" ? items.get(id) : undefined);
+  if (!next) return { error: "Invalid menu properties" };
+  if (items.size >= 100 && !items.has(id)) return { error: "Too many menu items" };
+  const ancestors = new Set<MenuId>([id]);
+  let parentId = next.parentId;
+  while (parentId !== undefined) {
+    const parent = items.get(parentId);
+    if (!parent || ancestors.has(parentId)) return { error: "Invalid menu parent" };
+    ancestors.add(parentId);
+    parentId = parent.parentId;
+  }
+  items.set(id, next);
+  persistMenus(partition, extensionId);
+  return {};
 }
 
 export function registerDesktopWebExtensionContextMenus(): void {
   if (listening) return;
   listening = true;
-  ipcMain.on("viron:extension-menu:mutate", (event, operation: string, extensionId: string, value?: unknown) => {
-    if (!event.senderFrame) return;
-    applyMutation(event.sender.session, event.senderFrame.url, operation, extensionId, value);
+  ipcMain.handle("viron:extension-menu:mutate", (event, operation: string, extensionId: string, value?: unknown) => {
+    if (!event.senderFrame) return { error: "Invalid extension frame" };
+    return applyMutation(event.sender.session, event.senderFrame.url, operation, extensionId, value);
   });
 }
 
@@ -132,8 +153,8 @@ export function registerDesktopWebExtensionWorkerMenus(partition: Session, scope
     const worker = partition.serviceWorkers.getWorkerFromVersionID(versionId);
     if (!worker || boundWorkers.has(worker)) return;
     boundWorkers.add(worker);
-    worker.ipc.on("viron:extension-menu:mutate", (event, operation: string, extensionId: string, value?: unknown) => {
-      applyMutation(event.session, event.serviceWorker.scope, operation, extensionId, value);
+    worker.ipc.handle("viron:extension-menu:mutate", (event, operation: string, extensionId: string, value?: unknown) => {
+      return applyMutation(event.session, event.serviceWorker.scope, operation, extensionId, value);
     });
   };
   partition.serviceWorkers.on("running-status-changed", (event) => {

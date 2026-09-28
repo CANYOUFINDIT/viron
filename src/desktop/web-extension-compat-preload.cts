@@ -3,7 +3,7 @@ import { contextBridge, ipcRenderer } from "electron";
 // The service-worker preload runs before `location` is exposed in its isolated world.
 if (globalThis.location?.protocol === "chrome-extension:" || !globalThis.location) {
   contextBridge.exposeInMainWorld("__vironExtensionMenus", {
-    mutate: (operation: string, extensionId: string, value?: unknown) => ipcRenderer.send("viron:extension-menu:mutate", operation, extensionId, value),
+    mutate: (operation: string, extensionId: string, value?: unknown) => ipcRenderer.invoke("viron:extension-menu:mutate", operation, extensionId, value) as Promise<{ error?: string }>,
     activeTabId: () => ipcRenderer.invoke("viron:web-extension:active-tab") as Promise<number | null>,
   });
   contextBridge.executeInMainWorld({ func: () => {
@@ -18,7 +18,8 @@ if (globalThis.location?.protocol === "chrome-extension:" || !globalThis.locatio
       }; sync?: unknown }; contextMenus?: unknown; tabs?: {
         query?: (queryInfo: Record<string, unknown>, callback?: (tabs: Array<{ id: number; url?: string; active?: boolean }>) => void) => Promise<Array<{ id: number; url?: string; active?: boolean }>>;
       } };
-      __vironExtensionMenus?: { mutate: (operation: string, id: string, value?: unknown) => void; activeTabId: () => Promise<number | null> };
+      browser?: { contextMenus?: unknown };
+      __vironExtensionMenus?: { mutate: (operation: string, id: string, value?: unknown) => Promise<{ error?: string }>; activeTabId: () => Promise<number | null> };
     };
     const chrome = root.chrome;
     if (globalThis.location?.protocol !== "chrome-extension:" || !chrome?.runtime?.id) return;
@@ -85,27 +86,50 @@ if (globalThis.location?.protocol === "chrome-extension:" || !globalThis.locatio
       }
     });
     if (chrome.contextMenus) return;
-    Object.defineProperty(chrome, "contextMenus", { configurable: true, value: {
+    // Chrome reports callback errors through runtime.lastError; Promise callers
+    // receive a rejection. Extensions use this to fall back from update to create.
+    const mutate = (operation: string, value?: unknown, callback?: () => void): Promise<void> | undefined => {
+      const result = bridge.mutate(operation, chrome.runtime!.id!, value).then((reply) => {
+        if (reply.error) throw new Error(reply.error);
+      });
+      if (!callback) return result;
+      void result.then(callback, (error: Error) => {
+        const runtime = chrome.runtime!;
+        const previous = Object.getOwnPropertyDescriptor(runtime, "lastError");
+        try {
+          Object.defineProperty(runtime, "lastError", { configurable: true, value: { message: error.message } });
+          callback();
+        } finally {
+          if (previous) Object.defineProperty(runtime, "lastError", previous);
+          else Reflect.deleteProperty(runtime, "lastError");
+        }
+      });
+      return undefined;
+    };
+    Object.defineProperty(chrome, "contextMenus", { configurable: true, enumerable: true, value: {
       create: (properties: Record<string, unknown>, callback?: () => void) => {
         const id = properties.id ?? `viron-${++nextId}`;
         if (typeof properties.onclick === "function") itemCallbacks.set(id as string | number, properties.onclick as (info: unknown, tab: unknown) => void);
-        bridge.mutate("create", chrome.runtime!.id!, { ...properties, id, onclick: undefined });
-        callback?.();
+        const result = mutate("create", { ...properties, id, onclick: undefined }, callback);
+        if (result) void result.catch((error: Error) => console.error(error.message));
         return id;
       },
       update: (id: string | number, properties: Record<string, unknown>, callback?: () => void) => {
         if (typeof properties.onclick === "function") itemCallbacks.set(id, properties.onclick as (info: unknown, tab: unknown) => void);
-        bridge.mutate("update", chrome.runtime!.id!, { id, ...properties, onclick: undefined });
-        callback?.();
-        return Promise.resolve();
+        return mutate("update", { ...properties, id, onclick: undefined }, callback);
       },
-      remove: (id: string | number, callback?: () => void) => { itemCallbacks.delete(id); bridge.mutate("remove", chrome.runtime!.id!, { id }); callback?.(); return Promise.resolve(); },
-      removeAll: (callback?: () => void) => { itemCallbacks.clear(); bridge.mutate("removeAll", chrome.runtime!.id!); callback?.(); return Promise.resolve(); },
+      remove: (id: string | number, callback?: () => void) => { itemCallbacks.delete(id); return mutate("remove", { id }, callback); },
+      removeAll: (callback?: () => void) => { itemCallbacks.clear(); return mutate("removeAll", undefined, callback); },
       onClicked: {
         addListener: (listener: (info: unknown, tab: unknown) => void) => listeners.add(listener),
         removeListener: (listener: (info: unknown, tab: unknown) => void) => listeners.delete(listener),
         hasListener: (listener: (info: unknown, tab: unknown) => void) => listeners.has(listener),
       },
     } });
+    // Electron exposes separate chrome/browser namespace objects. Extensions such
+    // as Immersive Translate select browser directly, bypassing a Chrome polyfill.
+    if (root.browser && !root.browser.contextMenus) {
+      Object.defineProperty(root.browser, "contextMenus", { configurable: true, enumerable: true, value: chrome.contextMenus });
+    }
   } });
 }

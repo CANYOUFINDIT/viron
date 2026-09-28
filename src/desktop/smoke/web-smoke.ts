@@ -156,6 +156,12 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
     const installed = await importDesktopChromeExtension(managed.partition, managed.lastUrlKey, scanned.token);
     const added = installed.find((item) => !before.some((existing) => existing.installId === item.installId));
     if (!added) throw new Error("Desktop extension was not installed");
+    // Registration is asynchronous. Let onInstalled finish before exercising disable/re-enable.
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if (readState().webExtensionMenus?.[managed.lastUrlKey]?.[added.extensionId]?.some((item) => item.id === "fixture-menu")) break;
+      if (attempt === 99) throw new Error("Extension menu initialization did not complete");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
     const secondExtension = () => second && listDesktopWebExtensions(second.partition, second.lastUrlKey).find((item) => item.installId === added.installId);
     const sharedInstall = secondExtension()?.loaded === true;
     let sharedContent = false;
@@ -215,7 +221,7 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
     let extensionMenuCommand: (() => void) | undefined;
     for (let attempt = 0; attempt < 100; attempt += 1) {
       const menus = desktopWebExtensionContextMenuItems(managed.partition, downloadPage, {
-        pageURL: downloadPage.getURL(), frameURL: downloadPage.getURL(), linkURL: "", srcURL: "", mediaType: "none", selectionText: "", isEditable: false,
+        pageURL: downloadPage.getURL(), frameURL: downloadPage.getURL(), linkURL: "", srcURL: "", mediaType: "none", selectionText: "Selected fixture text", isEditable: false,
       });
       const submenu = menus.find((menu) => menu.label === "Viron installed extension")?.submenu;
       const command = Array.isArray(submenu) ? submenu.find((item) => item.label === "Fixture command") : undefined;
@@ -229,7 +235,8 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
     const clickedContents = desktopWebExtensionPopupContents(managed.lastUrlKey);
     let extensionMenuClicked = false;
     for (let attempt = 0; attempt < 60 && clickedContents && !clickedContents.isDestroyed(); attempt += 1) {
-      extensionMenuClicked = Boolean(await clickedContents.executeJavaScript('chrome.storage.local.get("vironMenuClicked").then((value) => value.vironMenuClicked)').catch(() => false));
+      extensionMenuClicked = Boolean(await clickedContents.executeJavaScript('chrome.storage.local.get(["vironMenuClicked", "vironMenuCallbackError"]).then((value) => value.vironMenuClicked && value.vironMenuCallbackError)').catch(() => false))
+        && await downloadPage.executeJavaScript('document.documentElement.dataset.vironMenuSelection === "Selected fixture text"') as boolean;
       if (extensionMenuClicked) break;
       await new Promise((resolve) => setTimeout(resolve, 50));
     }

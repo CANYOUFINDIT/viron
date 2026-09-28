@@ -166,8 +166,24 @@ describe.skipIf(!enabled)("macOS local Web", () => {
       action: { default_popup: "popup.html" },
       content_scripts: [{ matches: ["http://127.0.0.1/*"], js: ["content.js"], run_at: "document_end" }],
     }));
-    writeFileSync(join(sourceExtension, "content.js"), 'document.documentElement.dataset.vironInstalled = "loaded"; chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => { if (message?.type === "viron-translate-smoke") { document.documentElement.dataset.vironTranslated = "yes"; sendResponse({ ok: true }); } });');
-    writeFileSync(join(sourceExtension, "background.js"), 'chrome.runtime.onInstalled.addListener(() => chrome.contextMenus.create({ id: "fixture-menu", title: "Fixture command", contexts: ["page"] })); chrome.contextMenus.onClicked.addListener((info) => { if (info.menuItemId === "fixture-menu") chrome.storage.local.set({ vironMenuClicked: true }); });');
+    writeFileSync(join(sourceExtension, "content.js"), 'document.documentElement.dataset.vironInstalled = "loaded"; chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => { if (message?.type === "viron-translate-smoke") { document.documentElement.dataset.vironTranslated = "yes"; sendResponse({ ok: true }); } if (message?.type === "viron-menu-smoke") { document.documentElement.dataset.vironMenuSelection = message.selectionText; sendResponse({ ok: true }); } });');
+    writeFileSync(join(sourceExtension, "background.js"), `
+      // Match plugins that select Electron's browser namespace and update before creating.
+      const menus = browser.contextMenus;
+      chrome.runtime.onInstalled.addListener(async () => {
+        const callbackError = await new Promise((resolve) => {
+          chrome.contextMenus.update("missing-item", { title: "Missing" }, () => resolve(Boolean(chrome.runtime.lastError)));
+        });
+        await chrome.storage.local.set({ vironMenuCallbackError: callbackError });
+        try { await menus.update("fixture-menu", { title: "Fixture command" }); }
+        catch { menus.create({ id: "fixture-menu", title: "Fixture command", contexts: ["page", "selection"] }); }
+      });
+      menus.onClicked.addListener(async (info, tab) => {
+        if (info.menuItemId !== "fixture-menu") return;
+        await chrome.storage.local.set({ vironMenuClicked: true });
+        await chrome.tabs.sendMessage(tab.id, { type: "viron-menu-smoke", selectionText: info.selectionText });
+      });
+    `);
     writeFileSync(join(sourceExtension, "popup.html"), '<!doctype html><title>Viron extension popup</title><style>html,body{margin:0}body{width:320px;height:260px}main{box-sizing:border-box;width:100%;height:100%;padding:12px}</style><main><p>Ready</p><button id="resize">Resize</button><button id="translate">Translate</button></main><script src="popup.js"></script>');
     writeFileSync(join(sourceExtension, "popup.js"), 'document.querySelector("#resize").addEventListener("click", () => { document.body.style.width = "540px"; document.body.style.height = "420px"; }); document.querySelector("#translate").addEventListener("click", async () => { const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); await chrome.tabs.sendMessage(tab.id, { type: "viron-translate-smoke" }); window.close(); });');
     const uploadPath = join(directory, "upload fixture.txt");
