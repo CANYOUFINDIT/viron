@@ -1,6 +1,6 @@
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { ipcMain, WebContentsView, type MenuItemConstructorOptions, type Session, type WebContents } from "electron";
+import { ipcMain, nativeImage, type MenuItemConstructorOptions, type Session, type WebContents } from "electron";
+import { resolve, sep } from "node:path";
+import { grantExtensionActiveTab, registerExtensionBrowserWorkers, sendExtensionEvent } from "./web-extension-browser.js";
 import { readState, writeState } from "./app-state.js";
 
 type MenuId = string | number;
@@ -146,6 +146,7 @@ export function registerDesktopWebExtensionContextMenus(): void {
 }
 
 export function registerDesktopWebExtensionWorkerMenus(partition: Session, scopeKey: string): void {
+  registerExtensionBrowserWorkers(partition);
   scopeKeys.set(partition, scopeKey);
   if (workerListeners.has(partition)) return;
   workerListeners.add(partition);
@@ -205,18 +206,8 @@ async function dispatchClick(partition: Session, extensionId: string, id: MenuId
     checked: item.checked,
   };
   const tab = { id: contents.id, url: contents.getURL(), title: contents.getTitle(), active: true };
-  const extension = partition.extensions.getExtension(extensionId);
-  if (!extension) return;
-  const filename = "__viron_context_menu_bridge__.html";
-  await writeFile(join(extension.path, filename), "<!doctype html><title>Extension command</title>", { flag: "wx" }).catch((error: NodeJS.ErrnoException) => {
-    if (error.code !== "EEXIST") throw error;
-  });
-  const bridge = new WebContentsView({ webPreferences: { session: partition, sandbox: true, contextIsolation: true, nodeIntegration: false } });
-  try {
-    await bridge.webContents.loadURL(`chrome-extension://${extensionId}/${filename}`);
-    await bridge.webContents.executeJavaScript(`chrome.runtime.sendMessage(${JSON.stringify({ __vironMenuClick: true, extensionId, info, tab })})`);
-  } catch { /* The extension may have been disabled while the command was opening. */ }
-  finally { if (!bridge.webContents.isDestroyed()) bridge.webContents.close(); }
+  grantExtensionActiveTab(partition, extensionId, contents.id);
+  await sendExtensionEvent(partition, extensionId, { __vironMenuClick: true, extensionId, info, tab });
 }
 
 export function desktopWebExtensionContextMenuItems(partition: Session, contents: WebContents, params: Context): MenuItemConstructorOptions[] {
@@ -253,7 +244,18 @@ export function desktopWebExtensionContextMenuItems(partition: Session, contents
       });
     const entries = build();
     if (!entries.length) continue;
-    groups.push({ label: extension.name, submenu: entries });
+    const icons = extension.manifest.icons as Record<string, string> | undefined;
+    const iconPath = icons?.["16"] ?? icons?.["32"] ?? Object.values(icons ?? {})[0];
+    let icon: Electron.NativeImage | undefined;
+    if (typeof iconPath === "string") {
+      const path = resolve(extension.path, iconPath);
+      if (path.startsWith(resolve(extension.path) + sep)) {
+        const loaded = nativeImage.createFromPath(path);
+        if (!loaded.isEmpty()) icon = loaded.resize({ width: 16, height: 16 });
+      }
+    }
+    const entry = entries.length === 1 ? entries[0] : { label: extension.name, submenu: entries };
+    groups.push({ ...entry, ...(icon ? { icon } : {}) });
   }
   return groups;
 }

@@ -13,6 +13,7 @@ import { extractWebExtensionArchive } from "./web-extension-archive.js";
 import { mainWindow } from "./window-host.js";
 import { registerNativeOverlayWindow } from "./overlays/native-window-stack.js";
 import type { ManagedDesktopWebView } from "./web-view-runtime.js";
+import { grantExtensionActiveTab } from "./web-extension-browser.js";
 import { clearDesktopWebExtensionContextMenus, restoreDesktopWebExtensionContextMenus } from "./web-extension-context-menus.js";
 
 export interface DesktopWebExtensionInfo extends InstalledWebExtension {
@@ -255,6 +256,7 @@ export async function openDesktopWebExtensionPopup(partition: Session, scopeKey:
   });
   registerNativeOverlayWindow(popup, 2500);
   extensionPopups.set(scopeKey, popup);
+  if (Number.isInteger(activeTabId)) grantExtensionActiveTab(partition, item.extensionId, activeTabId!);
   if (Number.isInteger(activeTabId)) popupActiveTabs.set(scopeKey, { partition, extensionId: item.extensionId, tabId: activeTabId! });
   popup.once("closed", () => {
     if (extensionPopups.get(scopeKey) === popup) {

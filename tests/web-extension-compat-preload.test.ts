@@ -10,7 +10,7 @@ const code = ts.transpileModule(readFileSync(new URL("../src/desktop/web-extensi
 function preload(backend: (operation: string, value?: any) => Promise<{ error?: string }>) {
   const runtime: any = { id: "a".repeat(32), onMessage: { addListener: vi.fn() } };
   Object.defineProperty(runtime, "lastError", { configurable: true, get: () => undefined });
-  const sandbox: any = { exports: {}, chrome: { runtime }, browser: { runtime }, location: { protocol: "chrome-extension:" }, document: {}, console, queueMicrotask };
+  const sandbox: any = { exports: {}, chrome: { runtime }, browser: { runtime }, location: { protocol: "chrome-extension:" }, document: {}, console, queueMicrotask, process: { platform: "darwin" } };
   const invoke = vi.fn((_channel: string, operation: string, _id: string, value: unknown) => backend(operation, value));
   sandbox.require = () => ({
     ipcRenderer: { invoke },
@@ -20,10 +20,21 @@ function preload(backend: (operation: string, value?: any) => Promise<{ error?: 
     },
   });
   runInNewContext(code, sandbox);
-  return { menus: sandbox.chrome.contextMenus, browser: sandbox.browser, runtime, invoke };
+  return { menus: sandbox.chrome.contextMenus, chrome: sandbox.chrome, browser: sandbox.browser, runtime, invoke };
 }
 
 describe("Chrome menu API compatibility", () => {
+  it("lets extensions register command listeners before installing their context menus", async () => {
+    const { chrome, browser } = preload(async () => ({}));
+    const listener = vi.fn();
+    chrome.commands.onCommand.addListener(listener);
+    expect(chrome.commands.onCommand.hasListener(listener)).toBe(true);
+    expect(browser.commands).toBe(chrome.commands);
+    expect(await chrome.commands.getAll()).toEqual([]);
+    chrome.commands.onCommand.removeListener(listener);
+    expect(chrome.commands.onCommand.hasListeners()).toBe(false);
+  });
+
   it("exposes the same menu API in Electron's separate browser namespace", async () => {
     const { menus, browser, invoke } = preload(async () => ({}));
     expect(browser.contextMenus).toBe(menus);

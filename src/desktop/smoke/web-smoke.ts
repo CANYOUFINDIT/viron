@@ -223,8 +223,7 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
       const menus = desktopWebExtensionContextMenuItems(managed.partition, downloadPage, {
         pageURL: downloadPage.getURL(), frameURL: downloadPage.getURL(), linkURL: "", srcURL: "", mediaType: "none", selectionText: "Selected fixture text", isEditable: false,
       });
-      const submenu = menus.find((menu) => menu.label === "Viron installed extension")?.submenu;
-      const command = Array.isArray(submenu) ? submenu.find((item) => item.label === "Fixture command") : undefined;
+      const command = menus.find((menu) => menu.label === "Fixture command");
       if (command) { extensionMenuRendered = true; extensionMenuCommand = command.click as (() => void) | undefined; break; }
       await new Promise((resolve) => setTimeout(resolve, 50));
     }

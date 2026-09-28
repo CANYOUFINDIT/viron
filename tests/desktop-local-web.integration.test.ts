@@ -205,7 +205,7 @@ describe.skipIf(!enabled)("macOS local Web", () => {
       VIRON_DESKTOP_SMOKE_CHROME_ROOT: chromeRoot,
       VIRON_DESKTOP_SMOKE_CHROME_EXTENSION_ID: chromeExtensionId,
     });
-    expect(result.code, result.stderr).toBe(0);
+    expect(result.code, `${result.stderr}\n${result.stdout}`).toBe(0);
     const line = result.stdout.split("\n").find((item) => item.startsWith("VIRON_DESKTOP_SMOKE "));
     expect(line, result.stdout).toBeTruthy();
     const smoke = JSON.parse(line!.slice("VIRON_DESKTOP_SMOKE ".length));

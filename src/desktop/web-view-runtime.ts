@@ -52,6 +52,7 @@ import {
 } from "./history-navigation-runtime.js";
 import { mainWindow } from "./window-host.js";
 import { closeDesktopWebExtensionPopup, forgetDesktopWebExtensions, loadDesktopWebExtensions } from "./web-extensions.js";
+import { closeExtensionBrowser, handleExtensionShortcut, registerExtensionBrowser, registerExtensionTab, selectExtensionTab } from "./web-extension-browser.js";
 import { desktopWebExtensionContextMenuItems } from "./web-extension-context-menus.js";
 import {
   desktopWebActionScript,
@@ -224,6 +225,7 @@ export function activateDesktopWebPage(view: ManagedDesktopWebView, pageId: stri
   const page = view.pages.get(pageId);
   if (!page) throw new Error(tr("本机子页面不存在或已经关闭"));
   view.activePageId = pageId;
+  selectExtensionTab(page.view.webContents);
   touchDesktopWebView(view);
   layoutDesktopWebViewPages(view, true);
   const pendingUrl = page.pendingUrl;
@@ -337,6 +339,12 @@ export function createDesktopWebPage(
     closing: false,
   };
   view.pages.set(page.id, page);
+  registerExtensionTab(nativeView.webContents, {
+    windowId: mainWindow.id,
+    bounds: () => nativeView.getBounds(),
+    select: () => activateDesktopWebPage(view, page.id),
+    remove: () => removeDesktopWebPage(view, page.id, true),
+  });
   mainWindow.contentView.addChildView(nativeView);
   attachHistoryNavigationTouchTracking(nativeView.webContents);
   nativeView.webContents.on("before-mouse-event", (event, mouse) => {
@@ -366,6 +374,7 @@ export function createDesktopWebPage(
     Menu.buildFromTemplate(template).popup({ window: mainWindow });
   });
   nativeView.webContents.on("before-input-event", (event, input) => {
+    if (handleExtensionShortcut(nativeView.webContents, input)) { event.preventDefault(); return; }
     if (input.type !== "keyDown" || input.isAutoRepeat) return;
     if (input.key === "Escape") {
       const action = immersiveNavigationEscapeAction(immersiveNavigationState);
@@ -551,6 +560,16 @@ export async function openDesktopWebView(
     desktopWebViews.set(id, managed);
     trackDesktopWebPartition(webPartition);
     webPartition.on("will-download", managed.downloadListener);
+    registerExtensionBrowser(webPartition, {
+      create: (url, active) => {
+        if (managed.closing || managed.pages.size >= DESKTOP_WEB_PAGE_LIMIT) throw new Error("No space for another extension tab");
+        const created = createDesktopWebPage(managed, false);
+        void created.view.webContents.loadURL(url).catch(() => undefined);
+        if (active) activateDesktopWebPage(managed, created.id);
+        sendWebViewState(managed);
+        return created.view.webContents;
+      },
+    });
     await loadDesktopWebExtensions(webPartition, lastUrlKey);
     const page = createDesktopWebPage(managed, true);
     activateDesktopWebPage(managed, page.id);
@@ -715,6 +734,7 @@ export async function closeDesktopWebView(id: string, reason = tr("用户主动�
   managed.closedReason = reason;
   sendWebViewState(managed);
   managed.closing = true;
+  closeExtensionBrowser(managed.partition);
   desktopWebViews.delete(id);
   managed.partition.off("will-download", managed.downloadListener);
   const releaseReservation = releaseDesktopRuntimeReservation(managed.registrationId);
