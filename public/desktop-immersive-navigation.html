@@ -3,13 +3,25 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'" />
   <title>Viron Immersive Navigation</title>
   <style>
     :root { color-scheme: light dark; font-family: "Avenir Next", "PingFang SC", "Microsoft YaHei", sans-serif; }
     * { box-sizing: border-box; }
     html, body, #app { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; }
     button { font: inherit; }
+    body {
+      --nav-bg: #fbfcfb;
+      --nav-ink: #1c2927;
+      --nav-muted: #5c6e6a;
+      --nav-faint: #6b7d79;
+      --nav-line: #e1e8e5;
+      --nav-hover: rgba(18, 36, 32, .05);
+      --nav-accent: #0f6b58;
+      --nav-accent-bg: #e5f3ee;
+      --nav-accent-ink: #0d4f42;
+      --nav-edge: rgba(20, 40, 36, .12);
+    }
     .handle { width: 100%; height: 100%; padding: 0; border: 0; background: #18806d; color: white; display: grid; place-items: center; cursor: pointer; touch-action: none; box-shadow: 0 5px 14px rgba(18,111,96,.28); transition: background-color .12s ease; }
     .handle:hover { background: #126f60; }
     .handle:active { background: #105f52; }
@@ -21,72 +33,57 @@
     body[data-edge="left"] .handle .chevron { transform: rotate(45deg); }
     body[data-edge="right"] .handle .chevron { transform: rotate(-135deg); }
     body[data-edge="top"] .handle .chevron { transform: rotate(135deg); }
-    .panel { position: relative; width: 100%; height: 100%; color: #122024; overflow: visible; outline: 0; }
-    .panel-surface { width: 100%; height: 100%; background: rgba(255,255,255,.97); box-shadow: inset 0 0 0 1px #d7dfe0; display: grid; grid-template-rows: auto minmax(0,1fr) auto; overflow: hidden; isolation: isolate; }
+    .panel { position: relative; width: 100%; height: 100%; color: var(--nav-ink); overflow: visible; outline: 0; }
+    .panel-surface { width: 100%; height: 100%; background: var(--nav-bg); box-shadow: inset 0 0 0 1px var(--nav-edge); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; isolation: isolate; }
     body[data-edge="left"] .panel-surface { border-radius: 0 15px 15px 0; clip-path: inset(0 round 0 15px 15px 0); }
     body[data-edge="right"] .panel-surface { border-radius: 15px 0 0 15px; clip-path: inset(0 round 15px 0 0 15px); }
     body[data-edge="top"] .panel-surface { border-radius: 0 0 15px 15px; clip-path: inset(0 round 0 0 15px 15px); }
-    .collapse { width: 32px; height: 32px; padding: 0; border: 1px solid #d7dfe0; border-radius: 9px; background: rgba(255,255,255,.82); color: #52656b; display: grid; place-items: center; cursor: pointer; box-shadow: 0 3px 10px rgba(10,31,35,.08); }
-    .collapse:hover { border-color: #9acfc2; background: white; color: #126f60; }
+    .collapse { width: 32px; height: 32px; padding: 0; border: 1px solid var(--nav-line); border-radius: 9px; background: transparent; color: var(--nav-muted); display: grid; place-items: center; cursor: pointer; }
+    .collapse:hover { background: var(--nav-hover); color: var(--nav-ink); }
+    .collapse:focus-visible, .row:focus-visible, footer .exit:focus-visible { outline: 2px solid var(--nav-accent); outline-offset: -2px; }
     body[data-edge="left"] .collapse .chevron { transform: rotate(-135deg); }
     body[data-edge="right"] .collapse .chevron { transform: rotate(45deg); }
     body[data-edge="top"] .collapse .chevron { transform: rotate(-45deg); }
-    header { min-height: 76px; padding: 13px 14px 13px 17px; border-bottom: 1px solid #e8edee; background: linear-gradient(135deg, #edf8f4, white); display: grid; grid-template-columns: minmax(0,1fr) 32px; align-items: center; gap: 12px; }
+    header { min-height: 72px; padding: 14px 12px 12px 16px; border-bottom: 1px solid var(--nav-line); background: transparent; display: grid; grid-template-columns: minmax(0, 1fr) 32px; align-items: center; gap: 10px; }
     .heading { min-width: 0; }
     .heading span, .heading strong { display: block; }
-    .heading span { color: #18806d; font-family: "SFMono-Regular", Consolas, monospace; font-size: 9px; font-weight: 800; letter-spacing: .16em; }
-    .heading strong { margin-top: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
-    nav { min-height: 0; padding: 10px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #d7dfe0 transparent; display: flex; flex-direction: column; gap: 2px; }
-    .row { width: 100%; min-width: 0; min-height: 36px; padding: 0 9px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: #52656b; display: grid; grid-template-columns: 18px minmax(0,1fr) auto auto; align-items: center; gap: 7px; text-align: left; cursor: pointer; }
-    .row:hover { background: #f3f6f5; color: #1c2c31; }
-    .row.active { border-color: #cce7df; background: #edf8f4; color: #126f60; }
-    .row.level-1 { min-height: 40px; grid-template-columns: 24px minmax(0,1fr) auto auto; }
-    .row .icon { width: 18px; text-align: center; font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; font-weight: 800; }
-    .row.level-1 .icon { width: 24px; height: 24px; border-radius: 7px; background: #e8edee; color: #65777c; display: grid; place-items: center; }
-    .row.level-1.active .icon { background: #d9f0e9; color: #126f60; }
-    .row .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 700; }
-    .row small { min-width: 20px; height: 19px; padding: 0 5px; border-radius: 10px; background: #e8edee; color: #73858a; display: grid; place-items: center; white-space: nowrap; font-size: 10px; }
-    .row small.planned { width: auto; background: #ffedc8; color: #b46b0d; }
-    .twisty { width: 7px; height: 7px; margin-right: 2px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg); transition: transform .16s ease; }
-    .twisty.closed { transform: rotate(-45deg); }
-    .branch { position: relative; }
-    .web-branch { margin: 1px 2px 7px 8px; padding: 4px 4px 4px 11px; border-left: 1px solid #63b7a4; border-radius: 0 9px 9px 0; background: rgba(237,248,244,.58); }
-    .row.level-2 { min-height: 36px; padding: 0 7px; grid-template-columns: 12px minmax(0,1fr) auto auto; }
-    .row.level-2 .icon { width: 7px; height: 7px; margin-left: 1px; border: 1.5px solid #219780; border-radius: 2px; background: white; font-size: 0; transform: rotate(45deg); }
-    .account-branch { margin: 2px 1px 4px 10px; padding: 3px 3px 3px 9px; border-left: 1px solid #bdc9cb; background: rgba(255,255,255,.62); }
-    .row.level-3 { min-height: 32px; padding: 0 7px; grid-template-columns: 15px minmax(0,1fr); border-radius: 6px; }
-    .row.level-3 .icon { color: #8b9b9f; }
-    .row.level-3 .label { font-size: 11px; font-weight: 650; }
-    .row.level-3.active { border-color: #b9ddd4; background: white; box-shadow: 0 2px 7px rgba(12,61,55,.07); }
-    .row.level-3.active .icon { color: #18806d; }
-    .empty { min-height: 31px; padding: 7px 10px 7px 23px; color: #9aa8ac; display: flex; align-items: center; font-size: 10px; }
-    footer { padding: 10px; border-top: 1px solid #e8edee; }
-    footer button { width: 100%; height: 34px; padding: 0 10px; border: 1px solid #e8edee; border-radius: 7px; background: white; color: #73858a; cursor: pointer; font-size: 11px; font-weight: 700; }
-    footer button:hover { border-color: #f8dedb; background: #f8dedb; color: #b7473f; }
-    @media (prefers-reduced-motion: reduce) { .handle { transition: none; } }
-    body[data-theme="dark"] { color-scheme: dark; }
+    .heading span { color: var(--nav-faint); font-family: "SFMono-Regular", Consolas, monospace; font-size: 9px; font-weight: 700; letter-spacing: .14em; }
+    .heading strong { margin-top: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 650; }
+    nav { min-height: 0; padding: 8px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: rgba(138, 156, 152, .7) transparent; display: flex; flex-direction: column; gap: 2px; }
+    .row { width: 100%; min-width: 0; min-height: 36px; padding: 0 8px; border: 0; border-radius: 8px; background: transparent; color: var(--nav-ink); display: grid; grid-template-columns: minmax(0, 1fr) auto 14px; align-items: center; gap: 6px; text-align: left; cursor: pointer; }
+    .row.has-icon { grid-template-columns: 18px minmax(0, 1fr) auto 14px; min-height: 40px; }
+    .row.level-2 { min-height: 36px; }
+    .row:hover:not(.current) { background: var(--nav-hover); }
+    .row.current { background: var(--nav-accent-bg); color: var(--nav-accent-ink); font-weight: 700; }
+    .marker { width: 18px; height: 18px; display: grid; place-items: center; }
+    .marker svg { width: 17px; height: 17px; display: block; }
+    .favicon { width: 16px; height: 16px; display: block; object-fit: contain; }
+    .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; font-weight: 650; }
+    .row.level-3 .label { font-size: 12px; font-weight: 600; }
+    .row.current .label { font-weight: inherit; }
+    .meta { display: inline-flex; align-items: center; min-width: 0; }
+    .count { color: var(--nav-faint); white-space: nowrap; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .row.current .count, .row.current .marker, .row.current .twisty, .row.current .check { color: inherit; border-color: currentColor; }
+    .twisty, .check, .arrow { display: block; box-sizing: border-box; }
+    .twisty { width: 7px; height: 7px; margin-left: 3px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); }
+    .twisty.is-open { transform: rotate(45deg); }
+    .twistyslot { width: 14px; height: 14px; }
+    .check { width: 11px; height: 6px; margin-bottom: 3px; border-left: 1.8px solid var(--nav-accent); border-bottom: 1.8px solid var(--nav-accent); transform: rotate(-45deg); }
+    .limb, .limb-kids { display: flex; flex-direction: column; gap: 1px; }
+    .limb.is-open { margin-bottom: 4px; }
+    .limb-kids .row.level-3, .limb-kids .empty, .empty.inset { width: calc(100% - 32px); margin-left: 32px; }
+    .empty { min-height: 32px; padding: 6px 8px; color: var(--nav-faint); display: flex; align-items: center; font-size: 12px; }
+    .split { margin: 8px 4px 2px; padding: 10px 8px 4px; border-top: 1px solid var(--nav-line); color: var(--nav-faint); font-size: 11px; font-weight: 650; }
+    .arrow { width: 7px; height: 7px; border-left: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg); }
+    footer { padding: 8px; border-top: 1px solid var(--nav-line); }
+    footer .exit { width: 100%; height: 34px; padding: 0 10px; border: 1px solid var(--nav-line); border-radius: 8px; background: transparent; color: var(--nav-ink); display: flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; font-size: 12px; font-weight: 700; }
+    footer .exit:hover { background: var(--nav-hover); }
+    @media (prefers-reduced-motion: reduce) { .handle, .twisty { transition: none; } }
+    body[data-theme="dark"] { color-scheme: dark; --nav-bg: #171d1f; --nav-ink: #e8efed; --nav-muted: #9aa7a4; --nav-faint: #8d9c99; --nav-line: rgba(255, 255, 255, .1); --nav-hover: rgba(255, 255, 255, .055); --nav-accent: #8fd0c0; --nav-accent-bg: #1c4038; --nav-accent-ink: #e9f8f3; --nav-edge: rgba(255, 255, 255, .1); }
     body[data-theme="dark"] .handle { box-shadow: 0 5px 14px rgba(8,22,25,.35); }
     body[data-theme="dark"] .handle:hover { background: #219780; }
     body[data-theme="dark"] .handle:active { background: #126f60; }
     body[data-theme="dark"] .handle:focus-visible { outline-color: #68cfad; }
-    body[data-theme="dark"] .panel { color: #e7ecea; }
-    body[data-theme="dark"] .panel-surface { background: rgba(21,33,36,.98); box-shadow: inset 0 0 0 1px #344844; }
-    body[data-theme="dark"] header { border-color: #263936; background: linear-gradient(135deg, #14312d, #152124); }
-    body[data-theme="dark"] .collapse { border-color: #344844; background: #1b2a2d; color: #a2b3af; }
-    body[data-theme="dark"] .collapse:hover { border-color: #3c7469; background: #203236; color: #68cfad; }
-    body[data-theme="dark"] nav { scrollbar-color: #344844 transparent; }
-    body[data-theme="dark"] .row { color: #a2b3af; }
-    body[data-theme="dark"] .row:hover { background: #1a2a2c; color: #e7ecea; }
-    body[data-theme="dark"] .row.active { border-color: #285149; background: #14312d; color: #68cfad; }
-    body[data-theme="dark"] .row.level-1 .icon { background: #263936; color: #a2b3af; }
-    body[data-theme="dark"] .row.level-1.active .icon { background: #21433c; color: #68cfad; }
-    body[data-theme="dark"] .row small { background: #263936; color: #849792; }
-    body[data-theme="dark"] .web-branch { border-left-color: #3c7469; background: rgba(20,49,45,.46); }
-    body[data-theme="dark"] .account-branch { border-left-color: #405551; background: rgba(21,33,36,.58); }
-    body[data-theme="dark"] .row.level-2 .icon, body[data-theme="dark"] footer button { background: #152124; }
-    body[data-theme="dark"] .row.level-3.active { border-color: #285149; background: #1b2a2d; }
-    body[data-theme="dark"] footer { border-color: #263936; }
-    body[data-theme="dark"] footer button { border-color: #263936; color: #849792; }
   </style>
 </head>
 <body data-edge="right">
@@ -98,6 +95,51 @@
     let pointerStart = null;
     let dragging = false;
     let hoverCollapseTimer = null;
+    const LUCIDE = {
+      web: [
+        ["path", "M21.54 15H17a2 2 0 0 0-2 2v4.54"],
+        ["path", "M7 3.34V5a3 3 0 0 0 3 3a2 2 0 0 1 2 2c0 1.1.9 2 2 2a2 2 0 0 0 2-2c0-1.1.9-2 2-2h3.17"],
+        ["path", "M11 21.95V18a2 2 0 0 0-2-2a2 2 0 0 1-2-2v-1a2 2 0 0 0-2-2H2.05"],
+        ["circle", "12,12,10"],
+      ],
+      terminal: [
+        ["path", "m7 11 2-2-2-2"],
+        ["path", "M11 13h4"],
+        ["rect", "18,18,3,3,2"],
+      ],
+      logs: [
+        ["path", "M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"],
+        ["path", "M14 2v5a1 1 0 0 0 1 1h5"],
+        ["path", "M10 9H8"],
+        ["path", "M16 13H8"],
+        ["path", "M16 17H8"],
+      ],
+      database: [
+        ["ellipse", "12,5,9,3"],
+        ["path", "M3 5V19A9 3 0 0 0 21 19V5"],
+        ["path", "M3 12A9 3 0 0 0 21 12"],
+      ],
+      redis: [
+        ["path", "M12 12v-2"],
+        ["path", "M12 18v-2"],
+        ["path", "M16 12v-2"],
+        ["path", "M16 18v-2"],
+        ["path", "M2 11h1.5"],
+        ["path", "M20 18v-2"],
+        ["path", "M20.5 11H22"],
+        ["path", "M4 18v-2"],
+        ["path", "M8 12v-2"],
+        ["path", "M8 18v-2"],
+        ["rect", "20,10,2,6,2"],
+      ],
+      knowledge: [
+        ["path", "M12 7v14"],
+        ["path", "M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"],
+      ],
+      maintenance: [
+        ["path", "M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z"],
+      ],
+    };
 
     function clearHoverCollapse() {
       if (hoverCollapseTimer === null) return;
@@ -130,12 +172,79 @@
 
     function chevron() { return element("span", "chevron"); }
 
-    function treeRow({ level = 1, icon, label, count, active, planned, tag, twisty, action }) {
-      const row = button(`row level-${level}${active ? " active" : ""}`, action, label);
-      row.append(element("span", "icon", icon), element("span", "label", label));
-      if (tag !== undefined) row.append(element("small", "planned", String(tag)));
-      if (count !== undefined) row.append(element("small", planned ? "planned" : "", String(count)));
-      if (twisty !== undefined) row.append(element("span", `twisty${twisty ? "" : " closed"}`));
+    function svgEl(viewBox) {
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", viewBox);
+      svg.setAttribute("aria-hidden", "true");
+      svg.setAttribute("focusable", "false");
+      return svg;
+    }
+
+    function svgPart(tag, attrs) {
+      const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+      for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+      return node;
+    }
+
+    function lucide(name) {
+      const svg = svgEl("0 0 24 24");
+      svg.setAttribute("fill", "none");
+      svg.setAttribute("stroke", "currentColor");
+      svg.setAttribute("stroke-width", "2");
+      svg.setAttribute("stroke-linecap", "round");
+      svg.setAttribute("stroke-linejoin", "round");
+      for (const [tag, value] of LUCIDE[name]) {
+        if (tag === "circle") {
+          const [cx, cy, r] = value.split(",");
+          svg.append(svgPart("circle", { cx, cy, r }));
+        } else if (tag === "ellipse") {
+          const [cx, cy, rx, ry] = value.split(",");
+          svg.append(svgPart("ellipse", { cx, cy, rx, ry }));
+        } else if (tag === "rect") {
+          const [width, height, x, y, rx] = value.split(",");
+          svg.append(svgPart("rect", { width, height, x, y, rx, ry: rx }));
+        } else svg.append(svgPart("path", { d: value }));
+      }
+      return svg;
+    }
+
+    function marker(child) {
+      const wrap = element("span", "marker");
+      wrap.append(child);
+      return wrap;
+    }
+
+    function safeFavicon(value) {
+      return typeof value === "string" && value.startsWith("data:image/") ? value : "";
+    }
+
+    function currentTarget(navigation) {
+      if (navigation.activeTab !== "web") return { type: "module", id: navigation.activeTab };
+      const accountVisible = navigation.webExpanded && navigation.expandedEntryId === navigation.selectedEntryId && navigation.selectedCredentialId;
+      if (accountVisible) return { type: "account", entryId: navigation.selectedEntryId, id: navigation.selectedCredentialId };
+      if (navigation.webExpanded && navigation.selectedEntryId) return { type: "entry", id: navigation.selectedEntryId };
+      return { type: "web" };
+    }
+
+    function treeRow({ level = 1, icon, favicon, label, count, current, twisty, action }) {
+      const graphic = favicon || icon;
+      const row = button(`row level-${level}${graphic ? " has-icon" : ""}${current ? " current" : ""}`, action, label);
+      if (current) row.setAttribute("aria-current", "true");
+      if (twisty !== undefined) row.setAttribute("aria-expanded", twisty ? "true" : "false");
+      if (favicon) {
+        const image = element("img", "favicon");
+        image.alt = "";
+        image.src = favicon;
+        image.addEventListener("error", () => { image.replaceWith(lucide("web")); });
+        row.append(marker(image));
+      } else if (icon) row.append(marker(lucide(icon)));
+      row.append(element("span", "label", label));
+      const meta = element("span", "meta");
+      if (count !== undefined && count !== "") meta.append(element("small", "count", String(count)));
+      row.append(meta);
+      if (current && twisty === undefined) row.append(element("i", "check"));
+      else if (twisty === undefined) row.append(element("span", "twistyslot"));
+      else row.append(element("i", `twisty${twisty ? " is-open" : ""}`));
       return row;
     }
 
@@ -193,6 +302,7 @@
       }
 
       const panel = element("section", "panel");
+      panel.setAttribute("aria-label", copy("环境沉浸导航", "Environment navigation"));
       panel.addEventListener("pointerenter", (event) => {
         if (event.pointerType === "mouse") clearHoverCollapse();
       });
@@ -205,35 +315,55 @@
       const heading = element("div", "heading");
       heading.append(element("span", "", "IMMERSIVE WORKSPACE"), element("strong", "", state.environmentName));
       header.append(heading, collapse);
+      const current = currentTarget(state);
       const nav = element("nav");
-      nav.append(treeRow({ icon: "◎", label: copy("Web 入口", "Web Entries"), count: state.counts.web, active: state.activeTab === "web", twisty: state.webExpanded, action: { type: "toggle-web" } }));
+      nav.append(treeRow({ icon: "web", label: copy("Web 入口", "Web Entries"), count: state.counts.web, current: current.type === "web", twisty: state.webExpanded, action: { type: "toggle-web" } }));
       if (state.webExpanded) {
-        const webBranch = element("div", "branch web-branch");
         for (const entry of state.entries) {
-          webBranch.append(treeRow({ level: 2, icon: "", label: entry.name, count: entry.credentialCount, active: state.selectedEntryId === entry.id, twisty: state.expandedEntryId === entry.id, action: { type: "toggle-entry", entryId: entry.id } }));
-          if (state.expandedEntryId === entry.id) {
-            const accounts = element("div", "branch account-branch");
-            if (entry.loading) accounts.append(element("span", "empty", copy("正在读取登录账号…", "Loading login accounts…")));
+          const open = state.expandedEntryId === entry.id;
+          const favicon = safeFavicon(entry.faviconDataUrl);
+          const limb = element("div", `limb${open ? " is-open" : ""}`);
+          limb.append(treeRow({
+            level: 2,
+            icon: favicon ? "" : "web",
+            favicon,
+            label: entry.name,
+            count: entry.credentialCount,
+            current: current.type === "entry" && current.id === entry.id,
+            twisty: open,
+            action: { type: "toggle-entry", entryId: entry.id },
+          }));
+          if (open) {
+            const kids = element("div", "limb-kids");
+            if (entry.loading) kids.append(element("span", "empty", copy("正在读取登录账号…", "Loading login accounts…")));
             for (const credential of entry.credentials || []) {
-              accounts.append(treeRow({ level: 3, icon: "⌁", label: credential.username, active: state.activeTab === "web" && state.selectedEntryId === entry.id && state.selectedCredentialId === credential.id, action: { type: "select-credential", entryId: entry.id, credentialId: credential.id } }));
+              kids.append(treeRow({
+                level: 3,
+                label: credential.username,
+                current: current.type === "account" && current.entryId === entry.id && current.id === credential.id,
+                action: { type: "select-credential", entryId: entry.id, credentialId: credential.id },
+              }));
             }
-            if (!entry.loading && entry.credentials && !entry.credentials.length) accounts.append(element("span", "empty", copy("暂无登录账号", "No login accounts")));
-            webBranch.append(accounts);
+            if (!entry.loading && entry.credentials && !entry.credentials.length) kids.append(element("span", "empty", copy("暂无登录账号", "No login accounts")));
+            limb.append(kids);
           }
+          nav.append(limb);
         }
-        if (!state.entries.length) webBranch.append(element("span", "empty", copy("暂无 Web 入口", "No Web entries")));
-        nav.append(webBranch);
+        if (!state.entries.length) nav.append(element("span", "empty inset", copy("暂无 Web 入口", "No Web entries")));
       }
+      nav.append(element("div", "split", copy("工作台", "Workbench")));
       nav.append(
-        treeRow({ icon: ">_", label: copy("SSH 终端", "SSH Terminal"), count: state.counts.ssh, active: state.activeTab === "ssh", action: { type: "select-tab", tab: "ssh" } }),
-        treeRow({ icon: "≡", label: copy("日志", "Logs"), count: state.counts.logs, active: state.activeTab === "logs", action: { type: "select-tab", tab: "logs" } }),
-        treeRow({ icon: "◫", label: copy("数据库", "Database"), count: state.counts.database, active: state.activeTab === "database", action: { type: "select-tab", tab: "database" } }),
-        treeRow({ icon: "R", label: "Redis", count: state.counts.redis, active: state.activeTab === "redis", action: { type: "select-tab", tab: "redis" } }),
-        treeRow({ icon: "▤", label: copy("知识库", "Knowledge Base"), count: state.counts.knowledge, active: state.activeTab === "knowledge", action: { type: "select-tab", tab: "knowledge" } }),
-        treeRow({ icon: "⌕", label: copy("服务维护", "Service Maintenance"), tag: copy("开发中", "In development"), count: `${copy("服务", "Services")} ${state.counts.maintenance} · ${copy("主机", "Hosts")} ${state.maintenanceHostCount}`, active: state.activeTab === "maintenance", action: { type: "select-tab", tab: "maintenance" } }),
+        treeRow({ icon: "terminal", label: copy("SSH 终端", "SSH Terminal"), count: state.counts.ssh, current: current.type === "module" && current.id === "ssh", action: { type: "select-tab", tab: "ssh" } }),
+        treeRow({ icon: "logs", label: copy("日志", "Logs"), count: state.counts.logs, current: current.type === "module" && current.id === "logs", action: { type: "select-tab", tab: "logs" } }),
+        treeRow({ icon: "database", label: copy("数据库", "Database"), count: state.counts.database, current: current.type === "module" && current.id === "database", action: { type: "select-tab", tab: "database" } }),
+        treeRow({ icon: "redis", label: "Redis", count: state.counts.redis, current: current.type === "module" && current.id === "redis", action: { type: "select-tab", tab: "redis" } }),
+        treeRow({ icon: "knowledge", label: copy("知识库", "Knowledge Base"), count: state.counts.knowledge, current: current.type === "module" && current.id === "knowledge", action: { type: "select-tab", tab: "knowledge" } }),
+        treeRow({ icon: "maintenance", label: copy("服务维护", "Service Maintenance"), count: `${copy("服务", "Services")} ${state.counts.maintenance} · ${copy("主机", "Hosts")} ${state.maintenanceHostCount}`, current: current.type === "module" && current.id === "maintenance", action: { type: "select-tab", tab: "maintenance" } }),
       );
+      const exit = button("exit", { type: "exit" }, copy("退出沉浸模式", "Exit immersive mode"));
+      exit.append(element("i", "arrow"), element("span", "", copy("退出沉浸模式", "Exit immersive mode")));
       const footer = element("footer");
-      footer.append(button("", { type: "exit" }, copy("退出沉浸模式", "Exit immersive mode")));
+      footer.append(exit);
       const surface = element("div", "panel-surface");
       surface.append(header, nav, footer);
       panel.append(surface);

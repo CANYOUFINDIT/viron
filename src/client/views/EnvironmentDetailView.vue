@@ -186,6 +186,7 @@ const logFocusRequest = reactive({ id: "", sequence: 0 });
 const immersiveEntries = computed<ImmersiveNavigationEntry[]>(() => webEntries.value.map((entry) => ({
   id: entry.id,
   name: entry.name,
+  faviconDataUrl: entryFavicons.value[entry.id] ?? null,
   credentialCount: entry.credentialCount,
   credentials: immersiveCredentials.value[entry.id]?.map((credential) => ({ id: credential.id, username: credential.username })) ?? null,
   loading: immersiveCredentialLoading.value.has(entry.id),

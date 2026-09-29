@@ -121,16 +121,25 @@ export async function runDesktopImmersiveNavigationSmoke(): Promise<{
     const visualHierarchy = await immersiveNavigationWindow!.webContents.executeJavaScript(`(() => {
       const header = document.querySelector('header').getBoundingClientRect();
       const collapse = document.querySelector('.collapse').getBoundingClientRect();
-      const level1 = document.querySelector('.row.level-1').getBoundingClientRect();
-      const level2 = document.querySelector('.row.level-2').getBoundingClientRect();
-      const level3 = document.querySelector('.row.level-3').getBoundingClientRect();
-      const webBranch = getComputedStyle(document.querySelector('.web-branch'));
-      const accountBranch = getComputedStyle(document.querySelector('.account-branch'));
+      const level1 = document.querySelector('.row.level-1');
+      const level2 = document.querySelector('.row.level-2');
+      const level3 = document.querySelector('.row.level-3');
+      const level1Box = level1.getBoundingClientRect();
+      const level2Box = level2.getBoundingClientRect();
+      const level1Label = level1.querySelector('.label').getBoundingClientRect();
+      const level2Label = level2.querySelector('.label').getBoundingClientRect();
+      const level3Box = level3.getBoundingClientRect();
+      const footerText = document.querySelector('footer button')?.textContent?.trim() || '';
+      const current = document.querySelectorAll('.row.current');
       return {
-        collapseClear: collapse.top >= header.top && collapse.right <= header.right && collapse.bottom <= header.bottom && collapse.bottom <= level1.top,
-        hierarchyClear: level1.left < level2.left && level2.left < level3.left
-          && webBranch.backgroundColor !== accountBranch.backgroundColor
-          && webBranch.borderLeftColor !== accountBranch.borderLeftColor,
+        collapseClear: collapse.top >= header.top && collapse.right <= header.right && collapse.bottom <= header.bottom && collapse.bottom <= level1Box.top,
+        hierarchyClear: Math.abs(level1Box.left - level2Box.left) <= 1
+          && Math.abs(level1Label.left - level2Label.left) <= 1
+          && Math.abs(level3Box.left - level2Label.left) <= 1
+          && footerText.length > 0
+          && current.length === 1
+          && current[0].querySelector('.label')?.textContent === 'smoke-user'
+          && !document.querySelector('.web-branch'),
       };
     })()`) as { collapseClear: boolean; hierarchyClear: boolean };
     const snapshot = await waitForDesktopWindowSnapshot(immersiveNavigationWindow!);

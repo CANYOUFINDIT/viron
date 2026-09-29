@@ -112,7 +112,7 @@ describe("environment immersive navigation geometry", () => {
     expect(webNavigation).toContain('class="immersive-navigation-surface"');
     expect(webNavigation).toContain("clip-path: inset(0 round 15px 0 0 15px)");
     expect(desktopNavigation).toContain('element("div", "panel-surface")');
-    expect(desktopNavigation).toContain("box-shadow: inset 0 0 0 1px #d7dfe0");
+    expect(desktopNavigation).toContain("box-shadow: inset 0 0 0 1px var(--nav-edge)");
   });
 
   it("keeps desktop navigation in the main content layer without covering the tree", () => {
@@ -124,8 +124,9 @@ describe("environment immersive navigation geometry", () => {
     expect(desktopHost).not.toContain("new BrowserWindow");
     expect(desktopHost).not.toContain("overlay.focus()");
     expect(desktopNavigation).toContain("header.append(heading, collapse)");
-    expect(desktopNavigation).toContain(".web-branch { margin:");
-    expect(desktopNavigation).toContain(".account-branch { margin:");
+    expect(desktopNavigation).toContain(".limb-kids .row.level-3");
+    expect(desktopNavigation).not.toContain(".web-branch");
+    expect(desktopNavigation).not.toContain("border-left: 1px solid");
   });
 
   it("expands the edge handle from a click instead of a hover timer", () => {

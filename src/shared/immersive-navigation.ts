@@ -14,6 +14,7 @@ export interface ImmersiveNavigationCredential {
 export interface ImmersiveNavigationEntry {
   id: string;
   name: string;
+  faviconDataUrl?: string | null;
   credentialCount: number;
   credentials: ImmersiveNavigationCredential[] | null;
   loading: boolean;
