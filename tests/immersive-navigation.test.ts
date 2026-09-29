@@ -115,6 +115,19 @@ describe("environment immersive navigation geometry", () => {
     expect(desktopNavigation).toContain("box-shadow: inset 0 0 0 1px #d7dfe0");
   });
 
+  it("keeps desktop navigation in the main content layer without covering the tree", () => {
+    const desktopHost = readFileSync(new URL("../src/desktop/overlays/immersive-navigation-window.ts", import.meta.url), "utf8");
+    const desktopNavigation = readFileSync(new URL("../public/desktop-immersive-navigation.html", import.meta.url), "utf8");
+
+    expect(desktopHost).toContain("new WebContentsView");
+    expect(desktopHost).toContain("mainWindow.contentView.addChildView(overlay)");
+    expect(desktopHost).not.toContain("new BrowserWindow");
+    expect(desktopHost).not.toContain("overlay.focus()");
+    expect(desktopNavigation).toContain("header.append(heading, collapse)");
+    expect(desktopNavigation).toContain(".web-branch { margin:");
+    expect(desktopNavigation).toContain(".account-branch { margin:");
+  });
+
   it("accepts an expansion observed by the final in-deadline smoke poll", () => {
     const desktopSmoke = readFileSync(new URL("../src/desktop/smoke/static-overlay-smoke.ts", import.meta.url), "utf8");
 

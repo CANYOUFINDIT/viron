@@ -189,7 +189,6 @@ export function registerDesktopCoreIpc(desktopUpdater: DesktopUpdater): void {
     } else {
       applyImmersiveNavigationActionPreview(action);
       sendImmersiveNavigationAction(action);
-      if (["collapse", "select-tab", "select-credential", "exit"].includes(action.type)) mainWindow?.focus();
     }
   });
   ipcMain.handle("viron:agent-chat:native-overlay", async (event, active: unknown) => {

@@ -90,7 +90,7 @@ import {
   updateConnectionQualityWindow,
 } from "./overlays/connection-quality-window.js";
 import {
-  immersiveNavigationWindow,
+  closeImmersiveNavigationWindow,
   layoutImmersiveNavigationWindow,
   updateImmersiveNavigationWindow,
 } from "./overlays/immersive-navigation-window.js";
@@ -462,7 +462,7 @@ async function createWindow(): Promise<void> {
     closeAllDomOverlayWindows();
     void closeAllDesktopWebViews();
     void updateImmersiveNavigationWindow(null);
-    immersiveNavigationWindow?.close();
+    closeImmersiveNavigationWindow();
     void updateAgentChatHost(null);
     void setAgentChatNativeOverlay(false);
     void updateAgentLauncherWindow(null);
@@ -560,7 +560,10 @@ async function createWindow(): Promise<void> {
       const localLogsPassed = localLogs === null || (localLogs.opened && localLogs.outputReceived && localLogs.stopped);
       const localDatabasePassed = localDatabase === null || (localDatabase.tested && localDatabase.queried && localDatabase.cancelled);
       const localInspectionPassed = localInspection === null || (localInspection.total === 2 && localInspection.available === 2 && localInspection.sshAvailable && localInspection.databaseAvailable && localInspection.credentialsHidden);
-      const immersiveNavigationPassed = immersiveNavigation.immediateExpand && immersiveNavigation.rendered && immersiveNavigation.snapshot && immersiveNavigation.webViewStayedVisible && immersiveNavigation.snappedTop && immersiveNavigation.hidden;
+      const immersiveNavigationPassed = immersiveNavigation.immediateExpand && immersiveNavigation.sameWindowLayer
+        && immersiveNavigation.passiveFirstClick && immersiveNavigation.rendered && immersiveNavigation.collapseClear
+        && immersiveNavigation.hierarchyClear && immersiveNavigation.snapshot && immersiveNavigation.webViewStayedVisible
+        && immersiveNavigation.snappedTop && immersiveNavigation.hidden;
       const agentLauncherPassed = agentLauncher.rendered && agentLauncher.exactButtonSize && agentLauncher.glowClearance && agentLauncher.compactInteraction
         && agentLauncher.nonFocusable && agentLauncher.passivePointerStable
         && agentLauncher.snapshot && agentLauncher.webViewStayedVisible && agentLauncher.actionDelivered

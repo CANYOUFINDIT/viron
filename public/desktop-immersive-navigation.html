@@ -10,8 +10,7 @@
     * { box-sizing: border-box; }
     html, body, #app { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; }
     button { font: inherit; }
-    .handle, .collapse { padding: 0; border: 0; background: #5d9ad6; color: white; display: grid; place-items: center; cursor: pointer; box-shadow: 0 5px 14px rgba(18,67,112,.28); }
-    .handle { width: 100%; height: 100%; touch-action: none; }
+    .handle { width: 100%; height: 100%; padding: 0; border: 0; background: #5d9ad6; color: white; display: grid; place-items: center; cursor: pointer; touch-action: none; box-shadow: 0 5px 14px rgba(18,67,112,.28); }
     body[data-edge="left"] .handle { border-radius: 0 11px 11px 0; }
     body[data-edge="right"] .handle { border-radius: 11px 0 0 11px; }
     body[data-edge="top"] .handle { border-radius: 0 0 11px 11px; }
@@ -24,36 +23,40 @@
     body[data-edge="left"] .panel-surface { border-radius: 0 15px 15px 0; clip-path: inset(0 round 0 15px 15px 0); }
     body[data-edge="right"] .panel-surface { border-radius: 15px 0 0 15px; clip-path: inset(0 round 15px 0 0 15px); }
     body[data-edge="top"] .panel-surface { border-radius: 0 0 15px 15px; clip-path: inset(0 round 0 0 15px 15px); }
-    .collapse { position: absolute; z-index: 3; width: 28px; height: 42px; }
-    body[data-edge="left"] .collapse { right: 0; top: 32px; border-radius: 9px 0 0 9px; }
-    body[data-edge="right"] .collapse { left: 0; top: 32px; border-radius: 0 9px 9px 0; }
-    body[data-edge="top"] .collapse { left: 32px; bottom: 0; width: 42px; height: 28px; border-radius: 9px 9px 0 0; }
+    .collapse { width: 32px; height: 32px; padding: 0; border: 1px solid #d7dfe0; border-radius: 9px; background: rgba(255,255,255,.82); color: #52656b; display: grid; place-items: center; cursor: pointer; box-shadow: 0 3px 10px rgba(10,31,35,.08); }
+    .collapse:hover { border-color: #9acfc2; background: white; color: #126f60; }
     body[data-edge="left"] .collapse .chevron { transform: rotate(-135deg); }
     body[data-edge="right"] .collapse .chevron { transform: rotate(45deg); }
     body[data-edge="top"] .collapse .chevron { transform: rotate(-45deg); }
-    header { min-height: 72px; padding: 17px 18px 14px; border-bottom: 1px solid #e8edee; background: linear-gradient(135deg, #edf8f4, white); }
-    header span, header strong { display: block; }
-    header span { color: #18806d; font-family: "SFMono-Regular", Consolas, monospace; font-size: 9px; font-weight: 800; letter-spacing: .16em; }
-    header strong { margin-top: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
-    nav { min-height: 0; padding: 10px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #d7dfe0 transparent; }
-    .row { width: 100%; min-width: 0; min-height: 36px; padding: 0 9px; border: 0; border-radius: 7px; background: transparent; color: #52656b; display: grid; grid-template-columns: 18px minmax(0,1fr) auto auto; align-items: center; gap: 7px; text-align: left; cursor: pointer; }
+    header { min-height: 76px; padding: 13px 14px 13px 17px; border-bottom: 1px solid #e8edee; background: linear-gradient(135deg, #edf8f4, white); display: grid; grid-template-columns: minmax(0,1fr) 32px; align-items: center; gap: 12px; }
+    .heading { min-width: 0; }
+    .heading span, .heading strong { display: block; }
+    .heading span { color: #18806d; font-family: "SFMono-Regular", Consolas, monospace; font-size: 9px; font-weight: 800; letter-spacing: .16em; }
+    .heading strong { margin-top: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
+    nav { min-height: 0; padding: 10px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #d7dfe0 transparent; display: flex; flex-direction: column; gap: 2px; }
+    .row { width: 100%; min-width: 0; min-height: 36px; padding: 0 9px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: #52656b; display: grid; grid-template-columns: 18px minmax(0,1fr) auto auto; align-items: center; gap: 7px; text-align: left; cursor: pointer; }
     .row:hover { background: #f3f6f5; color: #1c2c31; }
-    .row.active { background: #edf8f4; color: #126f60; }
+    .row.active { border-color: #cce7df; background: #edf8f4; color: #126f60; }
+    .row.level-1 { min-height: 40px; grid-template-columns: 24px minmax(0,1fr) auto auto; }
     .row .icon { width: 18px; text-align: center; font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; font-weight: 800; }
+    .row.level-1 .icon { width: 24px; height: 24px; border-radius: 7px; background: #e8edee; color: #65777c; display: grid; place-items: center; }
+    .row.level-1.active .icon { background: #d9f0e9; color: #126f60; }
     .row .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 700; }
     .row small { min-width: 20px; height: 19px; padding: 0 5px; border-radius: 10px; background: #e8edee; color: #73858a; display: grid; place-items: center; white-space: nowrap; font-size: 10px; }
     .row small.planned { width: auto; background: #ffedc8; color: #b46b0d; }
     .twisty { width: 7px; height: 7px; margin-right: 2px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg); transition: transform .16s ease; }
     .twisty.closed { transform: rotate(-45deg); }
     .branch { position: relative; }
-    .web-branch::before, .account-branch::before { content: ""; position: absolute; top: 0; bottom: 4px; width: 1px; background: #e8edee; }
-    .web-branch::before { left: 18px; }
-    .account-branch::before { left: 31px; }
-    .row.level-2 { padding-left: 14px; grid-template-columns: 12px minmax(0,1fr) auto auto; }
-    .row.level-2 .icon { width: 6px; height: 6px; margin-left: 1px; border: 1px solid #219780; border-radius: 50%; background: white; font-size: 0; }
-    .row.level-3 { min-height: 32px; padding-left: 28px; grid-template-columns: 15px minmax(0,1fr); }
+    .web-branch { margin: 1px 2px 7px 8px; padding: 4px 4px 4px 11px; border-left: 1px solid #63b7a4; border-radius: 0 9px 9px 0; background: rgba(237,248,244,.58); }
+    .row.level-2 { min-height: 36px; padding: 0 7px; grid-template-columns: 12px minmax(0,1fr) auto auto; }
+    .row.level-2 .icon { width: 7px; height: 7px; margin-left: 1px; border: 1.5px solid #219780; border-radius: 2px; background: white; font-size: 0; transform: rotate(45deg); }
+    .account-branch { margin: 2px 1px 4px 10px; padding: 3px 3px 3px 9px; border-left: 1px solid #bdc9cb; background: rgba(255,255,255,.62); }
+    .row.level-3 { min-height: 32px; padding: 0 7px; grid-template-columns: 15px minmax(0,1fr); border-radius: 6px; }
+    .row.level-3 .icon { color: #8b9b9f; }
     .row.level-3 .label { font-size: 11px; font-weight: 650; }
-    .empty { min-height: 31px; padding: 7px 10px 7px 43px; color: #9aa8ac; display: flex; align-items: center; font-size: 10px; }
+    .row.level-3.active { border-color: #b9ddd4; background: white; box-shadow: 0 2px 7px rgba(12,61,55,.07); }
+    .row.level-3.active .icon { color: #18806d; }
+    .empty { min-height: 31px; padding: 7px 10px 7px 23px; color: #9aa8ac; display: flex; align-items: center; font-size: 10px; }
     footer { padding: 10px; border-top: 1px solid #e8edee; }
     footer button { width: 100%; height: 34px; padding: 0 10px; border: 1px solid #e8edee; border-radius: 7px; background: white; color: #73858a; cursor: pointer; font-size: 11px; font-weight: 700; }
     footer button:hover { border-color: #f8dedb; background: #f8dedb; color: #b7473f; }
@@ -61,13 +64,19 @@
     body[data-theme="dark"] .panel { color: #e7ecea; }
     body[data-theme="dark"] .panel-surface { background: rgba(21,33,36,.98); box-shadow: inset 0 0 0 1px #344844; }
     body[data-theme="dark"] header { border-color: #263936; background: linear-gradient(135deg, #14312d, #152124); }
+    body[data-theme="dark"] .collapse { border-color: #344844; background: #1b2a2d; color: #a2b3af; }
+    body[data-theme="dark"] .collapse:hover { border-color: #3c7469; background: #203236; color: #68cfad; }
     body[data-theme="dark"] nav { scrollbar-color: #344844 transparent; }
     body[data-theme="dark"] .row { color: #a2b3af; }
     body[data-theme="dark"] .row:hover { background: #1a2a2c; color: #e7ecea; }
-    body[data-theme="dark"] .row.active { background: #14312d; color: #68cfad; }
+    body[data-theme="dark"] .row.active { border-color: #285149; background: #14312d; color: #68cfad; }
+    body[data-theme="dark"] .row.level-1 .icon { background: #263936; color: #a2b3af; }
+    body[data-theme="dark"] .row.level-1.active .icon { background: #21433c; color: #68cfad; }
     body[data-theme="dark"] .row small { background: #263936; color: #849792; }
-    body[data-theme="dark"] .web-branch::before, body[data-theme="dark"] .account-branch::before { background: #263936; }
+    body[data-theme="dark"] .web-branch { border-left-color: #3c7469; background: rgba(20,49,45,.46); }
+    body[data-theme="dark"] .account-branch { border-left-color: #405551; background: rgba(21,33,36,.58); }
     body[data-theme="dark"] .row.level-2 .icon, body[data-theme="dark"] footer button { background: #152124; }
+    body[data-theme="dark"] .row.level-3.active { border-color: #285149; background: #1b2a2d; }
     body[data-theme="dark"] footer { border-color: #263936; }
     body[data-theme="dark"] footer button { border-color: #263936; color: #849792; }
   </style>
@@ -209,7 +218,9 @@
       const collapse = button("collapse", { type: "collapse" }, copy("收起环境导航", "Collapse environment navigation"));
       collapse.append(chevron());
       const header = element("header");
-      header.append(element("span", "", "IMMERSIVE WORKSPACE"), element("strong", "", state.environmentName));
+      const heading = element("div", "heading");
+      heading.append(element("span", "", "IMMERSIVE WORKSPACE"), element("strong", "", state.environmentName));
+      header.append(heading, collapse);
       const nav = element("nav");
       nav.append(treeRow({ icon: "◎", label: copy("Web 入口", "Web Entries"), count: state.counts.web, active: state.activeTab === "web", twisty: state.webExpanded, action: { type: "toggle-web" } }));
       if (state.webExpanded) {
@@ -241,7 +252,7 @@
       footer.append(button("", { type: "exit" }, copy("退出沉浸模式", "Exit immersive mode")));
       const surface = element("div", "panel-surface");
       surface.append(header, nav, footer);
-      panel.append(collapse, surface);
+      panel.append(surface);
       app.append(panel);
     }
 

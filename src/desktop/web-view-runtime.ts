@@ -52,6 +52,7 @@ import { sendToAgentChat } from "./overlays/agent-chat-window.js";
 import { raiseSidebarOverlays } from "./overlays/sidebar-overlay-view.js";
 import {
   immersiveNavigationState,
+  raiseImmersiveNavigationWindow,
   sendImmersiveNavigationAction,
 } from "./overlays/immersive-navigation-window.js";
 import {
@@ -235,6 +236,7 @@ export function layoutDesktopWebViewPages(view: ManagedDesktopWebView, focus = f
   }
   if (focus && view.visible && !activeDesktopWebPage(view).certificateError) activeDesktopWebPage(view).view.webContents.focus();
   raiseSidebarOverlays();
+  raiseImmersiveNavigationWindow();
 }
 
 export function activateDesktopWebPage(view: ManagedDesktopWebView, pageId: string): void {

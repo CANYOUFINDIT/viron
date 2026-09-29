@@ -321,15 +321,17 @@ watch(expanded, (value) => { if (value && !props.native) void focusPanel(); });
       </button>
 
       <section v-else ref="panel" class="immersive-navigation-panel" tabindex="-1" :aria-label="$t('环境沉浸导航')">
-        <button class="immersive-panel-collapse" type="button" :aria-label="$t('收起环境导航')" @click="collapse">
-          <ChevronLeft v-if="dock.edge === 'left'" :size="19" />
-          <ChevronRight v-else-if="dock.edge === 'right'" :size="19" />
-          <ChevronUp v-else :size="19" />
-        </button>
         <div class="immersive-navigation-surface">
           <header>
-            <span>IMMERSIVE WORKSPACE</span>
-            <strong>{{ environmentName }}</strong>
+            <div class="immersive-navigation-heading">
+              <span>IMMERSIVE WORKSPACE</span>
+              <strong>{{ environmentName }}</strong>
+            </div>
+            <button class="immersive-panel-collapse" type="button" :aria-label="$t('收起环境导航')" :title="$t('收起环境导航')" @click="collapse">
+              <ChevronLeft v-if="dock.edge === 'left'" :size="18" />
+              <ChevronRight v-else-if="dock.edge === 'right'" :size="18" />
+              <ChevronUp v-else :size="18" />
+            </button>
           </header>
 
           <nav class="immersive-navigation-tree">
@@ -377,8 +379,7 @@ watch(expanded, (value) => { if (value && !props.native) void focusPanel(); });
 <style scoped>
 .environment-immersive-navigation { position: fixed; z-index: 120; color: var(--ink-900); transition: left .22s cubic-bezier(.22, 1, .36, 1), top .22s cubic-bezier(.22, 1, .36, 1), width .22s cubic-bezier(.22, 1, .36, 1), height .22s cubic-bezier(.22, 1, .36, 1); }
 .environment-immersive-navigation.is-dragging { transition: none; }
-.immersive-edge-handle, .immersive-panel-collapse { padding: 0; border: 0; background: #5d9ad6; color: white; display: grid; place-items: center; cursor: pointer; box-shadow: 0 5px 14px rgba(18, 67, 112, .28); }
-.immersive-edge-handle { width: 100%; height: 100%; touch-action: none; }
+.immersive-edge-handle { width: 100%; height: 100%; padding: 0; border: 0; background: #5d9ad6; color: white; display: grid; place-items: center; cursor: pointer; touch-action: none; box-shadow: 0 5px 14px rgba(18, 67, 112, .28); }
 .is-left .immersive-edge-handle { border-radius: 0 11px 11px 0; }
 .is-right .immersive-edge-handle { border-radius: 11px 0 0 11px; }
 .is-top .immersive-edge-handle { border-radius: 0 0 11px 11px; }
@@ -387,32 +388,36 @@ watch(expanded, (value) => { if (value && !props.native) void focusPanel(); });
 .is-left .immersive-navigation-surface { border-radius: 0 15px 15px 0; clip-path: inset(0 round 0 15px 15px 0); }
 .is-right .immersive-navigation-surface { border-radius: 15px 0 0 15px; clip-path: inset(0 round 15px 0 0 15px); }
 .is-top .immersive-navigation-surface { border-radius: 0 0 15px 15px; clip-path: inset(0 round 0 0 15px 15px); }
-.immersive-panel-collapse { position: absolute; z-index: 2; width: 28px; height: 42px; }
-.is-left .immersive-panel-collapse { right: -28px; top: 32px; border-radius: 0 9px 9px 0; }
-.is-right .immersive-panel-collapse { left: -28px; top: 32px; border-radius: 9px 0 0 9px; }
-.is-top .immersive-panel-collapse { left: 32px; bottom: -28px; width: 42px; height: 28px; border-radius: 0 0 9px 9px; }
-.immersive-navigation-surface > header { min-height: 72px; padding: 17px 18px 14px; border-bottom: 1px solid var(--ink-100); background: linear-gradient(135deg, color-mix(in srgb, var(--teal-50) 74%, var(--surface)), var(--surface)); }
-.immersive-navigation-surface > header span, .immersive-navigation-surface > header strong { display: block; }
-.immersive-navigation-surface > header span { color: var(--teal-600); font-family: var(--font-mono); font-size: 9px; font-weight: 800; letter-spacing: .16em; }
-.immersive-navigation-surface > header strong { margin-top: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
-.immersive-navigation-tree { min-height: 0; padding: 10px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--ink-200) transparent; }
-.immersive-tree-row { width: 100%; min-width: 0; min-height: 36px; padding: 0 9px; border: 0; border-radius: 7px; background: transparent; color: var(--ink-600); display: grid; grid-template-columns: 18px minmax(0, 1fr) auto auto; align-items: center; gap: 7px; text-align: left; cursor: pointer; }
-.immersive-tree-row:hover { background: var(--ink-50); color: var(--ink-800); }
-.immersive-tree-row.is-active { background: var(--teal-50); color: var(--teal-700); }
+.immersive-navigation-surface > header { min-height: 76px; padding: 13px 14px 13px 17px; border-bottom: 1px solid var(--ink-100); background: linear-gradient(135deg, color-mix(in srgb, var(--teal-50) 78%, var(--surface)), var(--surface)); display: grid; grid-template-columns: minmax(0, 1fr) 32px; align-items: center; gap: 12px; }
+.immersive-navigation-heading { min-width: 0; }
+.immersive-navigation-heading span, .immersive-navigation-heading strong { display: block; }
+.immersive-navigation-heading span { color: var(--teal-600); font-family: var(--font-mono); font-size: 9px; font-weight: 800; letter-spacing: .16em; }
+.immersive-navigation-heading strong { margin-top: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
+.immersive-panel-collapse { width: 32px; height: 32px; padding: 0; border: 1px solid color-mix(in srgb, var(--ink-200) 88%, transparent); border-radius: 9px; background: color-mix(in srgb, var(--surface) 82%, transparent); color: var(--ink-600); display: grid; place-items: center; cursor: pointer; box-shadow: 0 3px 10px rgba(10, 31, 35, .08); }
+.immersive-panel-collapse:hover { border-color: color-mix(in srgb, var(--teal-500) 42%, var(--ink-200)); background: var(--surface); color: var(--teal-700); }
+.immersive-navigation-tree { min-height: 0; padding: 10px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--ink-200) transparent; display: flex; flex-direction: column; gap: 2px; }
+.immersive-tree-row { width: 100%; min-width: 0; min-height: 36px; padding: 0 9px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--ink-600); display: grid; grid-template-columns: 18px minmax(0, 1fr) auto auto; align-items: center; gap: 7px; text-align: left; cursor: pointer; }
+.immersive-tree-row:hover { background: color-mix(in srgb, var(--ink-50) 84%, transparent); color: var(--ink-800); }
+.immersive-tree-row.is-active { border-color: color-mix(in srgb, var(--teal-200) 56%, transparent); background: var(--teal-50); color: var(--teal-700); }
+.immersive-tree-row.is-level-1 { min-height: 40px; grid-template-columns: 24px minmax(0, 1fr) auto auto; }
+.immersive-tree-row.is-level-1 > svg:first-child { width: 24px; height: 24px; padding: 5px; border-radius: 7px; background: color-mix(in srgb, var(--ink-100) 78%, transparent); color: var(--ink-500); }
+.immersive-tree-row.is-level-1.is-active > svg:first-child { background: color-mix(in srgb, var(--teal-100) 82%, transparent); color: var(--teal-700); }
 .immersive-tree-row span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 700; }
 .immersive-tree-row small { min-width: 20px; height: 19px; padding: 0 5px; border-radius: 10px; background: var(--ink-100); color: var(--ink-500); display: grid; place-items: center; font-size: 10px; }
 .immersive-tree-row small.maintenance-count { width: auto; white-space: nowrap; }
 .immersive-tree-row > svg:last-child { transition: transform .16s ease; }
 .immersive-tree-row > svg:last-child.is-collapsed { transform: rotate(-90deg); }
 .immersive-tree-branch { position: relative; }
-.is-web-branch::before, .is-account-branch::before { content: ""; position: absolute; top: 0; bottom: 4px; width: 1px; background: var(--ink-100); }
-.is-web-branch::before { left: 18px; }
-.is-account-branch::before { left: 31px; }
-.immersive-tree-row.is-level-2 { padding-left: 14px; grid-template-columns: 12px minmax(0, 1fr) auto auto; }
-.immersive-tree-dot { width: 6px; height: 6px; margin-left: 1px; border: 1px solid var(--teal-500); border-radius: 50%; background: var(--surface); }
-.immersive-tree-row.is-level-3 { min-height: 32px; padding-left: 28px; grid-template-columns: 15px minmax(0, 1fr); }
+.is-web-branch { margin: 1px 2px 7px 8px; padding: 4px 4px 4px 11px; border-left: 1px solid color-mix(in srgb, var(--teal-400) 55%, var(--ink-200)); border-radius: 0 9px 9px 0; background: color-mix(in srgb, var(--teal-50) 35%, transparent); }
+.immersive-tree-row.is-level-2 { min-height: 36px; padding: 0 7px; grid-template-columns: 12px minmax(0, 1fr) auto auto; }
+.immersive-tree-row.is-level-2 .immersive-tree-dot { width: 7px; height: 7px; margin-left: 1px; border: 1.5px solid var(--teal-500); border-radius: 2px; background: var(--surface); transform: rotate(45deg); }
+.is-account-branch { margin: 2px 1px 4px 10px; padding: 3px 3px 3px 9px; border-left: 1px solid color-mix(in srgb, var(--ink-300) 72%, transparent); background: color-mix(in srgb, var(--surface) 58%, transparent); }
+.immersive-tree-row.is-level-3 { min-height: 32px; padding: 0 7px; grid-template-columns: 15px minmax(0, 1fr); border-radius: 6px; }
+.immersive-tree-row.is-level-3 > svg { color: var(--ink-400); }
 .immersive-tree-row.is-level-3 span { font-size: 11px; font-weight: 650; }
-.immersive-tree-empty { min-height: 31px; padding: 7px 10px 7px 43px; color: var(--ink-400); display: flex; align-items: center; font-size: 10px; }
+.immersive-tree-row.is-level-3.is-active { border-color: color-mix(in srgb, var(--teal-200) 64%, transparent); background: var(--surface); box-shadow: 0 2px 7px rgba(12, 61, 55, .07); }
+.immersive-tree-row.is-level-3.is-active > svg { color: var(--teal-600); }
+.immersive-tree-empty { min-height: 31px; padding: 7px 10px 7px 23px; color: var(--ink-400); display: flex; align-items: center; font-size: 10px; }
 .immersive-navigation-surface > footer { padding: 10px; border-top: 1px solid var(--ink-100); }
 .immersive-navigation-surface > footer button { width: 100%; height: 34px; padding: 0 10px; border: 1px solid var(--ink-100); border-radius: 7px; background: var(--surface); color: var(--ink-500); display: flex; align-items: center; justify-content: center; gap: 7px; cursor: pointer; font-size: 11px; font-weight: 700; }
 .immersive-navigation-surface > footer button:hover { border-color: var(--red-100); background: var(--red-100); color: var(--red-600); }

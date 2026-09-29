@@ -31,7 +31,7 @@ import {
   updateConnectionQualityWindow,
 } from "../overlays/connection-quality-window.js";
 
-export async function waitForDesktopWindowSnapshot(window: BrowserWindow, timeoutMs = 5_000): Promise<boolean> {
+export async function waitForDesktopWindowSnapshot(window: BrowserWindow | WebContentsView, timeoutMs = 5_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
@@ -47,7 +47,11 @@ export async function waitForDesktopWindowSnapshot(window: BrowserWindow, timeou
 export async function runDesktopImmersiveNavigationSmoke(): Promise<{
   immediateExpand: boolean;
   expandLatencyMs: number;
+  sameWindowLayer: boolean;
+  passiveFirstClick: boolean;
   rendered: boolean;
+  collapseClear: boolean;
+  hierarchyClear: boolean;
   snapshot: boolean;
   webViewStayedVisible: boolean;
   snappedTop: boolean;
@@ -82,8 +86,16 @@ export async function runDesktopImmersiveNavigationSmoke(): Promise<{
   };
   try {
     await updateImmersiveNavigationWindow(base);
+    testView.webContents.focus();
+    const webFocusedBefore = testView.webContents.isFocused();
+    const sameWindowLayer = BrowserWindow.fromWebContents(immersiveNavigationWindow!.webContents) === mainWindow;
+    const handlePoint = await immersiveNavigationWindow!.webContents.executeJavaScript(`(() => {
+      const rect = document.querySelector('.handle').getBoundingClientRect();
+      return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+    })()`) as { x: number; y: number };
     const expandStartedAt = Date.now();
-    await immersiveNavigationWindow!.webContents.executeJavaScript("document.querySelector('.handle')?.click()");
+    immersiveNavigationWindow!.webContents.sendInputEvent({ type: "mouseDown", button: "left", clickCount: 1, ...handlePoint });
+    immersiveNavigationWindow!.webContents.sendInputEvent({ type: "mouseUp", button: "left", clickCount: 1, ...handlePoint });
     const expandDeadline = expandStartedAt + 250;
     let expandedInTime = Boolean(immersiveNavigationState?.expanded);
     while (!expandedInTime && Date.now() < expandDeadline) {
@@ -96,6 +108,7 @@ export async function runDesktopImmersiveNavigationSmoke(): Promise<{
       expandedInTime
       && expandedBounds.width === immersiveNavigationSize(base.dock, true, immersiveNavigationViewport()).width
     );
+    const passiveFirstClick = sameWindowLayer && webFocusedBefore && immediateExpand;
     const rendered = await immersiveNavigationWindow!.webContents.executeJavaScript(`new Promise((resolve, reject) => {
       const deadline = Date.now() + 5000;
       const inspect = () => {
@@ -105,13 +118,39 @@ export async function runDesktopImmersiveNavigationSmoke(): Promise<{
       };
       inspect();
     })`) as boolean;
+    const visualHierarchy = await immersiveNavigationWindow!.webContents.executeJavaScript(`(() => {
+      const header = document.querySelector('header').getBoundingClientRect();
+      const collapse = document.querySelector('.collapse').getBoundingClientRect();
+      const level1 = document.querySelector('.row.level-1').getBoundingClientRect();
+      const level2 = document.querySelector('.row.level-2').getBoundingClientRect();
+      const level3 = document.querySelector('.row.level-3').getBoundingClientRect();
+      const webBranch = getComputedStyle(document.querySelector('.web-branch'));
+      const accountBranch = getComputedStyle(document.querySelector('.account-branch'));
+      return {
+        collapseClear: collapse.top >= header.top && collapse.right <= header.right && collapse.bottom <= header.bottom && collapse.bottom <= level1.top,
+        hierarchyClear: level1.left < level2.left && level2.left < level3.left
+          && webBranch.backgroundColor !== accountBranch.backgroundColor
+          && webBranch.borderLeftColor !== accountBranch.borderLeftColor,
+      };
+    })()`) as { collapseClear: boolean; hierarchyClear: boolean };
     const snapshot = await waitForDesktopWindowSnapshot(immersiveNavigationWindow!);
     const webViewStayedVisible = testView.getVisible() && !testView.webContents.isDestroyed();
     await updateImmersiveNavigationWindow({ ...base, dock: { edge: "top", offset: 0.5 } });
     const topBounds = immersiveNavigationWindow!.getBounds();
     const snappedTop = topBounds.y === immersiveNavigationViewport().y && topBounds.width === 48 && topBounds.height === 34;
     await updateImmersiveNavigationWindow(null);
-    return { immediateExpand, expandLatencyMs, rendered, snapshot, webViewStayedVisible, snappedTop, hidden: !immersiveNavigationWindow!.isVisible() };
+    return {
+      immediateExpand,
+      expandLatencyMs,
+      sameWindowLayer,
+      passiveFirstClick,
+      rendered,
+      ...visualHierarchy,
+      snapshot,
+      webViewStayedVisible,
+      snappedTop,
+      hidden: !immersiveNavigationWindow!.getVisible(),
+    };
   } finally {
     mainWindow.contentView.removeChildView(testView);
     if (!testView.webContents.isDestroyed()) testView.webContents.close();
