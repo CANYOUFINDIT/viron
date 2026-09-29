@@ -137,6 +137,10 @@ describe("environment immersive navigation geometry", () => {
     expect(desktopNavigation).not.toContain("hoverOpenTimer");
     expect(webNavigation).toContain("else open();");
     expect(desktopNavigation).toContain('else api.action({ type: "toggle" });');
+    expect(webNavigation).toContain("background: var(--teal-600)");
+    expect(webNavigation).not.toContain("#5d9ad6");
+    expect(desktopNavigation).toContain("background: #18806d");
+    expect(desktopNavigation).not.toContain("#5d9ad6");
   });
 
   it("accepts an expansion observed by the final in-deadline smoke poll", () => {

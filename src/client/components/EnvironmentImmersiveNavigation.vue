@@ -363,7 +363,13 @@ watch(expanded, (value) => { if (value && !props.native) void focusPanel(); });
 <style scoped>
 .environment-immersive-navigation { position: fixed; z-index: 120; color: var(--ink-900); transition: left .22s cubic-bezier(.22, 1, .36, 1), top .22s cubic-bezier(.22, 1, .36, 1), width .22s cubic-bezier(.22, 1, .36, 1), height .22s cubic-bezier(.22, 1, .36, 1); }
 .environment-immersive-navigation.is-dragging { transition: none; }
-.immersive-edge-handle { width: 100%; height: 100%; padding: 0; border: 0; background: #5d9ad6; color: white; display: grid; place-items: center; cursor: pointer; touch-action: none; box-shadow: 0 5px 14px rgba(18, 67, 112, .28); }
+.immersive-edge-handle { width: 100%; height: 100%; padding: 0; border: 0; background: var(--teal-600); color: white; display: grid; place-items: center; cursor: pointer; touch-action: none; box-shadow: 0 5px 14px color-mix(in srgb, var(--teal-700) 32%, transparent); transition: background-color .12s ease; }
+.immersive-edge-handle:hover { background: var(--teal-700); }
+.immersive-edge-handle:active { background: #105f52; }
+.immersive-edge-handle:focus-visible { outline: 2px solid var(--teal-100); outline-offset: -3px; }
+:global(:root.dark) .immersive-edge-handle:hover { background: var(--teal-500); }
+:global(:root.dark) .immersive-edge-handle:active { background: var(--teal-700); }
+:global(:root.dark) .immersive-edge-handle:focus-visible { outline-color: #68cfad; }
 .is-left .immersive-edge-handle { border-radius: 0 11px 11px 0; }
 .is-right .immersive-edge-handle { border-radius: 11px 0 0 11px; }
 .is-top .immersive-edge-handle { border-radius: 0 0 11px 11px; }
@@ -405,5 +411,5 @@ watch(expanded, (value) => { if (value && !props.native) void focusPanel(); });
 .immersive-navigation-surface > footer { padding: 10px; border-top: 1px solid var(--ink-100); }
 .immersive-navigation-surface > footer button { width: 100%; height: 34px; padding: 0 10px; border: 1px solid var(--ink-100); border-radius: 7px; background: var(--surface); color: var(--ink-500); display: flex; align-items: center; justify-content: center; gap: 7px; cursor: pointer; font-size: 11px; font-weight: 700; }
 .immersive-navigation-surface > footer button:hover { border-color: var(--red-100); background: var(--red-100); color: var(--red-600); }
-@media (prefers-reduced-motion: reduce) { .environment-immersive-navigation, .immersive-tree-row > svg:last-child { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .environment-immersive-navigation, .immersive-edge-handle, .immersive-tree-row > svg:last-child { transition: none; } }
 </style>

@@ -10,7 +10,10 @@
     * { box-sizing: border-box; }
     html, body, #app { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; }
     button { font: inherit; }
-    .handle { width: 100%; height: 100%; padding: 0; border: 0; background: #5d9ad6; color: white; display: grid; place-items: center; cursor: pointer; touch-action: none; box-shadow: 0 5px 14px rgba(18,67,112,.28); }
+    .handle { width: 100%; height: 100%; padding: 0; border: 0; background: #18806d; color: white; display: grid; place-items: center; cursor: pointer; touch-action: none; box-shadow: 0 5px 14px rgba(18,111,96,.28); transition: background-color .12s ease; }
+    .handle:hover { background: #126f60; }
+    .handle:active { background: #105f52; }
+    .handle:focus-visible { outline: 2px solid #dff2ec; outline-offset: -3px; }
     body[data-edge="left"] .handle { border-radius: 0 11px 11px 0; }
     body[data-edge="right"] .handle { border-radius: 11px 0 0 11px; }
     body[data-edge="top"] .handle { border-radius: 0 0 11px 11px; }
@@ -60,7 +63,12 @@
     footer { padding: 10px; border-top: 1px solid #e8edee; }
     footer button { width: 100%; height: 34px; padding: 0 10px; border: 1px solid #e8edee; border-radius: 7px; background: white; color: #73858a; cursor: pointer; font-size: 11px; font-weight: 700; }
     footer button:hover { border-color: #f8dedb; background: #f8dedb; color: #b7473f; }
+    @media (prefers-reduced-motion: reduce) { .handle { transition: none; } }
     body[data-theme="dark"] { color-scheme: dark; }
+    body[data-theme="dark"] .handle { box-shadow: 0 5px 14px rgba(8,22,25,.35); }
+    body[data-theme="dark"] .handle:hover { background: #219780; }
+    body[data-theme="dark"] .handle:active { background: #126f60; }
+    body[data-theme="dark"] .handle:focus-visible { outline-color: #68cfad; }
     body[data-theme="dark"] .panel { color: #e7ecea; }
     body[data-theme="dark"] .panel-surface { background: rgba(21,33,36,.98); box-shadow: inset 0 0 0 1px #344844; }
     body[data-theme="dark"] header { border-color: #263936; background: linear-gradient(135deg, #14312d, #152124); }
