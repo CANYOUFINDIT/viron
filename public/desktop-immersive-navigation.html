@@ -89,14 +89,7 @@
     let state = null;
     let pointerStart = null;
     let dragging = false;
-    let hoverOpenTimer = null;
     let hoverCollapseTimer = null;
-
-    function clearHoverOpen() {
-      if (hoverOpenTimer === null) return;
-      window.clearTimeout(hoverOpenTimer);
-      hoverOpenTimer = null;
-    }
 
     function clearHoverCollapse() {
       if (hoverCollapseTimer === null) return;
@@ -104,17 +97,7 @@
       hoverCollapseTimer = null;
     }
 
-    function scheduleHoverOpen() {
-      clearHoverCollapse();
-      if (!state || state.expanded || pointerStart || hoverOpenTimer !== null) return;
-      hoverOpenTimer = window.setTimeout(() => {
-        hoverOpenTimer = null;
-        if (state && !state.expanded && !pointerStart) api.action({ type: "toggle" });
-      }, 120);
-    }
-
     function scheduleHoverCollapse() {
-      clearHoverOpen();
       if (!state?.expanded || hoverCollapseTimer !== null) return;
       hoverCollapseTimer = window.setTimeout(() => {
         hoverCollapseTimer = null;
@@ -149,15 +132,8 @@
     }
 
     function attachHandleDrag(handle) {
-      handle.addEventListener("pointerenter", (event) => {
-        if (event.pointerType === "mouse") scheduleHoverOpen();
-      });
-      handle.addEventListener("pointerleave", (event) => {
-        if (event.pointerType === "mouse") clearHoverOpen();
-      });
       handle.addEventListener("pointerdown", (event) => {
         if (event.button !== 0) return;
-        clearHoverOpen();
         pointerStart = { x: event.screenX, y: event.screenY };
         dragging = false;
         handle.setPointerCapture(event.pointerId);

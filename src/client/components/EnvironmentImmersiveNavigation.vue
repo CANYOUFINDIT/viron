@@ -58,11 +58,9 @@ const expandedEntryId = ref(props.activeTab === "web" ? props.selectedEntryId : 
 const dock = ref<ImmersiveDockPosition>(defaultImmersiveDock());
 const viewport = ref({ width: window.innerWidth, height: window.innerHeight });
 const dragPoint = ref<{ x: number; y: number } | null>(null);
-const hoverOpenDelay = 120;
 const hoverCollapseDelay = 80;
 let dragStart: { x: number; y: number } | null = null;
 let dragging = false;
-let hoverOpenTimer: number | null = null;
 let hoverCollapseTimer: number | null = null;
 let stopNativeActions: (() => void) | null = null;
 let themeObserver: MutationObserver | null = null;
@@ -122,12 +120,6 @@ function collapse() {
   expanded.value = false;
 }
 
-function clearHoverOpen() {
-  if (hoverOpenTimer === null) return;
-  window.clearTimeout(hoverOpenTimer);
-  hoverOpenTimer = null;
-}
-
 function clearHoverCollapse() {
   if (hoverCollapseTimer === null) return;
   window.clearTimeout(hoverCollapseTimer);
@@ -137,16 +129,10 @@ function clearHoverCollapse() {
 function onNavigationPointerEnter(event: PointerEvent) {
   if (event.pointerType !== "mouse") return;
   clearHoverCollapse();
-  if (expanded.value || dragStart || hoverOpenTimer !== null) return;
-  hoverOpenTimer = window.setTimeout(() => {
-    hoverOpenTimer = null;
-    if (!expanded.value && !dragStart) open();
-  }, hoverOpenDelay);
 }
 
 function onNavigationPointerLeave(event: PointerEvent) {
   if (event.pointerType !== "mouse") return;
-  clearHoverOpen();
   if (!expanded.value || hoverCollapseTimer !== null) return;
   hoverCollapseTimer = window.setTimeout(() => {
     hoverCollapseTimer = null;
@@ -192,7 +178,6 @@ function handleNativeAction(action: ImmersiveNavigationAction) {
 
 function onPointerDown(event: PointerEvent) {
   if (expanded.value || event.button !== 0) return;
-  clearHoverOpen();
   dragStart = { x: event.clientX, y: event.clientY };
   dragging = false;
   handle.value?.setPointerCapture(event.pointerId);
@@ -275,7 +260,6 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
-  clearHoverOpen();
   clearHoverCollapse();
   document.removeEventListener("pointerdown", onOutsidePointerDown, true);
   document.removeEventListener("keydown", onKeydown, true);

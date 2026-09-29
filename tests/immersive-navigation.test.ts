@@ -128,6 +128,17 @@ describe("environment immersive navigation geometry", () => {
     expect(desktopNavigation).toContain(".account-branch { margin:");
   });
 
+  it("expands the edge handle from a click instead of a hover timer", () => {
+    const webNavigation = readFileSync(new URL("../src/client/components/EnvironmentImmersiveNavigation.vue", import.meta.url), "utf8");
+    const desktopNavigation = readFileSync(new URL("../public/desktop-immersive-navigation.html", import.meta.url), "utf8");
+
+    expect(webNavigation).not.toContain("hoverOpen");
+    expect(desktopNavigation).not.toContain("scheduleHoverOpen");
+    expect(desktopNavigation).not.toContain("hoverOpenTimer");
+    expect(webNavigation).toContain("else open();");
+    expect(desktopNavigation).toContain('else api.action({ type: "toggle" });');
+  });
+
   it("accepts an expansion observed by the final in-deadline smoke poll", () => {
     const desktopSmoke = readFileSync(new URL("../src/desktop/smoke/static-overlay-smoke.ts", import.meta.url), "utf8");
 
