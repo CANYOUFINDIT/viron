@@ -231,8 +231,13 @@ export async function captureDesktopRendererPreview(value: unknown): Promise<str
 export function layoutDesktopWebViewPages(view: ManagedDesktopWebView, focus = false): void {
   for (const page of view.pages.values()) {
     const active = page.id === view.activePageId;
+    const visible = active && view.visible && !page.certificateError;
     if (active) page.view.setBounds(view.bounds);
-    page.view.setVisible(active && view.visible && !page.certificateError);
+    page.view.setVisible(visible);
+    // Keep the active page running while focus moves into browser chrome or
+    // an overlay. Inactive and genuinely hidden tabs retain Chromium's normal
+    // background throttling, while preview workspaces preserve their live page.
+    page.view.webContents.setBackgroundThrottling(!visible && !view.previewing);
   }
   if (focus && view.visible && !activeDesktopWebPage(view).certificateError) activeDesktopWebPage(view).view.webContents.focus();
   raiseSidebarOverlays();
@@ -411,7 +416,7 @@ export function createDesktopWebPage(
     ? { webContents: adoptedWebContents }
     : { webPreferences: desktopWebPreferences(view.partition) });
   nativeView.setBackgroundColor("#ffffff");
-  nativeView.webContents.setBackgroundThrottling(!view.previewing);
+  nativeView.webContents.setBackgroundThrottling(!view.visible && !view.previewing);
   nativeView.setBounds(view.bounds);
   nativeView.setVisible(false);
   const page: ManagedDesktopWebPage = {

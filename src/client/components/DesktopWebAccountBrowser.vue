@@ -66,7 +66,6 @@ const emit = defineEmits<{
 const surface = ref<HTMLElement | null>(null);
 const extensionsButton = ref<HTMLElement | null>(null);
 const pageMenuButton = ref<HTMLElement | null>(null);
-const extensionPageImage = ref<HTMLImageElement | null>(null);
 const state = ref<DesktopWebViewState | null>(null);
 const address = ref(props.entryUrl);
 const startError = ref("");
@@ -75,8 +74,6 @@ const starting = ref(false);
 const resetting = ref(false);
 const extensionsOpen = ref(false);
 const pageMenuOpen = ref(false);
-const extensionPageFrame = ref("");
-const extensionPageHidden = ref(false);
 const extensionsBusy = ref(false);
 const extensions = ref<DesktopWebExtensionInfo[]>([]);
 const extensionsLoading = ref(false);
@@ -116,11 +113,6 @@ let removeNativeViewPointerDownListener: (() => void) | null = null;
 let startRequestVersion = 0;
 let startPromise: Promise<void> | null = null;
 let releasePromise: Promise<void> | null = null;
-let extensionOverlayTask: Promise<void> = Promise.resolve();
-let extensionOpenRequest = 0;
-let pageMenuRequest = 0;
-let pageMenuOpening = false;
-let retainPageCover = false;
 let toolbarZoomWheel = 0;
 let toolbarZoomWheelAt = 0;
 
@@ -204,7 +196,7 @@ function syncVisibility() {
   }
   const bounds = surfaceBounds();
   const canShow = componentActive && props.active && !preloading.value && Boolean(bounds);
-  const visible = canShow && !extensionPageHidden.value;
+  const visible = canShow;
   syncNativeOverlay(visible);
   if (visible && bounds) updateNativeBounds(state.value.id, bounds);
   scheduleNativeDomOverlays();
@@ -330,49 +322,13 @@ async function openExtensions() {
   }
 }
 
-function releasePageCover() {
-  if (retainPageCover || extensionsOpen.value || pageMenuOpen.value || pageMenuOpening) return;
-  const id = state.value?.id;
-  extensionPageHidden.value = false;
-  extensionPageFrame.value = "";
-  if (id && componentActive && props.active && state.value?.id === id) {
-    void setDesktopWebViewVisible(id, true).then(applyState).catch(() => undefined);
-    syncVisibility();
-  }
-}
-
-async function coverPageForMenu(id: string, request: number) {
-  const frame = await captureDesktopWebView(id, "page").catch(() => "");
-  if (request !== pageMenuRequest || state.value?.id !== id || !componentActive || !props.active) return false;
-  const snapshot = frame || previewFrame.value;
-  if (!snapshot) return true;
-  extensionPageFrame.value = snapshot;
-  await nextTick();
-  await extensionPageImage.value?.decode().catch(() => undefined);
-  if (request !== pageMenuRequest || state.value?.id !== id || !componentActive || !props.active) return false;
-  extensionPageHidden.value = true;
-  await setDesktopWebViewVisible(id, false).then(applyState).catch(() => undefined);
-  return request === pageMenuRequest && state.value?.id === id;
-}
-
-async function togglePageMenu() {
+function togglePageMenu() {
   if (pageMenuOpen.value) {
     pageMenuOpen.value = false;
     return;
   }
-  const id = state.value?.id;
-  const request = ++pageMenuRequest;
-  pageMenuOpening = true;
   extensionsOpen.value = false;
   pageMenuOpen.value = true;
-  try {
-    if (id && !props.preview && !state.value?.closedReason && !(extensionPageHidden.value && extensionPageFrame.value)) {
-      await coverPageForMenu(id, request);
-    }
-  } finally {
-    pageMenuOpening = false;
-    if (!pageMenuOpen.value) releasePageCover();
-  }
 }
 
 function refillFromMenu() {
@@ -391,60 +347,11 @@ function toggleImmersiveFromMenu() {
 }
 
 async function toggleExtensions() {
-  const keepCover = pageMenuOpen.value;
-  pageMenuRequest += 1;
-  if (keepCover) retainPageCover = true;
-  pageMenuOpen.value = false;
-  try {
   if (extensionsOpen.value) { extensionsOpen.value = false; return; }
-  const id = state.value?.id;
-  if (!id || props.preview) return;
-  const request = ++extensionOpenRequest;
-  await extensionOverlayTask;
-  if (request !== extensionOpenRequest) return;
-  const extensionsTask = openExtensions();
-  const frame = await captureDesktopWebView(id, "page").catch(() => "");
-  if (request !== extensionOpenRequest || state.value?.id !== id || !componentActive || !props.active) return;
-  const snapshot = frame || previewFrame.value;
-  await extensionsTask;
-  if (request !== extensionOpenRequest || state.value?.id !== id) return;
-  if (!snapshot) {
-    ElMessage.warning(tr("无法获取当前网页画面，请重试打开拓展列表"));
-    return;
-  }
-  extensionPageFrame.value = snapshot;
-  await nextTick();
-  const snapshotReady = await extensionPageImage.value?.decode().then(() => true).catch(() => false);
-  if (request !== extensionOpenRequest || state.value?.id !== id || !componentActive || !props.active) {
-    extensionPageFrame.value = "";
-    return;
-  }
-  if (!snapshotReady) {
-    extensionPageFrame.value = "";
-    ElMessage.warning(tr("无法获取当前网页画面，请重试打开拓展列表"));
-    return;
-  }
-  // Let the decoded snapshot reach the renderer before hiding the native view.
-  await new Promise<void>((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())));
-  if (request !== extensionOpenRequest || state.value?.id !== id || !componentActive || !props.active) {
-    extensionPageHidden.value = false;
-    extensionPageFrame.value = "";
-    return;
-  }
-  extensionPageHidden.value = true;
-  await setDesktopWebViewVisible(id, false).then(applyState).catch(() => undefined);
-  if (request !== extensionOpenRequest || state.value?.id !== id || !componentActive || !props.active) {
-    extensionPageHidden.value = false;
-    extensionPageFrame.value = "";
-    if (state.value?.id === id && componentActive && props.active) await setDesktopWebViewVisible(id, true).then(applyState).catch(() => undefined);
-    return;
-  }
+  if (!state.value?.id || props.preview) return;
+  pageMenuOpen.value = false;
   extensionsOpen.value = true;
-  } finally {
-    const shouldRelease = retainPageCover && !extensionsOpen.value && !pageMenuOpen.value;
-    retainPageCover = false;
-    if (shouldRelease) releasePageCover();
-  }
+  await openExtensions();
 }
 
 async function changeExtension(extension: DesktopWebExtensionInfo, change: { pinned?: boolean; enabled?: boolean }) {
@@ -464,13 +371,15 @@ async function openExtensionPopup(extension: DesktopWebExtensionInfo, event: Mou
   if (!state.value) return;
   if (!extension.enabled || !extension.loaded) return ElMessage.info(tr("此拓展尚未启用"));
   if (!extension.hasPopup) return ElMessage.info(tr("此拓展没有可打开的弹窗"));
-  const target = event.currentTarget;
-  if (!(target instanceof HTMLElement)) return;
+  // Native DOM overlays adopt this button into a child renderer. Avoid an
+  // instanceof check against the host renderer's HTMLElement constructor.
+  const target = event.currentTarget as HTMLElement | null;
+  if (!target || typeof target.getBoundingClientRect !== "function") return;
   const anchor = target.classList.contains("desktop-web-pinned-extension") ? target : extensionsButton.value ?? target;
   const rect = anchor.getBoundingClientRect();
   extensionsOpen.value = false;
   try {
-    await extensionOverlayTask;
+    await nextTick();
     await openDesktopWebExtensionPopup(state.value.id, extension.installId, { right: rect.right, bottom: rect.bottom });
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : tr("打开拓展弹窗失败"));
@@ -753,7 +662,6 @@ onActivated(() => {
 onDeactivated(() => {
   componentActive = false;
   extensionsOpen.value = false;
-  extensionOpenRequest += 1;
   scheduleNativeDomOverlays();
   syncNativeOverlay(false);
   if (boundsFrame) {
@@ -778,26 +686,6 @@ watch(
   { immediate: true },
 );
 
-watch(extensionsOpen, (open) => {
-  const id = state.value?.id;
-  extensionOverlayTask = extensionOverlayTask.catch(() => undefined).then(async () => {
-    if (!open && extensionPageHidden.value && !pageMenuOpen.value && !pageMenuOpening) {
-      if (id && componentActive && props.active && state.value?.id === id) {
-        await setDesktopWebViewVisible(id, true).then(applyState).catch(() => undefined);
-      }
-      extensionPageHidden.value = false;
-      extensionPageFrame.value = "";
-      if (id && componentActive && props.active && state.value?.id === id) syncVisibility();
-    }
-  });
-}, { flush: "sync" });
-
-watch(pageMenuOpen, (open) => {
-  if (open) return;
-  pageMenuRequest += 1;
-  releasePageCover();
-});
-
 watch(
   [() => props.autoStart, () => props.preloadStart],
   ([autoStart, preloadStart]) => {
@@ -811,7 +699,6 @@ onBeforeUnmount(() => {
   closed = true;
   extensionsOpen.value = false;
   pageMenuOpen.value = false;
-  extensionOpenRequest += 1;
   syncNativeOverlay(false);
   if (boundsFrame) window.cancelAnimationFrame(boundsFrame);
   window.clearTimeout(previewTimer);
@@ -941,7 +828,6 @@ onBeforeUnmount(() => {
       </div>
     </header>
     <div ref="surface" class="web-browser-surface desktop-web-browser-surface" :class="{ 'is-preview': preview }">
-      <img v-if="extensionPageFrame" ref="extensionPageImage" class="desktop-web-extension-page-frame" :src="extensionPageFrame" alt="" aria-hidden="true" />
       <img v-if="preview && previewFrame" :src="previewFrame" :alt="$t('{0} 的页面画面', [username])" draggable="false" />
       <div v-else-if="!started || preloading" class="web-browser-loading web-browser-idle" :title="$t('双击空白处访问页面')" @pointerdown.stop @mousedown.stop @dblclick="visitPage">
         <div class="web-browser-idle__icon"><Globe2 :size="24" /></div>
@@ -995,7 +881,6 @@ onBeforeUnmount(() => {
 .web-page-menu__status svg { flex: none; margin-top: 1px; }
 .web-page-menu__status span { min-width: 0; }
 .desktop-web-browser-surface { background: #fff; }
-.desktop-web-extension-page-frame { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; object-fit: fill; pointer-events: none; }
 .desktop-web-browser-surface.is-preview { cursor: default; }
 .desktop-web-pinned-extension img { width: 16px; height: 16px; object-fit: contain; }
 .desktop-web-view-status { width: 28px; height: 28px; color: var(--ink-400); display: grid; place-items: center; }

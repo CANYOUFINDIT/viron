@@ -371,7 +371,7 @@ describe("active environment picture-in-picture", () => {
     expect(desktopWebRuntime).not.toContain("x: -16_384");
     expect(desktopWebRuntime).toContain("layoutDesktopWebViewPages");
     expect(desktopCoreIpc).toContain("if (view.previewing) view.visible = false;");
-    expect(desktopWebRuntime).toContain("setBackgroundThrottling(!view.previewing)");
+    expect(desktopWebRuntime).toContain("setBackgroundThrottling(!visible && !view.previewing)");
     expect(desktopDockSmoke).toContain("previewFrameChanged");
     expect(desktopDockSmoke).toContain("retainedPreviewPixels");
     expect(desktopDockSmoke).toContain("dragPositionDelivered");

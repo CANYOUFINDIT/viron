@@ -587,7 +587,6 @@ export function registerDesktopCoreIpc(desktopUpdater: DesktopUpdater): void {
     const view = localWebView(id);
     view.previewing = Boolean(previewing);
     if (view.previewing) view.visible = false;
-    for (const page of view.pages.values()) page.view.webContents.setBackgroundThrottling(!view.previewing);
     layoutDesktopWebViewPages(view);
     return webViewState(view);
   });
