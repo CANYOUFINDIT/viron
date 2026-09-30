@@ -2,7 +2,7 @@ import { fingerprintFiles } from "./build-fingerprint.mjs";
 import { existsSync, rmSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 
 export const root = resolve(import.meta.dirname, "..");
@@ -149,39 +149,45 @@ function stagedRuntimePackages(stage) {
   ]);
 }
 
-function stagedPackageManifest(stage, name) {
-  return join(stage, "node_modules", ...name.split("/"), "package.json");
+function resolveStagedPackage(stage, fromDirectory, name) {
+  let current = fromDirectory;
+  while (true) {
+    const candidate = join(current, "node_modules", ...name.split("/"));
+    if (existsSync(join(candidate, "package.json"))) return candidate;
+    if (current === stage) return null;
+    const parent = dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
 }
 
-async function requiredDesktopRuntimePackages(stage) {
-  const required = new Set();
+async function requiredDesktopRuntimeEntries(stage) {
+  const entries = [];
+  const seen = new Set();
   const missing = [];
-  const queue = [...stagedRuntimePackages(stage)];
+  const queue = [...stagedRuntimePackages(stage)].map((name) => ({ name, from: join(stage, "dist", "desktop") }));
   while (queue.length) {
-    const name = queue.pop();
-    if (!name || required.has(name)) continue;
-    required.add(name);
-    const manifestPath = stagedPackageManifest(stage, name);
-    if (!existsSync(manifestPath)) {
-      missing.push(name);
+    const item = queue.pop();
+    const resolved = resolveStagedPackage(stage, item.from, item.name);
+    if (!resolved) {
+      if (!missing.includes(item.name)) missing.push(item.name);
       continue;
     }
-    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-    for (const dependency of Object.keys(manifest.dependencies ?? {})) queue.push(dependency);
+    if (seen.has(resolved)) continue;
+    seen.add(resolved);
+    entries.push(`/${relative(stage, join(resolved, "package.json")).split(sep).join("/")}`);
+    const manifest = JSON.parse(await readFile(join(resolved, "package.json"), "utf8"));
+    for (const dependency of Object.keys(manifest.dependencies ?? {})) queue.push({ name: dependency, from: resolved });
   }
   if (missing.length) throw new Error(`桌面安装包缺少运行依赖：${missing.sort().join("、")}`);
-  return [...required].sort();
+  return entries;
 }
 
 export async function assertPackagedDesktopRuntime(archivePath, stage) {
   const cli = join(root, "node_modules", "@electron", "asar", "bin", "asar.js");
   const listed = execFileSync(process.execPath, [cli, "list", archivePath], { encoding: "utf8" });
   const entries = new Set(listed.split("\n").filter(Boolean));
-  const missing = [];
-  for (const name of await requiredDesktopRuntimePackages(stage)) {
-    const entry = `/node_modules/${name}/package.json`;
-    if (!entries.has(entry)) missing.push(entry);
-  }
+  const missing = (await requiredDesktopRuntimeEntries(stage)).filter((entry) => !entries.has(entry));
   if (missing.length) throw new Error(`安装包 app.asar 缺少运行依赖：${missing.join("、")}`);
 }
 
@@ -229,6 +235,6 @@ export async function stageDesktopApplication(temporaryPrefix) {
   }, null, 2)}\n`);
   // A smoke launch inside this repository can still resolve a missing package
   // from the repo node_modules. The installed app only has app.asar.
-  await requiredDesktopRuntimePackages(stage);
+  await requiredDesktopRuntimeEntries(stage);
   return stage;
 }
