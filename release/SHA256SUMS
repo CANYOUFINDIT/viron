@@ -1,7 +1,7 @@
 a86d40d7a06e1adc341e74131bd2bdab2ffab424ae1dbefa27b96d0975305839  release/viron-server-0.1.8-linux-amd64.tar.gz
 a6266f93d3be375e7adc8160fd83d8c08333fc47dda2700b2e7d69f132cfb4d2  release/viron-server-0.1.8-linux-arm64.tar.gz
 e142c2a893f77ab7240e068826e82057bd98090300f96f1422439b5b4ccce9d0  release/Viron-0.1.8-macos-arm64-self-signed.dmg
-d012429781eee80a56456df361ec3c9030ff5b6ee742875c35a5dedeb114f886  release/Viron-0.1.8-macos-x64-self-signed.dmg
-ec9813305f115c80454beb5fa96e69a5d49935e6df2e7b01adad6a1dcad2fced  release/Viron-0.1.8-windows-x86-unsigned-setup.exe
-5608723c5be9c1716740efc206b341941cc2d07b5bd41f6de81c4e034009a199  release/Viron-0.1.8-windows-x64-unsigned-setup.exe
-941635f4bfc35d9b1fdcb1232a2225f949947a714a2c6780772c2df4c202dd8f  release/Viron-0.1.8-windows-arm64-unsigned-setup.exe
+1bf5763bbadc62cf0492daf7ec9c618d634cf0bd504c250ecc9f726e9612659f  release/Viron-0.1.8-macos-x64-self-signed.dmg
+ed4093006dcdd6d7b1ca990b80cbf3dfcc03320f499329d2fc232acdc4596b68  release/Viron-0.1.8-windows-x86-unsigned-setup.exe
+23a24bf5569ea74836d4505df910a37b26a40eb50db60cb860d8abcd411ef700  release/Viron-0.1.8-windows-x64-unsigned-setup.exe
+86324d5068760d1f458fb47dba2a1417ca10ea1256d96f7b2942ff54e49e4289  release/Viron-0.1.8-windows-arm64-unsigned-setup.exe
