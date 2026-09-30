@@ -1005,9 +1005,9 @@ onBeforeUnmount(() => {
             <div class="ssh-host-card" :class="{ 'is-opening': openingId === connection.id }">
               <button class="connection-card-main" type="button" :disabled="openingId === connection.id" :title="$t('双击在当前工作台连接：{0} · {1}@{2}:{3}', [connection.name, connection.username, connection.host, connection.port])" @dblclick="openConnection(connection)" @keydown.enter="openConnection(connection)">
                 <span class="ssh-host-card__icon"><Server :size="16" /></span>
-                <span class="ssh-host-card__details"><strong>{{ connection.name }}</strong><small>{{ connection.username }}@{{ connection.host }}:{{ connection.port }}</small><span v-if="connection.tags.length" class="ssh-host-tags"><i v-for="tag in connection.tags" :key="tag">{{ tag }}</i></span></span>
+                <span class="ssh-host-card__details"><strong>{{ connection.name }}</strong><small class="ssh-host-card__endpoint"><em v-if="connection.username">{{ connection.username }}@</em><span>{{ connection.host }}:{{ connection.port }}</span></small><span v-if="connection.tags.length" class="ssh-host-tags"><i v-for="tag in connection.tags" :key="tag">{{ tag }}</i></span></span>
               </button>
-              <el-dropdown trigger="click" placement="bottom-end" popper-class="workbench-connection-menu-popper" @command="handleConnectionAction($event, connection)">
+              <el-dropdown class="ssh-host-card__menu" trigger="click" placement="bottom-end" popper-class="workbench-connection-menu-popper" @command="handleConnectionAction($event, connection)">
                 <button class="connect-indicator" type="button" :disabled="openingId === connection.id" :aria-label="$t('打开 {0} 的连接菜单', [connection.name])" :title="$t('连接操作')">
                   <RefreshCw v-if="openingId === connection.id" :size="15" class="is-spinning" />
                   <ChevronDown v-else :size="15" />
