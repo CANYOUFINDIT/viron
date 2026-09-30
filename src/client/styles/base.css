@@ -889,7 +889,6 @@ button { color: inherit; }
 .connection-form { display: block; }
 .form-section { padding-bottom: 24px; border-bottom: 1px solid var(--ink-100); }
 .form-section + .form-section { margin-top: 24px; }
-.form-section--type { padding-bottom: 22px; }
 .form-section--last { padding-bottom: 0; border-bottom: 0; }
 .form-section__header { margin-bottom: 15px; display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
 .form-section__header strong { color: var(--ink-900); font-size: 15px; line-height: 1.35; }

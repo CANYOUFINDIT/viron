@@ -315,6 +315,10 @@ const canManageWorkspace = computed(() => ["owner", "admin"].includes(session.wo
 const editingConnection = computed(() => inventory.value.find((item) => item.id === editingId.value) ?? connections.value.find((item) => item.id === editingId.value));
 const preservesLegacyPrivateKey = computed(() => Boolean(editingConnection.value?.authType === "privateKey" && editingConnection.value.hasPrivateKey && !editingConnection.value.sshKeyId));
 const availableGroups = computed(() => connectionGroups.value.filter((item) => item.type === form.type));
+const connectionDialogTitle = computed(() => {
+  if (editingId.value) return form.type === "ssh" ? tr("编辑 SSH 连接") : form.type === "redis" ? tr("编辑 Redis 连接") : tr("编辑数据库连接");
+  return form.type === "ssh" ? tr("新建 SSH 连接") : form.type === "redis" ? tr("新建 Redis 连接") : tr("新建数据库连接");
+});
 const availableParentGroups = computed(() => connectionGroups.value.filter((item) => item.type === groupForm.type));
 const importItemsForTab = computed(() => importBatch.value?.items.filter((item) => item.type === activeImportTab.value) ?? []);
 const activeImportConflictCount = computed(() => importItemsForTab.value.filter((item) => item.status === "conflict").length);
@@ -947,17 +951,6 @@ async function cancelImport() {
   if (route.query.importBatch) await router.replace({ path: "/connections" });
 }
 
-function changeConnectionType(value: "ssh" | "database" | "redis") {
-  form.type = value;
-  form.connectionGroupId = null;
-  form.port = value === "ssh" ? 22 : value === "redis" ? 6379 : 3306;
-  form.defaultDatabase = value === "redis" ? 0 : "";
-  form.connectionMode = "tcp";
-  form.sshConnectionId = null;
-  form.sslEnabled = false;
-  form.rejectUnauthorized = true;
-}
-
 watch(() => route.query.create, (value) => {
   if (value === "redis") resetForm("redis");
 }, { immediate: true });
@@ -1101,18 +1094,8 @@ onMounted(async () => {
     </section>
 
     <el-dialog v-model="connectionDialog" align-center class="envman-dialog connection-editor-dialog" width="760px" destroy-on-close append-to-body>
-      <template #header><div class="dialog-title"><span class="dialog-title__icon"><Pencil v-if="editingId" :size="19" /><Plus v-else :size="19" /></span><div><h3>{{ editingId ? $t('编辑连接') : $t('新建连接') }}</h3></div><TipIcon :content="$t('密码、SSH 密钥与证书使用 AES-256-GCM 加密保存，不会返回到连接列表。')" placement="left" /></div></template>
+      <template #header><div class="dialog-title"><span class="dialog-title__icon"><Pencil v-if="editingId" :size="19" /><Plus v-else :size="19" /></span><div><h3>{{ connectionDialogTitle }}</h3></div><TipIcon :content="$t('密码、SSH 密钥与证书使用 AES-256-GCM 加密保存，不会返回到连接列表。')" placement="left" /></div></template>
       <el-form label-position="top" class="connection-form">
-        <section class="form-section form-section--type">
-          <el-form-item :label="$t('连接类型')">
-            <el-radio-group :model-value="form.type" :disabled="Boolean(editingId)" @update:model-value="changeConnectionType">
-              <el-radio-button value="ssh"><TerminalSquare :size="15" />{{ $t('SSH 服务器') }}</el-radio-button>
-              <el-radio-button value="database"><Database :size="15" />MySQL / MariaDB</el-radio-button>
-              <el-radio-button value="redis"><MemoryStick :size="15" />Redis</el-radio-button>
-            </el-radio-group>
-          </el-form-item>
-        </section>
-
         <section class="form-section">
           <header class="form-section__header"><strong>{{ $t('基本信息') }}</strong></header>
           <div class="form-grid form-grid--two">
@@ -1251,7 +1234,7 @@ onMounted(async () => {
     <el-dialog v-model="groupDialog" align-center class="envman-dialog compact-dialog" width="500px" append-to-body>
       <template #header><div class="dialog-title"><span class="dialog-title__icon"><Boxes :size="19" /></span><div><h3>{{ $t('新建连接组') }}</h3></div><TipIcon :content="$t('连接组独立于环境，仅用于整理同类型连接。')" placement="left" /></div></template>
       <el-form label-position="top" class="polished-dialog-form">
-        <el-form-item :label="$t('连接类型')"><el-radio-group v-model="groupForm.type"><el-radio-button value="ssh">SSH</el-radio-button><el-radio-button value="database">{{ $t('数据库') }}</el-radio-button><el-radio-button value="redis">Redis</el-radio-button></el-radio-group></el-form-item>
+        <el-form-item :label="$t('连接类型')"><el-input :model-value="groupForm.type === 'ssh' ? 'SSH' : groupForm.type === 'redis' ? 'Redis' : $t('数据库')" disabled /></el-form-item>
         <el-form-item :label="$t('上级连接组')"><el-select v-model="groupForm.parentId" clearable :placeholder="$t('顶级连接组')" style="width:100%"><el-option v-for="group in availableParentGroups" :key="group.id" :label="group.path" :value="group.id" /></el-select></el-form-item>
         <el-form-item :label="$t('连接组名称')" required><el-input v-model="groupForm.name" maxlength="80" /></el-form-item>
       </el-form>

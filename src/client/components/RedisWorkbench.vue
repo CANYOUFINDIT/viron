@@ -31,7 +31,6 @@ import {
 } from "@lucide/vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { useRouter } from "vue-router";
 import { ApiError, api } from "../api";
 import { copyTextToClipboard } from "../clipboard";
 import { rememberActiveConnectionOrigin } from "../active-connection-origin";
@@ -46,6 +45,7 @@ import {
   redisKeyspaceStats,
   type RedisValueView,
 } from "../redis-workbench-format";
+import ConnectionEditDialog from "./ConnectionEditDialog.vue";
 import RedisCommandEditor from "./RedisCommandEditor.vue";
 import TipIcon from "./TipIcon.vue";
 
@@ -54,7 +54,6 @@ const props = withDefaults(defineProps<{
   initialConnectionId?: string;
   workspaceKey?: string;
 }>(), { workspaceKey: "fixed:redis" });
-const router = useRouter();
 
 interface BinaryValue { base64: string; utf8: string | null; byteLength: number }
 type RedisReply =
@@ -125,6 +124,7 @@ const info = ref<Record<string, Record<string, string>>>({});
 const slowLog = ref<RedisReply | null>(null);
 const diagnosticsLoading = ref(false);
 const createDialog = ref(false);
+const connectionEditorOpen = ref(false);
 const createType = ref<KeyItem["type"]>("string");
 const createKey = ref("");
 const createPrimary = ref("");
@@ -217,7 +217,14 @@ async function copyText(value: string, label: string) {
 }
 
 function openConnectionCreate() {
-  void router.push({ name: "connections", query: { create: "redis" } });
+  connectionEditorOpen.value = true;
+}
+
+async function handleConnectionSaved() {
+  const previous = new Set(connections.value.map((item) => item.id));
+  await loadConnections();
+  const created = connections.value.find((item) => !previous.has(item.id));
+  if (created) await activateConnection(created.id);
 }
 
 async function retryCurrentSection() {
@@ -904,6 +911,8 @@ onBeforeUnmount(() => {
     </main>
 
     <div v-else class="redis-no-connection"><span class="redis-empty-mark"><MemoryStick :size="30" /></span><h2>{{ $t('还没有 Redis 连接') }}</h2><el-button type="primary" @click="openConnectionCreate"><Plus :size="15" />{{ $t('新建 Redis 连接') }}</el-button></div>
+
+    <ConnectionEditDialog v-model="connectionEditorOpen" connection-type="redis" :connection="null" :default-environment-id="environmentId ?? null" @saved="handleConnectionSaved" />
 
     <el-dialog v-model="createDialog" align-center width="580px" class="envman-dialog compact-dialog" append-to-body>
       <template #header><div class="dialog-title"><span class="dialog-title__icon"><Plus :size="18" /></span><div><h3>{{ $t('新建键') }}</h3></div></div></template>

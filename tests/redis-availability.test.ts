@@ -36,7 +36,10 @@ describe("Redis product availability", () => {
     const settings = source("../src/client/views/settings/use-settings-controller.ts");
 
     expect(connectionPool).toContain('<el-dropdown-item @click="resetForm(\'redis\')"><MemoryStick :size="15" />{{ $t(\'Redis 连接\') }}</el-dropdown-item>');
-    expect(connectionPool).toContain('<el-radio-button value="redis"><MemoryStick :size="15" />Redis</el-radio-button>');
+    expect(connectionPool).toContain("{{ connectionDialogTitle }}");
+    expect(connectionPool).not.toContain("changeConnectionType");
+    expect(connectionPool).not.toContain("form-section--type");
+    expect(connectionPool).toContain("form.type === 'redis' ? $t('Redis 与安全')");
     expect(connectionPool).toContain('watch(() => route.query.create');
     expect(connectionPool).toContain('if (value === "redis") resetForm("redis")');
     expect(connectionTools).toContain("desktopExecutionTargets.value.inspectionRedis");
@@ -50,7 +53,8 @@ describe("Redis product availability", () => {
     expect(workbench).toContain('data-testid="redis-workbench"');
     expect(workbench).toContain("当前 Redis 连接为只读模式");
     expect(workbench).toContain('class="redis-workspace-error"');
-    expect(workbench).toContain('query: { create: "redis" }');
+    expect(workbench).toContain('<ConnectionEditDialog v-model="connectionEditorOpen" connection-type="redis" :connection="null"');
+    expect(workbench).not.toContain('query: { create: "redis" }');
     expect(workbench).toContain('const memoryValue = replyText(memory?.result)');
     expect(workbench).toContain('const quickCommands = ["PING", "DBSIZE", "INFO server", "INFO memory", "SLOWLOG GET 16"]');
     expect(workbench).toContain('class="redis-database-select"');

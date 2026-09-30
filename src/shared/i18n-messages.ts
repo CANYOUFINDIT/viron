@@ -5633,6 +5633,13 @@ const enOverrides: Record<string, string> = {
   "缩小": "Zoom out",
   "放大": "Zoom in",
   "重置为 100%": "Reset to 100%",
+  "新建数据库连接": "Create a new database connection",
+  "编辑 SSH 连接": "Edit SSH connection",
+  "编辑数据库连接": "Edit database connection",
+  "编辑 Redis 连接": "Edit Redis connection",
+  "复制 SSH 连接": "Copy SSH connection",
+  "复制数据库连接": "Copy database connection",
+  "请选择用于 Redis 隧道的 SSH 连接": "Select an SSH connection for the Redis tunnel",
 };
 
 export const enMessages: Readonly<Record<string, string>> = { ...generatedEnMessages, ...enOverrides };

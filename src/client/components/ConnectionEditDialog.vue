@@ -1,6 +1,6 @@
 <script setup lang="ts">import { translate as tr } from "../i18n";
 
-import { BadgeCheck, Copy, Database, KeyRound, Pencil, Plus, TerminalSquare, Trash2 } from "@lucide/vue";
+import { BadgeCheck, Copy, Database, KeyRound, Pencil, Plus, Trash2 } from "@lucide/vue";
 import { ElMessage } from "element-plus";
 import { computed, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
@@ -12,7 +12,7 @@ import SshLoginScriptEditor from "./SshLoginScriptEditor.vue";
 import TipIcon from "./TipIcon.vue";
 
 interface EnvironmentItem { id: string; name: string }
-interface ConnectionGroup { id: string; type: "ssh" | "database"; path: string }
+interface ConnectionGroup { id: string; type: "ssh" | "database" | "redis"; path: string }
 interface SshOption { id: string; name: string; host: string }
 interface SshKeyOption { id: string; name: string; fingerprint: string; algorithm: string }
 
@@ -20,7 +20,7 @@ interface EditableConnection {
   id: string;
   profileParentId?: string | null;
   profileName?: string;
-  type: "ssh" | "database";
+  type: "ssh" | "database" | "redis";
   environmentId: string | null;
   environmentIds?: string[];
   connectionGroupId: string | null;
@@ -38,7 +38,7 @@ interface EditableConnection {
   jumpConnectionId?: string | null;
   tags?: string[];
   engine?: "mysql" | "mariadb";
-  defaultDatabase?: string;
+  defaultDatabase?: string | number;
   connectionMode?: "tcp" | "sshTunnel" | "httpTunnel";
   options: Record<string, unknown>;
 }
@@ -51,7 +51,7 @@ const props = defineProps<{
   profiles?: EditableConnection[];
   activeProfileId?: string;
   connected?: boolean;
-  connectionType?: "ssh" | "database";
+  connectionType?: "ssh" | "database" | "redis";
   defaultEnvironmentId?: string | null;
 }>();
 
@@ -115,6 +115,10 @@ const form = reactive({
   tlsCertificate: "",
   tlsPrivateKey: "",
   tlsPassphrase: "",
+  redisDatabase: 0,
+  keySeparator: ":",
+  readOnly: false,
+  tlsServerName: "",
 });
 
 const isCopying = computed(() => Boolean(props.connection && props.copyMode));
@@ -124,7 +128,7 @@ const isCreatingProfile = computed(() => isProfile.value && !isEditingProfile.va
 const isEditing = computed(() => Boolean(props.connection && !props.copyMode && (!props.profileParentId || isEditingProfile.value)));
 const preservesCredential = computed(() => isEditing.value || isCopying.value || isProfile.value);
 const preservesLegacyPrivateKey = computed(() => Boolean(props.connection?.authType === "privateKey" && props.connection.hasPrivateKey && !props.connection.sshKeyId));
-const activeConnectionType = computed<"ssh" | "database">(() => props.connection?.type ?? props.connectionType ?? "ssh");
+const activeConnectionType = computed<"ssh" | "database" | "redis">(() => props.connection?.type ?? props.connectionType ?? "ssh");
 const availableGroups = computed(() => connectionGroups.value.filter((item) => item.type === activeConnectionType.value));
 const availableSshOptions = computed(() => sshOptions.value.filter((item) => !isEditing.value || item.id !== props.connection?.id));
 const profileManagerVisible = computed(() => Boolean(
@@ -136,6 +140,14 @@ const profileManagerVisible = computed(() => Boolean(
 ));
 const selectedProfile = computed(() => props.profiles?.find((profile) => profile.id === selectedProfileId.value) ?? null);
 const selectedProfileIsActive = computed(() => selectedProfileId.value === (props.activeProfileId || "main"));
+const dialogTitle = computed(() => {
+  if (isCreatingProfile.value) return tr("新建连接配置文件");
+  if (isEditingProfile.value) return tr("编辑连接配置文件");
+  const type = activeConnectionType.value;
+  if (isCopying.value) return type === "ssh" ? tr("复制 SSH 连接") : type === "redis" ? tr("复制 Redis 连接") : tr("复制数据库连接");
+  if (isEditing.value) return type === "ssh" ? tr("编辑 SSH 连接") : type === "redis" ? tr("编辑 Redis 连接") : tr("编辑数据库连接");
+  return type === "ssh" ? tr("新建 SSH 连接") : type === "redis" ? tr("新建 Redis 连接") : tr("新建数据库连接");
+});
 const sshAuthChoices = computed(() => [
   { value: "password", title: tr("密码"), description: tr("标准用户名与密码认证，适合常规主机。"), badge: tr("通用") },
   { value: "privateKey", title: tr("SSH 密钥"), description: tr("引用工作空间托管密钥，适合生产环境。"), badge: tr("推荐") },
@@ -156,13 +168,13 @@ function initializeForm() {
   const connection = props.connection;
   const connectionType = activeConnectionType.value;
   const options = connection?.options ?? {};
-  const ssl = options.ssl as { enabled?: boolean; rejectUnauthorized?: boolean } | undefined;
+  const security = (connectionType === "redis" ? options.tls : options.ssl) as { enabled?: boolean; rejectUnauthorized?: boolean; serverName?: string } | undefined;
   Object.assign(form, {
     environmentIds: [...(connection?.environmentIds ?? (connection?.environmentId ? [connection.environmentId] : props.defaultEnvironmentId ? [props.defaultEnvironmentId] : []))],
     connectionGroupId: connection?.connectionGroupId ?? null,
     name: isCreatingProfile.value ? "" : isEditingProfile.value ? connection?.profileName ?? "" : connection ? (isCopying.value ? tr("{0} 副本", [connection.name.slice(0, 157)]) : connection.name) : "",
     host: connection?.host ?? "",
-    port: connection?.port ?? (connectionType === "ssh" ? 22 : 3306),
+    port: connection?.port ?? (connectionType === "ssh" ? 22 : connectionType === "redis" ? 6379 : 3306),
     username: connection?.username ?? "",
     authType: connection?.authType ?? "password",
     sshKeyId: connection?.sshKeyId ?? null,
@@ -186,11 +198,12 @@ function initializeForm() {
     proxyUsername: String(options.proxyUsername ?? ""),
     proxyPassword: "",
     engine: connection?.engine ?? "mysql",
-    defaultDatabase: connection?.defaultDatabase ?? "",
-    connectionMode: connection?.connectionMode ?? "tcp",
+    defaultDatabase: typeof connection?.defaultDatabase === "string" ? connection.defaultDatabase : "",
+    redisDatabase: connectionType === "redis" ? Number(connection?.defaultDatabase ?? 0) || 0 : 0,
+    connectionMode: connectionType === "redis" && connection?.connectionMode === "httpTunnel" ? "tcp" : connection?.connectionMode ?? "tcp",
     sshConnectionId: (options.sshConnectionId as string | null | undefined) ?? null,
-    sslEnabled: Boolean(ssl?.enabled),
-    rejectUnauthorized: ssl?.rejectUnauthorized !== false,
+    sslEnabled: Boolean(security?.enabled),
+    rejectUnauthorized: security?.rejectUnauthorized !== false,
     httpTunnelUrl: String(options.httpTunnelUrl ?? ""),
     httpTunnelUsername: "",
     httpTunnelPassword: "",
@@ -198,6 +211,9 @@ function initializeForm() {
     charset: String(options.charset ?? "utf8mb4"),
     timezone: String(options.timezone ?? "local"),
     connectTimeoutMs: Number(options.connectTimeoutMs ?? 10000),
+    keySeparator: String(options.keySeparator ?? ":"),
+    readOnly: Boolean(options.readOnly),
+    tlsServerName: String(security?.serverName ?? ""),
     tlsCa: "",
     tlsCertificate: "",
     tlsPrivateKey: "",
@@ -227,10 +243,12 @@ async function loadOptions() {
 
 async function save() {
   const connection = props.connection;
-  if (!form.name.trim() || !form.host.trim() || !form.username.trim()) return ElMessage.warning(tr("请填写连接名称、主机和用户名"));
+  const connectionType = activeConnectionType.value;
+  if (!form.name.trim() || !form.host.trim() || (connectionType !== "redis" && !form.username.trim())) {
+    return ElMessage.warning(connectionType === "redis" ? tr("请填写连接名称和主机") : tr("请填写连接名称、主机和用户名"));
+  }
   saving.value = true;
   try {
-    const connectionType = activeConnectionType.value;
     if (connectionType === "ssh") {
       if (form.authType === "privateKey" && !form.sshKeyId && !preservesLegacyPrivateKey.value) return ElMessage.warning(tr("请选择用于连接的 SSH 密钥"));
       if (form.jumpConnectionId && form.proxyType !== "none") return ElMessage.warning(tr("ProxyJump 与出站代理不能同时配置；请把代理配置在最外层跳板机上"));
@@ -277,7 +295,7 @@ async function save() {
         method: isEditing.value ? "PUT" : "POST",
         body: JSON.stringify(payload),
       });
-    } else {
+    } else if (connectionType === "database") {
       if (form.connectionMode === "sshTunnel" && !form.sshConnectionId) return ElMessage.warning(tr("请选择用于数据库隧道的 SSH 连接"));
       if (form.connectionMode === "httpTunnel" && !form.httpTunnelUrl.trim()) return ElMessage.warning(tr("请填写 HTTP Tunnel URL"));
       const hasCertificate = Boolean(form.tlsCertificate || connection?.hasTlsCertificate);
@@ -326,6 +344,47 @@ async function save() {
         method: isEditing.value ? "PUT" : "POST",
         body: JSON.stringify(payload),
       });
+    } else {
+      if (form.connectionMode === "sshTunnel" && !form.sshConnectionId) return ElMessage.warning(tr("请选择用于 Redis 隧道的 SSH 连接"));
+      const hasCertificate = Boolean(form.tlsCertificate || connection?.hasTlsCertificate);
+      const hasPrivateKey = Boolean(form.tlsPrivateKey || connection?.hasTlsPrivateKey);
+      if (form.sslEnabled && hasCertificate !== hasPrivateKey) return ElMessage.warning(tr("双向 TLS 必须同时配置客户端证书和客户端私钥"));
+      const credentialChanged = Boolean(form.password || form.tlsCa || form.tlsCertificate || form.tlsPrivateKey || form.tlsPassphrase);
+      const payload: Record<string, unknown> = {
+        copyFromId: isCopying.value ? connection?.id : undefined,
+        environmentIds: form.environmentIds,
+        connectionGroupId: form.connectionGroupId,
+        name: form.name,
+        host: form.host,
+        port: form.port,
+        username: form.username,
+        defaultDatabase: Number(form.redisDatabase) || 0,
+        connectionMode: form.connectionMode === "sshTunnel" ? "sshTunnel" : "tcp",
+        options: {
+          connectTimeoutMs: 10000,
+          keySeparator: form.keySeparator,
+          readOnly: form.readOnly,
+          sshConnectionId: form.sshConnectionId,
+          tls: {
+            enabled: form.sslEnabled,
+            rejectUnauthorized: form.rejectUnauthorized,
+            serverName: form.tlsServerName,
+          },
+        },
+      };
+      if (!connection || credentialChanged) {
+        payload.credential = {
+          password: form.password,
+          tlsCa: form.tlsCa,
+          tlsCertificate: form.tlsCertificate,
+          tlsPrivateKey: form.tlsPrivateKey,
+          tlsPassphrase: form.tlsPassphrase,
+        };
+      }
+      await api(isEditing.value ? `/api/v1/redis-connections/${connection!.id}` : "/api/v1/redis-connections", {
+        method: isEditing.value ? "PUT" : "POST",
+        body: JSON.stringify(payload),
+      });
     }
     ElMessage.success(isCreatingProfile.value ? tr("连接配置文件已创建") : isEditingProfile.value ? tr("连接配置文件已更新") : isEditing.value ? tr("连接已更新") : isCopying.value ? tr("连接副本已创建") : tr("连接已创建"));
     close();
@@ -357,14 +416,8 @@ watch(() => props.profiles?.map((profile) => profile.id).join(","), () => {
 
 <template>
   <el-dialog :model-value="modelValue" align-center class="envman-dialog connection-editor-dialog" width="760px" destroy-on-close append-to-body @update:model-value="emit('update:modelValue', $event)">
-    <template #header><div class="dialog-title"><span class="dialog-title__icon"><Copy v-if="isCopying" :size="19" /><Pencil v-else-if="isEditing" :size="19" /><Plus v-else :size="19" /></span><div><h3>{{ isCreatingProfile ? $t('新建连接配置文件') : isEditingProfile ? $t('编辑连接配置文件') : isCopying ? $t('复制连接') : isEditing ? $t('编辑连接') : $t('新建连接') }}</h3></div><TipIcon :content="isProfile ? $t('配置文件使用独立连接参数，未填写的新凭据会沿用主要配置文件并保持加密。') : isCopying ? $t('源凭据会重新加密复制；填写新凭据可覆盖副本字段。') : isEditing ? $t('凭据字段留空会保留当前加密值。') : $t('密码、私钥与 Tunnel 认证会加密保存。')" placement="left" /></div></template>
+    <template #header><div class="dialog-title"><span class="dialog-title__icon"><Copy v-if="isCopying" :size="19" /><Pencil v-else-if="isEditing" :size="19" /><Plus v-else :size="19" /></span><div><h3>{{ dialogTitle }}</h3></div><TipIcon :content="isProfile ? $t('配置文件使用独立连接参数，未填写的新凭据会沿用主要配置文件并保持加密。') : isCopying ? $t('源凭据会重新加密复制；填写新凭据可覆盖副本字段。') : isEditing ? $t('凭据字段留空会保留当前加密值。') : $t('密码、私钥与 Tunnel 认证会加密保存。')" placement="left" /></div></template>
     <el-form v-loading="loadingOptions" label-position="top" class="connection-form">
-      <section class="form-section form-section--type">
-        <el-form-item :label="$t('连接类型')">
-          <el-radio-group :model-value="activeConnectionType" disabled><el-radio-button value="ssh"><TerminalSquare :size="15" />{{ $t('SSH 服务器') }}</el-radio-button><el-radio-button value="database"><Database :size="15" />MySQL / MariaDB</el-radio-button></el-radio-group>
-        </el-form-item>
-      </section>
-
       <section v-if="profileManagerVisible" class="form-section connection-profile-manager">
         <header class="form-section__header"><strong>{{ $t('连接配置文件') }}</strong><button type="button" data-navicat-action="new-connection-profile" :disabled="connected" :title="connected ? $t('要创建新的连接配置文件，必须关闭连接') : $t('新建连接配置文件')" @click="emit('profileAction', 'create')"><Plus :size="14" />{{ $t('新建连接配置文件') }}</button></header>
         <div class="connection-profile-manager__list" role="listbox" :aria-label="$t('连接配置文件')">
@@ -395,12 +448,12 @@ watch(() => props.profiles?.map((profile) => profile.id).join(","), () => {
         <div class="form-grid form-grid--endpoint">
           <el-form-item :label="$t('主机')" required><el-input v-model="form.host" /></el-form-item>
           <el-form-item :label="$t('端口')" required><el-input-number v-model="form.port" :min="1" :max="65535" controls-position="right" style="width:100%" /></el-form-item>
-          <el-form-item :label="$t('用户名')" required><el-input v-model="form.username" /></el-form-item>
+          <el-form-item :label="activeConnectionType === 'redis' ? $t('ACL 用户名（可选）') : $t('用户名')" :required="activeConnectionType !== 'redis'"><el-input v-model="form.username" /></el-form-item>
         </div>
       </section>
 
       <section class="form-section form-section--last">
-        <header class="form-section__header"><strong>{{ activeConnectionType === 'ssh' ? $t('认证与登录') : $t('数据库与安全') }}</strong></header>
+        <header class="form-section__header"><strong>{{ activeConnectionType === 'ssh' ? $t('认证与登录') : activeConnectionType === 'redis' ? $t('Redis 与安全') : $t('数据库与安全') }}</strong></header>
         <div class="form-grid form-grid--two">
           <template v-if="activeConnectionType === 'ssh'">
             <ConnectionMethodPicker v-model="form.authType" :label="$t('认证方式')" :choices="sshAuthChoices" />
@@ -440,7 +493,7 @@ watch(() => props.profiles?.map((profile) => profile.id).join(","), () => {
             <el-form-item :label="$t('登录脚本')" class="form-span-2"><SshLoginScriptEditor v-model="form.loginScript" v-model:enabled="form.loginScriptEnabled" /></el-form-item>
           </template>
 
-          <template v-else>
+          <template v-else-if="activeConnectionType === 'database'">
             <el-form-item :label="$t('数据库类型')"><el-select v-model="form.engine" style="width:100%"><el-option label="MySQL" value="mysql" /><el-option label="MariaDB" value="mariadb" /></el-select></el-form-item>
             <el-form-item :label="$t('默认数据库')"><el-input v-model="form.defaultDatabase" /></el-form-item>
             <el-form-item :label="$t('密码')" class="form-span-2"><el-input v-model="form.password" type="password" show-password :placeholder="preservesCredential ? $t('留空表示沿用原密码') : $t('数据库密码，可稍后补录')" /></el-form-item>
@@ -468,6 +521,23 @@ watch(() => props.profiles?.map((profile) => profile.id).join(","), () => {
                 <el-form-item :label="$t('连接超时')" class="form-span-2"><el-input-number v-model="form.connectTimeoutMs" :min="1000" :max="120000" :step="1000" controls-position="right" style="width:100%" /><small>{{ $t('毫秒，允许 1–120 秒') }}</small></el-form-item>
               </div>
             </details>
+          </template>
+          <template v-else-if="activeConnectionType === 'redis'">
+            <el-form-item :label="$t('默认逻辑库')"><el-input-number v-model="form.redisDatabase" :min="0" :max="1023" controls-position="right" style="width:100%" /></el-form-item>
+            <el-form-item :label="$t('键名分隔符')"><el-input v-model="form.keySeparator" maxlength="16" placeholder=":" /></el-form-item>
+            <el-form-item :label="$t('密码')" class="form-span-2"><el-input v-model="form.password" type="password" show-password :placeholder="preservesCredential ? $t('留空表示沿用原密码') : $t('Redis 密码，可留空')" /></el-form-item>
+            <el-form-item :label="$t('连接方式')"><el-select v-model="form.connectionMode" style="width:100%"><el-option :label="$t('TCP 直连')" value="tcp" /><el-option label="SSH Tunnel" value="sshTunnel" /></el-select></el-form-item>
+            <el-form-item v-if="form.connectionMode === 'sshTunnel'" :label="$t('SSH 隧道连接')" required><el-select v-model="form.sshConnectionId" filterable :placeholder="$t('选择已有 SSH 连接')" style="width:100%"><el-option v-for="item in availableSshOptions" :key="item.id" :label="item.name + ' · ' + item.host" :value="item.id" /></el-select></el-form-item>
+            <el-form-item><template #label><span class="form-label-with-tip">{{ $t('只读模式') }}<TipIcon :content="$t('开启后，可信执行端会拒绝所有写命令。')" placement="right" /></span></template><el-switch v-model="form.readOnly" /></el-form-item>
+            <el-form-item :label="$t('启用 TLS')"><el-switch v-model="form.sslEnabled" /></el-form-item>
+            <template v-if="form.sslEnabled">
+              <el-form-item :label="$t('校验服务器证书')"><el-switch v-model="form.rejectUnauthorized" /></el-form-item>
+              <el-form-item :label="$t('TLS 服务器名称')"><el-input v-model="form.tlsServerName" :placeholder="$t('默认使用连接主机')" /></el-form-item>
+              <el-form-item :label="$t('CA 证书')" class="form-span-2 form-item--code"><el-input v-model="form.tlsCa" type="textarea" :rows="3" :placeholder="preservesCredential ? $t('留空表示保持原 CA') : $t('可选 PEM')" /></el-form-item>
+              <el-form-item :label="$t('客户端证书')" class="form-span-2 form-item--code"><el-input v-model="form.tlsCertificate" type="textarea" :rows="3" :placeholder="preservesCredential ? $t('留空表示保持原证书') : $t('可选 PEM')" /></el-form-item>
+              <el-form-item :label="$t('客户端私钥')" class="form-span-2 form-item--code"><el-input v-model="form.tlsPrivateKey" type="textarea" :rows="4" :placeholder="preservesCredential ? $t('留空表示保持原私钥') : $t('可选 PEM')" /></el-form-item>
+              <el-form-item :label="$t('私钥口令')"><el-input v-model="form.tlsPassphrase" type="password" show-password :placeholder="preservesCredential ? $t('留空表示保持原口令') : $t('可选')" /></el-form-item>
+            </template>
           </template>
         </div>
       </section>
