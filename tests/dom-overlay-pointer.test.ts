@@ -38,7 +38,7 @@ vi.mock("../src/desktop/overlays/native-window-stack.js", () => ({
 }));
 
 import { closeAllDomOverlayWindows, hideDomOverlayWindow, layoutDomOverlayWindow, registerDomOverlayWindow } from "../src/desktop/overlays/dom-overlay-windows.js";
-import { createSidebarOverlay, raiseSidebarOverlays, sidebarOverlayViews } from "../src/desktop/overlays/sidebar-overlay-view.js";
+import { createDomOverlayView, createSidebarOverlay, domOverlayViews, raiseSidebarOverlays, sidebarOverlayViews } from "../src/desktop/overlays/sidebar-overlay-view.js";
 
 class Overlay extends EventEmitter {
   visible = false;
@@ -126,6 +126,27 @@ describe("native sidebar pointer tracking", () => {
     registerDomOverlayWindow(name, overlay as unknown as BrowserWindow);
     layoutDomOverlayWindow(name, { x: 20, y: 20, width: 500, height: 400 }, 2000, true);
     expect(overlay.focus).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("keeps popovers inside the host view stack without moving focus to another window", () => {
+    const name = "viron-dom-overlay-5";
+    const contents = createDomOverlayView(name, {});
+    layoutDomOverlayWindow(name, { x: 20, y: 30, width: 240, height: 180 }, 1200);
+    expect(domOverlayViews()).toHaveLength(1);
+    expect(domOverlayViews()[0].getVisible()).toBe(true);
+    expect(domOverlayViews()[0].getBounds()).toEqual({ x: 20, y: 30, width: 240, height: 180 });
+    expect(contents.focus).not.toHaveBeenCalled();
+    expect(host.focus).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("focuses modal contents without deactivating the host window", () => {
+    const name = "viron-dom-overlay-6";
+    const contents = createDomOverlayView(name, {});
+    layoutDomOverlayWindow(name, { x: 40, y: 50, width: 500, height: 400 }, 2000, true);
+    expect(contents.focus).toHaveBeenCalledOnce();
+    expect(host.focus).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
   });
 });

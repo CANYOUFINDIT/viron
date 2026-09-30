@@ -240,8 +240,8 @@ export function layoutDesktopWebViewPages(view: ManagedDesktopWebView, focus = f
     page.view.webContents.setBackgroundThrottling(!visible && !view.previewing);
   }
   if (focus && view.visible && !activeDesktopWebPage(view).certificateError) activeDesktopWebPage(view).view.webContents.focus();
-  raiseSidebarOverlays();
   raiseImmersiveNavigationWindow();
+  raiseSidebarOverlays();
 }
 
 export function activateDesktopWebPage(view: ManagedDesktopWebView, pageId: string): void {

@@ -1,7 +1,15 @@
 import { BrowserWindow, type Rectangle } from "electron";
 import { mainWindow } from "../window-host.js";
 import { raiseNativeOverlayWindows, registerNativeOverlayWindow, updateNativeOverlayPriority } from "./native-window-stack.js";
-import { closeAllSidebarOverlays, closeSidebarOverlay, hideSidebarOverlay, isSidebarDomOverlay, layoutSidebarOverlay } from "./sidebar-overlay-view.js";
+import {
+  closeAllDomOverlayViews,
+  closeDomOverlayView,
+  domOverlayView,
+  hideDomOverlayView,
+  layoutDomOverlayView,
+  layoutDomOverlayViews,
+  raiseDomOverlayViews,
+} from "./sidebar-overlay-view.js";
 
 const overlayName = /^viron-dom-overlay-[a-z0-9-]{1,64}$/;
 const windows = new Map<string, { window: BrowserWindow; order: number; bounds: Rectangle | null }>();
@@ -41,7 +49,7 @@ function checkedBounds(input: Rectangle): Rectangle {
 }
 
 export function layoutDomOverlayWindow(frameName: string, bounds: Rectangle, order: number, focus = false): void {
-  if (isSidebarDomOverlay(frameName)) return layoutSidebarOverlay(frameName, bounds);
+  if (domOverlayView(frameName)) return layoutDomOverlayView(frameName, bounds, order, focus);
   const entry = windows.get(frameName);
   if (!entry || entry.window.isDestroyed()) return;
   entry.order = Number.isFinite(order) ? Math.max(-1_000_000, Math.min(1_000_000, order)) : 0;
@@ -56,13 +64,13 @@ export function layoutDomOverlayWindow(frameName: string, bounds: Rectangle, ord
 }
 
 export function hideDomOverlayWindow(frameName: string): void {
-  if (isSidebarDomOverlay(frameName)) return hideSidebarOverlay(frameName);
+  if (domOverlayView(frameName)) return hideDomOverlayView(frameName);
   const entry = windows.get(frameName);
   if (entry?.window && !entry.window.isDestroyed()) entry.window.hide();
 }
 
 export function closeDomOverlayWindow(frameName: string): void {
-  if (isSidebarDomOverlay(frameName)) return closeSidebarOverlay(frameName);
+  if (domOverlayView(frameName)) return closeDomOverlayView(frameName);
   const entry = windows.get(frameName);
   if (entry?.window && !entry.window.isDestroyed()) {
     const focused = entry.window.isFocused();
@@ -81,6 +89,7 @@ export function domOverlayWindows(): BrowserWindow[] {
 }
 
 export function layoutDomOverlayWindows(): void {
+  layoutDomOverlayViews();
   for (const entry of windows.values()) {
     if (entry.window.isDestroyed() || !entry.bounds) continue;
     entry.window.setBounds(checkedBounds(entry.bounds), false);
@@ -88,10 +97,11 @@ export function layoutDomOverlayWindows(): void {
 }
 
 export function raiseDomOverlayWindows(): void {
+  raiseDomOverlayViews();
   raiseNativeOverlayWindows();
 }
 
 export function closeAllDomOverlayWindows(): void {
-  closeAllSidebarOverlays();
+  closeAllDomOverlayViews();
   for (const frameName of [...windows.keys()]) closeDomOverlayWindow(frameName);
 }

@@ -69,7 +69,7 @@ import {
   layoutDomOverlayWindows,
   registerDomOverlayWindow,
 } from "./overlays/dom-overlay-windows.js";
-import { createSidebarOverlay, isSidebarDomOverlay } from "./overlays/sidebar-overlay-view.js";
+import { createDomOverlayView } from "./overlays/sidebar-overlay-view.js";
 import { raiseNativeOverlayWindows } from "./overlays/native-window-stack.js";
 import {
   sendToAgentChat,
@@ -361,36 +361,10 @@ async function createWindow(): Promise<void> {
   createdMainWindow.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   createdMainWindow.webContents.setWindowOpenHandler(({ url, frameName }) => {
     if (!isDomOverlayRequest(url, frameName)) return { action: "deny" };
-    if (isSidebarDomOverlay(frameName)) {
-      return {
-        action: "allow",
-        overrideBrowserWindowOptions: { webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true } },
-        createWindow: (options) => createSidebarOverlay(frameName, options as Electron.WebContentsViewConstructorOptions),
-      };
-    }
     return {
       action: "allow",
-      overrideBrowserWindowOptions: {
-        parent: createdMainWindow,
-        show: false,
-        frame: false,
-        transparent: true,
-        backgroundColor: "#00000000",
-        hasShadow: false,
-        resizable: false,
-        movable: false,
-        minimizable: false,
-        maximizable: false,
-        fullscreenable: false,
-        skipTaskbar: true,
-        roundedCorners: false,
-        webPreferences: {
-          contextIsolation: true,
-          nodeIntegration: false,
-          sandbox: true,
-          webSecurity: true,
-        },
-      },
+      overrideBrowserWindowOptions: { webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true } },
+      createWindow: (options) => createDomOverlayView(frameName, options as Electron.WebContentsViewConstructorOptions),
     };
   });
   createdMainWindow.webContents.on("did-create-window", (window, details) => {
@@ -589,7 +563,7 @@ async function createWindow(): Promise<void> {
         && activeEnvironmentDock.dragPositionDelivered && activeEnvironmentDock.closeActionDelivered && activeEnvironmentDock.closeStateRemoved
         && activeEnvironmentDock.webViewStayedVisible && activeEnvironmentDock.nativeAboveWebView
         && activeEnvironmentDock.actionDelivered && activeEnvironmentDock.hidden;
-      app.exit(result.loginVisible && result.endpointVisible && endpointPassed && localWebPassed && localSshPassed && localLogsPassed && localDatabasePassed && localInspectionPassed && immersiveNavigationPassed && agentLauncherPassed && connectionQualityPassed && activeEnvironmentDockPassed && domOverlay.nodeAdopted && domOverlay.childAboveWeb && domOverlay.pointerDelivered && domOverlay.webStayedLive && domOverlay.cleanup && domOverlayManager.sidebarPortaled && domOverlayManager.sidebarFullWidth && domOverlayManager.sidebarAnimationStable && domOverlayManager.sidebarPinRestored && domOverlayManager.sidebarPassiveInteraction && domOverlayManager.sidebarNativeAutoCollapse && domOverlayManager.popoverPortaled && domOverlayManager.elementPopoverPortaled && domOverlayManager.elementPopoverArrowAligned && domOverlayManager.outsideDismissed && domOverlayManager.vueEventsPreserved && domOverlayManager.webStayedLive && domOverlayManager.restored ? 0 : 1);
+      app.exit(result.loginVisible && result.endpointVisible && endpointPassed && localWebPassed && localSshPassed && localLogsPassed && localDatabasePassed && localInspectionPassed && immersiveNavigationPassed && agentLauncherPassed && connectionQualityPassed && activeEnvironmentDockPassed && domOverlay.nodeAdopted && domOverlay.childAboveWeb && domOverlay.mainWindowStayedFocused && domOverlay.pointerDelivered && domOverlay.webStayedLive && domOverlay.cleanup && domOverlayManager.sidebarPortaled && domOverlayManager.sidebarFullWidth && domOverlayManager.sidebarAnimationStable && domOverlayManager.sidebarPinRestored && domOverlayManager.sidebarPassiveInteraction && domOverlayManager.sidebarNativeAutoCollapse && domOverlayManager.popoverPortaled && domOverlayManager.elementPopoverPortaled && domOverlayManager.elementPopoverArrowAligned && domOverlayManager.popoverSameWindow && domOverlayManager.popoverFocusStable && domOverlayManager.outsideDismissed && domOverlayManager.vueEventsPreserved && domOverlayManager.webStayedLive && domOverlayManager.restored ? 0 : 1);
     } catch (error) {
       process.stderr.write(`VIRON_DESKTOP_SMOKE_FAILED ${error instanceof Error ? error.message : String(error)}\n`);
       app.exit(1);

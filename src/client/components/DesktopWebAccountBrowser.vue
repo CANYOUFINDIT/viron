@@ -762,7 +762,7 @@ onBeforeUnmount(() => {
           <div class="desktop-web-extensions">
             <div class="desktop-web-extensions__heading">
               <button v-if="extensionPanel === 'chrome'" type="button" :aria-label="$t('返回')" @click="extensionPanel = 'installed'"><ArrowLeft :size="16" /></button>
-              <strong>{{ extensionPanel === 'chrome' ? $t('从 Chrome 导入') : $t('本机全局拓展') }}</strong>
+              <strong>{{ extensionPanel === 'chrome' ? $t('从 Chrome 导入') : $t('拓展程序') }}</strong>
               <button v-if="extensionPanel === 'chrome'" type="button" :aria-label="$t('刷新')" :disabled="chromeScanning" @click="refreshChromeExtensions"><RefreshCw :size="14" :class="{ 'is-spinning': chromeScanning }" /></button>
             </div>
             <div v-if="extensionPanel === 'installed'" class="desktop-web-extensions__section">
