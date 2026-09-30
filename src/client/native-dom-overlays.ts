@@ -144,6 +144,32 @@ function nativeArrowSide(element: HTMLElement, anchor: Element | null): string |
   return element.dataset.popperPlacement?.split("-")[0] ?? null;
 }
 
+function releaseSidebarPortalHold(sidebar: HTMLElement): void {
+  if (sidebar.dataset.vironPortalWidthHold !== "1") return;
+  delete sidebar.dataset.vironPortalWidthHold;
+  sidebar.style.removeProperty("width");
+}
+
+function holdSidebarForPortal(): void {
+  if (!bridge()) return;
+  const sidebar = document.querySelector<HTMLElement>(".app-frame > .app-sidebar");
+  if (!sidebar) return;
+  const frame = sidebar.parentElement;
+  const portaledExpansion = Boolean(frame?.classList.contains("is-sidebar-expanded")
+    && !frame.classList.contains("is-sidebar-pinned")
+    && !frame.classList.contains("is-immersive"));
+  if (!portaledExpansion) {
+    releaseSidebarPortalHold(sidebar);
+    return;
+  }
+  if (sidebar.dataset.vironPortalWidthHold === "1" || overlays.has(sidebar)) return;
+  // Keep the collapsed width through the next paint. The host transition
+  // otherwise finishes before adoption, and the overlay opens at full width.
+  const collapsed = getComputedStyle(frame!).getPropertyValue("--app-sidebar-collapsed-width").trim() || "68px";
+  sidebar.style.setProperty("width", collapsed, "important");
+  sidebar.dataset.vironPortalWidthHold = "1";
+}
+
 function moveSidebar(element: HTMLElement, root: HTMLElement): void {
   // Preserve every in-flight CSS transition (panel clipping, labels and button
   // widths included). Adoption cancels them; restarting from the collapsed
@@ -166,6 +192,11 @@ function moveSidebar(element: HTMLElement, root: HTMLElement): void {
   for (const { target, property, original, priority } of transitions) {
     if (original) target.style.setProperty(property, original, priority);
     else target.style.removeProperty(property);
+  }
+  if (element.dataset.vironPortalWidthHold === "1") {
+    element.getBoundingClientRect();
+    delete element.dataset.vironPortalWidthHold;
+    element.style.removeProperty("width");
   }
 }
 
@@ -194,7 +225,10 @@ function makeOverlay(element: HTMLElement): void {
   const order = kind === "sidebar" ? 40 : Number.parseInt(getComputedStyle(element).zIndex, 10) || 2000;
   const name = `viron-dom-overlay-${kind === "sidebar" ? "sidebar-" : ""}${++nextId}`;
   const child = window.open("about:blank", name, `width=${rect.width},height=${rect.height}`);
-  if (!child) return;
+  if (!child) {
+    releaseSidebarPortalHold(element);
+    return;
+  }
   try {
     // A sidebar-sized window otherwise activates the mobile media queries and
     // makes vw-based widths shrink again on every native window resize.
@@ -249,6 +283,7 @@ function makeOverlay(element: HTMLElement): void {
     });
     schedule();
   } catch {
+    releaseSidebarPortalHold(element);
     child.close();
   }
 }
@@ -308,6 +343,7 @@ function positionOverlay(record: OverlayRecord): void {
 
 function sync(): void {
   frame = 0;
+  holdSidebarForPortal();
   const rects = activeSurfaceRects();
   const candidates = new Set(overlayCandidates(rects));
   for (const record of [...overlays.values()]) {
@@ -350,7 +386,10 @@ function onNativePointerDown(): void {
 
 function start(): void {
   if (bodyObserver) return;
-  bodyObserver = new MutationObserver(schedule);
+  bodyObserver = new MutationObserver(() => {
+    holdSidebarForPortal();
+    schedule();
+  });
   bodyObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "style", "aria-hidden"] });
   window.addEventListener("resize", schedule);
   window.addEventListener("scroll", schedule, true);

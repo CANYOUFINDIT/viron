@@ -134,18 +134,32 @@ export async function runDesktopDomOverlayManagerSmoke(): Promise<{
       const api = window.vironDomOverlaySmoke;
       const sidebar = api.sidebar();
       const originalDocument = sidebar.ownerDocument;
+      const durationText = getComputedStyle(sidebar).getPropertyValue("--sidebar-motion-duration").trim();
+      const motionMs = durationText.endsWith("ms") ? Number.parseFloat(durationText) : durationText.endsWith("s") ? Number.parseFloat(durationText) * 1000 : 240;
+      const nextFrame = () => new Promise((resolve) => {
+        let settled = false;
+        const finish = () => { if (!settled) { settled = true; resolve(); } };
+        requestAnimationFrame(finish);
+        setTimeout(finish, 16);
+      });
       const sample = async (expanded, reverse = false) => {
         api.setSidebarExpanded(expanded);
         const frames = [];
-        const start = performance.now();
+        const started = performance.now();
         let reversed = false;
-        while (performance.now() - start < 550) {
-          await new Promise(requestAnimationFrame);
-          frames.push({ width: sidebar.getBoundingClientRect().width, portaled: sidebar.ownerDocument !== document });
-          if (reverse && !reversed && frames.at(-1).width < 190) {
+        let reverseStarted = started;
+        while (performance.now() - started < motionMs * 2 + 1800) {
+          await nextFrame();
+          const frame = { width: sidebar.getBoundingClientRect().width, portaled: sidebar.ownerDocument !== document };
+          frames.push(frame);
+          if (reverse && !reversed && frame.portaled && frame.width < 190 && frame.width > 70) {
             api.setSidebarExpanded(true);
             reversed = true;
+            reverseStarted = performance.now();
           }
+          const opening = reversed || expanded;
+          const arrived = Math.abs(frame.width - (opening ? 224 : 68)) < 1 && frame.portaled === opening;
+          if ((!reverse || reversed) && arrived && performance.now() - (reversed ? reverseStarted : started) >= motionMs) break;
         }
         return frames;
       };
