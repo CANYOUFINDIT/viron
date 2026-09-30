@@ -18,6 +18,7 @@ import {
   MemoryStick,
   Pencil,
   Play,
+  PlugZap,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -820,7 +821,7 @@ onBeforeUnmount(() => {
               <span class="redis-database-option"><span>{{ $t('数据库') }} {{ item.database }}</span><small>{{ item.keys ? $t('{0} 个键', [item.keys]) : $t('空') }}</small></span>
             </el-option>
           </el-select>
-          <el-button size="small" :loading="busy" @click="testConnection"><CircleCheck :size="14" />{{ $t('测试连接') }}</el-button>
+          <el-button class="redis-test-connection" size="small" :loading="busy" @click="testConnection"><PlugZap :size="14" />{{ $t('测试连接') }}</el-button>
         </div>
       </header>
 
@@ -967,7 +968,8 @@ onBeforeUnmount(() => {
 .redis-topbar nav button.is-active, .view-switch button.is-active { background: var(--surface); color: var(--teal-700); box-shadow: 0 1px 4px color-mix(in srgb, var(--ink-900) 10%, transparent); }
 .redis-topbar-actions { min-width: 0; display: flex; justify-content: flex-end; align-items: center; gap: 7px; }
 .redis-database-select { width: 178px; }
-.redis-database-select :deep(.el-select__wrapper) { min-height: 31px; font-family: var(--font-mono); }
+.redis-database-select :deep(.el-select__wrapper) { height: 31px; min-height: 31px; font-family: var(--font-mono); }
+.redis-test-connection { --el-button-size: 31px; height: 31px; min-height: 31px; padding: 0 12px; border-radius: var(--el-border-radius-base); }
 .redis-database-select :deep(.el-select__prefix) { color: var(--teal-700); }
 .redis-database-option { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .redis-database-option small { color: var(--ink-500); font-family: var(--font-mono); font-size: 10px; }
