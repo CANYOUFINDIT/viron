@@ -19,7 +19,7 @@ release/*.exe
 .playwright-cli/
 output/
 output/playwright/
-docs/tasks/
+docs/
 
 # All new private material belongs in private/. Never force-add or commit it.
 # This includes credentials, internal screenshots, exports, backups, and notes.
