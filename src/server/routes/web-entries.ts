@@ -4,7 +4,7 @@ import { z } from "zod";
 import { writeAudit } from "../audit.js";
 import { canAccessEnvironment, canManageWorkspace } from "../access-control.js";
 import { parseBody } from "../validation.js";
-import { loadWebFavicon } from "../web-favicon.js";
+import { loadWebFavicon } from "../../shared/web-favicon.js";
 import { tlsWebEntryBadge } from "../../shared/tls-certificates.js";
 import { monitorAlertSettingsForEnvironment } from "../monitor-alerts.js";
 import { hasExactIds } from "../../shared/tab-order.js";
@@ -228,8 +228,9 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
     async (request, reply) => {
       const entry = await app.db.prepare("SELECT environment_id, url FROM web_entries WHERE id = ?").get(request.params.entryId) as { environment_id: string; url: string } | undefined;
       if (!entry || !await canAccessEnvironment(app.db, request.admin!, entry.environment_id)) return reply.code(404).send({ error: "NOT_FOUND", message: "Web 入口不存在" });
-      reply.header("Cache-Control", "private, max-age=900");
-      return { dataUrl: await loadWebFavicon(entry.url) };
+      const dataUrl = await loadWebFavicon(entry.url);
+      reply.header("Cache-Control", dataUrl ? "private, max-age=900" : "private, no-store");
+      return { dataUrl };
     },
   );
 

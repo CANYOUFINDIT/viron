@@ -130,6 +130,7 @@ const environment = ref<EnvironmentItem | null>(null);
 const groups = ref<EnvironmentGroup[]>([]);
 const webEntries = ref<WebEntry[]>([]);
 const entryFavicons = ref<Record<string, string>>({});
+const desktopEntryFavicons = ref<Record<string, string>>({});
 const selectedEntryId = ref("");
 const credentials = ref<WebCredential[]>([]);
 const immersiveCredentials = ref<Record<string, WebCredential[]>>({});
@@ -168,6 +169,7 @@ const entryForm = reactive({ name: "", url: "", description: "", tags: "" });
 const credentialForm = reactive({ username: "", password: "", note: "" });
 const environmentForm = reactive({ name: "", groupId: null as string | null, description: "", tags: "" });
 const selectedEntry = computed(() => webEntries.value.find((item) => item.id === selectedEntryId.value) ?? null);
+const displayEntryFavicons = computed(() => ({ ...entryFavicons.value, ...desktopEntryFavicons.value }));
 const canManageWorkspace = computed(() => session.workspace?.role === "owner" || session.workspace?.role === "admin");
 const canSortTabs = computed(() => canManageWorkspace.value && !savingEntryOrder.value && !savingCredentialOrder.value);
 const focusedWebView = computed(() => workspaceQuery.value.webFocus === "1" && Boolean(workspaceQuery.value.webCredentialId));
@@ -186,7 +188,7 @@ const logFocusRequest = reactive({ id: "", sequence: 0 });
 const immersiveEntries = computed<ImmersiveNavigationEntry[]>(() => webEntries.value.map((entry) => ({
   id: entry.id,
   name: entry.name,
-  faviconDataUrl: entryFavicons.value[entry.id] ?? null,
+  faviconDataUrl: displayEntryFavicons.value[entry.id] ?? null,
   credentialCount: entry.credentialCount,
   credentials: immersiveCredentials.value[entry.id]?.map((credential) => ({ id: credential.id, username: credential.username })) ?? null,
   loading: immersiveCredentialLoading.value.has(entry.id),
@@ -343,12 +345,21 @@ async function loadEntryFavicons(entries: WebEntry[]) {
   if (version !== entryFaviconLoadVersion) return;
   const currentIds = new Set(webEntries.value.map((entry) => entry.id));
   entryFavicons.value = Object.fromEntries(results.filter((result): result is readonly [string, string] => currentIds.has(result[0]) && Boolean(result[1])));
+  desktopEntryFavicons.value = Object.fromEntries(Object.entries(desktopEntryFavicons.value).filter(([entryId]) => currentIds.has(entryId)));
+}
+
+function setDesktopEntryFavicon(entryId: string, dataUrl: string) {
+  if (!dataUrl.startsWith("data:image/")) return;
+  desktopEntryFavicons.value = { ...desktopEntryFavicons.value, [entryId]: dataUrl };
 }
 
 function discardEntryFavicon(entryId: string) {
   const next = { ...entryFavicons.value };
   delete next[entryId];
   entryFavicons.value = next;
+  const nextDesktop = { ...desktopEntryFavicons.value };
+  delete nextDesktop[entryId];
+  desktopEntryFavicons.value = nextDesktop;
 }
 
 function insertAfterTarget(event: DragEvent): boolean {
@@ -1008,7 +1019,7 @@ onBeforeUnmount(() => {
             @drop="dropEntry(entry.id, $event)"
             @dragend="endEntryDrag"
           >
-            <span class="resource-list__icon"><img v-if="entryFavicons[entry.id]" :src="entryFavicons[entry.id]" alt="" @error="discardEntryFavicon(entry.id)" /><Globe2 v-else :size="17" /></span>
+            <span class="resource-list__icon"><img v-if="displayEntryFavicons[entry.id]" :src="displayEntryFavicons[entry.id]" alt="" @error="discardEntryFavicon(entry.id)" /><Globe2 v-else :size="17" /></span>
             <strong>{{ entry.name }}</strong>
             <em>{{ entry.credentialCount }}</em>
           </button>
@@ -1092,6 +1103,7 @@ onBeforeUnmount(() => {
                       :auto-start="(focusedWebView || (webPreloadEnabled && webPreloadCredentialId === opened.id)) && openedCredentialActive(paneIndex, opened)"
                       :preload-start="webPreloadEnabled && webPreloadCredentialId === opened.id && !focusedWebView"
                       @focus-change="setFocusedWebView($event, opened)"
+                      @favicon-change="setDesktopEntryFavicon(opened.entryId, $event)"
                       @configure-entry-https="openSslConfigurationForId(opened.entryId)"
                       @tls-refreshed="loadEnvironment"
                       @preview-frame="emit('previewFrame', $event)"

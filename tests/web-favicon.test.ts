@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { faviconCandidates, loadWebFavicon } from "../src/server/web-favicon.js";
+import { faviconCandidates, loadWebFavicon, loadWebIcon } from "../src/shared/web-favicon.js";
 
 const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
 
@@ -34,6 +34,15 @@ describe("Web entry favicons", () => {
       `data:image/png;base64,${Buffer.from(png).toString("base64")}`,
     );
     expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("loads a browser-discovered icon without refetching the document", async () => {
+    const fetcher = vi.fn(async () => new Response(png, { headers: { "content-type": "image/png" } }));
+
+    await expect(loadWebIcon("https://console.example.com/assets/site.png", fetcher)).resolves.toBe(
+      `data:image/png;base64,${Buffer.from(png).toString("base64")}`,
+    );
+    expect(fetcher).toHaveBeenCalledOnce();
   });
 
   it("falls back to the conventional origin favicon and rejects non-images", async () => {

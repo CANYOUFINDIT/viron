@@ -59,6 +59,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   focusChange: [focused: boolean];
   previewFrame: [dataUrl: string];
+  faviconChange: [dataUrl: string];
   configureEntryHttps: [];
   tlsRefreshed: [];
 }>();
@@ -104,6 +105,7 @@ let componentActive = true;
 let closed = false;
 let lastNoticeId = "";
 let lastPageError = "";
+let lastFaviconDataUrl = "";
 let nativeOverlayHeld = false;
 let pendingNewPage = false;
 let previewTimer: number | undefined;
@@ -160,6 +162,10 @@ function applyState(next: DesktopWebViewState) {
   if (next.notice && next.notice.id !== lastNoticeId) {
     lastNoticeId = next.notice.id;
     ElMessage[next.notice.type](next.notice.message);
+  }
+  if (next.faviconDataUrl.startsWith("data:image/") && next.faviconDataUrl !== lastFaviconDataUrl) {
+    lastFaviconDataUrl = next.faviconDataUrl;
+    emit("faviconChange", next.faviconDataUrl);
   }
 }
 

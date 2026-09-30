@@ -22,6 +22,7 @@ import {
 import { normalizeWebAddress } from "../shared/web-address.js";
 import { reorderMap } from "../shared/tab-order.js";
 import { WEB_CREDENTIAL_AUTOFILL_DELAYS_MS } from "../shared/web-credential-autofill.js";
+import { loadWebIcon } from "../shared/web-favicon.js";
 import { immersiveNavigationEscapeAction } from "../shared/immersive-navigation.js";
 import { shortcutActionForInput } from "../shared/keyboard-shortcuts.js";
 import {
@@ -116,6 +117,7 @@ export interface DesktopWebViewState {
   }>;
   url: string;
   title: string;
+  faviconDataUrl: string;
   loading: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
@@ -142,6 +144,8 @@ export interface ManagedDesktopWebPage {
   autofillSignature: string;
   autofillMessage: string;
   error: string;
+  faviconDataUrl: string;
+  faviconLoadVersion: number;
   certificateError: {
     url: string;
     error: string;
@@ -406,6 +410,25 @@ function handleDesktopWebPageZoomWheel(
   return true;
 }
 
+async function updateDesktopWebPageFavicon(
+  view: ManagedDesktopWebView,
+  page: ManagedDesktopWebPage,
+  candidates: string[],
+): Promise<void> {
+  const version = ++page.faviconLoadVersion;
+  for (const candidate of [...new Set(candidates)].slice(0, 8)) {
+    const dataUrl = await loadWebIcon(candidate, (input, init) => view.partition.fetch(
+      input instanceof URL ? input.href : input,
+      { ...init, credentials: "include" },
+    ));
+    if (version !== page.faviconLoadVersion || page.closing || view.closing || !view.pages.has(page.id)) return;
+    if (!dataUrl) continue;
+    page.faviconDataUrl = dataUrl;
+    sendWebViewState(view);
+    return;
+  }
+}
+
 export function createDesktopWebPage(
   view: ManagedDesktopWebView,
   allowAutofill: boolean,
@@ -427,6 +450,8 @@ export function createDesktopWebPage(
     autofillSignature: "",
     autofillMessage: "",
     error: "",
+    faviconDataUrl: "",
+    faviconLoadVersion: 0,
     certificateError: null,
     closing: false,
     zoomFactor: 1,
@@ -552,6 +577,9 @@ export function createDesktopWebPage(
   nativeView.webContents.on("did-start-loading", () => { touchDesktopWebView(view); sendWebViewState(view); });
   nativeView.webContents.on("did-stop-loading", () => { touchDesktopWebView(view); sendWebViewState(view); });
   nativeView.webContents.on("page-title-updated", () => sendWebViewState(view));
+  nativeView.webContents.on("page-favicon-updated", (_event, favicons) => {
+    void updateDesktopWebPageFavicon(view, page, favicons);
+  });
   nativeView.webContents.on("zoom-changed", () => {
     if (page.closing || nativeView.webContents.isDestroyed()) return;
     const snapped = pageZoomFactor(nativeView.webContents.getZoomFactor());

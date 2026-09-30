@@ -192,6 +192,7 @@ export function webViewState(view: ManagedDesktopWebView): DesktopWebViewState {
     })),
     url: active.pendingUrl || active.view.webContents.getURL() || (active.allowAutofill ? view.entryUrl : "about:blank"),
     title: active.view.webContents.getTitle() || (active.allowAutofill ? view.username : tr("新页面")),
+    faviconDataUrl: active.faviconDataUrl,
     loading: active.view.webContents.isLoading(),
     canGoBack: navigation.canGoBack(),
     canGoForward: navigation.canGoForward(),

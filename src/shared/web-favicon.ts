@@ -114,6 +114,12 @@ async function iconDataUrl(fetcher: Fetcher, url: string): Promise<string | null
   }
 }
 
+export async function loadWebIcon(iconUrl: string, fetcher: Fetcher = fetch): Promise<string | null> {
+  const normalizedIconUrl = httpUrl(iconUrl);
+  if (!normalizedIconUrl) return null;
+  return iconDataUrl(fetcher, normalizedIconUrl);
+}
+
 export async function loadWebFavicon(entryUrl: string, fetcher: Fetcher = fetch): Promise<string | null> {
   const normalizedEntryUrl = httpUrl(entryUrl);
   if (!normalizedEntryUrl) return null;

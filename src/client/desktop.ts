@@ -120,6 +120,7 @@ export interface DesktopWebViewState {
   }>;
   url: string;
   title: string;
+  faviconDataUrl: string;
   loading: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
