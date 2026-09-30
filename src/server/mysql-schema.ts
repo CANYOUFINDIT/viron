@@ -598,6 +598,8 @@ CREATE TABLE IF NOT EXISTS monitor_samples (
   PRIMARY KEY (ssh_connection_id, agent_id, sequence_end),
   KEY monitor_samples_collected_idx (ssh_connection_id, collected_at),
   KEY monitor_samples_agent_collected_idx (agent_id, collected_at),
+  KEY monitor_samples_connection_agent_idx (ssh_connection_id, agent_id),
+  KEY monitor_samples_coverage_idx (ssh_connection_id, collected_at, sequence_start, sequence_end, resolution_seconds),
   CONSTRAINT monitor_samples_connection_fk FOREIGN KEY (ssh_connection_id) REFERENCES ssh_connections(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

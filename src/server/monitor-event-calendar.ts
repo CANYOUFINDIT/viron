@@ -144,7 +144,35 @@ export function monitorLocalDayRange(date: string, timezone: string): { start: n
   };
 }
 
+const hostIdentityInflight = new Map<string, Promise<HostIdentity | null>>();
+const databaseTokens = new WeakMap<object, number>();
+let nextDatabaseToken = 1;
+
+function databaseToken(db: object): number {
+  const existing = databaseTokens.get(db);
+  if (existing) return existing;
+  const token = nextDatabaseToken;
+  nextDatabaseToken += 1;
+  databaseTokens.set(db, token);
+  return token;
+}
+
+function singleFlight<T>(map: Map<string, Promise<T>>, key: string, load: () => Promise<T>): Promise<T> {
+  const existing = map.get(key);
+  if (existing) return existing;
+  const pending = load().finally(() => {
+    if (map.get(key) === pending) map.delete(key);
+  });
+  map.set(key, pending);
+  return pending;
+}
+
 async function hostIdentity(app: FastifyInstance, environmentId: string, connectionId: string): Promise<HostIdentity | null> {
+  const key = `${databaseToken(app.db)}:${environmentId}:${connectionId}`;
+  return singleFlight(hostIdentityInflight, key, () => resolveHostIdentity(app, environmentId, connectionId));
+}
+
+async function resolveHostIdentity(app: FastifyInstance, environmentId: string, connectionId: string): Promise<HostIdentity | null> {
   const connection = await app.db.prepare(`
     SELECT c.host, c.port, c.jump_connection_id, c.workspace_type, c.workspace_id
     FROM ssh_connections c
@@ -175,6 +203,7 @@ async function hostIdentity(app: FastifyInstance, environmentId: string, connect
   const connectionIds = [...new Set(connections.map((item) => item.id))];
   if (!connectionIds.includes(connectionId)) connectionIds.push(connectionId);
   const placeholders = connectionIds.map(() => "?").join(",");
+  // 只取连接上出现过的 agent。索引含这两列，不会去读采样正文。
   const historicalAgents = await app.db.prepare(`
     SELECT DISTINCT agent_id FROM monitor_samples
     WHERE ssh_connection_id IN (${placeholders}) AND agent_id <> ''
@@ -195,18 +224,19 @@ async function loadEvents(
   from: number,
   to: number,
   limit = 2_000,
+  identity?: HostIdentity | null,
 ): Promise<StoredEventRow[] | null> {
-  const identity = await hostIdentity(app, environmentId, connectionId);
-  if (!identity) return null;
+  const resolved = identity ?? await hostIdentity(app, environmentId, connectionId);
+  if (!resolved) return null;
   const targetClauses: string[] = [];
   const targetParameters: unknown[] = [];
-  if (identity.agentIds.length) {
-    targetClauses.push(`target_id IN (${identity.agentIds.map(() => "?").join(",")})`);
-    targetParameters.push(...identity.agentIds);
+  if (resolved.agentIds.length) {
+    targetClauses.push(`target_id IN (${resolved.agentIds.map(() => "?").join(",")})`);
+    targetParameters.push(...resolved.agentIds);
   }
-  if (identity.connectionIds.length) {
-    targetClauses.push(`ssh_connection_id IN (${identity.connectionIds.map(() => "?").join(",")})`);
-    targetParameters.push(...identity.connectionIds);
+  if (resolved.connectionIds.length) {
+    targetClauses.push(`ssh_connection_id IN (${resolved.connectionIds.map(() => "?").join(",")})`);
+    targetParameters.push(...resolved.connectionIds);
   }
   if (!targetClauses.length) return [];
   return app.db.prepare(`
@@ -251,38 +281,62 @@ function overlaps(interval: TimeInterval, start: number, end: number): boolean {
   return interval.start < end && interval.end >= start;
 }
 
+export function monitorSampleCoverageInterval(row: StoredSampleCoverageRow): TimeInterval | null {
+  const end = Date.parse(row.collected_at);
+  if (!Number.isFinite(end)) return null;
+  const resolutionSeconds = Math.max(1, Number(row.resolution_seconds) || 1);
+  const sampleCount = Math.max(1, Number(row.sequence_end) - Number(row.sequence_start) + 1);
+  const duration = Math.min(24 * 60 * 60 * 1000, resolutionSeconds * sampleCount * 1000);
+  return { start: end - duration, end: end + resolutionSeconds * 1000 };
+}
+
+export function coverageMsByDay(days: Array<{ start: number; end: number }>, intervals: TimeInterval[]): number[] {
+  const covered = Array.from({ length: days.length }, () => 0);
+  if (!days.length || !intervals.length) return covered;
+  const merged: TimeInterval[] = [];
+  for (const interval of intervals.slice().sort((left, right) => left.start - right.start || left.end - right.end)) {
+    const last = merged.at(-1);
+    if (last && interval.start <= last.end) last.end = Math.max(last.end, interval.end);
+    else merged.push({ start: interval.start, end: interval.end });
+  }
+  let dayIndex = 0;
+  for (const interval of merged) {
+    while (dayIndex < days.length && days[dayIndex]!.end <= interval.start) dayIndex += 1;
+    for (let index = dayIndex; index < days.length && days[index]!.start < interval.end; index += 1) {
+      const start = Math.max(days[index]!.start, interval.start);
+      const end = Math.min(days[index]!.end, interval.end);
+      if (end > start) covered[index] += end - start;
+    }
+  }
+  return covered;
+}
+
 async function coverageIntervals(
   app: FastifyInstance,
-  environmentId: string,
-  connectionId: string,
+  identity: HostIdentity,
   from: number,
   to: number,
-): Promise<TimeInterval[] | null> {
-  const identity = await hostIdentity(app, environmentId, connectionId);
-  if (!identity) return null;
+): Promise<TimeInterval[]> {
   if (!identity.connectionIds.length) return [];
   const placeholders = identity.connectionIds.map(() => "?").join(",");
+  // 覆盖率只需要区间端点。这些列都在 monitor_samples_coverage_idx 里，查询不会读取 payload_json。
   const rows = await app.db.prepare(`
     SELECT sequence_start, sequence_end, collected_at, resolution_seconds
     FROM monitor_samples
     WHERE ssh_connection_id IN (${placeholders})
       AND collected_at >= ? AND collected_at < ?
-    ORDER BY collected_at
   `).all(
     ...identity.connectionIds,
     new Date(from - 24 * 60 * 60 * 1000).toISOString(),
     new Date(to + 24 * 60 * 60 * 1000).toISOString(),
   ) as StoredSampleCoverageRow[];
   return rows.flatMap((row) => {
-    const end = Date.parse(row.collected_at);
-    const resolutionSeconds = Math.max(1, Number(row.resolution_seconds) || 1);
-    const sampleCount = Math.max(1, Number(row.sequence_end) - Number(row.sequence_start) + 1);
-    const duration = Math.min(24 * 60 * 60 * 1000, resolutionSeconds * sampleCount * 1000);
-    return Number.isFinite(end) ? [{ start: end - duration, end: end + resolutionSeconds * 1000 }] : [];
+    const interval = monitorSampleCoverageInterval(row);
+    return interval ? [interval] : [];
   });
 }
 
-function dayAggregate(day: { date: string; start: number; end: number }, events: StoredEventRow[], coverage: TimeInterval[], generatedAt: number): MonitorHostEventCalendarDay {
+function dayAggregate(day: { date: string; start: number; end: number }, events: StoredEventRow[], coverageMs: number, generatedAt: number): MonitorHostEventCalendarDay {
   const eventIntervals = events.map((event) => ({ event, interval: eventInterval(event, generatedAt) }));
   const active = eventIntervals.filter(({ interval }) => overlaps(interval, day.start, day.end));
   const newEvents = events.filter((event) => {
@@ -297,10 +351,6 @@ function dayAggregate(day: { date: string; start: number; end: number }, events:
     if (!peakSeverity || monitorAlertSeverityRank(eventSeverity) > monitorAlertSeverityRank(peakSeverity)) peakSeverity = eventSeverity;
   }
   const affectedMs = mergeDuration(active.map(({ interval }) => ({
-    start: Math.max(day.start, interval.start),
-    end: Math.min(day.end, interval.end),
-  })));
-  const coverageMs = mergeDuration(coverage.filter((interval) => overlaps(interval, day.start, day.end)).map((interval) => ({
     start: Math.max(day.start, interval.start),
     end: Math.min(day.end, interval.end),
   })));
@@ -339,12 +389,15 @@ export async function loadMonitorHostEventCalendar(
   const generatedAt = Date.now();
   const from = days[0]!.start;
   const to = days.at(-1)!.end;
+  const identity = await hostIdentity(app, environmentId, connectionId);
+  if (!identity) return null;
   const [events, coverage] = await Promise.all([
-    loadEvents(app, environmentId, connectionId, from, to),
-    coverageIntervals(app, environmentId, connectionId, from, to),
+    loadEvents(app, environmentId, connectionId, from, to, 2_000, identity),
+    coverageIntervals(app, identity, from, to),
   ]);
-  if (!events || !coverage) return null;
-  const aggregates = days.map((day) => dayAggregate(day, events, coverage, generatedAt));
+  if (!events) return null;
+  const coverageByDay = coverageMsByDay(days, coverage);
+  const aggregates = days.map((day, index) => dayAggregate(day, events, coverageByDay[index] ?? 0, generatedAt));
   const triggeredInMonth = events.filter((event) => {
     const triggeredAt = Date.parse(event.triggered_at);
     return triggeredAt >= from && triggeredAt < to;
@@ -531,7 +584,7 @@ export async function loadPlatformEventCalendar(
   // matching alert row and never joins per-user read/cleared state.
   const events = await loadPlatformAlertRows(app, { ...query, from, to, limit: null });
   const aggregates = days.map((day) => ({
-    ...dayAggregate(day, events, [], generatedAt),
+    ...dayAggregate(day, events, 0, generatedAt),
     coverageRatio: day.start > generatedAt ? 0 : 1,
   }));
   const triggeredInMonth = events.filter((event) => {

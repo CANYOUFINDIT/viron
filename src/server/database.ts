@@ -73,6 +73,10 @@ export async function openDatabase(config: AppConfig): Promise<EnvmanDatabase> {
     await db.prepare("UPDATE monitor_hosts SET latest_kubernetes_configs_json = '[]' WHERE latest_kubernetes_configs_json IS NULL").run();
     const monitorAgentIndex = await db.prepare("SHOW INDEX FROM `monitor_samples` WHERE Key_name = 'monitor_samples_agent_collected_idx'").get();
     if (!monitorAgentIndex) await db.exec("ALTER TABLE `monitor_samples` ADD KEY `monitor_samples_agent_collected_idx` (`agent_id`, `collected_at`)");
+    const monitorConnectionAgentIndex = await db.prepare("SHOW INDEX FROM `monitor_samples` WHERE Key_name = 'monitor_samples_connection_agent_idx'").get();
+    if (!monitorConnectionAgentIndex) await db.exec("ALTER TABLE `monitor_samples` ADD KEY `monitor_samples_connection_agent_idx` (`ssh_connection_id`, `agent_id`), ALGORITHM=INPLACE, LOCK=NONE");
+    const monitorCoverageIndex = await db.prepare("SHOW INDEX FROM `monitor_samples` WHERE Key_name = 'monitor_samples_coverage_idx'").get();
+    if (!monitorCoverageIndex) await db.exec("ALTER TABLE `monitor_samples` ADD KEY `monitor_samples_coverage_idx` (`ssh_connection_id`, `collected_at`, `sequence_start`, `sequence_end`, `resolution_seconds`), ALGORITHM=INPLACE, LOCK=NONE");
     const monitorAlertHostHistoryIndex = await db.prepare("SHOW INDEX FROM `monitor_alerts` WHERE Key_name = 'monitor_alerts_host_history_idx'").get();
     if (!monitorAlertHostHistoryIndex) await db.exec("ALTER TABLE `monitor_alerts` ADD KEY `monitor_alerts_host_history_idx` (`environment_id`, `target_type`, `target_id`, `triggered_at`)");
     await migrateMysqlKnowledgeSchema(db);

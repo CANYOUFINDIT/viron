@@ -573,6 +573,10 @@ CREATE INDEX IF NOT EXISTS monitor_samples_collected_idx
   ON monitor_samples(ssh_connection_id, collected_at DESC);
 CREATE INDEX IF NOT EXISTS monitor_samples_agent_collected_idx
   ON monitor_samples(agent_id, collected_at DESC);
+CREATE INDEX IF NOT EXISTS monitor_samples_connection_agent_idx
+  ON monitor_samples(ssh_connection_id, agent_id);
+CREATE INDEX IF NOT EXISTS monitor_samples_coverage_idx
+  ON monitor_samples(ssh_connection_id, collected_at, sequence_start, sequence_end, resolution_seconds);
 
 CREATE TABLE IF NOT EXISTS monitor_sequence_gaps (
   ssh_connection_id TEXT NOT NULL REFERENCES ssh_connections(id) ON DELETE CASCADE,
