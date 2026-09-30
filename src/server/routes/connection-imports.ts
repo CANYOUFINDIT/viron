@@ -5,6 +5,7 @@ import { writeAudit } from "../audit.js";
 import { canManageWorkspace, type WorkspaceType, workspaceParams, workspaceWhere } from "../access-control.js";
 import { addConnectionEnvironment } from "../connection-environments.js";
 import { ensureConnectionGroup } from "../connection-groups.js";
+import { nextSshConnectionSortOrder } from "../list-order.js";
 import { preserveSshLoginScript } from "../ssh/options.js";
 import { parseConnectionImport, type ImportedDatabasePayload, type ImportedPayload, type ImportedSshPayload } from "../imports/parsers.js";
 import { parseBody } from "../validation.js";
@@ -82,15 +83,16 @@ async function insertSsh(app: FastifyInstance, sourceId: string, payload: Import
   const now = new Date().toISOString();
   const connectionGroupId = await ensureConnectionGroup(app, "ssh", payload.groupPath ?? [], workspace);
   const environmentId = await mappedEnvironment(app, sourceId, payload.sourcePath);
+  const sortOrder = await nextSshConnectionSortOrder(app.db, workspace, connectionGroupId);
   await app.db.prepare(`
     INSERT INTO ssh_connections (
       id, workspace_type, workspace_id, environment_id, connection_group_id, source_id, source_item_id, source_path, name, host, port,
-      username, auth_type, credential_ciphertext, options_json, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      username, auth_type, credential_ciphertext, options_json, sort_order, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id, ...workspace, environmentId, connectionGroupId, sourceId, payload.importKey, payload.sourcePath,
     payload.name, payload.host, payload.port, payload.username || "root", payload.authType,
-    app.secrets.encrypt(JSON.stringify(payload.credential)), JSON.stringify(payload.options), now, now,
+    app.secrets.encrypt(JSON.stringify(payload.credential)), JSON.stringify(payload.options), sortOrder, now, now,
   );
   await addConnectionEnvironment(app.db, "ssh", id, environmentId);
   return id;

@@ -12,6 +12,8 @@ import {
 import { inspectConnection, type InspectableConnectionType } from "../connection-inspection.js";
 import { connectionGroupExists, ensureConnectionGroup, resolveConnectionGroupId, type ConnectionType } from "../connection-groups.js";
 import { refreshPendingExistingConnections } from "../connection-existing.js";
+import { nextSshConnectionSortOrder, orderedSshConnectionIds } from "../list-order.js";
+import { applySubsetOrder, sameOrder } from "../../shared/tab-order.js";
 import { parseBody } from "../validation.js";
 import { requireAdmin } from "./auth.js";
 import { revokeWorkspaceRuntime } from "../user-runtime.js";
@@ -87,6 +89,11 @@ const sshConnectionSchema = z.object({
 
 const sshConnectionCreateSchema = sshConnectionSchema.extend({
   copyFromId: z.string().uuid().optional(),
+});
+
+const sshConnectionOrderSchema = z.object({
+  connectionGroupId: z.string().uuid().nullable(),
+  orderedIds: z.array(z.string().uuid()).min(1).max(1000),
 });
 
 const databaseCredentialSchema = z.object({
@@ -492,6 +499,7 @@ export async function registerConnectionRoutes(app: FastifyInstance): Promise<vo
           jumpConnectionName: row.jump_connection_name,
           tags: parseTags(row.tags_json),
           options: parseOptions(row.options_json),
+          sortOrder: Number(row.sort_order ?? 0),
           ...flags,
           hasPrivateKey: Boolean(row.ssh_key_id) || flags.hasPrivateKey,
           lastInspectionStatus: row.inspection_status ?? null,
@@ -667,6 +675,38 @@ export async function registerConnectionRoutes(app: FastifyInstance): Promise<vo
     return { summary: { total: items.length, available, unavailable }, items };
   });
 
+  app.put("/api/v1/ssh-connections/order", async (request, reply) => {
+    if (!requireWorkspaceManager(request, reply)) return;
+    const body = parseBody(sshConnectionOrderSchema, request.body, reply);
+    if (!body) return;
+    const workspace = workspaceParams(request);
+    if (body.connectionGroupId && !await connectionGroupExists(app, body.connectionGroupId, "ssh", workspace)) {
+      return reply.code(400).send({ error: "INVALID_SSH_CONNECTION_ORDER", message: "SSH 连接排序无效" });
+    }
+    const currentIds = await orderedSshConnectionIds(app.db, workspace, body.connectionGroupId);
+    const orderedIds = applySubsetOrder(currentIds, body.orderedIds);
+    if (!orderedIds) return reply.code(400).send({ error: "INVALID_SSH_CONNECTION_ORDER", message: "SSH 连接排序无效" });
+    if (sameOrder(currentIds, orderedIds)) return { ok: true };
+    const groupSql = body.connectionGroupId ? "connection_group_id = ?" : "connection_group_id IS NULL";
+    const groupParams = body.connectionGroupId ? [body.connectionGroupId] : [];
+    await app.db.transaction(async () => {
+      for (const [index, id] of orderedIds.entries()) {
+        await app.db.prepare(`
+          UPDATE ssh_connections SET sort_order = ?
+          WHERE id = ? AND workspace_type = ? AND workspace_id = ? AND ${groupSql}
+        `).run(index, id, ...workspace, ...groupParams);
+      }
+    })();
+    await writeAudit(app.db, {
+      action: "connection.ssh_reordered",
+      resourceType: "ssh_connection",
+      summary: "调整 SSH 连接顺序",
+      details: { connectionGroupId: body.connectionGroupId, orderedIds },
+      request,
+    });
+    return { ok: true };
+  });
+
   app.post("/api/v1/ssh-connections", async (request, reply) => {
     if (!requireWorkspaceManager(request, reply)) return;
     const body = parseBody(sshConnectionCreateSchema, request.body, reply);
@@ -706,16 +746,17 @@ export async function registerConnectionRoutes(app: FastifyInstance): Promise<vo
     const id = randomUUID();
     const now = new Date().toISOString();
     const tags = [...new Set(body.tags ?? (copySource ? parseTags(copySource.tags_json) : []))];
+    const sortOrder = await nextSshConnectionSortOrder(app.db, workspaceParams(request), connectionGroupId);
     await app.db.transaction(async () => {
       await app.db.prepare(`
         INSERT INTO ssh_connections (
           id, workspace_type, workspace_id, environment_id, connection_group_id, name, host, port, username, auth_type, ssh_key_id, credential_ciphertext,
-          jump_connection_id, options_json, tags_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          jump_connection_id, options_json, tags_json, sort_order, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         id, ...workspaceParams(request), environmentIds[0] ?? null, connectionGroupId, body.name, body.host, body.port, body.username,
         body.authType, sshKeyId, encryptedCredential, body.jumpConnectionId ?? null,
-        JSON.stringify(body.options ?? defaultSshOptions), JSON.stringify(tags), now, now,
+        JSON.stringify(body.options ?? defaultSshOptions), JSON.stringify(tags), sortOrder, now, now,
       );
       await replaceConnectionEnvironments(app.db, "ssh", id, environmentIds);
     })();
@@ -734,8 +775,8 @@ export async function registerConnectionRoutes(app: FastifyInstance): Promise<vo
     if (!requireWorkspaceManager(request, reply)) return;
     const body = parseBody(sshConnectionSchema, request.body, reply);
     if (!body) return;
-    const existing = await app.db.prepare(`SELECT name, auth_type, ssh_key_id, credential_ciphertext, connection_group_id, options_json, tags_json FROM ssh_connections WHERE id = ? AND ${workspaceWhere()}`).get(request.params.id, ...workspaceParams(request)) as
-      | { name: string; auth_type: string; ssh_key_id: string | null; credential_ciphertext: string; connection_group_id: string | null; options_json: string; tags_json: string }
+    const existing = await app.db.prepare(`SELECT name, auth_type, ssh_key_id, credential_ciphertext, connection_group_id, options_json, tags_json, sort_order FROM ssh_connections WHERE id = ? AND ${workspaceWhere()}`).get(request.params.id, ...workspaceParams(request)) as
+      | { name: string; auth_type: string; ssh_key_id: string | null; credential_ciphertext: string; connection_group_id: string | null; options_json: string; tags_json: string; sort_order: number | string }
       | undefined;
     if (!existing) return reply.code(404).send({ error: "NOT_FOUND", message: "SSH 连接不存在" });
     const environmentIds = normalizeEnvironmentIds(body.environmentIds, body.environmentId);
@@ -761,15 +802,18 @@ export async function registerConnectionRoutes(app: FastifyInstance): Promise<vo
     }
     const connectionGroupId = await resolveConnectionGroupId(app, "ssh", environmentIds[0], body.connectionGroupId, workspaceParams(request), existing.connection_group_id);
     const tags = [...new Set(body.tags ?? parseTags(existing.tags_json))];
+    const sortOrder = (existing.connection_group_id ?? null) === (connectionGroupId ?? null)
+      ? Number(existing.sort_order)
+      : await nextSshConnectionSortOrder(app.db, workspaceParams(request), connectionGroupId, request.params.id);
     await app.db.transaction(async () => {
       await app.db.prepare(`
         UPDATE ssh_connections SET environment_id = ?, connection_group_id = ?, name = ?, host = ?, port = ?, username = ?,
-          auth_type = ?, ssh_key_id = ?, credential_ciphertext = ?, jump_connection_id = ?, options_json = ?, tags_json = ?, updated_at = ?
+          auth_type = ?, ssh_key_id = ?, credential_ciphertext = ?, jump_connection_id = ?, options_json = ?, tags_json = ?, sort_order = ?, updated_at = ?
         WHERE id = ?
       `).run(
         environmentIds[0] ?? null, connectionGroupId, body.name, body.host, body.port, body.username, body.authType,
         sshKeyId, encryptedCredential,
-        body.jumpConnectionId ?? null, JSON.stringify(effectiveSshOptions), JSON.stringify(tags), new Date().toISOString(), request.params.id,
+        body.jumpConnectionId ?? null, JSON.stringify(effectiveSshOptions), JSON.stringify(tags), sortOrder, new Date().toISOString(), request.params.id,
       );
       await replaceConnectionEnvironments(app.db, "ssh", request.params.id, environmentIds);
     })();

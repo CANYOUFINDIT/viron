@@ -12,6 +12,8 @@ import {
   MIN_ENVIRONMENT_LOG_LINES,
   parseStoredLogFilePaths,
 } from "../environment-log-files.js";
+import { nextEnvironmentLogSortOrder } from "../list-order.js";
+import { hasExactIds, sameOrder } from "../../shared/tab-order.js";
 import { parseBody } from "../validation.js";
 import { executionScope } from "../execution-scope.js";
 import { requireAdmin } from "./auth.js";
@@ -45,6 +47,10 @@ export const environmentLogSchema = z.object({
 
 const streamOptionsSchema = z.object({
   initialLines: z.number().int().min(MIN_ENVIRONMENT_LOG_LINES).max(MAX_ENVIRONMENT_LOG_LINES).default(DEFAULT_ENVIRONMENT_LOG_LINES),
+});
+
+const logOrderSchema = z.object({
+  orderedIds: z.array(z.string().uuid()).min(1).max(500),
 });
 
 function displayName(name: string, filePaths: string[]): string {
@@ -103,9 +109,44 @@ export async function registerEnvironmentLogRoutes(app: FastifyInstance): Promis
         FROM environment_logs l
         JOIN ssh_connections s ON s.id = l.ssh_connection_id
         WHERE l.environment_id = ?
-        ORDER BY l.updated_at DESC
+        ORDER BY l.sort_order ASC, l.updated_at DESC, l.name ASC, l.id ASC
       `).all(request.params.environmentId) as Record<string, unknown>[];
       return { items: rows.map(mapLog) };
+    },
+  );
+
+  app.put<{ Params: { environmentId: string } }>(
+    "/api/v1/environments/:environmentId/logs/order",
+    { preHandler: requireAdmin },
+    async (request, reply) => {
+      if (!requireManager(request, reply)) return;
+      const body = parseBody(logOrderSchema, request.body, reply);
+      if (!body) return;
+      if (!await canAccessEnvironment(app.db, request.admin!, request.params.environmentId)) {
+        return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
+      }
+      const rows = await app.db.prepare("SELECT id FROM environment_logs WHERE environment_id = ? ORDER BY sort_order ASC, updated_at DESC, name ASC, id ASC")
+        .all(request.params.environmentId) as Array<{ id: string }>;
+      const currentIds = rows.map((row) => row.id);
+      if (!hasExactIds(body.orderedIds, currentIds)) {
+        return reply.code(400).send({ error: "INVALID_LOG_ORDER", message: "日志排序必须包含当前环境的全部日志配置" });
+      }
+      if (sameOrder(currentIds, body.orderedIds)) return { ok: true };
+      await app.db.transaction(async () => {
+        for (const [index, id] of body.orderedIds.entries()) {
+          await app.db.prepare("UPDATE environment_logs SET sort_order = ? WHERE id = ? AND environment_id = ?")
+            .run(index, id, request.params.environmentId);
+        }
+      })();
+      await writeAudit(app.db, {
+        action: "environment_log.reordered",
+        resourceType: "environment",
+        resourceId: request.params.environmentId,
+        summary: "调整日志配置顺序",
+        details: { orderedIds: body.orderedIds },
+        request,
+      });
+      return { ok: true };
     },
   );
 
@@ -126,12 +167,13 @@ export async function registerEnvironmentLogRoutes(app: FastifyInstance): Promis
       const now = new Date().toISOString();
       const name = displayName(body.name, body.filePaths);
       const firstFilePath = body.filePaths[0]!;
+      const sortOrder = await nextEnvironmentLogSortOrder(app.db, request.params.environmentId);
       try {
         await app.db.prepare(`
           INSERT INTO environment_logs (
-            id, environment_id, ssh_connection_id, name, file_path, file_paths_json, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(id, request.params.environmentId, body.sshConnectionId, name, firstFilePath, JSON.stringify(body.filePaths), now, now);
+            id, environment_id, ssh_connection_id, name, file_path, file_paths_json, sort_order, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(id, request.params.environmentId, body.sshConnectionId, name, firstFilePath, JSON.stringify(body.filePaths), sortOrder, now, now);
       } catch (error) {
         if (isUniqueConstraintError(error)) {
           return reply.code(409).send({ error: "DUPLICATE_LOG", message: "该 SSH 连接已存在以相同文件开头的日志配置" });

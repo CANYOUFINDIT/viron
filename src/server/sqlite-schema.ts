@@ -440,6 +440,7 @@ CREATE TABLE IF NOT EXISTS ssh_connections (
   options_json TEXT NOT NULL DEFAULT '{}',
   tags_json TEXT NOT NULL DEFAULT '[]',
   source_deleted INTEGER NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   UNIQUE(source_id, source_item_id)
@@ -473,6 +474,7 @@ CREATE TABLE IF NOT EXISTS environment_logs (
   name TEXT NOT NULL,
   file_path TEXT NOT NULL,
   file_paths_json TEXT NOT NULL DEFAULT '[]',
+  sort_order INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   UNIQUE(environment_id, ssh_connection_id, file_path)

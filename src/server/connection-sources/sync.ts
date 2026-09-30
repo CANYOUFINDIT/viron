@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { nextSshConnectionSortOrder } from "../list-order.js";
 import { posix } from "node:path";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { Client, type ConnectConfig, type FileEntryWithStats, type SFTPWrapper } from "ssh2";
@@ -212,8 +213,9 @@ export async function reconcileSecureCrtPayloads(app: FastifyInstance, sourceId:
       const id = randomUUID();
       const connectionGroupId = await ensureConnectionGroup(app, "ssh", payload.groupPath ?? [], workspace);
       const environmentId = await mappedEnvironment(app, sourceId, payload.sourcePath);
-      await app.db.prepare(`INSERT INTO ssh_connections (id, workspace_type, workspace_id, environment_id, connection_group_id, source_id, source_item_id, source_path, name, host, port, username, auth_type, credential_ciphertext, options_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(id, ...workspace, environmentId, connectionGroupId, sourceId, payload.importKey, payload.sourcePath, payload.name, payload.host, payload.port, payload.username || "root", payload.authType, app.secrets.encrypt(JSON.stringify(payload.credential)), JSON.stringify(payload.options), now, now);
+      const sortOrder = await nextSshConnectionSortOrder(app.db, workspace, connectionGroupId);
+      await app.db.prepare(`INSERT INTO ssh_connections (id, workspace_type, workspace_id, environment_id, connection_group_id, source_id, source_item_id, source_path, name, host, port, username, auth_type, credential_ciphertext, options_json, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, ...workspace, environmentId, connectionGroupId, sourceId, payload.importKey, payload.sourcePath, payload.name, payload.host, payload.port, payload.username || "root", payload.authType, app.secrets.encrypt(JSON.stringify(payload.credential)), JSON.stringify(payload.options), sortOrder, now, now);
       await addConnectionEnvironment(app.db, "ssh", id, environmentId);
       created += 1;
     }

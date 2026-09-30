@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { WorkspaceType } from "../access-control.js";
 import { replaceConnectionEnvironments } from "../connection-environments.js";
 import { ensureConnectionGroup, normalizeGroupPath, type ConnectionType } from "../connection-groups.js";
+import { nextEnvironmentLogSortOrder, nextSshConnectionSortOrder } from "../list-order.js";
 import { inspectSshPrivateKey } from "../ssh/key-store.js";
 import { writeAudit } from "../audit.js";
 import { revokeWorkspaceRuntime } from "../user-runtime.js";
@@ -348,8 +349,9 @@ async function syncSshConnections(context: ApplyContext): Promise<void> {
     let ids: string[];
     if (!matches.length) {
       const id = randomUUID();
-      await context.app.db.prepare(`INSERT INTO ssh_connections (id, workspace_type, workspace_id, environment_id, connection_group_id, source_id, name, host, port, username, auth_type, ssh_key_id, credential_ciphertext, jump_connection_id, options_json, tags_json, source_deleted, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 0, ?, ?)`)
-        .run(id, ...context.workspace, environmentIds[0] ?? null, connectionGroupId, context.source.id, row.name, row.host, row.port, row.username, row.authType, sshKeyId, credential, JSON.stringify(row.options), JSON.stringify(row.tags), context.now, context.now);
+      const sortOrder = await nextSshConnectionSortOrder(context.app.db, context.workspace, connectionGroupId);
+      await context.app.db.prepare(`INSERT INTO ssh_connections (id, workspace_type, workspace_id, environment_id, connection_group_id, source_id, name, host, port, username, auth_type, ssh_key_id, credential_ciphertext, jump_connection_id, options_json, tags_json, source_deleted, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 0, ?, ?, ?)`)
+        .run(id, ...context.workspace, environmentIds[0] ?? null, connectionGroupId, context.source.id, row.name, row.host, row.port, row.username, row.authType, sshKeyId, credential, JSON.stringify(row.options), JSON.stringify(row.tags), sortOrder, context.now, context.now);
       await replaceConnectionEnvironments(context.app.db, "ssh", id, environmentIds);
       ids = [id];
       addReport(context, "ssh_connection", row.name, `${row.username}@${row.host}:${row.port}`, "created");
@@ -466,8 +468,9 @@ async function syncEnvironmentLogs(context: ApplyContext): Promise<void> {
     if (!sshConnectionId) throw new Error(`日志配置 ${row.name} 缺少 SSH 连接`);
     const matches = await context.app.db.prepare("SELECT id FROM environment_logs WHERE environment_id = ? AND LOWER(name) = LOWER(?) ORDER BY created_at").all(environmentId, row.name) as Array<{ id: string }>;
     if (!matches.length) {
-      await context.app.db.prepare(`INSERT INTO environment_logs (id, environment_id, ssh_connection_id, name, file_path, file_paths_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(randomUUID(), environmentId, sshConnectionId, row.name, row.filePaths[0], JSON.stringify(row.filePaths), context.now, context.now);
+      const sortOrder = await nextEnvironmentLogSortOrder(context.app.db, environmentId);
+      await context.app.db.prepare(`INSERT INTO environment_logs (id, environment_id, ssh_connection_id, name, file_path, file_paths_json, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(randomUUID(), environmentId, sshConnectionId, row.name, row.filePaths[0], JSON.stringify(row.filePaths), sortOrder, context.now, context.now);
       addReport(context, "environment_log", row.name, row.sshConnection, "created");
     } else if (context.strategy === "ignore") addReport(context, "environment_log", row.name, row.sshConnection, "ignored", matches.length);
     else {

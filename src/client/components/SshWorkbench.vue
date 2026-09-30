@@ -53,6 +53,7 @@ import { onAppShortcut } from "../keyboard-shortcuts";
 import { createSftpOpenRequest, type SftpOpenRequest } from "../sftp";
 import { rememberActiveConnectionOrigin } from "../active-connection-origin";
 import { WORKBENCH_SIDEBAR_COLLAPSE_THRESHOLD, WORKBENCH_SIDEBAR_RESTORE_WIDTH } from "../workbench-sidebar-width";
+import { applySubsetOrder, reorderIds, sameOrder } from "../../shared/tab-order";
 import ConnectionEditDialog from "./ConnectionEditDialog.vue";
 import SshCommandHistoryPanel from "./SshCommandHistoryPanel.vue";
 import SshTerminalPane from "./SshTerminalPane.vue";
@@ -88,6 +89,8 @@ interface SshConnection {
   environmentIds: string[];
   connectionGroupId: string | null;
   connectionGroupPath: string | null;
+  sortOrder?: number;
+  updatedAt?: string;
   authType: "password" | "privateKey" | "keyboardInteractive" | "sshAgent";
   jumpConnectionId: string | null;
   tags: string[];
@@ -124,6 +127,10 @@ const loading = ref(true);
 const openingId = ref("");
 const movingSessionId = ref("");
 const draggingSessionId = ref("");
+const draggingConnectionId = ref("");
+const connectionDropTarget = ref<{ id: string; after: boolean } | null>(null);
+const savingConnectionOrder = ref(false);
+const connectionDragSuppressed = ref(false);
 const dropPane = ref<number | null>(null);
 const connections = ref<SshConnection[]>([]);
 const sessions = ref<WorkbenchSession[]>([]);
@@ -180,6 +187,104 @@ const groupedConnections = computed(() => {
     .sort(([left], [right]) => left === tr("未分组") ? 1 : right === tr("未分组") ? -1 : left.localeCompare(right, "zh-CN"))
     .map(([path, items]) => ({ path, items }));
 });
+const canManageConnections = computed(() => adminSession.workspace?.role === "owner" || adminSession.workspace?.role === "admin");
+const canSortConnections = computed(() => canManageConnections.value && !keyword.value.trim() && !savingConnectionOrder.value);
+
+function compareConnections(left: SshConnection, right: SshConnection) {
+  const order = (left.sortOrder ?? 0) - (right.sortOrder ?? 0);
+  if (order) return order;
+  const updated = String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? ""));
+  if (updated) return updated;
+  const name = left.name.localeCompare(right.name, "zh-CN");
+  if (name) return name;
+  return left.id.localeCompare(right.id);
+}
+
+function sortConnections(items: SshConnection[]) {
+  return items.slice().sort(compareConnections);
+}
+
+function connectionDragTitle(connection: SshConnection) {
+  const connect = tr("双击在当前工作台连接：{0} · {1}@{2}:{3}", [connection.name, connection.username, connection.host, connection.port]);
+  return canSortConnections.value ? `${connect} ${tr("拖动可调整顺序")}` : connect;
+}
+
+function insertAfterConnection(event: DragEvent) {
+  const element = event.currentTarget;
+  if (!(element instanceof HTMLElement)) return false;
+  const bounds = element.getBoundingClientRect();
+  return event.clientY > bounds.top + bounds.height / 2;
+}
+
+function suppressConnectionDrag() {
+  connectionDragSuppressed.value = true;
+}
+
+function releaseConnectionDragSuppression() {
+  connectionDragSuppressed.value = false;
+}
+
+function endConnectionDrag() {
+  draggingConnectionId.value = "";
+  connectionDropTarget.value = null;
+  connectionDragSuppressed.value = false;
+}
+
+function startConnectionDrag(connection: SshConnection, event: DragEvent) {
+  if (connectionDragSuppressed.value || !canSortConnections.value) {
+    connectionDragSuppressed.value = false;
+    event.preventDefault();
+    return;
+  }
+  draggingConnectionId.value = connection.id;
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", `ssh-connection:${connection.id}`);
+  }
+}
+
+function dragConnectionOver(connection: SshConnection, event: DragEvent) {
+  const dragged = connections.value.find((item) => item.id === draggingConnectionId.value);
+  if (!dragged || (dragged.connectionGroupId ?? null) !== (connection.connectionGroupId ?? null)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+  if (dragged.id === connection.id) {
+    connectionDropTarget.value = null;
+    return;
+  }
+  connectionDropTarget.value = { id: connection.id, after: insertAfterConnection(event) };
+}
+
+async function dropConnection(connection: SshConnection, event: DragEvent) {
+  const draggedId = draggingConnectionId.value;
+  const dragged = connections.value.find((item) => item.id === draggedId);
+  if (!dragged || (dragged.connectionGroupId ?? null) !== (connection.connectionGroupId ?? null)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const insertAfter = insertAfterConnection(event);
+  endConnectionDrag();
+  const groupItems = connections.value.filter((item) => (item.connectionGroupId ?? null) === (connection.connectionGroupId ?? null));
+  const orderedIds = reorderIds(groupItems.map((item) => item.id), draggedId, connection.id, insertAfter);
+  if (sameOrder(groupItems.map((item) => item.id), orderedIds)) return;
+  const original = connections.value.slice();
+  const byId = new Map(original.map((item) => [item.id, item]));
+  const nextIds = applySubsetOrder(original.map((item) => item.id), orderedIds);
+  if (!nextIds || sameOrder(original.map((item) => item.id), nextIds)) return;
+  connections.value = nextIds.map((id) => byId.get(id)!);
+  savingConnectionOrder.value = true;
+  try {
+    await api("/api/v1/ssh-connections/order", {
+      method: "PUT",
+      body: JSON.stringify({ connectionGroupId: connection.connectionGroupId ?? null, orderedIds }),
+    });
+  } catch (error) {
+    connections.value = original;
+    ElMessage.error(error instanceof Error ? error.message : tr("保存 SSH 连接顺序失败"));
+  } finally {
+    savingConnectionOrder.value = false;
+  }
+}
 
 const paneCount = computed(() => layout.value === "single" ? 1 : layout.value === "quad" ? 4 : 2);
 const panes = computed(() => Array.from({ length: paneCount.value }, (_, index) => index));
@@ -311,7 +416,7 @@ async function load() {
       api<{ items: SshConnection[] }>(`/api/v1/connections?${query.toString()}`),
       props.localExecution ? listDesktopSshSessions() : api<{ items: ServerSession[] }>("/api/v1/ssh-sessions"),
     ]);
-    connections.value = connectionResponse.items;
+    connections.value = sortConnections(connectionResponse.items);
     const visibleIds = new Set(connections.value.map((item) => item.id));
     const saved = restorePreferences();
     const ownership = readSessionOwnership();
@@ -401,7 +506,7 @@ async function refreshConnections() {
   const query = new URLSearchParams({ type: "ssh" });
   if (props.environmentId) query.set("environmentId", props.environmentId);
   const response = await api<{ items: SshConnection[] }>(`/api/v1/connections?${query.toString()}`);
-  connections.value = response.items;
+  connections.value = sortConnections(response.items);
   for (const session of sessions.value) {
     const connection = connections.value.find((item) => item.id === session.connectionId);
     if (connection) session.connectionName = connection.name;
@@ -1002,13 +1107,13 @@ onBeforeUnmount(() => {
         <section v-for="group in groupedConnections" :key="group.path" class="workbench-connection-group">
           <button class="workbench-group-toggle" :aria-expanded="!collapsedGroups.has(group.path)" @click="toggleConnectionGroup(group.path)"><ChevronDown v-if="!collapsedGroups.has(group.path)" :size="14" /><ChevronRight v-else :size="14" /><FolderTree :size="13" /><span>{{ group.path }}</span><em>{{ group.items.length }}</em></button>
           <el-dropdown v-for="connection in collapsedGroups.has(group.path) ? [] : group.items" :key="connection.id" class="workbench-connection-context-target" trigger="contextmenu" placement="bottom-start" popper-class="workbench-connection-menu-popper" @command="handleConnectionAction($event, connection)">
-            <div class="ssh-host-card" :class="{ 'is-opening': openingId === connection.id }">
-              <button class="connection-card-main" type="button" :disabled="openingId === connection.id" :title="$t('双击在当前工作台连接：{0} · {1}@{2}:{3}', [connection.name, connection.username, connection.host, connection.port])" @dblclick="openConnection(connection)" @keydown.enter="openConnection(connection)">
+            <div class="ssh-host-card" :class="{ 'is-opening': openingId === connection.id, 'is-dragging': draggingConnectionId === connection.id, 'is-drop-before': connectionDropTarget?.id === connection.id && !connectionDropTarget.after, 'is-drop-after': connectionDropTarget?.id === connection.id && connectionDropTarget.after }" :draggable="canSortConnections" @dragstart="startConnectionDrag(connection, $event)" @dragover="dragConnectionOver(connection, $event)" @drop="dropConnection(connection, $event)" @dragend="endConnectionDrag">
+              <button class="connection-card-main" type="button" :disabled="openingId === connection.id" :title="connectionDragTitle(connection)" @dblclick="openConnection(connection)" @keydown.enter="openConnection(connection)">
                 <span class="ssh-host-card__icon"><Server :size="16" /></span>
                 <span class="ssh-host-card__details"><strong>{{ connection.name }}</strong><small class="ssh-host-card__endpoint"><em v-if="connection.username">{{ connection.username }}@</em><span>{{ connection.host }}:{{ connection.port }}</span></small><span v-if="connection.tags.length" class="ssh-host-tags"><i v-for="tag in connection.tags" :key="tag">{{ tag }}</i></span></span>
               </button>
               <el-dropdown class="ssh-host-card__menu" trigger="click" placement="bottom-end" popper-class="workbench-connection-menu-popper" @command="handleConnectionAction($event, connection)">
-                <button class="connect-indicator" type="button" :disabled="openingId === connection.id" :aria-label="$t('打开 {0} 的连接菜单', [connection.name])" :title="$t('连接操作')">
+                <button class="connect-indicator" type="button" :disabled="openingId === connection.id" :aria-label="$t('打开 {0} 的连接菜单', [connection.name])" :title="$t('连接操作')" @pointerdown.stop="suppressConnectionDrag" @pointerup.stop="releaseConnectionDragSuppression" @pointercancel.stop="releaseConnectionDragSuppression">
                   <RefreshCw v-if="openingId === connection.id" :size="15" class="is-spinning" />
                   <ChevronDown v-else :size="15" />
                 </button>

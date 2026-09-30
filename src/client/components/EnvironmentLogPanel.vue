@@ -42,6 +42,8 @@ import { renderHighlightedLogHtml } from "../log-highlighting";
 import { shouldHandleLogLineBreakShortcut, shouldHandleLogPauseShortcut, shouldHandleLogReconnectShortcut } from "../log-shortcut";
 import { ServiceSocket } from "../service-socket";
 import { WORKBENCH_SIDEBAR_COLLAPSE_THRESHOLD, WORKBENCH_SIDEBAR_RESTORE_WIDTH } from "../workbench-sidebar-width";
+import { session } from "../session";
+import { reorderIds, sameOrder } from "../../shared/tab-order";
 import DesktopExecutionNotice from "./DesktopExecutionNotice.vue";
 import TipIcon from "./TipIcon.vue";
 import WorkbenchConnectionActions from "./WorkbenchConnectionActions.vue";
@@ -114,6 +116,11 @@ const emit = defineEmits<{ countChange: [count: number] }>();
 
 const loading = ref(true);
 const saving = ref(false);
+const savingLogOrder = ref(false);
+const canSortLogs = computed(() => (session.workspace?.role === "owner" || session.workspace?.role === "admin") && !savingLogOrder.value);
+const draggingLogId = ref("");
+const logDropTarget = ref<{ id: string; after: boolean } | null>(null);
+const logDragSuppressed = ref(false);
 const logs = ref<EnvironmentLog[]>([]);
 const sshConnections = ref<SshConnection[]>([]);
 const selectedLogId = ref("");
@@ -278,6 +285,83 @@ async function loadData() {
     ElMessage.error(error instanceof Error ? error.message : tr("加载日志配置失败"));
   } finally {
     loading.value = false;
+  }
+}
+
+function logDragTitle(log: EnvironmentLog) {
+  const action = props.executionEnabled ? tr("单击选择，双击开始查看") : tr("单击选择；本机日志执行尚未开放");
+  return canSortLogs.value ? `${action} ${tr("拖动可调整顺序")}` : action;
+}
+
+function insertAfterLog(event: DragEvent) {
+  const element = event.currentTarget;
+  if (!(element instanceof HTMLElement)) return false;
+  const bounds = element.getBoundingClientRect();
+  return event.clientY > bounds.top + bounds.height / 2;
+}
+
+function suppressLogDrag() {
+  logDragSuppressed.value = true;
+}
+
+function releaseLogDragSuppression() {
+  logDragSuppressed.value = false;
+}
+
+function endLogDrag() {
+  draggingLogId.value = "";
+  logDropTarget.value = null;
+  logDragSuppressed.value = false;
+}
+
+function startLogDrag(log: EnvironmentLog, event: DragEvent) {
+  if (logDragSuppressed.value || !canSortLogs.value) {
+    logDragSuppressed.value = false;
+    event.preventDefault();
+    return;
+  }
+  draggingLogId.value = log.id;
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", `environment-log:${log.id}`);
+  }
+}
+
+function dragLogOver(log: EnvironmentLog, event: DragEvent) {
+  if (!draggingLogId.value || !logs.value.some((item) => item.id === draggingLogId.value)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+  if (draggingLogId.value === log.id) {
+    logDropTarget.value = null;
+    return;
+  }
+  logDropTarget.value = { id: log.id, after: insertAfterLog(event) };
+}
+
+async function dropLog(log: EnvironmentLog, event: DragEvent) {
+  const draggedId = draggingLogId.value;
+  if (!draggedId || !logs.value.some((item) => item.id === draggedId)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const insertAfter = insertAfterLog(event);
+  endLogDrag();
+  const original = logs.value.slice();
+  const orderedIds = reorderIds(original.map((item) => item.id), draggedId, log.id, insertAfter);
+  if (sameOrder(original.map((item) => item.id), orderedIds)) return;
+  const byId = new Map(original.map((item) => [item.id, item]));
+  logs.value = orderedIds.map((id) => byId.get(id)!);
+  savingLogOrder.value = true;
+  try {
+    await api(`/api/v1/environments/${props.environmentId}/logs/order`, {
+      method: "PUT",
+      body: JSON.stringify({ orderedIds }),
+    });
+  } catch (error) {
+    logs.value = original;
+    ElMessage.error(error instanceof Error ? error.message : tr("保存日志顺序失败"));
+  } finally {
+    savingLogOrder.value = false;
   }
 }
 
@@ -722,8 +806,8 @@ onBeforeUnmount(() => {
 
       <div v-if="logs.length" class="log-catalog__list">
         <el-dropdown v-for="log in logs" :key="log.id" class="workbench-connection-context-target" trigger="contextmenu" placement="bottom-start" popper-class="workbench-connection-menu-popper" @command="handleLogConnectionAction($event, log)">
-          <article class="log-config-item" :class="{ 'is-active': selectedLogId === log.id, 'is-streaming': logStreamActive(log.id) }">
-            <button class="log-config-item__main" type="button" :title="executionEnabled ? $t('单击选择，双击开始查看') : $t('单击选择；本机日志执行尚未开放')" @click="selectLog(log.id)" @dblclick="startLog(log.id)" @keydown.enter.prevent="startLog(log.id)">
+          <article class="log-config-item" :class="{ 'is-active': selectedLogId === log.id, 'is-streaming': logStreamActive(log.id), 'is-dragging': draggingLogId === log.id, 'is-drop-before': logDropTarget?.id === log.id && !logDropTarget.after, 'is-drop-after': logDropTarget?.id === log.id && logDropTarget.after }" :draggable="canSortLogs" @dragstart="startLogDrag(log, $event)" @dragover="dragLogOver(log, $event)" @drop="dropLog(log, $event)" @dragend="endLogDrag">
+            <button class="log-config-item__main" type="button" :title="logDragTitle(log)" @click="selectLog(log.id)" @dblclick="startLog(log.id)" @keydown.enter.prevent="startLog(log.id)">
               <span class="log-config-item__icon" :title="logStreamActive(log.id) ? $t('正在后台跟踪') : undefined"><FileText :size="17" /><i v-if="logStreamActive(log.id)"></i></span>
               <span class="log-config-item__copy">
                 <strong>{{ log.name }}</strong>
@@ -732,7 +816,7 @@ onBeforeUnmount(() => {
               </span>
             </button>
             <el-dropdown class="log-config-item__menu-target" trigger="click" placement="bottom-end" popper-class="workbench-connection-menu-popper" @command="handleLogConnectionAction($event, log)">
-              <button class="log-config-item__menu" type="button" :aria-label="$t('打开 {0} 的日志操作菜单', [log.name])" :title="$t('日志操作')"><ChevronDown :size="15" /></button>
+              <button class="log-config-item__menu" type="button" :aria-label="$t('打开 {0} 的日志操作菜单', [log.name])" :title="$t('日志操作')" @pointerdown.stop="suppressLogDrag" @pointerup.stop="releaseLogDragSuppression" @pointercancel.stop="releaseLogDragSuppression"><ChevronDown :size="15" /></button>
               <template #dropdown><WorkbenchConnectionActions :actions="logConnectionActions" /></template>
             </el-dropdown>
           </article>
@@ -857,7 +941,14 @@ onBeforeUnmount(() => {
 .log-catalog__header button:hover { border-color: #3f736b; color: #75dcc5; }
 .log-catalog__header button:disabled { cursor: not-allowed; opacity: .4; }
 .log-catalog__list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 5px; scrollbar-width: thin; scrollbar-color: #33484a transparent; }
-.log-config-item { width: 100%; min-height: 59px; padding: 4px 5px 4px 8px; border: 1px solid transparent; border-radius: 8px; display: grid; grid-template-columns: minmax(0, 1fr) 27px; align-items: center; gap: 3px; }
+.log-config-item { position: relative; width: 100%; min-height: 59px; padding: 4px 5px 4px 8px; border: 1px solid transparent; border-radius: 8px; display: grid; grid-template-columns: minmax(0, 1fr) 27px; align-items: center; gap: 3px; }
+.log-config-item[draggable="true"] .log-config-item__main { cursor: grab; }
+.log-config-item[draggable="true"] .log-config-item__main:active { cursor: grabbing; }
+.log-config-item.is-dragging { opacity: .48; }
+.log-config-item.is-drop-before::before,
+.log-config-item.is-drop-after::after { content: ""; position: absolute; z-index: 2; left: 8px; right: 8px; height: 2px; border-radius: 2px; background: var(--teal-500); pointer-events: none; }
+.log-config-item.is-drop-before::before { top: 0; }
+.log-config-item.is-drop-after::after { bottom: 0; }
 .log-config-item:hover { background: #152527; }
 .log-config-item.is-active { border-color: #276156; background: #17302d; }
 .log-config-item.is-streaming:not(.is-active) { border-color: rgba(53, 139, 121, .34); background: rgba(23, 48, 45, .38); }

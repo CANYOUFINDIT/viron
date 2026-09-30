@@ -37,13 +37,14 @@ interface WebCredentialRow { id: string; web_entry_id: string; username: string;
 interface SshRow {
   id: string; environment_id: string | null; connection_group_id: string | null; name: string; host: string; port: number; username: string;
   auth_type: string; ssh_key_id: string | null; credential_ciphertext: string; jump_connection_id: string | null; options_json: string; tags_json: string;
+  sort_order: number | string;
 }
 interface SshKeyRow { id: string; name: string; algorithm: string; public_key: string; fingerprint: string; private_key_ciphertext: string }
 interface DatabaseRow {
   id: string; environment_id: string | null; connection_group_id: string | null; name: string; engine: string; host: string; port: number; username: string;
   credential_ciphertext: string; default_database: string; connection_mode: string; options_json: string;
 }
-interface LogRow { id: string; environment_id: string; ssh_connection_id: string; name: string; file_path: string; file_paths_json: string }
+interface LogRow { id: string; environment_id: string; ssh_connection_id: string; name: string; file_path: string; file_paths_json: string; sort_order: number | string }
 interface ConnectionGroupRow { id: string; type: "ssh" | "database"; path: string }
 interface ConflictCandidate { id: string; label: string; context: string }
 interface CopyConflict { kind: ResourceKind; sourceId: string; sourceName: string; candidates: ConflictCandidate[] }
@@ -103,10 +104,10 @@ async function loadSource(app: FastifyInstance, userId: string): Promise<CopySou
     app.db.prepare("SELECT id, group_id, name, short_name, description, status, owner, tags_json FROM environments WHERE workspace_type = ? AND workspace_id = ? ORDER BY name").all<EnvironmentRow>(...workspace),
     app.db.prepare(`SELECT w.id, w.environment_id, w.name, w.url, w.description, w.tags_json, w.sort_order FROM web_entries w JOIN environments e ON e.id = w.environment_id WHERE e.workspace_type = ? AND e.workspace_id = ? ORDER BY w.sort_order, w.name`).all<WebEntryRow>(...workspace),
     app.db.prepare(`SELECT c.id, c.web_entry_id, c.username, c.password_ciphertext, c.note, c.custom_fields_json, c.sort_order FROM web_credentials c JOIN web_entries w ON w.id = c.web_entry_id JOIN environments e ON e.id = w.environment_id WHERE e.workspace_type = ? AND e.workspace_id = ? ORDER BY c.sort_order, c.username`).all<WebCredentialRow>(...workspace),
-    app.db.prepare("SELECT id, environment_id, connection_group_id, name, host, port, username, auth_type, ssh_key_id, credential_ciphertext, jump_connection_id, options_json, tags_json FROM ssh_connections WHERE workspace_type = ? AND workspace_id = ? ORDER BY name").all<SshRow>(...workspace),
+    app.db.prepare("SELECT id, environment_id, connection_group_id, name, host, port, username, auth_type, ssh_key_id, credential_ciphertext, jump_connection_id, options_json, tags_json, sort_order FROM ssh_connections WHERE workspace_type = ? AND workspace_id = ? ORDER BY name").all<SshRow>(...workspace),
     app.db.prepare("SELECT id, name, algorithm, public_key, fingerprint, private_key_ciphertext FROM ssh_keys WHERE workspace_type = ? AND workspace_id = ? ORDER BY name").all<SshKeyRow>(...workspace),
     app.db.prepare("SELECT id, environment_id, connection_group_id, name, engine, host, port, username, credential_ciphertext, default_database, connection_mode, options_json FROM database_connections WHERE workspace_type = ? AND workspace_id = ? ORDER BY name").all<DatabaseRow>(...workspace),
-    app.db.prepare(`SELECT l.id, l.environment_id, l.ssh_connection_id, l.name, l.file_path, l.file_paths_json FROM environment_logs l JOIN environments e ON e.id = l.environment_id WHERE e.workspace_type = ? AND e.workspace_id = ? ORDER BY l.name`).all<LogRow>(...workspace),
+    app.db.prepare(`SELECT l.id, l.environment_id, l.ssh_connection_id, l.name, l.file_path, l.file_paths_json, l.sort_order FROM environment_logs l JOIN environments e ON e.id = l.environment_id WHERE e.workspace_type = ? AND e.workspace_id = ? ORDER BY l.name`).all<LogRow>(...workspace),
     app.db.prepare("SELECT id, type, path FROM connection_groups WHERE workspace_type = ? AND workspace_id = ?").all<ConnectionGroupRow>(...workspace),
     app.db.prepare(`SELECT ce.connection_id, ce.environment_id FROM ssh_connection_environments ce JOIN ssh_connections c ON c.id = ce.connection_id WHERE c.workspace_type = ? AND c.workspace_id = ?`).all<{ connection_id: string; environment_id: string }>(...workspace),
     app.db.prepare(`SELECT ce.connection_id, ce.environment_id FROM database_connection_environments ce JOIN database_connections c ON c.id = ce.connection_id WHERE c.workspace_type = ? AND c.workspace_id = ?`).all<{ connection_id: string; environment_id: string }>(...workspace),
@@ -349,8 +350,8 @@ async function executeCopy(
       const connectionGroupId = groupPath ? await ensureConnectionGroup(app, "ssh", groupPath.split("/"), workspace) : null;
       const name = await nextCopyName(app, "ssh_connections", workspace, row.name);
       const sshKeyId = row.ssh_key_id ? await ensureSshKey(row.ssh_key_id) : null;
-      await app.db.prepare(`INSERT INTO ssh_connections (id, workspace_type, workspace_id, environment_id, connection_group_id, source_id, source_item_id, source_path, name, host, port, username, auth_type, ssh_key_id, credential_ciphertext, jump_connection_id, options_json, tags_json, source_deleted, created_at, updated_at) VALUES (?, ?, ?, NULL, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`)
-        .run(targetId, ...workspace, connectionGroupId, name, row.host, row.port, row.username, row.auth_type, sshKeyId, reencrypt(app, row.credential_ciphertext), jumpId, row.options_json, row.tags_json, now, now);
+      await app.db.prepare(`INSERT INTO ssh_connections (id, workspace_type, workspace_id, environment_id, connection_group_id, source_id, source_item_id, source_path, name, host, port, username, auth_type, ssh_key_id, credential_ciphertext, jump_connection_id, options_json, tags_json, source_deleted, sort_order, created_at, updated_at) VALUES (?, ?, ?, NULL, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`)
+        .run(targetId, ...workspace, connectionGroupId, name, row.host, row.port, row.username, row.auth_type, sshKeyId, reencrypt(app, row.credential_ciphertext), jumpId, row.options_json, row.tags_json, Number(row.sort_order ?? 0), now, now);
       return targetId;
     };
     for (const sourceId of plan.selection.sshConnectionIds) await ensureSsh(sourceId);
@@ -423,8 +424,8 @@ async function executeCopy(
         if (target?.environment_id !== environmentId || target.ssh_connection_id !== sshConnectionId) throw new Error(`日志配置 ${row.name} 的复用目标依赖不一致`);
         continue;
       }
-      await app.db.prepare(`INSERT INTO environment_logs (id, environment_id, ssh_connection_id, name, file_path, file_paths_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(targetId, environmentId, sshConnectionId, row.name, row.file_path, row.file_paths_json, now, now);
+      await app.db.prepare(`INSERT INTO environment_logs (id, environment_id, ssh_connection_id, name, file_path, file_paths_json, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(targetId, environmentId, sshConnectionId, row.name, row.file_path, row.file_paths_json, Number(row.sort_order ?? 0), now, now);
     }
 
     const coveredEnvironmentIds = new Set<string>();
