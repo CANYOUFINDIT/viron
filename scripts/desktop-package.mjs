@@ -3,13 +3,13 @@ import { existsSync, rmSync, readFileSync, writeFileSync, mkdirSync, readdirSync
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 
 export const root = resolve(import.meta.dirname, "..");
 export const packageJson = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
 export const electronVersion = JSON.parse(await readFile(join(root, "node_modules", "electron", "package.json"), "utf8")).version;
 
-const desktopRuntimePackageRoots = [
+export const desktopRuntimePackageRoots = [
   "@earendil-works/pi-agent-core",
   "@earendil-works/pi-ai",
   "zod",
@@ -21,7 +21,13 @@ const desktopRuntimePackageRoots = [
   "ws",
   "@modelcontextprotocol/sdk",
   "electron-chrome-web-store",
+  "yauzl",
 ];
+
+const desktopRuntimeEntries = ["src/desktop/main.ts", "src/desktop/mcp-stdio.ts"];
+
+// Electron supplies this. Every other bare import has to be inside app.asar.
+const electronRuntimePackages = new Set(["electron"]);
 
 export function buildDesktop() {
   const outputPaths = ["dist/desktop", "dist/shared", "dist/desktop-renderer", "dist/database-sync.js", "dist/database-sync.js.map", "dist/server/database-workbench/http-tunnel.js", "dist/server/database-workbench/http-tunnel.js.map"];
@@ -75,6 +81,110 @@ async function desktopRuntimePackageDirectories() {
   return [...collected.entries()].sort(([left], [right]) => left.localeCompare(right));
 }
 
+export function runtimePackageName(specifier) {
+  if (!specifier || specifier.startsWith(".") || specifier.startsWith("/") || specifier.startsWith("node:")) return null;
+  const parts = specifier.split("/");
+  const name = specifier.startsWith("@") ? (parts.length >= 2 ? `${parts[0]}/${parts[1]}` : null) : parts[0];
+  if (!name || electronRuntimePackages.has(name)) return null;
+  return name;
+}
+
+export function importedSpecifiers(source) {
+  const executable = source
+    .replace(/^\s*import\s+type\b[^;]*;?/gm, "")
+    .replace(/^\s*export\s+type\b[^;]*;?/gm, "");
+  const clause = String.raw`(?:[\s\w{},*]|\btype\b)*`;
+  const pattern = new RegExp(String.raw`(?<![\w$-])(?:import|export)\b(?!\s+type\b)\s*(?:${clause}\bfrom\s+)?["']([^"'\n]+)["']|(?<![\w$-])import\(\s*["']([^"'\n]+)["']\s*\)`, "g");
+  const specifiers = [];
+  for (const match of executable.matchAll(pattern)) {
+    const specifier = match[1] ?? match[2];
+    if (specifier && !/\s/.test(specifier)) specifiers.push(specifier);
+  }
+  return specifiers;
+}
+
+function resolveImportedFile(fromFile, specifier) {
+  if (!specifier.startsWith(".")) return null;
+  const target = resolve(dirname(fromFile), specifier);
+  const candidates = [];
+  if (/\.[cm]?js$/.test(target)) {
+    const stem = target.replace(/\.[cm]?js$/, "");
+    for (const extension of [".ts", ".tsx", ".cts", ".mts", ".js", ".cjs", ".mjs"]) candidates.push(`${stem}${extension}`);
+  }
+  candidates.push(target, `${target}.ts`, `${target}.js`, join(target, "index.ts"), join(target, "index.js"));
+  const resolved = candidates.find((candidate) => existsSync(candidate));
+  if (!resolved) throw new Error(`无法解析桌面模块 ${specifier}（来自 ${relative(root, fromFile)}）`);
+  return resolved;
+}
+
+function runtimePackagesFrom(entryFiles) {
+  const packages = new Set();
+  const seen = new Set();
+  const queue = [...entryFiles];
+  while (queue.length) {
+    const file = queue.pop();
+    if (!file || seen.has(file)) continue;
+    seen.add(file);
+    for (const specifier of importedSpecifiers(readFileSync(file, "utf8"))) {
+      const packageName = runtimePackageName(specifier);
+      if (packageName) {
+        packages.add(packageName);
+        continue;
+      }
+      const imported = resolveImportedFile(file, specifier);
+      if (imported) queue.push(imported);
+    }
+  }
+  return packages;
+}
+
+export function desktopSourceRuntimePackages() {
+  return runtimePackagesFrom(desktopRuntimeEntries.map((file) => join(root, file)));
+}
+
+function stagedRuntimePackages(stage) {
+  return runtimePackagesFrom([
+    join(stage, "dist", "desktop", "main.js"),
+    join(stage, "dist", "desktop", "mcp-stdio.js"),
+  ]);
+}
+
+function stagedPackageManifest(stage, name) {
+  return join(stage, "node_modules", ...name.split("/"), "package.json");
+}
+
+async function requiredDesktopRuntimePackages(stage) {
+  const required = new Set();
+  const missing = [];
+  const queue = [...stagedRuntimePackages(stage)];
+  while (queue.length) {
+    const name = queue.pop();
+    if (!name || required.has(name)) continue;
+    required.add(name);
+    const manifestPath = stagedPackageManifest(stage, name);
+    if (!existsSync(manifestPath)) {
+      missing.push(name);
+      continue;
+    }
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    for (const dependency of Object.keys(manifest.dependencies ?? {})) queue.push(dependency);
+  }
+  if (missing.length) throw new Error(`桌面安装包缺少运行依赖：${missing.sort().join("、")}`);
+  return [...required].sort();
+}
+
+export async function assertPackagedDesktopRuntime(archivePath, stage) {
+  const cli = join(root, "node_modules", "@electron", "asar", "bin", "asar.js");
+  const listed = execFileSync(process.execPath, [cli, "list", archivePath], { encoding: "utf8" });
+  const entries = new Set(listed.split("\n").filter(Boolean));
+  const missing = [];
+  for (const name of await requiredDesktopRuntimePackages(stage)) {
+    const entry = `/node_modules/${name}/package.json`;
+    if (!entries.has(entry)) missing.push(entry);
+  }
+  if (missing.length) throw new Error(`安装包 app.asar 缺少运行依赖：${missing.join("、")}`);
+}
+
 export async function stageDesktopApplication(temporaryPrefix) {
   const stage = await mkdtemp(join(tmpdir(), temporaryPrefix));
   await mkdir(join(stage, "dist"), { recursive: true });
@@ -117,5 +227,8 @@ export async function stageDesktopApplication(temporaryPrefix) {
     main: "dist/desktop/main.js",
     dependencies: Object.fromEntries(desktopRuntimePackageRoots.map((name) => [name, packageJson.dependencies[name]])),
   }, null, 2)}\n`);
+  // A smoke launch inside this repository can still resolve a missing package
+  // from the repo node_modules. The installed app only has app.asar.
+  await requiredDesktopRuntimePackages(stage);
   return stage;
 }

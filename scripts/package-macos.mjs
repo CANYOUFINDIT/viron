@@ -6,7 +6,7 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import packager from "@electron/packager";
 import { createAppIconPng } from "./app-icon.mjs";
-import { buildDesktop, electronVersion, packageJson, root, stageDesktopApplication } from "./desktop-package.mjs";
+import { assertPackagedDesktopRuntime, buildDesktop, electronVersion, packageJson, root, stageDesktopApplication } from "./desktop-package.mjs";
 import { pkcs12ExportArgs, resolveOpenSslCommand, supportsPkcs12Legacy } from "./macos-openssl.mjs";
 
 const requestedArch = process.argv.find((argument) => argument.startsWith("--arch="))?.slice("--arch=".length);
@@ -480,6 +480,7 @@ try {
   });
   const appPath = packagedPaths.map((path) => join(path, "Viron.app")).find((path) => basename(path) === "Viron.app");
   if (!appPath) throw new Error("没有找到生成的 Viron.app");
+  await assertPackagedDesktopRuntime(join(appPath, "Contents", "Resources", "app.asar"), stage);
   compileMcpLauncher(appPath);
   await verifyPortableApplicationSymlinks(appPath);
   verifyPackagedCompatibility(appPath);

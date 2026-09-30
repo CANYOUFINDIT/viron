@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
+import { desktopRuntimePackageRoots, desktopSourceRuntimePackages } from "../scripts/desktop-package.mjs";
 
 const releaseScriptUrl = new URL("../scripts/package-release.sh", import.meta.url);
 const versionScriptUrl = new URL("../scripts/sync-release-version.mjs", import.meta.url);
@@ -78,6 +79,12 @@ describe("release packaging", () => {
     for (const removed of ["@ai-sdk/anthropic", "@ai-sdk/openai-compatible", '"ai"']) {
       expect(desktopPackage).not.toContain(removed);
     }
+    expect(desktopRuntimePackageRoots).toContain("yauzl");
+    expect(windowsPackage).toContain("/node_modules/yauzl/package.json");
+    expect(windowsPackage).toContain("/node_modules/pend/package.json");
+    const runtimePackages = [...desktopSourceRuntimePackages()].sort();
+    expect(runtimePackages).toContain("yauzl");
+    expect(runtimePackages.filter((name) => !desktopRuntimePackageRoots.includes(name))).toEqual([]);
   });
 
   it("documents the default version and exits without building for help", () => {

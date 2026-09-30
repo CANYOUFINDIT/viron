@@ -4,7 +4,7 @@ import { basename, join, relative } from "node:path";
 import { execFileSync } from "node:child_process";
 import { Arch, Platform, build } from "electron-builder";
 import { createAppIconPng } from "./app-icon.mjs";
-import { buildDesktop, electronVersion, packageJson, root, stageDesktopApplication } from "./desktop-package.mjs";
+import { assertPackagedDesktopRuntime, buildDesktop, electronVersion, packageJson, root, stageDesktopApplication } from "./desktop-package.mjs";
 
 const requestedArch = process.argv.find((argument) => argument.startsWith("--arch="))?.slice("--arch=".length) ?? "ia32";
 const architectures = {
@@ -77,6 +77,8 @@ function verifyApplicationArchive(unpackedDir) {
     "/node_modules/mysql2/package.json",
     "/node_modules/ioredis/package.json",
     "/node_modules/exceljs/package.json",
+    "/node_modules/yauzl/package.json",
+    "/node_modules/pend/package.json",
   ]) {
     if (!entries.includes(required)) throw new Error(`Windows App 缺少运行文件 ${required}`);
   }
@@ -140,6 +142,7 @@ try {
   const appDescription = verifyExecutableArchitecture(appExecutable, "Windows App ");
   const installerDescription = verifyNsisInstaller(installerPath);
   verifyApplicationArchive(unpackedDir);
+  await assertPackagedDesktopRuntime(join(unpackedDir, "resources", "app.asar"), stage);
   await verifyMcpLauncher(unpackedDir);
 
   if (installerPath !== releasePath) await cp(installerPath, releasePath);
