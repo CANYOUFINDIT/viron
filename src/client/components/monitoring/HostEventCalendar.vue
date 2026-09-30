@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock3, RefreshCw } from "@lucide/vue";
 import { ElTooltip } from "element-plus";
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   type MonitorAlertSeverity,
   type MonitorHostEventCalendarDay,
@@ -48,6 +48,11 @@ const events = ref<MonitorHostEventItem[]>([]);
 const eventsLoading = ref(false);
 const isDragging = ref(false);
 const weeksWrapperRef = ref<HTMLElement | null>(null);
+const graphScrollRef = ref<HTMLElement | null>(null);
+let heatmapResizeObserver: ResizeObserver | null = null;
+// 最近月份在矩阵右侧。用户没有主动向左滚动时，保持尾部可见。
+let stickHeatmapToTail = true;
+let scrollingHeatmapToTail = false;
 const loadingMonthKeys = ref<string[]>([]);
 const failedMonthKeys = ref<string[]>([]);
 
@@ -319,6 +324,48 @@ function handleCellMouseLeave() {
   hoveredDay.value = null;
 }
 
+function scrollHeatmapToTail() {
+  const scroller = graphScrollRef.value;
+  if (!scroller || !stickHeatmapToTail || scrollingHeatmapToTail) return;
+  const max = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+  if (scroller.scrollLeft >= max - 1) return;
+  scrollingHeatmapToTail = true;
+  scroller.scrollLeft = max;
+  requestAnimationFrame(() => {
+    scrollingHeatmapToTail = false;
+  });
+}
+
+function pinHeatmapToTail() {
+  stickHeatmapToTail = true;
+  void nextTick(() => {
+    scrollHeatmapToTail();
+    requestAnimationFrame(scrollHeatmapToTail);
+  });
+}
+
+function handleGraphScroll() {
+  handleCellMouseLeave();
+  if (scrollingHeatmapToTail) return;
+  const scroller = graphScrollRef.value;
+  if (!scroller) return;
+  const max = scroller.scrollWidth - scroller.clientWidth;
+  stickHeatmapToTail = max <= 1 || scroller.scrollLeft >= max - 2;
+}
+
+function observeHeatmapScroller() {
+  heatmapResizeObserver?.disconnect();
+  heatmapResizeObserver = null;
+  const scroller = graphScrollRef.value;
+  if (!scroller || typeof ResizeObserver === "undefined") return;
+  heatmapResizeObserver = new ResizeObserver(() => {
+    scrollHeatmapToTail();
+  });
+  heatmapResizeObserver.observe(scroller);
+  const graph = scroller.querySelector(".event-calendar__graph");
+  if (graph) heatmapResizeObserver.observe(graph);
+}
+
 function formatDuration(minutes: number) {
   if (minutes < 60) return tr("{0} 分钟", [Math.round(minutes)]);
   const hours = Math.floor(minutes / 60);
@@ -431,9 +478,18 @@ watch(() => [props.environmentId, props.hostId, props.mode], () => {
   calendars.value = [];
   loadingMonthKeys.value = [];
   failedMonthKeys.value = [];
+  pinHeatmapToTail();
+});
+watch(anchorMonth, () => {
+  pinHeatmapToTail();
 });
 watch(() => [props.environmentId, props.hostId, props.mode, props.refreshKey, anchorMonth.value, rangeMonths.value], loadCalendar, { immediate: true });
+onMounted(() => {
+  observeHeatmapScroller();
+  pinHeatmapToTail();
+});
 onBeforeUnmount(() => {
+  heatmapResizeObserver?.disconnect();
   calendarAbort?.abort();
   eventsAbort?.abort();
 });
@@ -513,7 +569,7 @@ onBeforeUnmount(() => {
     </header>
 
     <p v-if="error" class="event-calendar__error">{{ error }}</p>
-    <div class="event-calendar__graph-scroll" :class="{ 'is-loading': loading && !heatmapWeeks.length }" @scroll="handleCellMouseLeave">
+    <div ref="graphScrollRef" class="event-calendar__graph-scroll" :class="{ 'is-loading': loading && !heatmapWeeks.length }" @scroll="handleGraphScroll">
       <div v-if="heatmapWeeks.length" class="event-calendar__graph" :style="{ '--week-count': heatmapWeeks.length }">
         <div class="event-calendar__months" aria-hidden="true">
           <span
@@ -1091,6 +1147,7 @@ onBeforeUnmount(() => {
 .event-calendar__graph-scroll {
   padding: 18px 18px 14px;
   overflow-x: auto;
+  overflow-anchor: none;
   transition: opacity 0.16s ease;
   scrollbar-width: thin;
 }
@@ -1147,6 +1204,9 @@ onBeforeUnmount(() => {
 }
 
 .event-calendar__weekdays {
+  position: sticky;
+  left: 0;
+  z-index: 4;
   width: 23px;
   display: grid;
   grid-template-rows: repeat(7, var(--heat-cell));
@@ -1157,6 +1217,8 @@ onBeforeUnmount(() => {
   text-align: right;
   font-family: var(--font-body);
   user-select: none;
+  background: var(--surface);
+  box-shadow: 9px 0 0 var(--surface);
 }
 
 .event-calendar__weeks-wrapper {

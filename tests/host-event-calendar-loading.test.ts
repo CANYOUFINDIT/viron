@@ -1,5 +1,6 @@
 /** @vitest-environment happy-dom */
 import { flushPromises, mount } from "@vue/test-utils";
+import { nextTick } from "vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../src/client/api", () => ({ api: vi.fn() }));
@@ -141,5 +142,34 @@ describe("platform event calendar loading state", () => {
     expect(wrapper.findAll(".event-calendar__cell.is-loading-data").length).toBeGreaterThan(0);
     wrapper.unmount();
     await flushPromises();
+  });
+
+  it("opens the heatmap scrolled to the latest weeks and keeps a manual position", async () => {
+    const pending: Array<() => void> = [];
+    mockedApi.mockImplementation((path) => new Promise((resolve) => {
+      pending.push(() => resolve(calendar(calendarMonth(String(path)))));
+    }));
+
+    const wrapper = mountCalendar();
+    const scroller = wrapper.get(".event-calendar__graph-scroll").element as HTMLElement;
+    Object.defineProperty(scroller, "scrollWidth", { configurable: true, get: () => 1200 });
+    Object.defineProperty(scroller, "clientWidth", { configurable: true, get: () => 480 });
+    await nextTick();
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));
+
+    expect(scroller.scrollLeft).toBe(720);
+
+    scroller.scrollLeft = 30;
+    scroller.dispatchEvent(new Event("scroll"));
+    pending.splice(0).forEach((resolve) => resolve());
+    await flushPromises();
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));
+    expect(scroller.scrollLeft).toBe(30);
+
+    await wrapper.get(".toolbar-nav button").trigger("click");
+    await nextTick();
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));
+    expect(scroller.scrollLeft).toBe(720);
+    wrapper.unmount();
   });
 });
