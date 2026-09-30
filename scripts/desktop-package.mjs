@@ -162,31 +162,47 @@ function resolveStagedPackage(stage, fromDirectory, name) {
   }
 }
 
-async function requiredDesktopRuntimeEntries(stage) {
-  const entries = [];
+function archivePackageExists(entries, fromRel, name) {
+  const parts = fromRel.split("/").filter(Boolean);
+  const packageParts = name.split("/");
+  while (true) {
+    const entry = `/${[...parts, "node_modules", ...packageParts, "package.json"].join("/")}`;
+    if (entries.has(entry)) return true;
+    if (parts.length === 0) return false;
+    parts.pop();
+  }
+}
+
+async function requiredDesktopRuntimeRequests(stage) {
+  const requests = [];
   const seen = new Set();
   const missing = [];
-  const queue = [...stagedRuntimePackages(stage)].map((name) => ({ name, from: join(stage, "dist", "desktop") }));
+  const queue = [...stagedRuntimePackages(stage)].map((name) => ({ name, fromRel: "dist/desktop" }));
   while (queue.length) {
     const item = queue.pop();
-    const resolved = resolveStagedPackage(stage, item.from, item.name);
+    const resolved = resolveStagedPackage(stage, join(stage, item.fromRel), item.name);
     if (!resolved) {
-      if (!missing.includes(item.name)) missing.push(item.name);
+      const label = `${item.name}（${item.fromRel}）`;
+      if (!missing.includes(label)) missing.push(label);
       continue;
     }
-    if (seen.has(resolved)) continue;
-    seen.add(resolved);
-    entries.push(`/${relative(stage, join(resolved, "package.json")).split(sep).join("/")}`);
+    const rel = relative(stage, resolved).split(sep).join("/");
+    requests.push({ fromRel: item.fromRel, name: item.name });
+    if (seen.has(rel)) continue;
+    seen.add(rel);
     const manifest = JSON.parse(await readFile(join(resolved, "package.json"), "utf8"));
-    for (const dependency of Object.keys(manifest.dependencies ?? {})) queue.push({ name: dependency, from: resolved });
+    for (const dependency of Object.keys(manifest.dependencies ?? {})) queue.push({ name: dependency, fromRel: rel });
   }
   if (missing.length) throw new Error(`桌面安装包缺少运行依赖：${missing.sort().join("、")}`);
-  return entries;
+  return requests;
 }
 
 export async function assertPackagedDesktopRuntime(archivePath, stage) {
   const entries = new Set(listPackage(archivePath));
-  const missing = (await requiredDesktopRuntimeEntries(stage)).filter((entry) => !entries.has(entry));
+  const missing = [];
+  for (const request of await requiredDesktopRuntimeRequests(stage)) {
+    if (!archivePackageExists(entries, request.fromRel, request.name)) missing.push(`${request.name}（${request.fromRel}）`);
+  }
   if (missing.length) throw new Error(`安装包 app.asar 缺少运行依赖：${missing.join("、")}`);
 }
 
@@ -234,6 +250,6 @@ export async function stageDesktopApplication(temporaryPrefix) {
   }, null, 2)}\n`);
   // A smoke launch inside this repository can still resolve a missing package
   // from the repo node_modules. The installed app only has app.asar.
-  await requiredDesktopRuntimeEntries(stage);
+  await requiredDesktopRuntimeRequests(stage);
   return stage;
 }
