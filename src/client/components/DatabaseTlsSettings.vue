@@ -134,7 +134,7 @@ function credentialPlaceholder(kind: "ca" | "certificate" | "privateKey" | "pass
 }
 
 .connection-advanced-panel__body {
-  padding: 14px 13px 0;
+  padding: 14px 13px 16px;
   border-top: 1px solid var(--ink-100);
 }
 </style>

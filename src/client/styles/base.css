@@ -76,8 +76,34 @@
   --el-text-color-secondary: var(--ink-500);
   --el-border-color: var(--ink-200);
   --el-border-color-light: var(--ink-100);
+  --el-border-color-lighter: #20312e;
+  --el-border-color-extra-light: #1b2b28;
+  --el-border-color-dark: #3e5550;
+  --el-border-color-darker: #4c6660;
+  --el-border-color-hover: var(--ink-300);
   --el-fill-color-blank: var(--surface);
+  --el-fill-color: #1c2c2f;
   --el-fill-color-light: var(--ink-50);
+  --el-fill-color-lighter: #162326;
+  --el-fill-color-extra-light: #121c1e;
+  --el-fill-color-dark: #243538;
+  --el-fill-color-darker: #2c4144;
+  --el-text-color-placeholder: var(--ink-400);
+  --el-text-color-disabled: var(--ink-400);
+  --el-color-primary-light-3: #3f7568;
+  --el-color-primary-light-5: #2f564d;
+  --el-color-primary-light-7: #23423c;
+  --el-color-primary-light-8: #1c3833;
+  --el-color-primary-light-9: #17302c;
+  --el-color-info: #c5d1cd;
+  --el-color-info-light-3: #8d9e9a;
+  --el-color-info-light-5: #667874;
+  --el-color-info-light-7: #3c4e4b;
+  --el-color-info-light-8: #2c3d3a;
+  --el-color-info-light-9: #1c2c2a;
+  --el-color-info-dark-2: #d7e3df;
+  --el-mask-color: rgba(8, 16, 18, .72);
+  --el-mask-color-extra-light: rgba(8, 16, 18, .36);
 }
 
 * { box-sizing: border-box; }
@@ -894,6 +920,11 @@ button { color: inherit; }
 .envman-dialog .el-form-item__label { height: auto; margin-bottom: 7px; padding: 0; color: var(--ink-700); font-size: 14px; font-weight: 700; line-height: 1.4; }
 .envman-dialog .el-form-item.is-required:not(.is-no-asterisk).asterisk-left > .el-form-item__label::before { margin-right: 5px; color: var(--red-600); }
 .envman-dialog .el-input__wrapper, .envman-dialog .el-select__wrapper, .envman-dialog .el-input-number .el-input__wrapper { min-height: 42px; padding-inline: 12px; border-radius: 7px; background: color-mix(in srgb, var(--ink-50) 42%, var(--surface)); box-shadow: 0 0 0 1px var(--ink-200) inset; transition: background-color .16s ease, box-shadow .16s ease; }
+.envman-dialog .el-select__wrapper:has(.el-tag) { min-height: 46px; padding: 8px 12px; }
+.envman-dialog .el-select__selection.is-near { margin-left: 0; }
+.envman-dialog .el-select__selection .el-tag { height: 24px; max-width: 100%; border: 0; border-radius: 6px; background: color-mix(in srgb, var(--teal-50) 86%, var(--surface)); color: var(--ink-800); }
+.envman-dialog .el-select__selection .el-tag .el-tag__close { color: var(--ink-500); }
+.envman-dialog .el-select__selection .el-tag .el-tag__close:hover { background: var(--teal-100); color: var(--ink-900); }
 .envman-dialog .el-input__wrapper:hover, .envman-dialog .el-select__wrapper:hover, .envman-dialog .el-input-number .el-input__wrapper:hover { background: var(--surface); box-shadow: 0 0 0 1px var(--ink-300) inset; }
 .envman-dialog .el-input__inner, .envman-dialog .el-select__placeholder, .envman-dialog .el-select__selected-item { color: var(--ink-800); font-size: 13px; }
 .envman-dialog .el-input__inner::placeholder, .envman-dialog .el-textarea__inner::placeholder { color: var(--ink-600); }
@@ -903,8 +934,9 @@ button { color: inherit; }
 .envman-dialog .el-input__wrapper.is-focus, .envman-dialog .el-select__wrapper.is-focused, .envman-dialog .el-textarea__inner:focus { background: var(--surface); box-shadow: 0 0 0 1px var(--teal-500) inset, 0 0 0 3px color-mix(in srgb, var(--teal-500) 13%, transparent); }
 .connection-form .el-input-number.is-controls-right .el-input__wrapper { padding-right: 38px; }
 .connection-form .el-input-number .el-input__inner { text-align: left; }
+.connection-form .el-input-number { --el-fill-color-light: color-mix(in srgb, var(--ink-50) 42%, var(--surface)); }
 .connection-form .el-input-number.is-controls-right .el-input-number__increase,
-.connection-form .el-input-number.is-controls-right .el-input-number__decrease { --el-input-number-controls-height: calc(50% - 1px); width: 30px; border-left-color: var(--ink-200); background: transparent; color: var(--ink-500); transition: background-color .16s ease, color .16s ease; }
+.connection-form .el-input-number.is-controls-right .el-input-number__decrease { --el-input-number-controls-height: calc(50% - 1px); width: 30px; border-color: var(--ink-200); border-left-color: var(--ink-200); background: color-mix(in srgb, var(--ink-50) 42%, var(--surface)); color: var(--ink-500); transition: background-color .16s ease, color .16s ease; }
 .connection-form .el-input-number__increase:hover,
 .connection-form .el-input-number__decrease:hover { background: var(--teal-50); color: var(--teal-700); }
 .envman-dialog .is-disabled .el-input__wrapper, .envman-dialog .is-disabled.el-select__wrapper, .envman-dialog .el-textarea.is-disabled .el-textarea__inner { background: var(--ink-50); color: var(--ink-500); opacity: .72; }
@@ -912,9 +944,13 @@ button { color: inherit; }
 .envman-dialog .el-form-item__error { padding-top: 5px; color: var(--red-600); font-size: 12px; }
 .envman-dialog .el-form-item__content > small, .envman-dialog .el-form-item__content > p { color: var(--ink-500); font-size: 12px; line-height: 1.55; }
 .envman-dialog .el-form-item:has(.el-switch) .el-form-item__content { min-height: 42px; align-items: center; }
-.connection-form .el-radio-group { width: 100%; }
+.connection-form .el-radio-group { width: 100%; display: flex; }
 .connection-form .el-radio-button { flex: 1; }
-.connection-form .el-radio-button__inner { width: 100%; min-height: 42px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; font-size: 13px; font-weight: 700; }
+.connection-form .el-radio-button__inner { width: 100%; min-height: 42px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; border-color: var(--ink-200); background: color-mix(in srgb, var(--ink-50) 42%, var(--surface)); color: var(--ink-700); box-shadow: none; font-size: 13px; font-weight: 700; }
+.connection-form .el-radio-button__inner:hover { color: var(--ink-900); }
+.connection-form .el-radio-button__original-radio:disabled + .el-radio-button__inner { border-color: var(--ink-200); background: color-mix(in srgb, var(--ink-50) 55%, var(--surface)); color: var(--ink-500); cursor: not-allowed; }
+.connection-form .el-radio-button.is-active .el-radio-button__original-radio:not(:disabled) + .el-radio-button__inner,
+.connection-form .el-radio-button__original-radio:disabled:checked + .el-radio-button__inner { border-color: var(--teal-500); background: color-mix(in srgb, var(--teal-50) 78%, var(--surface)); color: var(--ink-900); box-shadow: none; }
 .connection-advanced-panel { margin-bottom: 18px; overflow: hidden; border: 1px solid var(--ink-200); border-radius: 9px; background: var(--surface); }
 .connection-advanced-panel > summary { min-height: 52px; padding: 10px 13px; color: var(--ink-700); display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; list-style: none; transition: background-color .16s ease; }
 .connection-advanced-panel > summary::-webkit-details-marker { display: none; }
@@ -923,7 +959,7 @@ button { color: inherit; }
 .connection-advanced-panel > summary strong { color: var(--ink-800); font-size: 13px; }
 .connection-advanced-panel > summary small { color: var(--ink-400); font-size: 11px; }
 .connection-advanced-panel__status { flex: 0 0 auto; padding: 3px 7px; border-radius: 999px; background: var(--ink-50); color: var(--ink-500); font-family: var(--font-mono); font-size: 10px; font-weight: 700; }
-.connection-advanced-panel__body { padding: 14px 13px 0; border-top: 1px solid var(--ink-100); }
+.connection-advanced-panel__body { padding: 14px 13px 16px; border-top: 1px solid var(--ink-100); }
 .connection-switch-stack { width: 100%; min-height: 32px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 .connection-switch-stack label { display: inline-flex; align-items: center; gap: 7px; color: var(--ink-650); font-size: 12px; }
 .form-field-warning { color: var(--warning-700, #9a5b12) !important; }
