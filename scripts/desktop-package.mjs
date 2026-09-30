@@ -3,7 +3,8 @@ import { existsSync, rmSync, readFileSync, writeFileSync, mkdirSync, readdirSync
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
+import { listPackage } from "@electron/asar";
 
 export const root = resolve(import.meta.dirname, "..");
 export const packageJson = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
@@ -184,9 +185,7 @@ async function requiredDesktopRuntimeEntries(stage) {
 }
 
 export async function assertPackagedDesktopRuntime(archivePath, stage) {
-  const cli = join(root, "node_modules", "@electron", "asar", "bin", "asar.js");
-  const listed = execFileSync(process.execPath, [cli, "list", archivePath], { encoding: "utf8" });
-  const entries = new Set(listed.split("\n").filter(Boolean));
+  const entries = new Set(listPackage(archivePath));
   const missing = (await requiredDesktopRuntimeEntries(stage)).filter((entry) => !entries.has(entry));
   if (missing.length) throw new Error(`安装包 app.asar 缺少运行依赖：${missing.join("、")}`);
 }

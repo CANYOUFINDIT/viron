@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { listPackage } from "@electron/asar";
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -52,8 +53,7 @@ function verifyNsisInstaller(path) {
 function verifyApplicationArchive(unpackedDir) {
   const archivePath = join(unpackedDir, "resources", "app.asar");
   if (!existsSync(archivePath)) throw new Error("Windows App 缺少 resources/app.asar");
-  const asarCli = join(root, "node_modules", "@electron", "asar", "bin", "asar.js");
-  const entries = run(process.execPath, [asarCli, "list", archivePath]);
+  const entries = new Set(listPackage(archivePath));
   for (const required of [
     "/dist/desktop/main.js",
     "/dist/desktop/mcp-stdio.js",
@@ -80,7 +80,7 @@ function verifyApplicationArchive(unpackedDir) {
     "/node_modules/yauzl/package.json",
     "/node_modules/pend/package.json",
   ]) {
-    if (!entries.includes(required)) throw new Error(`Windows App 缺少运行文件 ${required}`);
+    if (!entries.has(required)) throw new Error(`Windows App 缺少运行文件 ${required}`);
   }
 }
 
