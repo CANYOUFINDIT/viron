@@ -3192,6 +3192,7 @@ const generatedEnMessages: Record<string, string> = {
   "选择一个账号": "Choose an account",
   "选择已有 SSH 连接": "Select an existing SSH connection",
   "选择主机": "Select host",
+  "选择组织": "Select an organization",
   "选择组织成员": "Select organization members",
   "选择组织成员或项目": "Select organization members or projects",
   "选中 SQL：\n{{0}}": "Select SQL:\n{{0}}",

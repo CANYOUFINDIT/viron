@@ -12,36 +12,8 @@
 .identity-hero h1 { margin: 0; font-family: var(--font-display); font-size: clamp(32px, 4vw, 52px); line-height: 1.08; letter-spacing: -.035em; }
 .identity-hero__copy > span { display: block; max-width: 680px; margin-top: 13px; color: #8fa19d; font-size: 13px; line-height: 1.7; }
 .identity-hero__index { position: absolute; z-index: 0; right: 36px; bottom: 40px; color: rgba(255,255,255,.025); font-family: var(--font-display); font-size: 120px; font-weight: 900; line-height: 1; letter-spacing: -.08em; }
-.identity-layout { margin-top: 20px; display: grid; grid-template-columns: 268px minmax(0, 1fr); gap: 18px; align-items: start; }
-.organization-directory, .workspace-console { border: 1px solid var(--ink-100); border-radius: 16px; background: color-mix(in srgb, var(--surface) 96%, transparent); box-shadow: var(--shadow-sm); }
-.organization-directory { position: sticky; top: 22px; padding: 18px; }
-.organization-directory > header { padding: 1px 2px 15px; border-bottom: 1px solid var(--ink-100); display: flex; align-items: baseline; justify-content: space-between; }
-.organization-directory > header span { font-size: 13px; font-weight: 800; }
-.organization-directory > header small { color: var(--ink-400); font-size: 10px; }
-.organization-directory__actions { margin-top: 12px; display: grid; gap: 7px; }
-.create-organization-trigger, .join-organization-trigger { width: 100%; height: 38px; border-radius: 9px; display: flex; align-items: center; justify-content: center; gap: 7px; cursor: pointer; font-size: 11px; font-weight: 800; transition: .16s ease; }
-.create-organization-trigger { border: 1px solid color-mix(in srgb, var(--teal-500) 34%, var(--ink-100)); background: var(--teal-50); color: var(--teal-700); }
-.create-organization-trigger:hover { border-color: var(--teal-500); background: var(--teal-100); transform: translateY(-1px); }
-.join-organization-trigger { border: 1px solid var(--ink-200); background: var(--surface); color: var(--ink-600); }
-.join-organization-trigger:hover { border-color: var(--teal-500); background: color-mix(in srgb, var(--teal-50) 55%, var(--surface)); color: var(--teal-700); transform: translateY(-1px); }
-.workspace-list { padding: 12px 0; display: grid; gap: 7px; }
-.workspace-list > button { width: 100%; min-height: 58px; padding: 8px 9px; border: 1px solid transparent; border-radius: 10px; background: transparent; color: var(--ink-600); display: grid; grid-template-columns: 34px minmax(0, 1fr) 16px; gap: 9px; align-items: center; cursor: pointer; text-align: left; transition: .16s ease; }
-.workspace-list > button:hover { background: var(--ink-50); color: var(--ink-800); }
-.workspace-list > button.is-active { border-color: color-mix(in srgb, var(--teal-500) 32%, var(--ink-100)); background: var(--teal-50); color: var(--teal-700); }
-.workspace-mark { width: 34px; height: 34px; border-radius: 9px; background: var(--ink-50); color: var(--ink-500); display: grid; place-items: center; }
-.is-active .workspace-mark { background: var(--teal-100); color: var(--teal-700); }
-.workspace-list button > span:nth-child(2) { min-width: 0; }
-.workspace-list strong, .workspace-list small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.workspace-list strong { font-size: 12px; }
-.workspace-list small { margin-top: 3px; color: var(--ink-400); font-size: 10px; }
-.workspace-list__empty { margin: 8px 0; color: var(--ink-400); font-size: 10px; text-align: center; }
-.organization-directory > footer { padding: 13px; border-radius: 10px; background: var(--ink-50); color: var(--teal-600); display: flex; gap: 9px; }
-.organization-directory > footer svg { flex: 0 0 auto; margin-top: 1px; }
-.organization-directory footer p { margin: 0; }
-.organization-directory footer strong, .organization-directory footer span { display: block; }
-.organization-directory footer strong { color: var(--ink-700); font-size: 11px; }
-.organization-directory footer span { margin-top: 4px; color: var(--ink-400); font-size: 10px; line-height: 1.55; }
-.workspace-console { min-width: 0; overflow: hidden; animation: panel-in .55s .08s cubic-bezier(.22, 1, .36, 1) both; }
+.identity-layout { margin-top: 20px; }
+.workspace-console { min-width: 0; border: 1px solid var(--ink-100); border-radius: 16px; background: color-mix(in srgb, var(--surface) 96%, transparent); box-shadow: var(--shadow-sm); overflow: hidden; animation: panel-in .55s .08s cubic-bezier(.22, 1, .36, 1) both; }
 .workspace-console__heading { min-height: 120px; padding: 25px 27px; border-bottom: 1px solid var(--ink-100); display: grid; grid-template-columns: 54px minmax(0, 1fr) auto; align-items: center; gap: 16px; }
 .organization-symbol { width: 54px; height: 54px; border-radius: 13px; background: var(--ink-950); color: #65d2ae; display: grid; place-items: center; font-family: var(--font-display); font-size: 23px; font-weight: 900; box-shadow: inset 0 0 0 1px rgba(255,255,255,.06); }
 .workspace-console__heading > div:nth-child(2) > span { color: var(--teal-600); font-family: var(--font-mono); font-size: 9px; font-weight: 800; letter-spacing: .14em; }
@@ -95,16 +67,11 @@
 @keyframes hero-in { from { opacity: 0; transform: translateY(10px); } }
 @keyframes panel-in { from { opacity: 0; transform: translateY(12px); } }
 @media (max-width: 1180px) {
-  .identity-layout { grid-template-columns: 230px minmax(0, 1fr); }
   .project-workspace { grid-template-columns: 1fr; }
   .grant-form { grid-template-columns: repeat(2, minmax(160px, 1fr)); }
 }
 @media (max-width: 900px) {
   .identity-hero { padding-inline: 22px; }
-  .identity-layout { grid-template-columns: 1fr; }
-  .organization-directory { position: static; }
-  .workspace-list { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
-  .organization-directory > footer { display: none; }
 }
 @media (max-width: 680px) {
   .identity-hero { min-height: 0; border-radius: 15px; }
@@ -123,24 +90,18 @@
 
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 /* Hallmark · genre: modern-minimal · tone: technical-quiet · palette: Viron teal · macrostructure: Workbench · fingerprint: tree-inspector + dense invitation ledger · contrast: pass (40–41) · slop: pass (42–45) · honest: pass (46) · chrome: pass (47) · tokens: pass (48) · responsive: pass (49) · icons: pass (30) · mobile: pass (34, 49, 50–57) */
-.identity-layout {
-  margin-block-start: 0;
-  grid-template-columns: 250px minmax(0, 1fr);
-  gap: var(--space-md);
+.identity-layout { margin-block-start: 0; }
+.organization-switcher { width: 220px; max-width: 100%; }
+.organization-switcher :deep(.el-select__wrapper) {
+  min-height: var(--el-component-size);
+  height: var(--el-component-size);
+  font-weight: 700;
 }
-.organization-directory {
-  top: var(--space-lg);
-  padding: var(--space-md);
-  border-radius: var(--radius-panel);
-  box-shadow: none;
-}
-.organization-directory > header { padding-block-end: var(--space-sm); }
-.workspace-list { padding-block: var(--space-sm); gap: var(--space-2xs); }
-.workspace-list > button {
-  min-height: 54px;
-  border-radius: var(--radius-control);
-}
-.organization-directory > footer { border-radius: var(--radius-control); }
+.organization-switcher :deep(.el-select__prefix) { color: var(--teal-600); }
+.organization-switcher__option { min-width: 0; display: flex; align-items: center; gap: var(--space-sm); }
+.organization-switcher__option strong { min-width: 0; overflow: hidden; font-weight: 700; text-overflow: ellipsis; }
+.organization-switcher__option small { margin-inline-start: auto; color: var(--color-muted); font-size: var(--text-2xs); font-weight: 600; }
+:global(.organization-switcher-popper) { min-width: 240px; }
 .workspace-console {
   border: 0;
   border-radius: 0;
@@ -309,15 +270,8 @@
   .choice-grid button { transition-duration: 0ms; }
 }
 
-@media (max-width: 78rem) {
-  .identity-layout { grid-template-columns: 1fr; }
-  .organization-directory { position: static; }
-  .workspace-list { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
-}
-@media (max-width: 56.25rem) {
-  .identity-layout { grid-template-columns: 1fr; }
-  .organization-directory { position: static; }
-  .workspace-list { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+@media (max-width: 40rem) {
+  .organization-switcher { width: 100%; }
 }
 @media (max-width: 42.5rem) {
   .workspace-console__heading { grid-template-columns: 42px minmax(0, 1fr); padding: var(--space-md); }

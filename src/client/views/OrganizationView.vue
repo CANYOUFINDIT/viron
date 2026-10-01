@@ -23,12 +23,33 @@ const {
   saveProjectMembers, selectInvitationLimit, selectedGrantTarget, selectedInvitation,
   selectedProjectMembers, session, unattributedInvitationUses,
 } = context;
+
+function selectOrganization(organizationId: string) {
+  const organization = organizations.value.find((item) => item.id === organizationId);
+  if (!organization) return;
+  void activateWorkspace({ type: "organization", id: organization.id, name: organization.name, role: organization.role });
+}
 </script>
 
 <template>
   <div class="organization-view" v-loading="loading">
     <PageHeader :title="$t('组织与用户')">
       <template #actions>
+        <el-select
+          class="organization-switcher"
+          :model-value="currentOrganizationId || undefined"
+          :disabled="!organizations.length"
+          :placeholder="organizations.length ? $t('选择组织') : $t('尚未加入任何组织')"
+          :aria-label="$t('选择组织')"
+          :fit-input-width="false"
+          popper-class="organization-switcher-popper"
+          @change="selectOrganization"
+        >
+          <template #prefix><Building2 :size="15" /></template>
+          <el-option v-for="organization in organizations" :key="organization.id" :label="organization.name" :value="organization.id">
+            <span class="organization-switcher__option"><strong>{{ organization.name }}</strong><small>{{ organization.role === 'admin' ? $t('组织管理员') : $t('普通成员') }}</small></span>
+          </el-option>
+        </el-select>
         <el-button :aria-label="$t('通过邀请链接加入组织')" @click="joinOrganizationDialog = true"><Link2 :size="16" />{{ $t('加入组织') }}</el-button>
         <el-button :aria-label="$t('创建组织')" @click="createOrganizationDialog = true"><Plus :size="16" />{{ $t('创建组织') }}</el-button>
         <el-button type="primary" :aria-label="$t('同步组织数据')" :loading="loading" @click="load"><RefreshCw v-if="!loading" :size="16" />{{ $t('同步数据') }}</el-button>
@@ -36,18 +57,6 @@ const {
     </PageHeader>
 
     <div class="identity-layout">
-      <aside class="organization-directory">
-        <header><span>{{ $t('组织') }}</span><small>{{ organizations.length }} {{ $t('个已加入组织') }}</small></header>
-        <div class="workspace-list">
-          <button v-for="organization in organizations" :key="organization.id" type="button" :class="{ 'is-active': organization.id === currentOrganizationId }" @click="activateWorkspace({ type: 'organization', id: organization.id, name: organization.name, role: organization.role })">
-            <span class="workspace-mark"><Building2 :size="16" /></span>
-            <span><strong>{{ organization.name }}</strong><small>{{ organization.role === 'admin' ? $t('组织管理员') : $t('普通成员') }}</small></span>
-            <Check v-if="organization.id === currentOrganizationId" :size="15" />
-          </button>
-          <p v-if="!organizations.length" class="workspace-list__empty">{{ $t('尚未加入任何组织') }}</p>
-        </div>
-      </aside>
-
       <main class="workspace-console">
         <template v-if="detail">
           <header class="workspace-console__heading">
