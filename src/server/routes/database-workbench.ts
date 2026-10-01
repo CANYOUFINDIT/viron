@@ -14,6 +14,7 @@ import { parseBody } from "../validation.js";
 import { requireAdmin } from "./auth.js";
 import { auditLikePattern, auditRetentionCutoff, parseAuditListQuery, type AuditListQuery } from "../audit-query.js";
 import { assertMcpReadOnlySql } from "../../shared/mcp-policy.js";
+import { sqlRequiresWrite } from "../../shared/access-permissions.js";
 
 const querySchema = z.object({
   sql: z.string().trim().min(1).max(2 * 1024 * 1024),
@@ -713,6 +714,9 @@ export async function registerDatabaseWorkbenchRoutes(app: FastifyInstance): Pro
   app.post<{ Params: { id: string } }>("/api/v1/database-connections/:id/table-data/changes", async (request, reply) => {
     const body = parseBody(tableChangesSchema, request.body, reply);
     if (!body) return;
+    if (!await canAccessConnection(app.db, request.admin!, "database", request.params.id, "write")) {
+      return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有这项操作权限" });
+    }
     try {
       const columns = await tableColumns(app, request.params.id, body.database, body.table);
       const allowed = new Set(columns.map((column) => column.name));
@@ -770,6 +774,9 @@ export async function registerDatabaseWorkbenchRoutes(app: FastifyInstance): Pro
   app.post<{ Params: { id: string } }>("/api/v1/database-connections/:id/queries", async (request, reply) => {
     const body = parseBody(querySchema, request.body, reply);
     if (!body || !request.admin) return;
+    if (sqlRequiresWrite(body.sql) && !await canAccessConnection(app.db, request.admin, "database", request.params.id, "write")) {
+      return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有这项操作权限" });
+    }
     try {
       const job = await app.databaseQueries.create(
         request.admin,

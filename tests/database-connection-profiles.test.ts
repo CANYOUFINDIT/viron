@@ -171,7 +171,9 @@ describe("database connection profiles", () => {
     const bobList = await app.inject({ method: "GET", url: "/api/v1/connections?type=database&includeProfiles=true", cookies: bob.cookies });
     expect(bobList.json().items.map((item: { id: string }) => item.id).sort()).toEqual([connectionId, profileId, duplicateId].sort());
     expect((await app.inject({ method: "POST", url: "/api/v1/database-sessions", cookies: bob.cookies, payload: { connectionId: profileId } })).statusCode).toBe(201);
-    expect((await app.inject({ method: "POST", url: `/api/v1/database-connections/${connectionId}/profiles`, cookies: bob.cookies, payload: { profileName: "Forbidden", name: "Forbidden", engine: "mysql", host: "x", port: 3306, username: "x" } })).statusCode).toBe(403);
+    const profileWhileOpen = await app.inject({ method: "POST", url: `/api/v1/database-connections/${connectionId}/profiles`, cookies: bob.cookies, payload: { profileName: "Forbidden", name: "Forbidden", engine: "mysql", host: "x", port: 3306, username: "x" } });
+    expect(profileWhileOpen.statusCode).toBe(409);
+    expect(profileWhileOpen.json().error).toBe("CONNECTION_PROFILE_REQUIRES_CLOSED");
 
     expect((await app.inject({ method: "PUT", url: `/api/v1/database-connections/${connectionId}/preferences`, cookies: bob.cookies, payload: { starred: true, color: "#4d78a8" } })).statusCode).toBe(200);
     const bobPreferred = await app.inject({ method: "GET", url: "/api/v1/connections?type=database", cookies: bob.cookies });

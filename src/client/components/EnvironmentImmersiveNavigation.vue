@@ -30,7 +30,9 @@ import {
 } from "../desktop";
 import { language } from "../i18n";
 
-const props = defineProps<{
+const workspaceTabs: ImmersiveWorkspaceTab[] = ["web", "ssh", "logs", "database", "redis", "knowledge", "maintenance"];
+
+const props = withDefaults(defineProps<{
   native: boolean;
   environmentName: string;
   activeTab: ImmersiveWorkspaceTab;
@@ -39,7 +41,16 @@ const props = defineProps<{
   counts: Record<ImmersiveWorkspaceTab, number>;
   maintenanceHostCount: number;
   entries: ImmersiveNavigationEntry[];
-}>();
+  visibleTabs?: ImmersiveWorkspaceTab[];
+}>(), {
+  visibleTabs: () => ["web", "ssh", "logs", "database", "redis", "knowledge", "maintenance"],
+});
+
+function showTab(tab: ImmersiveWorkspaceTab) {
+  return props.visibleTabs.includes(tab);
+}
+
+const showModules = computed(() => workspaceTabs.some((tab) => tab !== "web" && props.visibleTabs.includes(tab)));
 
 const emit = defineEmits<{
   selectTab: [tab: Exclude<ImmersiveWorkspaceTab, "web">];
@@ -350,10 +361,10 @@ watch(expanded, (value) => { if (value && !props.native) void focusPanel(); });
           </header>
 
           <nav class="immersive-navigation-tree">
-            <button class="immersive-tree-row is-level-1" :class="{ 'is-current': currentRow.kind === 'web' }" type="button" :aria-expanded="webExpanded" @click="toggleWeb">
+            <button v-if="showTab('web')" class="immersive-tree-row is-level-1" :class="{ 'is-current': currentRow.kind === 'web' }" type="button" :aria-expanded="webExpanded" @click="toggleWeb">
               <span class="immersive-tree-icon"><Globe2 :size="17" /></span><span>{{ $t('Web 入口') }}</span><small>{{ counts.web }}</small><i class="immersive-twisty" :class="{ 'is-open': webExpanded }"></i>
             </button>
-            <template v-if="webExpanded">
+            <template v-if="showTab('web') && webExpanded">
               <div v-for="entry in entries" :key="entry.id" class="immersive-limb" :class="{ 'is-open': expandedEntryId === entry.id }">
                 <button class="immersive-tree-row is-level-2" :class="{ 'is-current': entryIsCurrent(entry.id) }" type="button" :aria-expanded="expandedEntryId === entry.id" @click="toggleEntry(entry.id)">
                   <span class="immersive-tree-icon"><img v-if="entryFavicon(entry)" :src="entryFavicon(entry)" alt="" @error="hideFavicon(entry.id)" /><Globe2 v-else :size="17" /></span><span>{{ entry.name }}</span><small>{{ entry.credentialCount }}</small><i class="immersive-twisty" :class="{ 'is-open': expandedEntryId === entry.id }"></i>
@@ -376,13 +387,13 @@ watch(expanded, (value) => { if (value && !props.native) void focusPanel(); });
               <span v-if="!entries.length" class="immersive-tree-empty">{{ $t('暂无 Web 入口') }}</span>
             </template>
 
-            <div class="immersive-split">{{ $t('工作台') }}</div>
-            <button class="immersive-tree-row is-level-1" :class="{ 'is-current': moduleIsCurrent('ssh') }" type="button" @click="selectTab('ssh')"><span class="immersive-tree-icon"><TerminalSquare :size="17" /></span><span>{{ $t('SSH 终端') }}</span><small>{{ counts.ssh }}</small><i v-if="moduleIsCurrent('ssh')" class="immersive-check"></i><span v-else class="immersive-twistyslot"></span></button>
-            <button class="immersive-tree-row is-level-1" :class="{ 'is-current': moduleIsCurrent('logs') }" type="button" @click="selectTab('logs')"><span class="immersive-tree-icon"><FileText :size="17" /></span><span>{{ $t('日志') }}</span><small>{{ counts.logs }}</small><i v-if="moduleIsCurrent('logs')" class="immersive-check"></i><span v-else class="immersive-twistyslot"></span></button>
-            <button class="immersive-tree-row is-level-1" :class="{ 'is-current': moduleIsCurrent('database') }" type="button" @click="selectTab('database')"><span class="immersive-tree-icon"><Database :size="17" /></span><span>{{ $t('数据库') }}</span><small>{{ counts.database }}</small><i v-if="moduleIsCurrent('database')" class="immersive-check"></i><span v-else class="immersive-twistyslot"></span></button>
-            <button class="immersive-tree-row is-level-1" :class="{ 'is-current': moduleIsCurrent('redis') }" type="button" @click="selectTab('redis')"><span class="immersive-tree-icon"><MemoryStick :size="17" /></span><span>Redis</span><small>{{ counts.redis }}</small><i v-if="moduleIsCurrent('redis')" class="immersive-check"></i><span v-else class="immersive-twistyslot"></span></button>
-            <button class="immersive-tree-row is-level-1" :class="{ 'is-current': moduleIsCurrent('knowledge') }" type="button" @click="selectTab('knowledge')"><span class="immersive-tree-icon"><BookOpen :size="17" /></span><span>{{ $t('知识库') }}</span><small>{{ counts.knowledge }}</small><i v-if="moduleIsCurrent('knowledge')" class="immersive-check"></i><span v-else class="immersive-twistyslot"></span></button>
-            <button class="immersive-tree-row is-level-1" :class="{ 'is-current': moduleIsCurrent('maintenance') }" type="button" @click="selectTab('maintenance')"><span class="immersive-tree-icon"><Wrench :size="17" /></span><span>{{ $t('服务维护') }}</span><small>{{ $t('服务') }} {{ counts.maintenance }} · {{ $t('主机') }} {{ maintenanceHostCount }}</small><i v-if="moduleIsCurrent('maintenance')" class="immersive-check"></i><span v-else class="immersive-twistyslot"></span></button>
+            <div v-if="showModules" class="immersive-split">{{ $t('工作台') }}</div>
+            <button v-if="showTab('ssh')" class="immersive-tree-row is-level-1" :class="{ 'is-current': moduleIsCurrent('ssh') }" type="button" @click="selectTab('ssh')"><span class="immersive-tree-icon"><TerminalSquare :size="17" /></span><span>{{ $t('SSH 终端') }}</span><small>{{ counts.ssh }}</small><i v-if="moduleIsCurrent('ssh')" class="immersive-check"></i><span v-else class="immersive-twistyslot"></span></button>
+            <button v-if="showTab('logs')" class="immersive-tree-row is-level-1" :class="{ 'is-current': moduleIsCurrent('logs') }" type="button" @click="selectTab('logs')"><span class="immersive-tree-icon"><FileText :size="17" /></span><span>{{ $t('日志') }}</span><small>{{ counts.logs }}</small><i v-if="moduleIsCurrent('logs')" class="immersive-check"></i><span v-else class="immersive-twistyslot"></span></button>
+            <button v-if="showTab('database')" class="immersive-tree-row is-level-1" :class="{ 'is-current': moduleIsCurrent('database') }" type="button" @click="selectTab('database')"><span class="immersive-tree-icon"><Database :size="17" /></span><span>{{ $t('数据库') }}</span><small>{{ counts.database }}</small><i v-if="moduleIsCurrent('database')" class="immersive-check"></i><span v-else class="immersive-twistyslot"></span></button>
+            <button v-if="showTab('redis')" class="immersive-tree-row is-level-1" :class="{ 'is-current': moduleIsCurrent('redis') }" type="button" @click="selectTab('redis')"><span class="immersive-tree-icon"><MemoryStick :size="17" /></span><span>Redis</span><small>{{ counts.redis }}</small><i v-if="moduleIsCurrent('redis')" class="immersive-check"></i><span v-else class="immersive-twistyslot"></span></button>
+            <button v-if="showTab('knowledge')" class="immersive-tree-row is-level-1" :class="{ 'is-current': moduleIsCurrent('knowledge') }" type="button" @click="selectTab('knowledge')"><span class="immersive-tree-icon"><BookOpen :size="17" /></span><span>{{ $t('知识库') }}</span><small>{{ counts.knowledge }}</small><i v-if="moduleIsCurrent('knowledge')" class="immersive-check"></i><span v-else class="immersive-twistyslot"></span></button>
+            <button v-if="showTab('maintenance')" class="immersive-tree-row is-level-1" :class="{ 'is-current': moduleIsCurrent('maintenance') }" type="button" @click="selectTab('maintenance')"><span class="immersive-tree-icon"><Wrench :size="17" /></span><span>{{ $t('服务维护') }}</span><small>{{ $t('服务') }} {{ counts.maintenance }} · {{ $t('主机') }} {{ maintenanceHostCount }}</small><i v-if="moduleIsCurrent('maintenance')" class="immersive-check"></i><span v-else class="immersive-twistyslot"></span></button>
           </nav>
 
           <footer><button type="button" @click="exit"><i class="immersive-exit-arrow"></i>{{ $t('退出沉浸模式') }}</button></footer>

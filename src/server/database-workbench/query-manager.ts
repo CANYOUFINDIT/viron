@@ -202,6 +202,21 @@ export class DatabaseQueryManager {
     }
   }
 
+  runningJobs(): Array<{ ownerId: string; connectionId: string; workspaceType: WorkspaceType; workspaceId: string }> {
+    return [...this.jobs.values()]
+      .filter((job) => job.status === "pending" || job.status === "running")
+      .map((job) => ({ ownerId: job.ownerId, connectionId: job.connectionId, workspaceType: job.workspaceType, workspaceId: job.workspaceId }));
+  }
+
+  closeMatching(ownerId: string, connectionId: string, reason: string): void {
+    for (const job of this.jobs.values()) {
+      if (job.ownerId !== ownerId || job.connectionId !== connectionId || !["pending", "running"].includes(job.status)) continue;
+      job.status = "cancelled";
+      job.error = reason;
+      job.active?.connection.destroy();
+    }
+  }
+
   closeConnection(ownerId: string, connectionId: string, reason: string, executionScope: string | null): void {
     for (const job of this.jobs.values()) {
       if (job.ownerId !== ownerId || job.connectionId !== connectionId || job.executionScope !== executionScope) continue;

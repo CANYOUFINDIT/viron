@@ -311,6 +311,24 @@ export class DatabaseTaskManager {
     await Promise.all(updates);
   }
 
+  runningTasks(): Array<{ ownerId: string; connectionId: string | null; workspaceType: WorkspaceType; workspaceId: string }> {
+    return [...this.tasks.values()]
+      .filter((task) => task.status === "pending" || task.status === "running")
+      .map((task) => ({ ownerId: task.ownerId, connectionId: task.connectionId, workspaceType: task.workspaceType, workspaceId: task.workspaceId }));
+  }
+
+  async closeMatching(ownerId: string, connectionId: string, reason: string): Promise<void> {
+    const tasks = [...this.tasks.values()].filter((task) => task.ownerId === ownerId && task.connectionId === connectionId && ["pending", "running"].includes(task.status));
+    await Promise.all(tasks.map(async (task) => {
+      task.status = "cancelled";
+      task.error = reason;
+      task.completedAt = new Date().toISOString();
+      for (const connected of task.active) connected.connection.destroy();
+      this.log(task, reason);
+      await this.persist(task);
+    }));
+  }
+
   async closeOwner(ownerId: string, executionScope?: string | null): Promise<void> {
     const tasks = [...this.tasks.values()].filter((task) => task.ownerId === ownerId
       && ["pending", "running"].includes(task.status)

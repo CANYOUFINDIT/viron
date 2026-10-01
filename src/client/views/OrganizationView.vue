@@ -3,6 +3,7 @@ import { ArrowRight, Ban, Building2, Check, Clock3, Copy, KeyRound, Link2, Netwo
 import PageHeader from "../components/PageHeader.vue";
 import TipIcon from "../components/TipIcon.vue";
 import { provideOrganizationContext } from "./organization/context";
+import OrganizationGrantDialog from "./organization/OrganizationGrantDialog.vue";
 import OrganizationInvitationPanel from "./organization/OrganizationInvitationPanel.vue";
 import OrganizationPlatformPanel from "./organization/OrganizationPlatformPanel.vue";
 import OrganizationStructurePanel from "./organization/OrganizationStructurePanel.vue";
@@ -11,16 +12,16 @@ import { useOrganizationController } from "./organization/use-organization-contr
 const context = useOrganizationController();
 provideOrganizationContext(context);
 const {
-  activateWorkspace, activePanel, availableParentProjects, availableResources, canManageOrganization,
-  copiedInvitationKey, copyInvitationLink, createGrant, createInvitation, createOrganization,
+  activateWorkspace, activePanel, availableParentProjects, canManageOrganization,
+  copiedInvitationKey, copyInvitationLink, createInvitation, createOrganization,
   createOrganizationDialog, creatingInvitation, creatingOrganization, currentOrganizationId,
   customInvitationLimit, customInvitationLimitInput, detail, editingProject, generatedInvitation,
-  grantDialog, grantForm, grantingResource, invitationDialog, invitationDuration, invitationDurations,
+  invitationDialog, invitationDuration, invitationDurations,
   invitationJoinResult, invitationLimitDescription, invitationLimitPreset, invitationLimits,
   invitationLinkInput, invitationProjectId, invitationUsersDialog, joinOrganizationDialog, load,
   loadError, loading, openInvitationFromLink, organizationForm, organizations, projectDialog,
-  projectDialogMode, projectForm, projectMemberDialog, resourceTypeLabels, saveProject,
-  saveProjectMembers, selectInvitationLimit, selectedGrantTarget, selectedInvitation,
+  projectDialogMode, projectForm, projectMemberDialog, saveProject,
+  saveProjectMembers, selectInvitationLimit, selectedInvitation,
   selectedProjectMembers, session, unattributedInvitationUses,
 } = context;
 
@@ -105,14 +106,7 @@ function selectOrganization(organizationId: string) {
       <template #footer><el-button @click="projectDialog = false">{{ $t('取消') }}</el-button><el-button type="primary" @click="saveProject">{{ projectDialogMode === 'create' ? $t('创建项目组') : $t('保存修改') }}</el-button></template>
     </el-dialog>
     <el-dialog append-to-body v-model="projectMemberDialog" align-center class="envman-dialog compact-dialog" :title="$t('项目组成员 · {0}', [editingProject?.name || ''])" width="480px"><el-select v-model="selectedProjectMembers" multiple filterable style="width:100%" :placeholder="$t('选择组织成员')"><el-option v-for="member in detail?.members || []" :key="member.id" :label="member.username" :value="member.id" /></el-select><template #footer><el-button @click="projectMemberDialog = false">{{ $t('取消') }}</el-button><el-button type="primary" @click="saveProjectMembers">{{ $t('保存') }}</el-button></template></el-dialog>
-    <el-dialog append-to-body v-model="grantDialog" align-center class="envman-dialog compact-dialog operation-dialog" :title="$t('授权资源')" width="min(520px, calc(100% - 32px))" @closed="grantForm.resourceIds = []">
-      <div v-if="selectedGrantTarget" class="dialog-subject"><span class="dialog-subject__icon"><ShieldCheck :size="18" /></span><div><small>{{ $t('授权对象') }}</small><strong>{{ selectedGrantTarget.name }}</strong><p>{{ selectedGrantTarget.type === 'project' ? $t('项目组及其子项目组会继承这项授权') : $t('仅授权给该成员个人') }}</p></div></div>
-      <el-form label-position="top" @submit.prevent="createGrant">
-        <el-form-item :label="$t('资源类型')"><el-select v-model="grantForm.resourceType" style="width:100%" @change="grantForm.resourceIds = []"><el-option v-for="(label, type) in resourceTypeLabels" :key="type" :label="label" :value="type" /></el-select></el-form-item>
-        <el-form-item :label="$t('资源')"><el-select v-model="grantForm.resourceIds" multiple filterable clearable collapse-tags collapse-tags-tooltip style="width:100%" :placeholder="$t('选择要授权的资源')"><el-option v-for="item in availableResources" :key="item.id" :label="item.name" :value="item.id" /></el-select></el-form-item>
-      </el-form>
-      <template #footer><el-button :disabled="grantingResource" @click="grantDialog = false">{{ $t('取消') }}</el-button><el-button type="primary" :loading="grantingResource" :disabled="!grantForm.resourceIds.length" @click="createGrant"><ShieldCheck v-if="!grantingResource" :size="15" />{{ $t('确认授权') }}</el-button></template>
-    </el-dialog>
+    <OrganizationGrantDialog />
     <el-dialog append-to-body v-model="invitationDialog" align-center class="envman-dialog compact-dialog operation-dialog invitation-dialog" :title="$t('生成邀请链接')" width="min(620px, calc(100% - 32px))">
       <el-form class="invitation-dialog-form" label-position="top" @submit.prevent="createInvitation">
         <el-form-item>

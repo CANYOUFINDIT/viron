@@ -168,6 +168,36 @@ CREATE INDEX IF NOT EXISTS resource_grants_grantee_idx
 CREATE INDEX IF NOT EXISTS resource_grants_resource_idx
   ON resource_grants(organization_id, resource_type, resource_id);
 
+CREATE TABLE IF NOT EXISTS access_authorizations (
+  id TEXT PRIMARY KEY,
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  grantee_type TEXT NOT NULL CHECK(grantee_type IN ('user','project')),
+  grantee_id TEXT NOT NULL,
+  scope_kind TEXT NOT NULL CHECK(scope_kind IN ('environment_group','environment','ssh_connection','database_connection','redis_connection')),
+  whole_group INTEGER NOT NULL DEFAULT 0 CHECK(whole_group IN (0, 1)),
+  group_id TEXT,
+  permissions_json TEXT NOT NULL,
+  items_json TEXT NOT NULL DEFAULT '{}',
+  expires_at TEXT,
+  created_by_user_id TEXT NOT NULL REFERENCES admin_users(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS access_authorizations_grantee_idx
+  ON access_authorizations(organization_id, grantee_type, grantee_id, expires_at);
+CREATE INDEX IF NOT EXISTS access_authorizations_group_idx
+  ON access_authorizations(group_id);
+
+CREATE TABLE IF NOT EXISTS access_authorization_targets (
+  authorization_id TEXT NOT NULL REFERENCES access_authorizations(id) ON DELETE CASCADE,
+  resource_id TEXT NOT NULL,
+  PRIMARY KEY (authorization_id, resource_id)
+);
+
+CREATE INDEX IF NOT EXISTS access_authorization_targets_resource_idx
+  ON access_authorization_targets(resource_id);
+
 CREATE TABLE IF NOT EXISTS environment_groups (
   id TEXT PRIMARY KEY,
   workspace_type TEXT NOT NULL DEFAULT 'personal' CHECK(workspace_type IN ('personal','organization')),

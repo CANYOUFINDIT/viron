@@ -699,12 +699,12 @@ describe("monitor installer", () => {
       const base = `/api/v1/environments/${context.environmentId}/monitor-hosts/${context.connectionId}`;
       for (const path of [`${base}/install/preflight`, `${base}/install`, `${base}/install-tasks`]) {
         const response = await context.app.inject({ method: "POST", url: path, cookies: member, payload: { installPath: "/opt/viron/monitor" } });
-        expect(response.statusCode, path).toBe(403);
-        expect(response.json().error).toBe("WORKSPACE_ADMIN_REQUIRED");
+        expect(response.statusCode, path).toBe(404);
+        expect(response.json().error).toBe("ENVIRONMENT_NOT_FOUND");
       }
       const uninstall = await context.app.inject({ method: "DELETE", url: `${base}/uninstall`, cookies: member });
-      expect(uninstall.statusCode).toBe(403);
-      expect(uninstall.json().error).toBe("WORKSPACE_ADMIN_REQUIRED");
+      expect(uninstall.statusCode).toBe(404);
+      expect(uninstall.json().error).toBe("ENVIRONMENT_NOT_FOUND");
     } finally {
       await context.app.close();
       await context.ssh.close();

@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { canManageWorkspace, getWorkspaceAccess } from "./access-control.js";
+import { getWorkspaceAccess } from "./access-control.js";
 import {
   SERVICE_DEPLOYMENTS_MAX_BYTES,
   SERVICE_DEPLOYMENTS_MAX_DEPLOYMENTS,
@@ -31,7 +31,12 @@ export async function loadServiceDeploymentsPayload(
   query: { cursor?: string; limit?: number } = {},
 ): Promise<Record<string, unknown>> {
   const access = await getWorkspaceAccess(app.db, request.admin!);
-  const serviceRows = await app.db.prepare("SELECT * FROM services WHERE environment_id = ? ORDER BY sort_order, updated_at DESC, name").all(environmentId) as Record<string, unknown>[];
+  const canSee = (capability: "maintenance" | "logs", action: string, itemId: string) => (
+    access.canManage || access.allowsEnvironment(environmentId, capability, action, itemId)
+  );
+  const maintenanceActions = (itemId: string) => ["view", "control", "script", "manage", "install"].filter((action) => canSee("maintenance", action, itemId));
+  const allServiceRows = await app.db.prepare("SELECT * FROM services WHERE environment_id = ? ORDER BY sort_order, updated_at DESC, name").all(environmentId) as Record<string, unknown>[];
+  const serviceRows = allServiceRows.filter((row) => canSee("maintenance", "view", `service:${row.id}`));
   const limit = Math.min(Math.max(1, query.limit ?? SERVICE_DEPLOYMENTS_MAX_SERVICES), SERVICE_DEPLOYMENTS_MAX_SERVICES);
   const cursorIndex = query.cursor ? serviceRows.findIndex((row) => String(row.id) === query.cursor) : -1;
   const start = cursorIndex >= 0 ? cursorIndex + 1 : 0;
@@ -76,9 +81,12 @@ export async function loadServiceDeploymentsPayload(
     `).all(environmentId) as Promise<Record<string, unknown>[]>,
   ]);
 
-  const connectionRows = connectionRowsRaw.filter((row) => access.canManage || access.sshConnectionIds.has(String(row.id)));
+  const connectionRows = connectionRowsRaw.filter((row) => canSee("maintenance", "view", `host:${row.id}`));
   const visibleConnectionIds = new Set(connectionRows.map((row) => String(row.id)));
-  const manager = canManageWorkspace(request);
+  const canConfigure = access.canManage || access.allowsEnvironment(environmentId, "maintenance", "manage", undefined, true);
+  const canOperate = access.canManage || access.allowsEnvironment(environmentId, "maintenance", "control", undefined, true);
+  const canRunScripts = access.canManage || access.allowsEnvironment(environmentId, "maintenance", "script", undefined, true);
+  const canInstall = access.canManage || access.allowsEnvironment(environmentId, "maintenance", "install", undefined, true);
   const scriptActionsByService = new Map<string, Record<string, unknown>[]>();
   const scriptActionsByDeployment = new Map<string, Record<string, unknown>[]>();
   for (const row of scriptActionRows) {
@@ -164,6 +172,7 @@ export async function loadServiceDeploymentsPayload(
   const services = includedRows.map((row) => ({
     id: row.id,
     environmentId: row.environment_id,
+    actions: maintenanceActions(`service:${row.id}`),
     name: row.name,
     description: row.description,
     status: row.status,
@@ -177,15 +186,17 @@ export async function loadServiceDeploymentsPayload(
   const pageContinues = start + includedRows.length < serviceRows.length || includedRows.length < pageRows.length;
 
   const payload = {
-    canConfigure: manager,
-    canOperate: manager,
+    canConfigure,
+    canOperate,
+    canRunScripts,
+    canInstall,
     generatedAt: new Date().toISOString(),
     truncated,
     nextCursor: pageContinues && services.length ? String(services[services.length - 1]!.id) : null,
     hasMore: truncated,
     partialFailures: [] as string[],
     services,
-    logs: logRows.map((row) => {
+    logs: logRows.filter((row) => canSee("logs", "view", String(row.id))).map((row) => {
       const paths = parseJson<string[]>(row.file_paths_json, []);
       return {
         id: row.id,
@@ -198,6 +209,7 @@ export async function loadServiceDeploymentsPayload(
     discovery: {
       hosts: connectionRows.map((row) => ({
         sshConnectionId: row.id,
+        actions: maintenanceActions(`host:${row.id}`),
         connectionName: row.name,
         host: row.host,
         connectionAvailable: !Boolean(row.source_deleted),

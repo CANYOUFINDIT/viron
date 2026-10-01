@@ -37,6 +37,7 @@ import {
 } from "../environment-preload";
 import { immersiveModeKey } from "../immersive-mode";
 import { session } from "../session";
+import type { Capability, PermissionMap } from "../../shared/access-permissions";
 import type { ImmersiveNavigationEntry, ImmersiveWorkspaceTab } from "../../shared/immersive-navigation";
 import { reorderIds, sameOrder } from "../../shared/tab-order";
 
@@ -69,6 +70,7 @@ interface EnvironmentItem {
   serviceCount: number;
   monitorHostCount: number;
   updatedAt: string;
+  permissions?: PermissionMap | null;
 }
 
 interface EnvironmentGroup { id: string; name: string }
@@ -172,6 +174,18 @@ const selectedEntry = computed(() => webEntries.value.find((item) => item.id ===
 const displayEntryFavicons = computed(() => ({ ...entryFavicons.value, ...desktopEntryFavicons.value }));
 const canManageWorkspace = computed(() => session.workspace?.role === "owner" || session.workspace?.role === "admin");
 const canSortTabs = computed(() => canManageWorkspace.value && !savingEntryOrder.value && !savingCredentialOrder.value);
+const workspaceTabs: WorkspaceTab[] = ["web", "ssh", "logs", "database", "redis", "knowledge", "maintenance"];
+
+function environmentAllows(capability: Capability, action?: string) {
+  const permissions = environment.value?.permissions;
+  if (!permissions) return true;
+  const actions = permissions[capability] ?? [];
+  return action ? actions.includes(action) : actions.length > 0;
+}
+
+const visibleTabs = computed(() => workspaceTabs.filter((tab) => environmentAllows(tab)));
+const canManageWeb = computed(() => environmentAllows("web", "manage"));
+const canUseWeb = computed(() => environmentAllows("web", "use"));
 const focusedWebView = computed(() => workspaceQuery.value.webFocus === "1" && Boolean(workspaceQuery.value.webCredentialId));
 const environmentImmersive = computed(() => props.preview ? workspaceQuery.value.immersive === "1" : immersiveMode?.active.value ?? false);
 const requestedConnectionId = computed(() => workspaceQuery.value.connectionId || undefined);
@@ -313,12 +327,17 @@ function handleVisibilityChange(): void {
 watch(
   () => workspaceQuery.value.tab,
   (tab) => {
-    if (typeof tab === "string" && ["web", "ssh", "logs", "database", "redis", "knowledge", "maintenance"].includes(tab)) {
-      activeTab.value = tab as WorkspaceTab;
-    }
+    if (typeof tab !== "string" || !workspaceTabs.includes(tab as WorkspaceTab)) return;
+    if (environment.value?.permissions && !environmentAllows(tab as Capability)) return;
+    activeTab.value = tab as WorkspaceTab;
   },
   { immediate: true },
 );
+
+watch(visibleTabs, (tabs) => {
+  if (!environment.value?.permissions || tabs.includes(activeTab.value) || !tabs[0]) return;
+  void selectWorkspaceTab(tabs[0]);
+});
 
 watch(
   [() => workspaceQuery.value.tab, requestedConnectionId],
@@ -606,7 +625,7 @@ function reconcileOpenedCredentials() {
 }
 
 function rememberCredential(index: 0 | 1, id: string) {
-  if (!id || !selectedEntryId.value) return;
+  if (!canUseWeb.value || !id || !selectedEntryId.value) return;
   const credential = credentials.value.find((item) => item.id === id);
   if (!credential) return;
   const opened = { ...credential, entryId: selectedEntryId.value };
@@ -637,6 +656,10 @@ function openedCredentialActive(index: 0 | 1, opened: OpenedWebCredential) {
 }
 
 async function selectCredential(id: string, event?: MouseEvent) {
+  if (!canUseWeb.value) {
+    ElMessage.warning(tr("当前授权只能查看入口"));
+    return;
+  }
   paneCredentialIds.value[activeWebPane.value] = id;
   rememberCredential(activeWebPane.value, id);
   await nextTick();
@@ -703,6 +726,10 @@ async function selectEntry(id: string) {
 }
 
 async function selectImmersiveCredential(entryId: string, credentialId: string) {
+  if (!canUseWeb.value) {
+    ElMessage.warning(tr("当前授权只能查看入口"));
+    return;
+  }
   await selectWorkspaceTab("web");
   if (selectedEntryId.value === entryId) {
     await selectCredential(credentialId);
@@ -966,6 +993,7 @@ onBeforeUnmount(() => {
       :counts="immersiveCounts"
       :maintenance-host-count="environment.monitorHostCount"
       :entries="immersiveEntries"
+      :visible-tabs="visibleTabs"
       @select-tab="selectWorkspaceTab"
       @select-credential="selectImmersiveCredential"
       @load-credentials="loadImmersiveCredentials"
@@ -981,17 +1009,17 @@ onBeforeUnmount(() => {
           <p v-if="environment.description">{{ environment.description }}</p>
         </div>
       </div>
-      <div class="environment-hero__actions"><span>{{ $t('更新于') }} {{ new Date(environment.updatedAt).toLocaleString($locale()) }}</span><el-button @click="openEnvironmentEdit"><Settings2 :size="16" />{{ $t('编辑环境') }}</el-button></div>
+      <div class="environment-hero__actions"><span>{{ $t('更新于') }} {{ new Date(environment.updatedAt).toLocaleString($locale()) }}</span><el-button v-if="canManageWorkspace" @click="openEnvironmentEdit"><Settings2 :size="16" />{{ $t('编辑环境') }}</el-button></div>
     </section>
 
     <nav v-if="!focusedWebView && !environmentImmersive" ref="workspaceTabsElement" class="workspace-tabs">
-      <button :class="{ 'is-active': activeTab === 'web' }" @click="selectWorkspaceTab('web')"><Globe2 :size="17" />{{ $t('Web 入口') }} <small>{{ environment?.webCount || 0 }}</small></button>
-      <button :class="{ 'is-active': activeTab === 'ssh' }" @pointerenter="preloadTabOnHover('ssh')" @focus="preloadTabOnIntent('ssh')" @touchstart.passive="preloadTabOnIntent('ssh')" @click="selectWorkspaceTab('ssh')"><TerminalSquare :size="17" />{{ $t('SSH 终端') }} <small>{{ environment?.sshCount || 0 }}</small></button>
-      <button :class="{ 'is-active': activeTab === 'logs' }" @pointerenter="preloadTabOnHover('logs')" @focus="preloadTabOnIntent('logs')" @touchstart.passive="preloadTabOnIntent('logs')" @click="selectWorkspaceTab('logs')"><FileText :size="17" />{{ $t('日志') }} <small>{{ environment?.logCount || 0 }}</small></button>
-      <button :class="{ 'is-active': activeTab === 'database' }" @pointerenter="preloadTabOnHover('database')" @pointerleave="cancelIntentPreload" @focus="preloadTabOnIntent('database')" @blur="cancelIntentPreload" @touchstart.passive="preloadTabOnIntent('database')" @click="selectWorkspaceTab('database')"><Database :size="17" />{{ $t('数据库') }} <small>{{ environment?.databaseCount || 0 }}</small></button>
-      <button :class="{ 'is-active': activeTab === 'redis' }" @pointerenter="preloadTabOnHover('redis')" @focus="preloadTabOnIntent('redis')" @touchstart.passive="preloadTabOnIntent('redis')" @click="selectWorkspaceTab('redis')"><MemoryStick :size="17" />Redis <small>{{ environment?.redisCount || 0 }}</small></button>
-      <button :class="{ 'is-active': activeTab === 'knowledge' }" @pointerenter="preloadTabOnHover('knowledge')" @focus="preloadTabOnIntent('knowledge')" @touchstart.passive="preloadTabOnIntent('knowledge')" @click="selectWorkspaceTab('knowledge')"><BookOpen :size="17" />{{ $t('知识库') }} <small>{{ environment?.knowledgeDocumentCount || 0 }}</small></button>
-      <button :class="{ 'is-active': activeTab === 'maintenance' }" @pointerenter="preloadTabOnHover('maintenance')" @focus="preloadTabOnIntent('maintenance')" @touchstart.passive="preloadTabOnIntent('maintenance')" @click="selectWorkspaceTab('maintenance')"><Wrench :size="17" />{{ $t('服务维护') }} <small>{{ $t('服务') }} {{ environment?.serviceCount || 0 }} · {{ $t('主机') }} {{ environment?.monitorHostCount || 0 }}</small></button>
+      <button v-if="visibleTabs.includes('web')" :class="{ 'is-active': activeTab === 'web' }" @click="selectWorkspaceTab('web')"><Globe2 :size="17" />{{ $t('Web 入口') }} <small>{{ environment?.webCount || 0 }}</small></button>
+      <button v-if="visibleTabs.includes('ssh')" :class="{ 'is-active': activeTab === 'ssh' }" @pointerenter="preloadTabOnHover('ssh')" @focus="preloadTabOnIntent('ssh')" @touchstart.passive="preloadTabOnIntent('ssh')" @click="selectWorkspaceTab('ssh')"><TerminalSquare :size="17" />{{ $t('SSH 终端') }} <small>{{ environment?.sshCount || 0 }}</small></button>
+      <button v-if="visibleTabs.includes('logs')" :class="{ 'is-active': activeTab === 'logs' }" @pointerenter="preloadTabOnHover('logs')" @focus="preloadTabOnIntent('logs')" @touchstart.passive="preloadTabOnIntent('logs')" @click="selectWorkspaceTab('logs')"><FileText :size="17" />{{ $t('日志') }} <small>{{ environment?.logCount || 0 }}</small></button>
+      <button v-if="visibleTabs.includes('database')" :class="{ 'is-active': activeTab === 'database' }" @pointerenter="preloadTabOnHover('database')" @pointerleave="cancelIntentPreload" @focus="preloadTabOnIntent('database')" @blur="cancelIntentPreload" @touchstart.passive="preloadTabOnIntent('database')" @click="selectWorkspaceTab('database')"><Database :size="17" />{{ $t('数据库') }} <small>{{ environment?.databaseCount || 0 }}</small></button>
+      <button v-if="visibleTabs.includes('redis')" :class="{ 'is-active': activeTab === 'redis' }" @pointerenter="preloadTabOnHover('redis')" @focus="preloadTabOnIntent('redis')" @touchstart.passive="preloadTabOnIntent('redis')" @click="selectWorkspaceTab('redis')"><MemoryStick :size="17" />Redis <small>{{ environment?.redisCount || 0 }}</small></button>
+      <button v-if="visibleTabs.includes('knowledge')" :class="{ 'is-active': activeTab === 'knowledge' }" @pointerenter="preloadTabOnHover('knowledge')" @focus="preloadTabOnIntent('knowledge')" @touchstart.passive="preloadTabOnIntent('knowledge')" @click="selectWorkspaceTab('knowledge')"><BookOpen :size="17" />{{ $t('知识库') }} <small>{{ environment?.knowledgeDocumentCount || 0 }}</small></button>
+      <button v-if="visibleTabs.includes('maintenance')" :class="{ 'is-active': activeTab === 'maintenance' }" @pointerenter="preloadTabOnHover('maintenance')" @focus="preloadTabOnIntent('maintenance')" @touchstart.passive="preloadTabOnIntent('maintenance')" @click="selectWorkspaceTab('maintenance')"><Wrench :size="17" />{{ $t('服务维护') }} <small>{{ $t('服务') }} {{ environment?.serviceCount || 0 }} · {{ $t('主机') }} {{ environment?.monitorHostCount || 0 }}</small></button>
     </nav>
 
     <div class="environment-tab-stage">
@@ -1024,13 +1052,13 @@ onBeforeUnmount(() => {
             <em>{{ entry.credentialCount }}</em>
           </button>
           <div v-if="!webEntries.length" class="list-empty"><Globe2 :size="20" /><span>{{ $t('还没有页面入口') }}</span></div>
-          <button class="resource-list__add" type="button" :aria-label="$t('添加 Web 入口')" :title="$t('添加 Web 入口')" @click="openEntryCreate"><span><Plus :size="18" /></span></button>
+          <button v-if="canManageWeb" class="resource-list__add" type="button" :aria-label="$t('添加 Web 入口')" :title="$t('添加 Web 入口')" @click="openEntryCreate"><span><Plus :size="18" /></span></button>
         </div>
         <div class="resource-list__actions">
           <template v-if="selectedEntry">
             <button class="icon-action" :aria-label="$t('复制页面地址')" :title="$t('复制页面地址')" @click="copyText(selectedEntry.url, $t('页面地址'))"><Copy :size="15" /></button>
-            <button class="icon-action" :aria-label="$t('编辑 Web 入口')" :title="$t('编辑 Web 入口')" @click="openEntryEdit(selectedEntry)"><Pencil :size="15" /></button>
-            <button class="icon-action is-danger" :aria-label="$t('删除 Web 入口')" :title="$t('删除 Web 入口')" @click="removeEntry(selectedEntry)"><Trash2 :size="15" /></button>
+            <button v-if="canManageWeb" class="icon-action" :aria-label="$t('编辑 Web 入口')" :title="$t('编辑 Web 入口')" @click="openEntryEdit(selectedEntry)"><Pencil :size="15" /></button>
+            <button v-if="canManageWeb" class="icon-action is-danger" :aria-label="$t('删除 Web 入口')" :title="$t('删除 Web 入口')" @click="removeEntry(selectedEntry)"><Trash2 :size="15" /></button>
           </template>
         </div>
       </aside>
@@ -1070,7 +1098,7 @@ onBeforeUnmount(() => {
                       <code v-if="credentialSelected(credential.id) && revealed[credential.id]">{{ revealed[credential.id] }}</code>
                     </span>
                   </button>
-                  <div v-if="credentialSelected(credential.id)" class="web-account-row__actions">
+                  <div v-if="canManageWeb && credentialSelected(credential.id)" class="web-account-row__actions">
                     <button v-if="!desktop" type="button" :aria-label="revealed[credential.id] ? $t('隐藏密码') : $t('显示密码')" :title="revealed[credential.id] ? $t('隐藏密码') : $t('显示密码')" @click="toggleReveal(credential)"><EyeOff v-if="revealed[credential.id]" :size="14" /><Eye v-else :size="14" /></button>
                     <button v-if="!desktop" type="button" :aria-label="$t('复制密码')" :title="$t('复制密码')" :disabled="!revealed[credential.id]" @click="copyText(revealed[credential.id], $t('密码'))"><Copy :size="14" /></button>
                     <button type="button" :aria-label="$t('编辑登录账号')" :title="$t('编辑登录账号')" @click="openCredentialEdit(credential)"><Pencil :size="14" /></button>
@@ -1078,7 +1106,7 @@ onBeforeUnmount(() => {
                   </div>
                 </article>
                 <div v-if="!credentials.length" class="web-account-empty"><KeyRound :size="20" /><span>{{ $t('还没有登录账号') }}</span></div>
-                <button class="web-account-list__add" type="button" :aria-label="$t('添加登录账号')" :title="$t('添加登录账号')" @click="openCredentialCreate"><span><Plus :size="18" /></span></button>
+                <button v-if="canManageWeb" class="web-account-list__add" type="button" :aria-label="$t('添加登录账号')" :title="$t('添加登录账号')" @click="openCredentialCreate"><span><Plus :size="18" /></span></button>
               </div>
             </aside>
 
@@ -1087,7 +1115,7 @@ onBeforeUnmount(() => {
                 <article v-for="paneIndex in webPaneIndexes.slice(0, 1)" :key="paneIndex" class="web-view-pane is-active">
                   <template v-for="opened in paneOpenedCredentials[paneIndex]" :key="opened.id">
                     <DesktopWebAccountBrowser
-                      v-if="desktop && webTarget === 'local'"
+                      v-if="canUseWeb && desktop && webTarget === 'local'"
                       v-show="openedCredentialActive(paneIndex, opened)"
                       :environment-id="environmentId"
                       :credential-id="opened.id"
@@ -1108,9 +1136,9 @@ onBeforeUnmount(() => {
                       @tls-refreshed="loadEnvironment"
                       @preview-frame="emit('previewFrame', $event)"
                     />
-                    <DesktopExecutionNotice v-else-if="desktop && webTarget === 'unavailable'" v-show="openedCredentialActive(paneIndex, opened)" :capability='$t("当前连接模式下 Web 账号浏览")' compact />
+                    <DesktopExecutionNotice v-else-if="canUseWeb && desktop && webTarget === 'unavailable'" v-show="openedCredentialActive(paneIndex, opened)" :capability='$t("当前连接模式下 Web 账号浏览")' compact />
                     <WebAccountBrowser
-                      v-else
+                      v-else-if="canUseWeb"
                       v-show="openedCredentialActive(paneIndex, opened)"
                       :credential-id="opened.id"
                       :entry-id="opened.entryId"

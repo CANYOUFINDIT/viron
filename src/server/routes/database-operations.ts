@@ -127,8 +127,14 @@ export async function registerDatabaseOperationRoutes(app: FastifyInstance): Pro
   app.addHook("preHandler", async (request, reply) => {
     if (!request.url.startsWith("/api/v1/database-connections/")) return;
     const connectionId = (request.params as { id?: string }).id;
-    if (connectionId && !await canAccessConnection(app.db, request.admin!, "database", connectionId)) {
+    const needsWrite = /\/(table-import|backup|restore|sync-preview|sync|transfer)(?:\?|$)/.test(request.url.split("?")[0] ?? "");
+    if (!connectionId) return;
+    if (!await canAccessConnection(app.db, request.admin!, "database", connectionId)) {
       await reply.code(404).send({ error: "NOT_FOUND", message: "数据库连接不存在" });
+      return;
+    }
+    if (needsWrite && !await canAccessConnection(app.db, request.admin!, "database", connectionId, "write")) {
+      await reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有这项操作权限" });
     }
   });
 
@@ -269,6 +275,7 @@ export async function registerDatabaseOperationRoutes(app: FastifyInstance): Pro
     if (!body || !request.admin) return;
     const task = app.databaseTasks.get(request.params.id, request.admin.id, executionScope(request));
     if (!task?.connectionId || task.type !== "backup" || !await canAccessConnection(app.db, request.admin, "database", task.connectionId)) return reply.code(404).send({ error: "BACKUP_NOT_FOUND", message: "备份不存在" });
+    if (!await canAccessConnection(app.db, request.admin, "database", task.connectionId, "write")) return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有这项操作权限" });
     try {
       const updated = await app.databaseTasks.renameBackup(task.id, request.admin.id, body.name);
       if (!updated) return reply.code(409).send({ error: "BACKUP_NOT_READY", message: "只有已完成的备份可以重命名" });
@@ -284,6 +291,7 @@ export async function registerDatabaseOperationRoutes(app: FastifyInstance): Pro
     if (!body || !request.admin) return;
     const task = app.databaseTasks.get(request.params.id, request.admin.id, executionScope(request));
     if (!task?.connectionId || task.type !== "backup" || !await canAccessConnection(app.db, request.admin, "database", task.connectionId)) return reply.code(404).send({ error: "BACKUP_NOT_FOUND", message: "备份不存在" });
+    if (!await canAccessConnection(app.db, request.admin, "database", task.connectionId, "write")) return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有这项操作权限" });
     try {
       const duplicate = await app.databaseTasks.duplicateBackup(task.id, request.admin.id, body.name);
       if (!duplicate) return reply.code(409).send({ error: "BACKUP_NOT_READY", message: "只有已完成的备份可以复制" });
@@ -299,6 +307,7 @@ export async function registerDatabaseOperationRoutes(app: FastifyInstance): Pro
     if (!body || !request.admin) return;
     const task = app.databaseTasks.get(request.params.id, request.admin.id, executionScope(request));
     if (!task?.connectionId || task.type !== "backup" || !await canAccessConnection(app.db, request.admin, "database", task.connectionId)) return reply.code(404).send({ error: "BACKUP_NOT_FOUND", message: "备份不存在" });
+    if (!await canAccessConnection(app.db, request.admin, "database", task.connectionId, "write")) return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有这项操作权限" });
     const path = app.databaseTasks.output(task.id, request.admin.id);
     if (!path) return reply.code(409).send({ error: "BACKUP_NOT_READY", message: "备份尚未完成或文件不可用" });
     const database = body.database || String(task.details.database ?? "");
@@ -314,6 +323,7 @@ export async function registerDatabaseOperationRoutes(app: FastifyInstance): Pro
   app.delete<{ Params: { id: string } }>("/api/v1/database-backups/:id", async (request, reply) => {
     const task = app.databaseTasks.get(request.params.id, request.admin!.id, executionScope(request));
     if (!task?.connectionId || task.type !== "backup" || !await canAccessConnection(app.db, request.admin!, "database", task.connectionId)) return reply.code(404).send({ error: "BACKUP_NOT_FOUND", message: "备份不存在" });
+    if (!await canAccessConnection(app.db, request.admin!, "database", task.connectionId, "write")) return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有这项操作权限" });
     const deleted = await app.databaseTasks.deleteBackup(task.id, request.admin!.id);
     if (!deleted) return reply.code(409).send({ error: "BACKUP_RUNNING", message: "运行中的备份不能删除，请先取消任务" });
     await writeAudit(app.db, { action: "database.backup_deleted", resourceType: "database_connection", resourceId: task.connectionId, summary: `删除备份 ${task.title}`, request });

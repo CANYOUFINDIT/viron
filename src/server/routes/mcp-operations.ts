@@ -3,9 +3,10 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import {
   canAccessConnection,
-  canAccessEnvironment,
   canAccessWebCredential,
+  canCreateConnection,
   canManageWorkspace,
+  getWorkspaceAccess,
   workspaceWhere,
 } from "../access-control.js";
 import { runWithAuditSource, writeAudit } from "../audit.js";
@@ -361,12 +362,21 @@ async function connectionName(app: FastifyInstance, type: "ssh" | "database" | "
 }
 
 async function ensureCredentialTarget(app: FastifyInstance, request: FastifyRequest, action: string, arguments_: Record<string, unknown>): Promise<void> {
-  if (!canManageWorkspace(request)) throw new Error("只有当前工作空间管理员可以新增或更新连接凭据");
+  const user = request.admin!;
+  if (action.startsWith("viron_ssh_key_") || action === "viron_connection_import_secure_preview" || action === "viron_connection_source_secure_update") {
+    if (!canManageWorkspace(request)) throw new Error("只有当前工作空间管理员可以管理密钥、导入或连接来源");
+    if (action === "viron_connection_source_secure_update") {
+      const exists = await app.db.prepare(`SELECT 1 FROM connection_sources WHERE id = ? AND ${workspaceWhere()}`).get(String(arguments_.sourceId), user.workspace.type, user.workspace.id);
+      if (!exists) throw new Error("连接来源不存在或不属于当前工作空间");
+    }
+    return;
+  }
   if (action === "viron_database_connection_profile_secure_create" || action === "viron_database_connection_profile_secure_update") {
     const connectionId = String(arguments_.connectionId);
     const root = await app.db.prepare(`SELECT 1 FROM database_connections WHERE id = ? AND profile_parent_id IS NULL AND ${workspaceWhere()}`)
-      .get(connectionId, request.admin!.workspace.type, request.admin!.workspace.id);
+      .get(connectionId, user.workspace.type, user.workspace.id);
     if (!root) throw new Error("数据库连接不存在或不属于当前工作空间");
+    if (!await canAccessConnection(app.db, user, "database", connectionId, "manage")) throw new Error("没有这项操作权限");
     if (action.endsWith("_update")) {
       const profile = await app.db.prepare("SELECT 1 FROM database_connections WHERE id = ? AND profile_parent_id = ?")
         .get(String(arguments_.profileId), connectionId);
@@ -374,28 +384,31 @@ async function ensureCredentialTarget(app: FastifyInstance, request: FastifyRequ
     }
     return;
   }
-  if (!action.endsWith("_update")) {
-    if (action === "viron_web_credential_secure_create") {
-      const entry = await app.db.prepare("SELECT environment_id FROM web_entries WHERE id = ?").get(String(arguments_.webEntryId)) as { environment_id: string } | undefined;
-      if (!entry || !await canAccessEnvironment(app.db, request.admin!, entry.environment_id)) throw new Error("Web 入口不存在或无权访问");
-    }
+  if (action === "viron_web_credential_secure_create") {
+    const entry = await app.db.prepare(`
+      SELECT w.id, w.environment_id FROM web_entries w
+      JOIN environments e ON e.id = w.environment_id
+      WHERE w.id = ? AND e.workspace_type = ? AND e.workspace_id = ?
+    `).get(String(arguments_.webEntryId), user.workspace.type, user.workspace.id) as { id: string; environment_id: string } | undefined;
+    const access = await getWorkspaceAccess(app.db, user);
+    if (!entry || !access.allowsEnvironment(entry.environment_id, "web", "manage", entry.id)) throw new Error("没有这项操作权限");
     return;
   }
   if (action === "viron_web_credential_secure_update") {
-    if (!await canAccessWebCredential(app.db, request.admin!, String(arguments_.credentialId))) throw new Error("Web 登录账号不存在或无权访问");
+    if (!await canAccessWebCredential(app.db, user, String(arguments_.credentialId), "manage")) throw new Error("没有这项操作权限");
     return;
   }
-  if (action === "viron_connection_source_secure_update") {
-    const exists = await app.db.prepare(`SELECT 1 FROM connection_sources WHERE id = ? AND ${workspaceWhere()}`).get(String(arguments_.sourceId), request.admin!.workspace.type, request.admin!.workspace.id);
-    if (!exists) throw new Error("连接来源不存在或不属于当前工作空间");
-    return;
-  }
-  if (action.startsWith("viron_ssh_key_") || action === "viron_connection_import_secure_preview") return;
   const type = action.includes("ssh_connection") ? "ssh" : action.includes("database_connection") ? "database" : "redis";
+  if (!action.endsWith("_update")) {
+    const config = arguments_.config as { environmentIds?: string[] } | undefined;
+    if (!await canCreateConnection(app.db, user, type, config?.environmentIds ?? [])) throw new Error("没有这项操作权限");
+    return;
+  }
   const id = String(arguments_.connectionId);
   const table = type === "ssh" ? "ssh_connections" : type === "database" ? "database_connections" : "redis_connections";
-  const exists = await app.db.prepare(`SELECT 1 FROM ${table} WHERE id = ? AND ${workspaceWhere()}`).get(id, request.admin!.workspace.type, request.admin!.workspace.id);
+  const exists = await app.db.prepare(`SELECT 1 FROM ${table} WHERE id = ? AND ${workspaceWhere()}`).get(id, user.workspace.type, user.workspace.id);
   if (!exists) throw new Error("连接不存在或不属于当前工作空间");
+  if (!await canAccessConnection(app.db, user, type, id, "manage")) throw new Error("没有这项操作权限");
 }
 
 function credentialSpec(action: string, arguments_: Record<string, unknown>): { title: string; summary: string; credential: { kind: McpCredentialKind; mode: "create" | "update" }; request: McpApiRequest } {
@@ -506,22 +519,22 @@ async function confirmationSpec(app: FastifyInstance, request: FastifyRequest, a
   const approved = resolveVironMcpApprovedRequest(action, arguments_);
   if (action === "viron_ssh_command_request") {
     const id = String(arguments_.connectionId);
-    if (!await canAccessConnection(app.db, request.admin!, "ssh", id)) throw new Error("SSH 连接不存在或无权访问");
+    if (!await canAccessConnection(app.db, request.admin!, "ssh", id, "use")) throw new Error("SSH 连接不存在或无权访问");
     return { title: "确认执行 SSH 命令", summary: `${await connectionName(app, "ssh", id)} · ${String(arguments_.command).slice(0, 300)}`, riskLevel: sshCommandRiskLevel(String(arguments_.command)), request: approved };
   }
   if (action === "viron_database_write_request") {
     const id = String(arguments_.connectionId);
-    if (!await canAccessConnection(app.db, request.admin!, "database", id)) throw new Error("数据库连接不存在或无权访问");
+    if (!await canAccessConnection(app.db, request.admin!, "database", id, "write")) throw new Error("数据库连接不存在或无权访问");
     return { title: "确认执行数据库写 SQL", summary: `${await connectionName(app, "database", id)} / ${String(arguments_.database || "默认 Schema")} · ${String(arguments_.sql).slice(0, 300)}`, riskLevel: "high" as const, request: approved };
   }
   if (action === "viron_redis_write_request") {
     const id = String(arguments_.connectionId);
-    if (!await canAccessConnection(app.db, request.admin!, "redis", id)) throw new Error("Redis 连接不存在或无权访问");
+    if (!await canAccessConnection(app.db, request.admin!, "redis", id, "write")) throw new Error("Redis 连接不存在或无权访问");
     return { title: "确认执行 Redis 写命令", summary: `${await connectionName(app, "redis", id)} · ${String(arguments_.command)}，${Array.isArray(arguments_.args) ? arguments_.args.length : 0} 个参数`, riskLevel: "high" as const, request: approved };
   }
   if (["viron_sftp_mkdir_request", "viron_sftp_rename_request", "viron_sftp_chmod_request", "viron_sftp_delete_request"].includes(action)) {
     const id = String(arguments_.connectionId);
-    if (!await canAccessConnection(app.db, request.admin!, "ssh", id)) throw new Error("SSH 连接不存在或无权访问");
+    if (!await canAccessConnection(app.db, request.admin!, "ssh", id, "use")) throw new Error("SSH 连接不存在或无权访问");
     const label = action.includes("mkdir") ? "创建目录" : action.includes("rename") ? "重命名路径" : action.includes("chmod") ? "修改权限" : "删除路径";
     return { title: `确认${label}`, summary: `${await connectionName(app, "ssh", id)} · ${String(arguments_.path)}${arguments_.newPath ? ` → ${String(arguments_.newPath)}` : ""}`, riskLevel: action.includes("delete") ? "high" as const : "medium" as const, request: approved };
   }
@@ -529,8 +542,8 @@ async function confirmationSpec(app: FastifyInstance, request: FastifyRequest, a
     const sourceId = String(arguments_.sourceConnectionId);
     const targetId = String(arguments_.targetConnectionId);
     const [sourceAllowed, targetAllowed] = await Promise.all([
-      canAccessConnection(app.db, request.admin!, "ssh", sourceId),
-      canAccessConnection(app.db, request.admin!, "ssh", targetId),
+      canAccessConnection(app.db, request.admin!, "ssh", sourceId, "use"),
+      canAccessConnection(app.db, request.admin!, "ssh", targetId, "use"),
     ]);
     if (!sourceAllowed || !targetAllowed) throw new Error("来源或目标 SSH 连接不存在或无权访问");
     return { title: "确认 SFTP 主机间传输", summary: `${await connectionName(app, "ssh", sourceId)}:${String(arguments_.sourcePath)} → ${await connectionName(app, "ssh", targetId)}:${String(arguments_.targetDirectory)}（${String(arguments_.conflict)}）`, riskLevel: "high" as const, request: approved };

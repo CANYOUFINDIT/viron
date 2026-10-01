@@ -6,19 +6,21 @@ const source = (path: string) => readFileSync(resolve(process.cwd(), path), "utf
 
 describe("organization resource grant selector", () => {
   const view = source("src/client/views/OrganizationView.vue");
+  const dialog = source("src/client/views/organization/OrganizationGrantDialog.vue");
   const controller = source("src/client/views/organization/use-organization-controller.ts");
 
-  it("submits multiple resources from the selected resource type", () => {
-    expect(controller).toContain('const grantForm = reactive({ resourceType: "environment" as ResourceType, resourceIds: [] as string[] });');
-    expect(view).toContain('v-model="grantForm.resourceIds" multiple filterable clearable collapse-tags collapse-tags-tooltip');
-    expect(controller).toContain('resourceType: grantForm.resourceType, resourceIds: grantForm.resourceIds');
-    expect(view).toContain(':disabled="!grantForm.resourceIds.length"');
-    expect(controller).not.toContain("grantForm.resourceId =");
+  it("submits the selected environments or connections with one duration", () => {
+    expect(view).toContain("<OrganizationGrantDialog />");
+    expect(dialog).toContain('v-model="targetIds" multiple filterable clearable collapse-tags collapse-tags-tooltip');
+    expect(dialog).toContain("wholeGroup");
+    expect(dialog).toContain("expiresAt: expiryValue()");
+    expect(dialog).toContain("scopeKind,");
+    expect(controller).toContain("const body = JSON.stringify({ granteeType, granteeId, ...draft });");
+    expect(controller).toContain("editingGrant");
+    expect(controller).not.toContain("grantForm");
   });
 
-  it("excludes resources already granted directly or through project inheritance", () => {
-    expect(controller).toContain("const selectedGrantResourceKeys = computed(() => new Set(");
-    expect(controller).toContain("selectedGrantRows.value.map(({ grant }) => `${grant.resourceType}:${grant.resourceId}`)");
-    expect(controller).toContain("&& !selectedGrantResourceKeys.value.has(`${item.type}:${item.id}`)");
+  it("allows another grant on a resource that already has one", () => {
+    expect(controller).not.toContain("selectedGrantResourceKeys");
   });
 });

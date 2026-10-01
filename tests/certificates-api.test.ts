@@ -182,7 +182,9 @@ describe("certificate assets API", () => {
       const member = { envman_session: memberRegistration.cookies.find((item) => item.name === "envman_session")!.value };
       expect((await app.inject({ method: "PUT", url: "/api/v1/auth/workspace", cookies: member, payload: { type: "organization", id: organizationId } })).statusCode).toBe(200);
       expect((await app.inject({ method: "GET", url: "/api/v1/certificates", cookies: member })).statusCode).toBe(403);
-      expect((await app.inject({ method: "POST", url: `/api/v1/tls-endpoints/${endpointA.json().id}/probe`, cookies: member })).statusCode).toBe(403);
+      const memberProbe = await app.inject({ method: "POST", url: `/api/v1/tls-endpoints/${endpointA.json().id}/probe`, cookies: member });
+      expect(memberProbe.statusCode).toBe(404);
+      expect(memberProbe.json().error).toBe("TLS_ENDPOINT_NOT_FOUND");
 
       await app.inject({ method: "POST", url: "/api/v1/auth/register", payload: { username: "other-admin", password: "other-password-123" } });
       const otherLogin = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { username: "other-admin", password: "other-password-123" } });

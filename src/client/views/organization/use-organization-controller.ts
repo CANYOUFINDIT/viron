@@ -19,7 +19,35 @@ interface Member {
   invitedBy: { id: string; username: string } | null;
 }
 interface Project { id: string; parentId: string | null; name: string; description: string; memberCount: number }
-interface Grant { id: string; granteeType: "user" | "project"; granteeId: string; granteeName: string; resourceType: ResourceType; resourceId: string }
+interface Grant {
+  id: string;
+  legacy: boolean;
+  granteeType: "user" | "project";
+  granteeId: string;
+  granteeName: string;
+  scopeKind: ResourceType;
+  wholeGroup: boolean;
+  groupId: string | null;
+  targetIds: string[];
+  permissions: Record<string, string[]>;
+  items: Record<string, string[]>;
+  expiresAt: string | null;
+  expired: boolean;
+  createdAt: string;
+  label: string;
+  permissionText: string;
+  resourceType: ResourceType;
+  resourceId: string;
+}
+interface GrantDraft {
+  scopeKind: ResourceType;
+  wholeGroup: boolean;
+  groupId: string | null;
+  targetIds: string[];
+  permissions: Record<string, string[]>;
+  items: Record<string, string[]>;
+  expiresAt: string | null;
+}
 interface OrganizationDetail { organization: Organization; members: Member[]; projects: Project[]; grants: Grant[] }
 interface PlatformUser { id: string; username: string; status: "active" | "disabled"; isPlatformAdmin: boolean; organizationCount: number }
 interface ManagedInvitation {
@@ -44,7 +72,7 @@ interface AcceptedInvitationUser {
   joinedProject: boolean;
 }
 type ResourceType = "environment_group" | "environment" | "ssh_connection" | "database_connection" | "redis_connection";
-interface ResourceOption { id: string; name: string; type: ResourceType }
+interface ResourceOption { id: string; name: string; type: ResourceType; groupId?: string | null }
 interface StructureNode {
   key: string;
   type: "organization" | "project" | "member";
@@ -80,6 +108,7 @@ export function useOrganizationController() {
   const projectMemberDialog = ref(false);
   const grantDialog = ref(false);
   const grantingResource = ref(false);
+  const editingGrant = ref<Grant | null>(null);
   const invitationDialog = ref(false);
   const invitationUsersDialog = ref(false);
   const selectedInvitation = ref<ManagedInvitation | null>(null);
@@ -100,7 +129,6 @@ export function useOrganizationController() {
 
   const organizationForm = reactive({ name: "", description: "" });
   const projectForm = reactive({ name: "", description: "", parentId: null as string | null });
-  const grantForm = reactive({ resourceType: "environment" as ResourceType, resourceIds: [] as string[] });
   const userForm = reactive({ username: "", password: "", isPlatformAdmin: false });
 
   const currentOrganizationId = computed(() => session.workspace?.type === "organization" ? session.workspace.id : "");
@@ -182,14 +210,6 @@ export function useOrganizationController() {
     }
     return [];
   });
-  const selectedGrantResourceKeys = computed(() => new Set(
-    selectedGrantRows.value.map(({ grant }) => `${grant.resourceType}:${grant.resourceId}`),
-  ));
-  const availableResources = computed(() => resources.value.filter((item) => (
-    item.type === grantForm.resourceType
-    && !selectedGrantResourceKeys.value.has(`${item.type}:${item.id}`)
-  )));
-
   const structureTree = computed<StructureNode[]>(() => {
     if (!detail.value) return [];
     const projects = detail.value.projects;
@@ -248,11 +268,15 @@ export function useOrganizationController() {
 
   function selectStructureNode(node: StructureNode) {
     selectedNode.value = { type: node.type, id: node.entityId };
-    grantForm.resourceIds = [];
   }
 
   function openGrantDialog() {
-    grantForm.resourceIds = [];
+    editingGrant.value = null;
+    grantDialog.value = true;
+  }
+
+  function openEditGrant(grant: Grant) {
+    editingGrant.value = grant;
     grantDialog.value = true;
   }
 
@@ -278,19 +302,19 @@ export function useOrganizationController() {
     resources.value = [];
     invitations.value = [];
     selectedNode.value = { type: "organization", id: organizationId };
-    grantForm.resourceIds = [];
+    editingGrant.value = null;
   }
 
   async function loadResources() {
     if (!canManageOrganization.value) { resources.value = []; return; }
     const [groups, environments, connections] = await Promise.all([
       api<{ items: Array<{ id: string; name: string }> }>("/api/v1/environment-groups"),
-      api<{ items: Array<{ id: string; name: string }> }>("/api/v1/environments"),
+      api<{ items: Array<{ id: string; name: string; groupId: string | null }> }>("/api/v1/environments"),
       api<{ items: Array<{ id: string; name: string; type: "ssh" | "database" | "redis" }> }>("/api/v1/connections"),
     ]);
     resources.value = [
       ...groups.items.map((item) => ({ ...item, type: "environment_group" as const })),
-      ...environments.items.map((item) => ({ ...item, type: "environment" as const })),
+      ...environments.items.map((item) => ({ id: item.id, name: item.name, groupId: item.groupId, type: "environment" as const })),
       ...connections.items.map((item) => ({ id: item.id, name: item.name, type: `${item.type}_connection` as ResourceType })),
     ];
   }
@@ -543,16 +567,20 @@ export function useOrganizationController() {
     } catch (error) { ElMessage.error(error instanceof Error ? error.message : tr("保存项目组成员失败")); }
   }
 
-  async function createGrant() {
-    if (!selectedGrantTarget.value || !grantForm.resourceIds.length) return ElMessage.warning(tr("请选择资源"));
+  async function saveGrant(draft: GrantDraft) {
+    const granteeType = editingGrant.value?.granteeType ?? selectedGrantTarget.value?.type;
+    const granteeId = editingGrant.value?.granteeId ?? selectedGrantTarget.value?.id;
+    if (!granteeType || !granteeId) return ElMessage.warning(tr("请选择资源和操作"));
     grantingResource.value = true;
     try {
-      await api(`/api/v1/organizations/${currentOrganizationId.value}/grants`, {
-        method: "POST",
-        body: JSON.stringify({ granteeType: selectedGrantTarget.value.type, granteeId: selectedGrantTarget.value.id, resourceType: grantForm.resourceType, resourceIds: grantForm.resourceIds }),
-      });
-      grantForm.resourceIds = [];
+      const body = JSON.stringify({ granteeType, granteeId, ...draft });
+      if (editingGrant.value) {
+        await api(`/api/v1/organizations/${currentOrganizationId.value}/grants/${editingGrant.value.id}`, { method: "PUT", body });
+      } else {
+        await api(`/api/v1/organizations/${currentOrganizationId.value}/grants`, { method: "POST", body });
+      }
       grantDialog.value = false;
+      editingGrant.value = null;
       await load();
     } catch (error) { ElMessage.error(error instanceof Error ? error.message : tr("分配资源失败")); }
     finally { grantingResource.value = false; }
@@ -599,17 +627,17 @@ export function useOrganizationController() {
   });
 
   return {
-    activateWorkspace, activePanel, availableParentProjects, availableResources, canManageOrganization, changeRole,
-    copiedInvitationKey, copyInvitationLink, createGrant, createInvitation, createOrganization, createOrganizationDialog,
+    activateWorkspace, activePanel, availableParentProjects, canManageOrganization, changeRole,
+    copiedInvitationKey, copyInvitationLink, createInvitation, createOrganization, createOrganizationDialog,
     createUser, creatingInvitation, creatingOrganization, currentOrganizationId, customInvitationLimit, customInvitationLimitInput, deleteInvitationRecord,
-    deleteProject, deletingInvitationId, detail, editingProject, generatedInvitation, grantDialog,
-    grantForm, grantingResource, invitationDialog, invitationDuration, invitationDurations, invitationJoinResult,
+    deleteProject, deletingInvitationId, detail, editingGrant, editingProject, generatedInvitation, grantDialog,
+    grantingResource, invitationDialog, invitationDuration, invitationDurations, invitationJoinResult,
     invitationLimitDescription, invitationLimitPreset, invitationLimits, invitationLink, invitationLinkInput, invitationProjectId,
     invitationStatusLabel, invitationTimeRemaining, invitationUsersDialog, invitations, joinOrganizationDialog, load,
-    loadError, loading, openCreateProject, openEditProject, openGrantDialog, openInvitationDialog,
+    loadError, loading, openCreateProject, openEditGrant, openEditProject, openGrantDialog, openInvitationDialog,
     openInvitationFromLink, openInvitationUsers, openProjectMembersById, organizationForm, organizations, projectDialog,
     projectDialogMode, projectForm, projectMemberDialog, removeMember, resetPassword, resourceNames,
-    resourceTypeLabels, revokeGrant, revokeInvitation, revokingInvitationId, saveProject, saveProjectMembers,
+    resourceTypeLabels, resources, revokeGrant, revokeInvitation, revokingInvitationId, saveGrant, saveProject, saveProjectMembers,
     selectInvitationLimit, selectStructureNode, selectedGrantRows, selectedGrantTarget, selectedInvitation, selectedMember,
     selectedMemberProjects, selectedNode, selectedProject, selectedProjectChildren, selectedProjectMembers, selectedProjectPath,
     session, structureTree, toggleUser, unattributedInvitationUses, userForm, users,

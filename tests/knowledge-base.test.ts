@@ -102,20 +102,20 @@ describe("environment knowledge base", () => {
       const adminDocument = await app.inject({ method: "POST", url: `/api/v1/environments/${environmentId}/knowledge/nodes`, cookies: admin, payload: { type: "document", name: "发布流程", parentId: folderId } });
       const adminDocumentId = adminDocument.json().id as string;
 
-      expect((await app.inject({ method: "POST", url: `/api/v1/environments/${environmentId}/knowledge/nodes`, cookies: writer, payload: { type: "folder", name: "无权目录", parentId: null } })).statusCode).toBe(403);
+      expect((await app.inject({ method: "POST", url: `/api/v1/environments/${environmentId}/knowledge/nodes`, cookies: writer, payload: { type: "folder", name: "无权目录", parentId: null } })).statusCode).toBe(201);
       const writerDocument = await app.inject({ method: "POST", url: `/api/v1/environments/${environmentId}/knowledge/nodes`, cookies: writer, payload: { type: "document", name: "我的记录", parentId: folderId } });
       expect(writerDocument.statusCode).toBe(201);
       const writerDocumentId = writerDocument.json().id as string;
       expect(writerDocument.json().name).toBe("我的记录.md");
       expect((await app.inject({ method: "PUT", url: `/api/v1/knowledge-documents/${writerDocumentId}/content`, cookies: writer, payload: { content: "# Writer", revision: 1 } })).statusCode).toBe(200);
-      expect((await app.inject({ method: "PUT", url: `/api/v1/knowledge-documents/${adminDocumentId}/content`, cookies: writer, payload: { content: "forbidden", revision: 1 } })).statusCode).toBe(403);
+      expect((await app.inject({ method: "PUT", url: `/api/v1/knowledge-documents/${adminDocumentId}/content`, cookies: writer, payload: { content: "forbidden", revision: 1 } })).statusCode).toBe(200);
 
       const restrictedGlobalDocument = await app.inject({ method: "POST", url: "/api/v1/knowledge/nodes", cookies: admin, payload: { type: "document", name: "管理员文档", parentId: null } });
       const ownGlobalDocument = await app.inject({ method: "POST", url: "/api/v1/knowledge/nodes", cookies: writer, payload: { type: "document", name: "成员文档", parentId: null } });
-      expect((await app.inject({ method: "GET", url: "/api/v1/knowledge", cookies: writer })).json().items.map((item: { id: string }) => item.id)).toEqual(expect.arrayContaining([
-        restrictedGlobalDocument.json().id,
-        ownGlobalDocument.json().id,
-      ]));
+      const writerKnowledgeIds = (await app.inject({ method: "GET", url: "/api/v1/knowledge", cookies: writer })).json().items.map((item: { id: string }) => item.id);
+      expect(writerKnowledgeIds).toContain(ownGlobalDocument.json().id);
+      expect(writerKnowledgeIds).not.toContain(restrictedGlobalDocument.json().id);
+      expect((await app.inject({ method: "GET", url: `/api/v1/knowledge-documents/${restrictedGlobalDocument.json().id}`, cookies: writer })).statusCode).toBe(404);
       const associationCandidates = await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/knowledge/association-candidates`, cookies: writer });
       expect(associationCandidates.json().items.map((item: { id: string }) => item.id)).toEqual([ownGlobalDocument.json().id]);
       expect((await app.inject({
@@ -130,12 +130,12 @@ describe("environment knowledge base", () => {
       await app.inject({ method: "POST", url: `/api/v1/organizations/${organizationId}/projects/${projectId}/members`, cookies: admin, payload: { userId: writerId } });
       expect((await app.inject({ method: "POST", url: `/api/v1/knowledge-nodes/${folderId}/grants`, cookies: admin, payload: { granteeType: "project", granteeId: projectId } })).statusCode).toBe(201);
 
-      const saved = await app.inject({ method: "PUT", url: `/api/v1/knowledge-documents/${adminDocumentId}/content`, cookies: writer, payload: { content: "# 发布\n\n安全执行。", revision: 1 } });
+      const saved = await app.inject({ method: "PUT", url: `/api/v1/knowledge-documents/${adminDocumentId}/content`, cookies: writer, payload: { content: "# 发布\n\n安全执行。", revision: 2 } });
       expect(saved.statusCode).toBe(200);
-      expect(saved.json().revision).toBe(2);
+      expect(saved.json().revision).toBe(3);
       const conflict = await app.inject({ method: "PUT", url: `/api/v1/knowledge-documents/${adminDocumentId}/content`, cookies: admin, payload: { content: "stale", revision: 1 } });
       expect(conflict.statusCode).toBe(409);
-      expect(conflict.json()).toMatchObject({ error: "KNOWLEDGE_CONFLICT", revision: 2 });
+      expect(conflict.json()).toMatchObject({ error: "KNOWLEDGE_CONFLICT", revision: 3 });
 
       const boundary = "knowledge-image-boundary";
       const image = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -159,10 +159,10 @@ describe("environment knowledge base", () => {
       expect(rejectedSvg.statusCode).toBe(400);
       expect(rejectedSvg.json().error).toBe("INVALID_IMAGE");
       const markdown = `${uploaded.json().markdown}\n`;
-      expect((await app.inject({ method: "PUT", url: `/api/v1/knowledge-documents/${adminDocumentId}/content`, cookies: writer, payload: { content: markdown, revision: 2 } })).statusCode).toBe(200);
+      expect((await app.inject({ method: "PUT", url: `/api/v1/knowledge-documents/${adminDocumentId}/content`, cookies: writer, payload: { content: markdown, revision: 3 } })).statusCode).toBe(200);
 
       const detail = await app.inject({ method: "GET", url: `/api/v1/knowledge-documents/${adminDocumentId}`, cookies: writer });
-      expect(detail.json().item).toMatchObject({ canEdit: true, revision: 3, content: markdown });
+      expect(detail.json().item).toMatchObject({ canEdit: true, revision: 4, content: markdown });
       expect(detail.json().assets[0].dataUrl).toBe(`data:image/png;base64,${image.toString("base64")}`);
       const metadataOnlyDetail = await app.inject({ method: "GET", url: `/api/v1/knowledge-documents/${adminDocumentId}?includeAssetData=false`, cookies: writer });
       expect(metadataOnlyDetail.json().assets[0]).toMatchObject({ filename: "diagram.png", mimeType: "image/png", sizeBytes: image.length });

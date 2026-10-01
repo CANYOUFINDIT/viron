@@ -175,6 +175,34 @@ CREATE TABLE IF NOT EXISTS resource_grants (
   CONSTRAINT resource_grants_creator_fk FOREIGN KEY (created_by_user_id) REFERENCES admin_users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS access_authorizations (
+  id VARCHAR(64) PRIMARY KEY,
+  organization_id VARCHAR(64) NOT NULL,
+  grantee_type VARCHAR(16) NOT NULL,
+  grantee_id VARCHAR(64) NOT NULL,
+  scope_kind VARCHAR(32) NOT NULL,
+  whole_group TINYINT NOT NULL DEFAULT 0,
+  group_id VARCHAR(64) NULL,
+  permissions_json LONGTEXT NOT NULL,
+  items_json LONGTEXT NOT NULL,
+  expires_at VARCHAR(40) NULL,
+  created_by_user_id VARCHAR(64) NOT NULL,
+  created_at VARCHAR(40) NOT NULL,
+  updated_at VARCHAR(40) NOT NULL,
+  KEY access_authorizations_grantee_idx (organization_id, grantee_type, grantee_id, expires_at),
+  KEY access_authorizations_group_idx (group_id),
+  CONSTRAINT access_authorizations_org_fk FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  CONSTRAINT access_authorizations_creator_fk FOREIGN KEY (created_by_user_id) REFERENCES admin_users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS access_authorization_targets (
+  authorization_id VARCHAR(64) NOT NULL,
+  resource_id VARCHAR(64) NOT NULL,
+  PRIMARY KEY (authorization_id, resource_id),
+  KEY access_authorization_targets_resource_idx (resource_id),
+  CONSTRAINT access_authorization_targets_fk FOREIGN KEY (authorization_id) REFERENCES access_authorizations(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS environment_groups (
   id VARCHAR(64) PRIMARY KEY,
   workspace_type VARCHAR(20) NOT NULL DEFAULT 'personal',

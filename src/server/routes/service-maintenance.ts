@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { canAccessConnection, canAccessEnvironment, canManageWorkspace } from "../access-control.js";
+import { environmentCapability, sendCapabilityResult } from "../access-control.js";
 import { writeAudit } from "../audit.js";
 import { isUniqueConstraintError } from "../database-errors.js";
 import { quotePosixShellArg } from "../../shared/environment-log.js";
@@ -100,10 +100,46 @@ const kubernetesSelectionSchema = z.object({
   })).max(64),
 });
 
-function requireManager(request: FastifyRequest, reply: { code: (status: number) => { send: (body: unknown) => unknown } }): boolean {
-  if (canManageWorkspace(request)) return true;
-  void reply.code(403).send({ error: "WORKSPACE_ADMIN_REQUIRED", message: "只有工作空间管理员可以修改或执行服务维护" });
-  return false;
+type RouteReply = { code: (status: number) => { send: (body: unknown) => unknown } };
+
+async function allowMaintenance(
+  app: FastifyInstance,
+  request: FastifyRequest,
+  reply: RouteReply,
+  environmentId: string,
+  action: "view" | "control" | "script" | "manage" | "install",
+  itemId: string | undefined,
+  missing: { error: string; message: string },
+  requireAll = false,
+): Promise<boolean> {
+  return sendCapabilityResult(
+    reply,
+    await environmentCapability(app.db, request.admin!, environmentId, "maintenance", action, itemId, requireAll),
+    missing,
+  );
+}
+
+async function requireMonitorHost(
+  app: FastifyInstance,
+  request: FastifyRequest,
+  reply: RouteReply,
+  environmentId: string,
+  connectionId: string,
+  action: "view" | "install",
+) {
+  if (!await allowMaintenance(app, request, reply, environmentId, action, `host:${connectionId}`, { error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" })) return undefined;
+  const connection = await connectionBelongsToEnvironment(app, connectionId, environmentId);
+  if (!connection) {
+    void reply.code(404).send({ error: "SSH_CONNECTION_NOT_FOUND", message: "SSH 连接不存在" });
+    return undefined;
+  }
+  return connection;
+}
+
+async function sshBelongsToWorkspace(app: FastifyInstance, request: FastifyRequest, connectionId: string): Promise<boolean> {
+  const workspace = request.admin!.workspace;
+  const row = await app.db.prepare("SELECT 1 FROM ssh_connections WHERE id = ? AND workspace_type = ? AND workspace_id = ?").get(connectionId, workspace.type, workspace.id);
+  return Boolean(row);
 }
 
 function parseJson<T>(value: unknown, fallback: T): T {
@@ -370,9 +406,6 @@ async function executeDeploymentAction(
   if (!connectionId) {
     return { ...base, ok: false, exitCode: null, durationMs: 0, truncated: false, message: "原 SSH 连接已删除，请先修复部署节点", errorCode: "SSH_CONNECTION_MISSING" };
   }
-  if (!await canAccessConnection(app.db, request.admin!, "ssh", connectionId)) {
-    return { ...base, ok: false, exitCode: null, durationMs: 0, truncated: false, message: "当前账号无权访问该 SSH 连接", errorCode: "SSH_CONNECTION_NOT_FOUND" };
-  }
   if (!await connectionBelongsToEnvironment(app, connectionId, String(deployment.environment_id))) {
     return { ...base, ok: false, exitCode: null, durationMs: 0, truncated: false, message: "SSH 连接已删除或移出当前环境", errorCode: "SSH_CONNECTION_UNAVAILABLE" };
   }
@@ -411,12 +444,8 @@ async function executeDeploymentAction(
   }
 }
 
-async function requireEnvironment(app: FastifyInstance, request: FastifyRequest, reply: { code: (status: number) => { send: (body: unknown) => unknown } }, environmentId: string): Promise<boolean> {
-  if (!await canAccessEnvironment(app.db, request.admin!, environmentId)) {
-    void reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
-    return false;
-  }
-  return true;
+async function requireEnvironment(app: FastifyInstance, request: FastifyRequest, reply: RouteReply, environmentId: string): Promise<boolean> {
+  return allowMaintenance(app, request, reply, environmentId, "view", undefined, { error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
 }
 
 export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Promise<void> {
@@ -467,11 +496,8 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     "/api/v1/environments/:environmentId/monitor-hosts/:connectionId/candidates",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!await requireEnvironment(app, request, reply, request.params.environmentId)) return;
-      const connection = await connectionBelongsToEnvironment(app, request.params.connectionId, request.params.environmentId);
-      if (!connection || !await canAccessConnection(app.db, request.admin!, "ssh", connection.id)) {
-        return reply.code(404).send({ error: "SSH_CONNECTION_NOT_FOUND", message: "SSH 连接不存在" });
-      }
+      const connection = await requireMonitorHost(app, request, reply, request.params.environmentId, request.params.connectionId, "view");
+      if (!connection) return;
       const row = await app.db.prepare(`
         SELECT
           c.host, c.port, c.username,
@@ -528,9 +554,7 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     "/api/v1/environments/:environmentId/tls-endpoints",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!await canAccessEnvironment(app.db, request.admin!, request.params.environmentId)) {
-        return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
-      }
+      if (!await allowMaintenance(app, request, reply, request.params.environmentId, "view", undefined, { error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" })) return;
       return { items: await listTlsEndpoints(app, request.params.environmentId) };
     },
   );
@@ -539,13 +563,10 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     "/api/v1/environments/:environmentId/tls-endpoints",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!requireManager(request, reply)) return;
       const body = parseBody(tlsEndpointSchema, request.body, reply);
       if (!body) return;
-      if (!await canAccessEnvironment(app.db, request.admin!, request.params.environmentId)) {
-        return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
-      }
-      if (body.sshConnectionId && !await canAccessConnection(app.db, request.admin!, "ssh", body.sshConnectionId)) {
+      if (!await allowMaintenance(app, request, reply, request.params.environmentId, "manage", undefined, { error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" }, true)) return;
+      if (body.sshConnectionId && !await sshBelongsToWorkspace(app, request, body.sshConnectionId)) {
         return reply.code(404).send({ error: "SSH_CONNECTION_NOT_FOUND", message: "SSH 连接不存在" });
       }
       try {
@@ -572,9 +593,7 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     { preHandler: requireAdmin },
     async (request, reply) => {
       const item = await getTlsEndpoint(app, request.params.id);
-      if (!item || !await canAccessEnvironment(app.db, request.admin!, item.environmentId)) {
-        return reply.code(404).send({ error: "TLS_ENDPOINT_NOT_FOUND", message: "证书端点不存在" });
-      }
+      if (!item || !await allowMaintenance(app, request, reply, item.environmentId, "view", undefined, { error: "TLS_ENDPOINT_NOT_FOUND", message: "证书端点不存在" })) return;
       return { item };
     },
   );
@@ -583,15 +602,12 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     "/api/v1/tls-endpoints/:id",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!requireManager(request, reply)) return;
       const body = parseBody(tlsEndpointSchema, request.body, reply);
       if (!body) return;
       try {
         const row = await app.db.prepare("SELECT environment_id FROM ssl_endpoints WHERE id = ?").get(request.params.id) as { environment_id: string } | undefined;
-        if (!row || !await canAccessEnvironment(app.db, request.admin!, row.environment_id)) {
-          return reply.code(404).send({ error: "TLS_ENDPOINT_NOT_FOUND", message: "证书端点不存在" });
-        }
-        if (body.sshConnectionId && !await canAccessConnection(app.db, request.admin!, "ssh", body.sshConnectionId)) {
+        if (!row || !await allowMaintenance(app, request, reply, row.environment_id, "manage", undefined, { error: "TLS_ENDPOINT_NOT_FOUND", message: "证书端点不存在" }, true)) return;
+        if (body.sshConnectionId && !await sshBelongsToWorkspace(app, request, body.sshConnectionId)) {
           return reply.code(404).send({ error: "SSH_CONNECTION_NOT_FOUND", message: "SSH 连接不存在" });
         }
         const item = await updateTlsEndpoint(app, request.params.id, body);
@@ -615,13 +631,10 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     "/api/v1/tls-endpoints/:id",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!requireManager(request, reply)) return;
       const row = await app.db.prepare("SELECT environment_id, host, port FROM ssl_endpoints WHERE id = ?").get(request.params.id) as
         | { environment_id: string; host: string; port: number | string }
         | undefined;
-      if (!row || !await canAccessEnvironment(app.db, request.admin!, row.environment_id)) {
-        return reply.code(404).send({ error: "TLS_ENDPOINT_NOT_FOUND", message: "证书端点不存在" });
-      }
+      if (!row || !await allowMaintenance(app, request, reply, row.environment_id, "manage", undefined, { error: "TLS_ENDPOINT_NOT_FOUND", message: "证书端点不存在" }, true)) return;
       try {
         await deleteTlsEndpoint(app, request.params.id);
         await writeAudit(app.db, {
@@ -644,13 +657,10 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     "/api/v1/tls-endpoints/:id/web-entries",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!requireManager(request, reply)) return;
       const body = parseBody(z.object({ webEntryIds: z.array(z.string().uuid()).max(100) }), request.body, reply);
       if (!body) return;
       const row = await app.db.prepare("SELECT environment_id FROM ssl_endpoints WHERE id = ?").get(request.params.id) as { environment_id: string } | undefined;
-      if (!row || !await canAccessEnvironment(app.db, request.admin!, row.environment_id)) {
-        return reply.code(404).send({ error: "TLS_ENDPOINT_NOT_FOUND", message: "证书端点不存在" });
-      }
+      if (!row || !await allowMaintenance(app, request, reply, row.environment_id, "manage", undefined, { error: "TLS_ENDPOINT_NOT_FOUND", message: "证书端点不存在" }, true)) return;
       try {
         const item = await replaceEndpointWebEntries(app, request.params.id, body.webEntryIds);
         await writeAudit(app.db, {
@@ -673,14 +683,11 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     "/api/v1/tls-endpoints/:id/probe",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!requireManager(request, reply)) return;
       const row = await app.db.prepare("SELECT environment_id, ssh_connection_id, host, port FROM ssl_endpoints WHERE id = ?").get(request.params.id) as
         | { environment_id: string; ssh_connection_id: string | null; host: string; port: number | string }
         | undefined;
-      if (!row || !await canAccessEnvironment(app.db, request.admin!, row.environment_id)) {
-        return reply.code(404).send({ error: "TLS_ENDPOINT_NOT_FOUND", message: "证书端点不存在" });
-      }
-      if (row.ssh_connection_id && !await canAccessConnection(app.db, request.admin!, "ssh", row.ssh_connection_id)) {
+      if (!row || !await allowMaintenance(app, request, reply, row.environment_id, "manage", undefined, { error: "TLS_ENDPOINT_NOT_FOUND", message: "证书端点不存在" }, true)) return;
+      if (row.ssh_connection_id && !await sshBelongsToWorkspace(app, request, row.ssh_connection_id)) {
         return reply.code(404).send({ error: "SSH_CONNECTION_NOT_FOUND", message: "SSH 连接不存在" });
       }
       try {
@@ -705,12 +712,9 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     "/api/v1/environments/:environmentId/services/order",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!requireManager(request, reply)) return;
       const body = parseBody(maintenanceOrderSchema, request.body, reply);
       if (!body) return;
-      if (!await canAccessEnvironment(app.db, request.admin!, request.params.environmentId)) {
-        return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
-      }
+      if (!await allowMaintenance(app, request, reply, request.params.environmentId, "manage", undefined, { error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" }, true)) return;
       const rows = await app.db.prepare("SELECT id FROM services WHERE environment_id = ?").all(request.params.environmentId) as Array<{ id: string }>;
       if (!hasExactIds(body.orderedIds, rows.map((row) => row.id))) {
         return reply.code(400).send({ error: "INVALID_SERVICE_ORDER", message: "服务排序必须包含当前环境的全部服务" });
@@ -737,12 +741,9 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     "/api/v1/environments/:environmentId/maintenance-hosts/order",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!requireManager(request, reply)) return;
       const body = parseBody(maintenanceOrderSchema, request.body, reply);
       if (!body) return;
-      if (!await canAccessEnvironment(app.db, request.admin!, request.params.environmentId)) {
-        return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
-      }
+      if (!await allowMaintenance(app, request, reply, request.params.environmentId, "install", undefined, { error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" }, true)) return;
       const rows = await app.db.prepare("SELECT connection_id AS id FROM ssh_connection_environments WHERE environment_id = ?")
         .all(request.params.environmentId) as Array<{ id: string }>;
       if (!hasExactIds(body.orderedIds, rows.map((row) => row.id))) {
@@ -772,10 +773,9 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     "/api/v1/environments/:environmentId/services",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!requireManager(request, reply)) return;
       const body = parseBody(serviceSchema, request.body, reply);
       if (!body) return;
-      if (!await canAccessEnvironment(app.db, request.admin!, request.params.environmentId)) return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
+      if (!await allowMaintenance(app, request, reply, request.params.environmentId, "manage", undefined, { error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" }, true)) return;
       const id = randomUUID();
       const now = new Date().toISOString();
       const nextOrder = await app.db.prepare(`
@@ -797,11 +797,10 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
   );
 
   app.put<{ Params: { id: string } }>("/api/v1/services/:id", { preHandler: requireAdmin }, async (request, reply) => {
-    if (!requireManager(request, reply)) return;
     const body = parseBody(serviceSchema, request.body, reply);
     if (!body) return;
     const existing = await serviceRow(app, request.params.id);
-    if (!existing || !await canAccessEnvironment(app.db, request.admin!, existing.environment_id)) return reply.code(404).send({ error: "SERVICE_NOT_FOUND", message: "服务不存在" });
+    if (!existing || !await allowMaintenance(app, request, reply, existing.environment_id, "manage", `service:${existing.id}`, { error: "SERVICE_NOT_FOUND", message: "服务不存在" })) return;
     try {
       await app.db.prepare("UPDATE services SET name = ?, description = ?, status = ?, updated_at = ? WHERE id = ?")
         .run(body.name, body.description, body.status, new Date().toISOString(), existing.id);
@@ -814,20 +813,18 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
   });
 
   app.delete<{ Params: { id: string } }>("/api/v1/services/:id", { preHandler: requireAdmin }, async (request, reply) => {
-    if (!requireManager(request, reply)) return;
     const existing = await serviceRow(app, request.params.id);
-    if (!existing || !await canAccessEnvironment(app.db, request.admin!, existing.environment_id)) return reply.code(404).send({ error: "SERVICE_NOT_FOUND", message: "服务不存在" });
+    if (!existing || !await allowMaintenance(app, request, reply, existing.environment_id, "manage", `service:${existing.id}`, { error: "SERVICE_NOT_FOUND", message: "服务不存在" })) return;
     await app.db.prepare("DELETE FROM services WHERE id = ?").run(existing.id);
     await writeAudit(app.db, { action: "service.deleted", resourceType: "service", resourceId: existing.id, summary: `删除服务 ${existing.name}`, request });
     return reply.code(204).send();
   });
 
   app.post<{ Params: { serviceId: string } }>("/api/v1/services/:serviceId/deployments", { preHandler: requireAdmin }, async (request, reply) => {
-    if (!requireManager(request, reply)) return;
     const body = parseBody(deploymentSchema, request.body, reply);
     if (!body) return;
     const service = await serviceRow(app, request.params.serviceId);
-    if (!service || !await canAccessEnvironment(app.db, request.admin!, service.environment_id)) return reply.code(404).send({ error: "SERVICE_NOT_FOUND", message: "服务不存在" });
+    if (!service || !await allowMaintenance(app, request, reply, service.environment_id, "manage", `service:${service.id}`, { error: "SERVICE_NOT_FOUND", message: "服务不存在" })) return;
     const connection = await connectionBelongsToEnvironment(app, body.sshConnectionId, service.environment_id);
     if (!connection) return reply.code(400).send({ error: "INVALID_SSH_CONNECTION", message: "请选择当前环境中可用的 SSH 连接" });
     if (body.provider === "kubernetes" && (body.origin !== "discovered" || !await kubernetesCandidateExists(app, connection.id, body.externalId))) {
@@ -851,11 +848,10 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
   });
 
   app.put<{ Params: { id: string } }>("/api/v1/service-deployments/:id", { preHandler: requireAdmin }, async (request, reply) => {
-    if (!requireManager(request, reply)) return;
     const body = parseBody(deploymentSchema, request.body, reply);
     if (!body) return;
     const existing = await deploymentRow(app, request.params.id);
-    if (!existing || !await canAccessEnvironment(app.db, request.admin!, String(existing.environment_id))) return reply.code(404).send({ error: "DEPLOYMENT_NOT_FOUND", message: "部署节点不存在" });
+    if (!existing || !await allowMaintenance(app, request, reply, String(existing.environment_id), "manage", `service:${existing.service_id}`, { error: "DEPLOYMENT_NOT_FOUND", message: "部署节点不存在" })) return;
     const connection = await connectionBelongsToEnvironment(app, body.sshConnectionId, String(existing.environment_id));
     if (!connection) return reply.code(400).send({ error: "INVALID_SSH_CONNECTION", message: "请选择当前环境中可用的 SSH 连接" });
     if (body.provider === "kubernetes" && (body.origin !== "discovered" || !await kubernetesCandidateExists(app, connection.id, body.externalId))) {
@@ -876,22 +872,18 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
   });
 
   app.delete<{ Params: { id: string } }>("/api/v1/service-deployments/:id", { preHandler: requireAdmin }, async (request, reply) => {
-    if (!requireManager(request, reply)) return;
     const existing = await deploymentRow(app, request.params.id);
-    if (!existing || !await canAccessEnvironment(app.db, request.admin!, String(existing.environment_id))) return reply.code(404).send({ error: "DEPLOYMENT_NOT_FOUND", message: "部署节点不存在" });
+    if (!existing || !await allowMaintenance(app, request, reply, String(existing.environment_id), "manage", `service:${existing.service_id}`, { error: "DEPLOYMENT_NOT_FOUND", message: "部署节点不存在" })) return;
     await app.db.prepare("DELETE FROM service_deployments WHERE id = ?").run(request.params.id);
     await writeAudit(app.db, { action: "service_deployment.deleted", resourceType: "service_deployment", resourceId: request.params.id, summary: `删除服务 ${String(existing.service_name)} 的部署节点`, request });
     return reply.code(204).send();
   });
 
   app.post<{ Params: { serviceId: string } }>("/api/v1/services/:serviceId/script-actions", { preHandler: requireAdmin }, async (request, reply) => {
-    if (!requireManager(request, reply)) return;
     const body = parseBody(serviceScriptActionSchema, request.body, reply);
     if (!body) return;
     const service = await serviceRow(app, request.params.serviceId);
-    if (!service || !await canAccessEnvironment(app.db, request.admin!, service.environment_id)) {
-      return reply.code(404).send({ error: "SERVICE_NOT_FOUND", message: "服务不存在" });
-    }
+    if (!service || !await allowMaintenance(app, request, reply, service.environment_id, "manage", `service:${service.id}`, { error: "SERVICE_NOT_FOUND", message: "服务不存在" })) return;
     if (body.deploymentId) {
       const deployment = await deploymentRow(app, body.deploymentId);
       if (!deployment || deployment.service_id !== service.id) {
@@ -919,11 +911,8 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
   });
 
   app.get<{ Params: { id: string } }>("/api/v1/service-script-actions/:id", { preHandler: requireAdmin }, async (request, reply) => {
-    if (!requireManager(request, reply)) return;
     const existing = await scriptActionRow(app, request.params.id);
-    if (!existing || !await canAccessEnvironment(app.db, request.admin!, String(existing.environment_id))) {
-      return reply.code(404).send({ error: "SCRIPT_ACTION_NOT_FOUND", message: "功能按钮不存在" });
-    }
+    if (!existing || !await allowMaintenance(app, request, reply, String(existing.environment_id), "manage", `service:${existing.service_id}`, { error: "SCRIPT_ACTION_NOT_FOUND", message: "功能按钮不存在" })) return;
     return {
       item: {
         id: existing.id,
@@ -939,13 +928,10 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
   });
 
   app.put<{ Params: { id: string } }>("/api/v1/service-script-actions/:id", { preHandler: requireAdmin }, async (request, reply) => {
-    if (!requireManager(request, reply)) return;
     const body = parseBody(serviceScriptActionSchema, request.body, reply);
     if (!body) return;
     const existing = await scriptActionRow(app, request.params.id);
-    if (!existing || !await canAccessEnvironment(app.db, request.admin!, String(existing.environment_id))) {
-      return reply.code(404).send({ error: "SCRIPT_ACTION_NOT_FOUND", message: "功能按钮不存在" });
-    }
+    if (!existing || !await allowMaintenance(app, request, reply, String(existing.environment_id), "manage", `service:${existing.service_id}`, { error: "SCRIPT_ACTION_NOT_FOUND", message: "功能按钮不存在" })) return;
     if (body.deploymentId) {
       const deployment = await deploymentRow(app, body.deploymentId);
       if (!deployment || deployment.service_id !== existing.service_id) {
@@ -972,11 +958,8 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
   });
 
   app.delete<{ Params: { id: string } }>("/api/v1/service-script-actions/:id", { preHandler: requireAdmin }, async (request, reply) => {
-    if (!requireManager(request, reply)) return;
     const existing = await scriptActionRow(app, request.params.id);
-    if (!existing || !await canAccessEnvironment(app.db, request.admin!, String(existing.environment_id))) {
-      return reply.code(404).send({ error: "SCRIPT_ACTION_NOT_FOUND", message: "功能按钮不存在" });
-    }
+    if (!existing || !await allowMaintenance(app, request, reply, String(existing.environment_id), "manage", `service:${existing.service_id}`, { error: "SCRIPT_ACTION_NOT_FOUND", message: "功能按钮不存在" })) return;
     await app.db.prepare("DELETE FROM service_script_actions WHERE id = ?").run(request.params.id);
     await writeAudit(app.db, {
       action: "service_script_action.deleted",
@@ -990,13 +973,10 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
   });
 
   app.post<{ Params: { id: string } }>("/api/v1/service-script-actions/:id/execute", { preHandler: requireAdmin }, async (request, reply) => {
-    if (!requireManager(request, reply)) return;
     const body = parseBody(scriptExecuteSchema, request.body ?? {}, reply);
     if (!body) return;
     const action = await scriptActionRow(app, request.params.id);
-    if (!action || !await canAccessEnvironment(app.db, request.admin!, String(action.environment_id))) {
-      return reply.code(404).send({ error: "SCRIPT_ACTION_NOT_FOUND", message: "功能按钮不存在" });
-    }
+    if (!action || !await allowMaintenance(app, request, reply, String(action.environment_id), "script", `service:${action.service_id}`, { error: "SCRIPT_ACTION_NOT_FOUND", message: "功能按钮不存在" })) return;
     if (action.service_status !== "active") {
       return reply.code(409).send({ error: "SERVICE_DISABLED", message: "服务已停用，不能执行功能按钮" });
     }
@@ -1037,8 +1017,6 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
             let result;
             if (!connectionId || !Boolean(target.connection_available) || Boolean(target.source_deleted)) {
               result = { ...base, ok: false, exitCode: null, durationMs: 0, truncated: false, message: "SSH 连接已删除或移出当前环境", errorCode: "SSH_CONNECTION_UNAVAILABLE" };
-            } else if (!await canAccessConnection(app.db, request.admin!, "ssh", connectionId)) {
-              result = { ...base, ok: false, exitCode: null, durationMs: 0, truncated: false, message: "当前账号无权访问该 SSH 连接", errorCode: "SSH_CONNECTION_NOT_FOUND" };
             } else {
               const began = Date.now();
               try {
@@ -1119,11 +1097,10 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
   });
 
   app.put<{ Params: { id: string } }>("/api/v1/services/:id/logs", { preHandler: requireAdmin }, async (request, reply) => {
-    if (!requireManager(request, reply)) return;
     const body = parseBody(serviceLogsSchema, request.body, reply);
     if (!body) return;
     const service = await serviceRow(app, request.params.id);
-    if (!service || !await canAccessEnvironment(app.db, request.admin!, service.environment_id)) return reply.code(404).send({ error: "SERVICE_NOT_FOUND", message: "服务不存在" });
+    if (!service || !await allowMaintenance(app, request, reply, service.environment_id, "manage", `service:${service.id}`, { error: "SERVICE_NOT_FOUND", message: "服务不存在" })) return;
     if (body.logIds.length) {
       const rows = await app.db.prepare(`SELECT id FROM environment_logs WHERE environment_id = ? AND id IN (${body.logIds.map(() => "?").join(",")})`)
         .all(service.environment_id, ...body.logIds) as Array<{ id: string }>;
@@ -1141,12 +1118,10 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     "/api/v1/environments/:environmentId/monitor-hosts/:connectionId/install/preflight",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!requireManager(request, reply)) return;
       const body = parseBody(monitorInstallSchema, request.body ?? {}, reply);
       if (!body) return;
-      if (!await canAccessEnvironment(app.db, request.admin!, request.params.environmentId)) return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
-      const connection = await connectionBelongsToEnvironment(app, request.params.connectionId, request.params.environmentId);
-      if (!connection || !await canAccessConnection(app.db, request.admin!, "ssh", connection.id)) return reply.code(404).send({ error: "SSH_CONNECTION_NOT_FOUND", message: "SSH 连接不存在" });
+      const connection = await requireMonitorHost(app, request, reply, request.params.environmentId, request.params.connectionId, "install");
+      if (!connection) return;
       try {
         return { item: await preflightMonitorInstallation(app, connection.id, body.installPath) };
       } catch (error) {
@@ -1162,12 +1137,10 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     "/api/v1/environments/:environmentId/monitor-hosts/:connectionId/install",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!requireManager(request, reply)) return;
       const body = parseBody(monitorInstallSchema, request.body ?? {}, reply);
       if (!body) return;
-      if (!await canAccessEnvironment(app.db, request.admin!, request.params.environmentId)) return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
-      const connection = await connectionBelongsToEnvironment(app, request.params.connectionId, request.params.environmentId);
-      if (!connection || !await canAccessConnection(app.db, request.admin!, "ssh", connection.id)) return reply.code(404).send({ error: "SSH_CONNECTION_NOT_FOUND", message: "SSH 连接不存在" });
+      const connection = await requireMonitorHost(app, request, reply, request.params.environmentId, request.params.connectionId, "install");
+      if (!connection) return;
       const started = Date.now();
       try {
         return await performMonitorInstallation(app, connection, body.installPath, request);
@@ -1185,9 +1158,8 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     "/api/v1/environments/:environmentId/monitor-hosts/:connectionId/install-task",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!await canAccessEnvironment(app.db, request.admin!, request.params.environmentId)) return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
-      const connection = await connectionBelongsToEnvironment(app, request.params.connectionId, request.params.environmentId);
-      if (!connection || !await canAccessConnection(app.db, request.admin!, "ssh", connection.id)) return reply.code(404).send({ error: "SSH_CONNECTION_NOT_FOUND", message: "SSH 连接不存在" });
+      const connection = await requireMonitorHost(app, request, reply, request.params.environmentId, request.params.connectionId, "view");
+      if (!connection) return;
       return { item: await app.monitorInstallTasks.latest(connection.id) };
     },
   );
@@ -1196,12 +1168,10 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     "/api/v1/environments/:environmentId/monitor-hosts/:connectionId/install-tasks",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!requireManager(request, reply)) return;
       const body = parseBody(monitorInstallSchema, request.body ?? {}, reply);
       if (!body) return;
-      if (!await canAccessEnvironment(app.db, request.admin!, request.params.environmentId)) return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
-      const connection = await connectionBelongsToEnvironment(app, request.params.connectionId, request.params.environmentId);
-      if (!connection || !await canAccessConnection(app.db, request.admin!, "ssh", connection.id)) return reply.code(404).send({ error: "SSH_CONNECTION_NOT_FOUND", message: "SSH 连接不存在" });
+      const connection = await requireMonitorHost(app, request, reply, request.params.environmentId, request.params.connectionId, "install");
+      if (!connection) return;
       let installPath: string;
       try {
         installPath = normalizeMonitorInstallPath(body.installPath);
@@ -1244,10 +1214,8 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     "/api/v1/environments/:environmentId/monitor-hosts/:connectionId/refresh",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!requireManager(request, reply)) return;
-      if (!await canAccessEnvironment(app.db, request.admin!, request.params.environmentId)) return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
-      const connection = await connectionBelongsToEnvironment(app, request.params.connectionId, request.params.environmentId);
-      if (!connection || !await canAccessConnection(app.db, request.admin!, "ssh", connection.id)) return reply.code(404).send({ error: "SSH_CONNECTION_NOT_FOUND", message: "SSH 连接不存在" });
+      const connection = await requireMonitorHost(app, request, reply, request.params.environmentId, request.params.connectionId, "install");
+      if (!connection) return;
       try {
         const result = await syncMonitorHost(app, connection.id, true);
         await writeAudit(app.db, { action: "monitor_host.refreshed", resourceType: "ssh_connection", resourceId: connection.id, summary: `刷新监控节点 ${connection.name}`, details: { status: result.status, candidateCount: result.candidates.length, lastSequence: result.lastSequence }, request });
@@ -1264,12 +1232,10 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     "/api/v1/environments/:environmentId/monitor-hosts/:connectionId/kubernetes-contexts",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!requireManager(request, reply)) return;
       const body = parseBody(kubernetesSelectionSchema, request.body, reply);
       if (!body) return;
-      if (!await canAccessEnvironment(app.db, request.admin!, request.params.environmentId)) return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
-      const connection = await connectionBelongsToEnvironment(app, request.params.connectionId, request.params.environmentId);
-      if (!connection || !await canAccessConnection(app.db, request.admin!, "ssh", connection.id)) return reply.code(404).send({ error: "SSH_CONNECTION_NOT_FOUND", message: "SSH 连接不存在" });
+      const connection = await requireMonitorHost(app, request, reply, request.params.environmentId, request.params.connectionId, "install");
+      if (!connection) return;
 
       const monitorHost = await app.db.prepare("SELECT latest_kubernetes_configs_json FROM monitor_hosts WHERE ssh_connection_id = ?").get(connection.id) as { latest_kubernetes_configs_json?: string } | undefined;
       const discoveries = parseJson<Array<{ sourceId?: unknown; context?: unknown; status?: unknown }>>(monitorHost?.latest_kubernetes_configs_json, []);
@@ -1312,10 +1278,8 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     "/api/v1/environments/:environmentId/monitor-hosts/:connectionId/restart",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!requireManager(request, reply)) return;
-      if (!await canAccessEnvironment(app.db, request.admin!, request.params.environmentId)) return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
-      const connection = await connectionBelongsToEnvironment(app, request.params.connectionId, request.params.environmentId);
-      if (!connection || !await canAccessConnection(app.db, request.admin!, "ssh", connection.id)) return reply.code(404).send({ error: "SSH_CONNECTION_NOT_FOUND", message: "SSH 连接不存在" });
+      const connection = await requireMonitorHost(app, request, reply, request.params.environmentId, request.params.connectionId, "install");
+      if (!connection) return;
       const started = Date.now();
       try {
         const result = await executeSshCommand(app, connection.id, restartMonitorServiceCommand(), { timeoutMs: 60_000, maxBytes: 64 * 1024 });
@@ -1389,10 +1353,8 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     "/api/v1/environments/:environmentId/monitor-hosts/:connectionId/clear",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!requireManager(request, reply)) return;
-      if (!await canAccessEnvironment(app.db, request.admin!, request.params.environmentId)) return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
-      const connection = await connectionBelongsToEnvironment(app, request.params.connectionId, request.params.environmentId);
-      if (!connection || !await canAccessConnection(app.db, request.admin!, "ssh", connection.id)) return reply.code(404).send({ error: "SSH_CONNECTION_NOT_FOUND", message: "SSH 连接不存在" });
+      const connection = await requireMonitorHost(app, request, reply, request.params.environmentId, request.params.connectionId, "install");
+      if (!connection) return;
       const started = Date.now();
       try {
         const result = await executeSshCommand(app, connection.id, monitorCommand("viron-monitor clear"), { timeoutMs: 30_000, maxBytes: 64 * 1024 });
@@ -1445,14 +1407,8 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
     "/api/v1/environments/:environmentId/monitor-hosts/:connectionId/uninstall",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!requireManager(request, reply)) return;
-      if (!await canAccessEnvironment(app.db, request.admin!, request.params.environmentId)) {
-        return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
-      }
-      const connection = await connectionBelongsToEnvironment(app, request.params.connectionId, request.params.environmentId);
-      if (!connection || !await canAccessConnection(app.db, request.admin!, "ssh", connection.id)) {
-        return reply.code(404).send({ error: "SSH_CONNECTION_NOT_FOUND", message: "SSH 连接不存在" });
-      }
+      const connection = await requireMonitorHost(app, request, reply, request.params.environmentId, request.params.connectionId, "install");
+      if (!connection) return;
       const installation = await app.db.prepare(`
         SELECT h.agent_id, h.install_path, h.install_managed, c.workspace_type, c.workspace_id
         FROM ssh_connections c
@@ -1533,15 +1489,12 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
   );
 
   app.post("/api/v1/service-deployments/actions", { preHandler: requireAdmin }, async (request, reply) => {
-    if (!requireManager(request, reply)) return;
     const body = parseBody(batchMaintenanceActionSchema, request.body, reply);
     if (!body) return;
     const deployments: Record<string, unknown>[] = [];
     for (const id of body.deploymentIds) {
       const deployment = await deploymentRow(app, id);
-      if (!deployment || !await canAccessEnvironment(app.db, request.admin!, String(deployment.environment_id))) {
-        return reply.code(404).send({ error: "DEPLOYMENT_NOT_FOUND", message: "部署节点不存在" });
-      }
+      if (!deployment || !await allowMaintenance(app, request, reply, String(deployment.environment_id), "control", `service:${deployment.service_id}`, { error: "DEPLOYMENT_NOT_FOUND", message: "部署节点不存在" })) return;
       if (deployment.service_status !== "active") return reply.code(409).send({ error: "SERVICE_DISABLED", message: "服务已停用，不能执行维护动作" });
       deployments.push(deployment);
     }
@@ -1622,16 +1575,12 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
   });
 
   app.post<{ Params: { id: string } }>("/api/v1/service-deployments/:id/actions", { preHandler: requireAdmin }, async (request, reply) => {
-    if (!requireManager(request, reply)) return;
     const body = parseBody(maintenanceActionSchema, request.body, reply);
     if (!body) return;
     const deployment = await deploymentRow(app, request.params.id);
-    if (!deployment || !await canAccessEnvironment(app.db, request.admin!, String(deployment.environment_id))) return reply.code(404).send({ error: "DEPLOYMENT_NOT_FOUND", message: "部署节点不存在" });
+    if (!deployment || !await allowMaintenance(app, request, reply, String(deployment.environment_id), "control", `service:${deployment.service_id}`, { error: "DEPLOYMENT_NOT_FOUND", message: "部署节点不存在" })) return;
     if (deployment.service_status !== "active") return reply.code(409).send({ error: "SERVICE_DISABLED", message: "服务已停用，不能执行维护动作" });
     if (!deployment.ssh_connection_id) return reply.code(409).send({ error: "SSH_CONNECTION_MISSING", message: "原 SSH 连接已删除，请先修复部署节点" });
-    if (!await canAccessConnection(app.db, request.admin!, "ssh", String(deployment.ssh_connection_id))) {
-      return reply.code(404).send({ error: "SSH_CONNECTION_NOT_FOUND", message: "SSH 连接不存在" });
-    }
     if (!await connectionBelongsToEnvironment(app, String(deployment.ssh_connection_id), String(deployment.environment_id))) {
       return reply.code(409).send({ error: "SSH_CONNECTION_UNAVAILABLE", message: "SSH 连接已删除或移出当前环境，请先修复部署节点" });
     }

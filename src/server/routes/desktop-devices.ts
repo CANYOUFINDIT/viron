@@ -10,6 +10,7 @@ import {
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { canAccessConnection, canAccessWebCredential, canManageWorkspace } from "../access-control.js";
+import { sqlRequiresWrite } from "../../shared/access-permissions.js";
 import { writeAudit } from "../audit.js";
 import { decryptDatabaseCredential, hydrateDatabaseOptions } from "../database-credentials.js";
 import { isUniqueConstraintError } from "../database-errors.js";
@@ -554,8 +555,11 @@ export async function registerDesktopDeviceRoutes(app: FastifyInstance): Promise
       `).get(body.deviceId, request.admin!.id) as StoredDevice | undefined;
       if (!device) return reply.code(404).send({ error: "DEVICE_NOT_FOUND", message: "当前设备尚未注册" });
       if (device.status !== "active") return reply.code(403).send({ error: "DEVICE_REVOKED", message: "当前设备已被撤销" });
-      if (!await canAccessConnection(app.db, request.admin!, "ssh", connectionId.data)) {
+      if (!await canAccessConnection(app.db, request.admin!, "ssh", connectionId.data, "view")) {
         return reply.code(404).send({ error: "NOT_FOUND", message: "SSH 连接不存在" });
+      }
+      if (!await canAccessConnection(app.db, request.admin!, "ssh", connectionId.data, "use")) {
+        return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有这项操作权限" });
       }
       const connection = await app.db.prepare(`
         SELECT id, workspace_type, workspace_id, name, host, port, username, auth_type, ssh_key_id, credential_ciphertext,
@@ -653,8 +657,11 @@ export async function registerDesktopDeviceRoutes(app: FastifyInstance): Promise
       let jumpConnections: SshEnvelopeRow[] = [];
       if (connection.connection_mode === "sshTunnel") {
         if (!options.sshConnectionId) return reply.code(409).send({ error: "SSH_TUNNEL_UNAVAILABLE", message: "数据库连接没有配置 SSH Tunnel" });
-        if (!await canAccessConnection(app.db, request.admin!, "ssh", options.sshConnectionId)) {
+        if (!await canAccessConnection(app.db, request.admin!, "ssh", options.sshConnectionId, "view")) {
           return reply.code(404).send({ error: "NOT_FOUND", message: "SSH Tunnel 连接不存在" });
+        }
+        if (!await canAccessConnection(app.db, request.admin!, "ssh", options.sshConnectionId, "use")) {
+          return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有这项操作权限" });
         }
         sshConnection = await app.db.prepare(`
           SELECT id, workspace_type, workspace_id, name, host, port, username, auth_type, ssh_key_id, credential_ciphertext,
@@ -783,8 +790,11 @@ export async function registerDesktopDeviceRoutes(app: FastifyInstance): Promise
       let jumpConnections: SshEnvelopeRow[] = [];
       if (connection.connection_mode === "sshTunnel") {
         if (!options.sshConnectionId) return reply.code(409).send({ error: "SSH_TUNNEL_UNAVAILABLE", message: "Redis 连接没有配置 SSH Tunnel" });
-        if (!await canAccessConnection(app.db, request.admin!, "ssh", options.sshConnectionId)) {
+        if (!await canAccessConnection(app.db, request.admin!, "ssh", options.sshConnectionId, "view")) {
           return reply.code(404).send({ error: "NOT_FOUND", message: "SSH Tunnel 连接不存在" });
+        }
+        if (!await canAccessConnection(app.db, request.admin!, "ssh", options.sshConnectionId, "use")) {
+          return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有这项操作权限" });
         }
         sshConnection = await app.db.prepare(`
           SELECT id, workspace_type, workspace_id, name, host, port, username, auth_type, ssh_key_id, credential_ciphertext,
@@ -878,8 +888,11 @@ export async function registerDesktopDeviceRoutes(app: FastifyInstance): Promise
       const admin = request.admin;
       try {
         const accepted = await acceptDesktopReport(app, admin, request.body, sshExecutionReportSchema, async ({ payload, deviceId }) => {
-          if (!await canAccessConnection(app.db, admin, "ssh", payload.connectionId)) {
+          if (!await canAccessConnection(app.db, admin, "ssh", payload.connectionId, "view")) {
             throw new DesktopReportError(404, "NOT_FOUND", "SSH 连接不存在");
+          }
+          if (!await canAccessConnection(app.db, admin, "ssh", payload.connectionId, "use")) {
+            throw new DesktopReportError(403, "ACTION_FORBIDDEN", "没有这项操作权限");
           }
           await writeAudit(app.db, {
             action: `ssh.${payload.action}`,
@@ -909,6 +922,12 @@ export async function registerDesktopDeviceRoutes(app: FastifyInstance): Promise
         const accepted = await acceptDesktopReport(app, admin, request.body, databaseExecutionReportSchema, async ({ payload: body, deviceId }) => {
           if (!await canAccessConnection(app.db, admin, "database", body.connectionId)) {
             throw new DesktopReportError(404, "NOT_FOUND", "数据库连接不存在");
+          }
+          const databaseWrite = body.kind === "query"
+            ? sqlRequiresWrite(body.sql)
+            : ["table_data_changed", "table_imported", "backup_success", "backup_error", "backup_cancelled", "restore_success", "restore_error", "restore_cancelled", "transfer_success", "transfer_error", "transfer_cancelled"].includes(body.action);
+          if (databaseWrite && !await canAccessConnection(app.db, admin, "database", body.connectionId, "write")) {
+            throw new DesktopReportError(403, "ACTION_FORBIDDEN", "没有这项操作权限");
           }
           if (body.kind === "query") {
             const existing = await app.db.prepare("SELECT id FROM database_query_history WHERE id = ?").get(body.operationId) as { id: string } | undefined;
@@ -979,6 +998,10 @@ export async function registerDesktopDeviceRoutes(app: FastifyInstance): Promise
         const accepted = await acceptDesktopReport(app, admin, request.body, redisExecutionReportSchema, async ({ payload, deviceId }) => {
           if (!await canAccessConnection(app.db, admin, "redis", payload.connectionId)) {
             throw new DesktopReportError(404, "NOT_FOUND", "Redis 连接不存在");
+          }
+          const redisWrite = ["command_executed", "command_failed", "command_rejected"].includes(payload.action) && payload.details.access !== "read";
+          if (redisWrite && !await canAccessConnection(app.db, admin, "redis", payload.connectionId, "write")) {
+            throw new DesktopReportError(403, "ACTION_FORBIDDEN", "没有这项操作权限");
           }
           await writeAudit(app.db, {
             action: `redis.${payload.action}`,

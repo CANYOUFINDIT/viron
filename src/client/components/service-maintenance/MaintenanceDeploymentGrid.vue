@@ -15,7 +15,7 @@ const {
 
 <template>
   <section class="deployment-board">
-    <div v-if="payload.canOperate && selectedService.deployments.length" class="deployment-select-all">
+    <div v-if="(payload.canOperate || (selectedService.actions ?? []).includes('control')) && selectedService.deployments.length" class="deployment-select-all">
       <label><input type="checkbox" :checked="selectedService.deployments.every((item: { id: string }) => selectedDeploymentIds.includes(item.id))" @change="selectAllVisibleDeployments">{{ $t('全选节点') }}</label>
     </div>
     <div class="deployment-grid">
@@ -27,7 +27,7 @@ const {
         @open-log="emit('open-log', $event)"
         @open-ssh="emit('open-ssh', $event)"
       />
-      <button v-if="payload.canConfigure && !selectedService.deployments.length" class="deployment-empty-action" type="button" @click="openDeploymentCreate()"><Plus :size="18" /><strong>{{ $t('添加部署节点') }}</strong></button>
+      <button v-if="(payload.canConfigure || (selectedService.actions ?? []).includes('manage')) && !selectedService.deployments.length" class="deployment-empty-action" type="button" @click="openDeploymentCreate()"><Plus :size="18" /><strong>{{ $t('添加部署节点') }}</strong></button>
     </div>
   </section>
 </template>

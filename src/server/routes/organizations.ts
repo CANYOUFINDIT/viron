@@ -2,6 +2,8 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { resourceBelongsToWorkspace } from "../access-control.js";
+import { AccessAuthorizationError, createAccessAuthorization, deleteAccessAuthorization, deleteAccessForGrantee, listOrganizationGrants, grantCatalog, updateAccessAuthorization } from "../access-authorizations.js";
+import { disconnectGrantees } from "../access-expiry.js";
 import { writeAudit } from "../audit.js";
 import { isUniqueConstraintError } from "../database-errors.js";
 import { revokeUserRuntime } from "../user-runtime.js";
@@ -36,6 +38,17 @@ const grantSchema = z.object({
   if (Boolean(body.resourceId) === Boolean(body.resourceIds)) {
     context.addIssue({ code: "custom", message: "resourceId 和 resourceIds 必须且只能提供一个" });
   }
+});
+const fineGrantSchema = z.object({
+  granteeType: z.enum(["user", "project"]),
+  granteeId: z.string().uuid(),
+  scopeKind: z.enum(["environment_group", "environment", "ssh_connection", "database_connection", "redis_connection"]),
+  wholeGroup: z.boolean().optional().default(false),
+  groupId: z.string().uuid().nullable().optional().default(null),
+  targetIds: z.array(z.string().uuid()).max(500).optional().default([]),
+  permissions: z.record(z.string(), z.array(z.string())).optional().default({}),
+  items: z.record(z.string(), z.array(z.string())).optional().default({}),
+  expiresAt: z.string().nullable().optional().default(null),
 });
 
 function invitationTokenHash(token: string): string {
@@ -358,16 +371,7 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
-    const grants = organization.role === "admin" ? (await app.db.prepare(`
-      SELECT g.*, COALESCE(u.username, p.name) AS grantee_name
-      FROM resource_grants g
-      LEFT JOIN admin_users u ON g.grantee_type = 'user' AND u.id = g.grantee_id
-      LEFT JOIN projects p ON g.grantee_type = 'project' AND p.id = g.grantee_id
-      WHERE g.organization_id = ? ORDER BY g.created_at DESC
-    `).all(request.params.id) as Record<string, unknown>[]).map((row) => ({
-      id: row.id, granteeType: row.grantee_type, granteeId: row.grantee_id, granteeName: row.grantee_name,
-      resourceType: row.resource_type, resourceId: row.resource_id, createdAt: row.created_at,
-    })) : [];
+    const grants = organization.role === "admin" ? await listOrganizationGrants(app.db, request.params.id) : [];
     return { organization, members, projects, grants };
   });
 
@@ -624,6 +628,7 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
     await app.db.transaction(async () => {
       await app.db.prepare("DELETE FROM project_members WHERE user_id = ? AND project_id IN (SELECT id FROM projects WHERE organization_id = ?)").run(request.params.userId, request.params.id);
       await app.db.prepare("DELETE FROM resource_grants WHERE organization_id = ? AND grantee_type = 'user' AND grantee_id = ?").run(request.params.id, request.params.userId);
+      await deleteAccessForGrantee(app.db, request.params.id, "user", [request.params.userId]);
       await app.db.prepare("DELETE FROM knowledge_node_grants WHERE organization_id = ? AND grantee_type = 'user' AND grantee_id = ?").run(request.params.id, request.params.userId);
       await app.db.prepare("DELETE FROM organization_members WHERE organization_id = ? AND user_id = ?").run(request.params.id, request.params.userId);
       await app.db.prepare("UPDATE sessions SET workspace_type = 'personal', workspace_id = user_id WHERE user_id = ? AND workspace_type = 'organization' AND workspace_id = ?")
@@ -690,6 +695,7 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
     await app.db.transaction(async () => {
       await app.db.prepare(`UPDATE organization_invitation_policies SET project_id = NULL WHERE project_id IN (${placeholders})`).run(...projectIds);
       await app.db.prepare(`DELETE FROM resource_grants WHERE organization_id = ? AND grantee_type = 'project' AND grantee_id IN (${placeholders})`).run(request.params.id, ...projectIds);
+      await deleteAccessForGrantee(app.db, request.params.id, "project", projectIds);
       await app.db.prepare(`DELETE FROM knowledge_node_grants WHERE organization_id = ? AND grantee_type = 'project' AND grantee_id IN (${placeholders})`).run(request.params.id, ...projectIds);
       await app.db.prepare(`DELETE FROM project_members WHERE project_id IN (${placeholders})`).run(...projectIds);
       for (const projectId of [...projectIds].reverse()) await app.db.prepare("DELETE FROM projects WHERE id = ?").run(projectId);
@@ -734,8 +740,33 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
     return { items };
   });
 
+  app.get<{ Params: { id: string }; Querystring: { environmentIds?: string } }>("/api/v1/organizations/:id/grant-catalog", async (request, reply) => {
+    if (!await requireOrganizationAdmin(app, request, reply, request.params.id)) return;
+    const environmentIds = (request.query.environmentIds ?? "").split(",").map((id) => id.trim()).filter(Boolean);
+    if (environmentIds.some((id) => !z.string().uuid().safeParse(id).success)) {
+      return reply.code(400).send({ error: "INVALID_RESOURCE", message: "环境无效" });
+    }
+    try {
+      return await grantCatalog(app.db, request.params.id, environmentIds);
+    } catch (error) {
+      if (error instanceof AccessAuthorizationError) return reply.code(error.statusCode).send({ error: error.code, message: error.message });
+      throw error;
+    }
+  });
+
   app.post<{ Params: { id: string } }>("/api/v1/organizations/:id/grants", async (request, reply) => {
     if (!await requireOrganizationAdmin(app, request, reply, request.params.id)) return;
+    if (request.body && typeof request.body === "object" && "scopeKind" in request.body) {
+      const body = parseBody(fineGrantSchema, request.body, reply);
+      if (!body) return;
+      try {
+        const id = await createAccessAuthorization(app.db, request.params.id, request.admin!, body, request);
+        return reply.code(201).send({ id, ids: [id] });
+      } catch (error) {
+        if (error instanceof AccessAuthorizationError) return reply.code(error.statusCode).send({ error: error.code, message: error.message });
+        throw error;
+      }
+    }
     const body = parseBody(grantSchema, request.body, reply);
     if (!body) return;
     const resourceIds = body.resourceIds ?? [body.resourceId!];
@@ -781,17 +812,30 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
     return reply.code(201).send({ id: grantIds[0], ids: grantIds });
   });
 
+  app.put<{ Params: { id: string; grantId: string } }>("/api/v1/organizations/:id/grants/:grantId", async (request, reply) => {
+    if (!await requireOrganizationAdmin(app, request, reply, request.params.id)) return;
+    const body = parseBody(fineGrantSchema, request.body, reply);
+    if (!body) return;
+    try {
+      const saved = await updateAccessAuthorization(app.db, request.params.id, request.params.grantId, request.admin!, body, request);
+      const affectedUsers = saved.granteeType === "user" ? [saved.granteeId] : await projectSubtreeUserIds(app, request.params.id, saved.granteeId);
+      await disconnectGrantees(app, request.params.id, affectedUsers);
+    } catch (error) {
+      if (error instanceof AccessAuthorizationError) return reply.code(error.statusCode).send({ error: error.code, message: error.message });
+      throw error;
+    }
+    return { ok: true };
+  });
+
   app.delete<{ Params: { id: string; grantId: string } }>("/api/v1/organizations/:id/grants/:grantId", async (request, reply) => {
     if (!await requireOrganizationAdmin(app, request, reply, request.params.id)) return;
-    const grant = await app.db.prepare("SELECT resource_type, resource_id, grantee_type, grantee_id FROM resource_grants WHERE id = ? AND organization_id = ?")
-      .get(request.params.grantId, request.params.id) as Record<string, unknown> | undefined;
+    const grant = await deleteAccessAuthorization(app.db, request.params.id, request.params.grantId);
     if (!grant) return reply.code(404).send({ error: "NOT_FOUND", message: "授权不存在" });
-    const affectedUsers = grant.grantee_type === "user"
-      ? [String(grant.grantee_id)]
-      : await projectSubtreeUserIds(app, request.params.id, String(grant.grantee_id));
-    await app.db.prepare("DELETE FROM resource_grants WHERE id = ?").run(request.params.grantId);
-    await Promise.all(affectedUsers.map((userId) => revokeUserRuntime(app, userId, false)));
-    await writeAudit(app.db, { action: "resource.revoked", resourceType: String(grant.resource_type), resourceId: String(grant.resource_id), summary: "撤销组织资源授权", details: { grantId: request.params.grantId, granteeType: grant.grantee_type, granteeId: grant.grantee_id }, request });
+    const affectedUsers = grant.granteeType === "user"
+      ? [grant.granteeId]
+      : await projectSubtreeUserIds(app, request.params.id, grant.granteeId);
+    await disconnectGrantees(app, request.params.id, affectedUsers);
+    await writeAudit(app.db, { action: "resource.revoked", resourceType: grant.resourceType, resourceId: grant.resourceId, summary: "撤销组织资源授权", details: { grantId: request.params.grantId, granteeType: grant.granteeType, granteeId: grant.granteeId }, request });
     return reply.code(204).send();
   });
 }

@@ -48,10 +48,10 @@ function showDeploymentIdentity() {
 <template>
   <article class="deployment-card" :class="`is-${deployment.status}`">
     <header>
-      <label v-if="payload.canOperate" class="deployment-select"><input type="checkbox" :checked="selectedDeploymentIds.includes(deployment.id)" @change="toggleDeploymentSelection(deployment.id)"></label>
+      <label v-if="payload.canOperate || (selectedService.actions ?? []).includes('control')" class="deployment-select"><input type="checkbox" :checked="selectedDeploymentIds.includes(deployment.id)" @change="toggleDeploymentSelection(deployment.id)"></label>
       <span class="deployment-provider">{{ providerLabel(deployment.provider) }}</span>
       <span class="deployment-status" :title="deployment.state || undefined"><i></i>{{ statusLabel(deployment.status) }}</span>
-      <div v-if="payload.canConfigure" class="deployment-card__tools">
+      <div v-if="payload.canConfigure || (selectedService.actions ?? []).includes('manage')" class="deployment-card__tools">
         <button v-if="payload.scriptActionsSupported" type="button" :title="$t('管理节点功能按钮')" :aria-label="$t('管理节点功能按钮')" @click="openScriptActionManager(deployment)"><Settings2 :size="14" /></button>
         <button type="button" :title="$t('编辑部署节点')" :aria-label="$t('编辑部署节点')" @click="openDeploymentEdit(deployment)"><Pencil :size="14" /></button>
         <button type="button" class="is-danger" :title="$t('移除部署节点')" :aria-label="$t('移除部署节点')" @click="removeDeployment(deployment)"><Trash2 :size="14" /></button>
@@ -78,7 +78,7 @@ function showDeploymentIdentity() {
         </template>
       </dl>
     </div>
-    <div v-if="deployment.scriptActions.length" class="deployment-script-actions">
+    <div v-if="deployment.scriptActions.length && ((payload.canRunScripts ?? payload.canOperate) || (selectedService.actions ?? []).includes('script'))" class="deployment-script-actions">
       <button v-for="action in deployment.scriptActions" :key="action.id" type="button" class="script-action-button is-node" :disabled="runningScriptActionId !== '' || selectedService.status !== 'active' || !deployment.connectionAvailable" @click="executeScriptAction(action)">
         <component :is="resolveScriptActionIcon(action.icon)" :size="14" />
         <span>{{ action.name }}</span>
@@ -91,13 +91,13 @@ function showDeploymentIdentity() {
       <div class="deployment-card__ops">
         <button type="button" :disabled="!deployment.sshConnectionId || !deployment.connectionAvailable" :title="$t('直连 SSH')" :aria-label="$t('直连 SSH')" @click="emit('open-ssh', deployment.sshConnectionId || '')"><Terminal :size="14" /></button>
         <button type="button" :disabled="!deploymentLogId()" :title="$t('节点日志')" :aria-label="$t('节点日志')" @click="emit('open-log', deploymentLogId())"><FileText :size="14" /></button>
-        <template v-if="payload.canOperate && selectedService.status === 'active' && supportsMaintenanceActions(deployment.provider, deployment)">
+        <template v-if="(payload.canOperate || (selectedService.actions ?? []).includes('control')) && selectedService.status === 'active' && supportsMaintenanceActions(deployment.provider, deployment)">
           <button v-if="deploymentAllowsAction(deployment, 'start')" type="button" :disabled="runningAction !== '' || !deployment.connectionAvailable" :title="$t('启动')" :aria-label="$t('启动')" @click="runMaintenanceAction(deployment, 'start')"><Play :size="14" /></button>
           <button v-if="deploymentAllowsAction(deployment, 'stop')" type="button" :disabled="runningAction !== '' || !deployment.connectionAvailable" :title="$t('停止')" :aria-label="$t('停止')" @click="runMaintenanceAction(deployment, 'stop')"><Square :size="13" /></button>
           <button v-if="deploymentAllowsAction(deployment, 'restart')" type="button" :disabled="runningAction !== '' || !deployment.connectionAvailable" :title="$t('重启')" :aria-label="$t('重启')" @click="runMaintenanceAction(deployment, 'restart')"><RotateCw :size="14" :class="{ 'is-spinning': runningAction === `${deployment.id}:restart` }" /></button>
         </template>
       </div>
-      <small v-if="!(payload.canOperate && selectedService.status === 'active' && supportsMaintenanceActions(deployment.provider, deployment)) && unsupportedMaintenanceActionReason(deployment.provider, deployment)" class="deployment-action-note">{{ unsupportedMaintenanceActionReason(deployment.provider, deployment) }}</small>
+      <small v-if="!((payload.canOperate || (selectedService.actions ?? []).includes('control')) && selectedService.status === 'active' && supportsMaintenanceActions(deployment.provider, deployment)) && unsupportedMaintenanceActionReason(deployment.provider, deployment)" class="deployment-action-note">{{ unsupportedMaintenanceActionReason(deployment.provider, deployment) }}</small>
     </footer>
   </article>
 </template>

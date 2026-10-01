@@ -169,6 +169,9 @@ export async function registerRedisWorkbenchRoutes(app: FastifyInstance): Promis
     const command = body.command.toUpperCase();
     const args = body.args.map(argumentBuffer);
     const access = redisCommandAccess(command, args.map((value) => value.toString("utf8")));
+    if (access !== "read" && access !== "deny" && !await canAccessConnection(app.db, request.admin!, "redis", request.params.id, "write")) {
+      return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有这项操作权限" });
+    }
     if (access === "deny") {
       await writeAudit(app.db, { action: "redis.command_rejected", resourceType: "redis_connection", resourceId: request.params.id, summary: `拒绝 Redis 命令 ${command}`, details: { command, argumentCount: args.length, reason: "policy" }, request });
       return reply.code(403).send({ error: "REDIS_COMMAND_BLOCKED", message: `当前策略不允许执行 ${command}` });

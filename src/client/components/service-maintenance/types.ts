@@ -206,6 +206,7 @@ export interface Deployment {
 export interface ServiceItem {
     id: string;
     environmentId: string;
+    actions?: string[];
     name: string;
     description: string;
     status: "active" | "disabled";
@@ -226,6 +227,7 @@ export interface EnvironmentLog {
 
 export interface DiscoveryHostSummary {
     sshConnectionId: string;
+    actions?: string[];
     connectionName: string;
     host: string;
     connectionAvailable: boolean;
@@ -236,6 +238,8 @@ export interface DiscoveryHostSummary {
 export interface MaintenancePayload {
     canConfigure: boolean;
     canOperate: boolean;
+    canRunScripts?: boolean;
+    canInstall?: boolean;
     scriptActionsSupported: boolean;
     alertSettings: MonitorAlertSettings;
     services: ServiceItem[];

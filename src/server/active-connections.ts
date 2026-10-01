@@ -224,6 +224,31 @@ export class ActiveConnectionManager {
     return snapshot;
   }
 
+  inspect(): Array<{
+    id: string;
+    ownerId: string;
+    type: ActiveConnectionType;
+    resourceId: string;
+    workspaceType: "personal" | "organization";
+    workspaceId: string;
+    executionScope: string | null;
+  }> {
+    return [...this.entries.values()].map((entry) => ({
+      id: entry.id,
+      ownerId: entry.ownerId,
+      type: entry.type,
+      resourceId: entry.resourceId,
+      workspaceType: entry.workspaceType,
+      workspaceId: entry.workspaceId,
+      executionScope: entry.executionScope,
+    }));
+  }
+
+  async closeInspected(id: string, reason: string): Promise<void> {
+    const entry = this.entries.get(id);
+    if (entry) await this.requestClose(entry, reason);
+  }
+
   async closeOwner(ownerId: string, reason: string): Promise<void> {
     await Promise.all([...this.entries.values()]
       .filter((entry) => entry.ownerId === ownerId)

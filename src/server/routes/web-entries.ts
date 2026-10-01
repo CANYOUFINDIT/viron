@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { writeAudit } from "../audit.js";
-import { canAccessEnvironment, canManageWorkspace } from "../access-control.js";
+import { getWorkspaceAccess, requireEnvironmentAction } from "../access-control.js";
 import { parseBody } from "../validation.js";
 import { loadWebFavicon } from "../../shared/web-favicon.js";
 import { tlsWebEntryBadge } from "../../shared/tls-certificates.js";
@@ -34,15 +34,9 @@ async function entryEnvironmentId(app: FastifyInstance, entryId: string): Promis
   return row?.environment_id ?? null;
 }
 
-async function credentialEnvironmentId(app: FastifyInstance, credentialId: string): Promise<string | null> {
-  const row = await app.db.prepare("SELECT w.environment_id FROM web_credentials c JOIN web_entries w ON w.id = c.web_entry_id WHERE c.id = ?").get(credentialId) as { environment_id: string } | undefined;
-  return row?.environment_id ?? null;
-}
-
-function requireManager(request: Parameters<typeof canManageWorkspace>[0], reply: { code: (status: number) => { send: (body: unknown) => unknown } }): boolean {
-  if (canManageWorkspace(request)) return true;
-  void reply.code(403).send({ error: "WORKSPACE_ADMIN_REQUIRED", message: "只有工作空间管理员可以修改 Web 入口和账号" });
-  return false;
+async function credentialTarget(app: FastifyInstance, credentialId: string): Promise<{ environmentId: string; entryId: string } | null> {
+  const row = await app.db.prepare("SELECT w.environment_id, w.id AS entry_id FROM web_credentials c JOIN web_entries w ON w.id = c.web_entry_id WHERE c.id = ?").get(credentialId) as { environment_id: string; entry_id: string } | undefined;
+  return row ? { environmentId: row.environment_id, entryId: row.entry_id } : null;
 }
 
 export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void> {
@@ -50,7 +44,8 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
     "/api/v1/environments/:environmentId/web-entries",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!await canAccessEnvironment(app.db, request.admin!, request.params.environmentId)) return reply.code(404).send({ error: "NOT_FOUND", message: "环境不存在" });
+      if (!await requireEnvironmentAction(app.db, request.admin!, reply, request.params.environmentId, "web", "view", undefined, { error: "NOT_FOUND", message: "环境不存在" })) return;
+      const access = await getWorkspaceAccess(app.db, request.admin!);
       const rows = await app.db.prepare(`
         SELECT w.*,
           (SELECT COUNT(*) FROM web_credentials c WHERE c.web_entry_id = w.id) AS credential_count
@@ -63,7 +58,7 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
         monitorAlertSettingsForEnvironment(app, request.params.environmentId),
       ]);
       return {
-        items: rows.map((row) => {
+        items: rows.filter((row) => access.allowsEnvironment(request.params.environmentId, "web", "view", String(row.id))).map((row) => {
           const linked = tlsEndpoints.filter((endpoint) => endpoint.webEntries.some((entry) => entry.id === row.id));
           return {
             id: row.id,
@@ -86,10 +81,9 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
     "/api/v1/environments/:environmentId/web-entries",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!requireManager(request, reply)) return;
       const body = parseBody(entrySchema, request.body, reply);
       if (!body) return;
-      if (!await canAccessEnvironment(app.db, request.admin!, request.params.environmentId)) return reply.code(404).send({ error: "NOT_FOUND", message: "环境不存在" });
+      if (!await requireEnvironmentAction(app.db, request.admin!, reply, request.params.environmentId, "web", "manage", undefined, { error: "NOT_FOUND", message: "环境不存在" }, true)) return;
       const id = randomUUID();
       const now = new Date().toISOString();
       const nextOrder = await app.db.prepare(`
@@ -128,10 +122,9 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
     "/api/v1/environments/:environmentId/web-entries/order",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!requireManager(request, reply)) return;
       const body = parseBody(orderSchema, request.body, reply);
       if (!body) return;
-      if (!await canAccessEnvironment(app.db, request.admin!, request.params.environmentId)) return reply.code(404).send({ error: "NOT_FOUND", message: "环境不存在" });
+      if (!await requireEnvironmentAction(app.db, request.admin!, reply, request.params.environmentId, "web", "manage", undefined, { error: "NOT_FOUND", message: "环境不存在" }, true)) return;
       const rows = await app.db.prepare("SELECT id FROM web_entries WHERE environment_id = ?").all(request.params.environmentId) as Array<{ id: string }>;
       if (!hasExactIds(body.orderedIds, rows.map((row) => row.id))) {
         return reply.code(400).send({ error: "INVALID_WEB_ENTRY_ORDER", message: "Web 入口排序必须包含当前环境的全部入口" });
@@ -158,11 +151,10 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
     "/api/v1/web-entries/:id",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!requireManager(request, reply)) return;
       const body = parseBody(entrySchema, request.body, reply);
       if (!body) return;
       const environmentId = await entryEnvironmentId(app, request.params.id);
-      if (!environmentId || !await canAccessEnvironment(app.db, request.admin!, environmentId)) return reply.code(404).send({ error: "NOT_FOUND", message: "Web 入口不存在" });
+      if (!environmentId || !await requireEnvironmentAction(app.db, request.admin!, reply, environmentId, "web", "manage", request.params.id, { error: "NOT_FOUND", message: "Web 入口不存在" })) return;
       const credentials = await app.db.prepare("SELECT id FROM web_credentials WHERE web_entry_id = ?").all(request.params.id) as Array<{ id: string }>;
       const result = await app.db.prepare("UPDATE web_entries SET name = ?, url = ?, description = ?, tags_json = ?, updated_at = ? WHERE id = ?")
         .run(body.name, body.url, body.description, JSON.stringify(body.tags), new Date().toISOString(), request.params.id);
@@ -179,13 +171,10 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
     "/api/v1/web-entries/:id/tls-endpoint",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!requireManager(request, reply)) return;
       const body = parseBody(tlsBindSchema, request.body, reply);
       if (!body) return;
       const environmentId = await entryEnvironmentId(app, request.params.id);
-      if (!environmentId || !await canAccessEnvironment(app.db, request.admin!, environmentId)) {
-        return reply.code(404).send({ error: "NOT_FOUND", message: "Web 入口不存在" });
-      }
+      if (!environmentId || !await requireEnvironmentAction(app.db, request.admin!, reply, environmentId, "web", "manage", request.params.id, { error: "NOT_FOUND", message: "Web 入口不存在" })) return;
       try {
         const result = await bindWebEntryTlsEndpoint(app, request.params.id, body.endpointId);
         await writeAudit(app.db, {
@@ -208,9 +197,8 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
     "/api/v1/web-entries/:id",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!requireManager(request, reply)) return;
       const environmentId = await entryEnvironmentId(app, request.params.id);
-      if (!environmentId || !await canAccessEnvironment(app.db, request.admin!, environmentId)) return reply.code(404).send({ error: "NOT_FOUND", message: "Web 入口不存在" });
+      if (!environmentId || !await requireEnvironmentAction(app.db, request.admin!, reply, environmentId, "web", "manage", request.params.id, { error: "NOT_FOUND", message: "Web 入口不存在" })) return;
       const entry = await app.db.prepare("SELECT name FROM web_entries WHERE id = ?").get(request.params.id) as { name: string } | undefined;
       if (!entry) return reply.code(404).send({ error: "NOT_FOUND", message: "Web 入口不存在" });
       const credentials = await app.db.prepare("SELECT id FROM web_credentials WHERE web_entry_id = ?").all(request.params.id) as Array<{ id: string }>;
@@ -227,7 +215,7 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
     { preHandler: requireAdmin },
     async (request, reply) => {
       const entry = await app.db.prepare("SELECT environment_id, url FROM web_entries WHERE id = ?").get(request.params.entryId) as { environment_id: string; url: string } | undefined;
-      if (!entry || !await canAccessEnvironment(app.db, request.admin!, entry.environment_id)) return reply.code(404).send({ error: "NOT_FOUND", message: "Web 入口不存在" });
+      if (!entry || !await requireEnvironmentAction(app.db, request.admin!, reply, entry.environment_id, "web", "view", request.params.entryId, { error: "NOT_FOUND", message: "Web 入口不存在" })) return;
       const dataUrl = await loadWebFavicon(entry.url);
       reply.header("Cache-Control", dataUrl ? "private, max-age=900" : "private, no-store");
       return { dataUrl };
@@ -239,7 +227,9 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
     { preHandler: requireAdmin },
     async (request, reply) => {
       const environmentId = await entryEnvironmentId(app, request.params.entryId);
-      if (!environmentId || !await canAccessEnvironment(app.db, request.admin!, environmentId)) return reply.code(404).send({ error: "NOT_FOUND", message: "Web 入口不存在" });
+      if (!environmentId || !await requireEnvironmentAction(app.db, request.admin!, reply, environmentId, "web", "use", request.params.entryId, { error: "NOT_FOUND", message: "Web 入口不存在" })) return;
+      const access = await getWorkspaceAccess(app.db, request.admin!);
+      const canEditAccounts = access.allowsEnvironment(environmentId, "web", "manage", request.params.entryId);
       return { items: (await app.db.prepare(`
         SELECT id, web_entry_id, username, note, custom_fields_json, created_at, updated_at
         FROM web_credentials WHERE web_entry_id = ? ORDER BY sort_order, created_at
@@ -250,7 +240,7 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
           webEntryId: item.web_entry_id,
           username: item.username,
           note: item.note,
-          customFields: canManageWorkspace(request) ? JSON.parse(String(item.custom_fields_json ?? "{}")) : {},
+          customFields: canEditAccounts ? JSON.parse(String(item.custom_fields_json ?? "{}")) : {},
           hasPassword: true,
           createdAt: item.created_at,
           updatedAt: item.updated_at,
@@ -263,11 +253,10 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
     "/api/v1/web-entries/:entryId/credentials",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!requireManager(request, reply)) return;
       const body = parseBody(credentialSchema, request.body, reply);
       if (!body) return;
       const environmentId = await entryEnvironmentId(app, request.params.entryId);
-      if (!environmentId || !await canAccessEnvironment(app.db, request.admin!, environmentId)) return reply.code(404).send({ error: "NOT_FOUND", message: "Web 入口不存在" });
+      if (!environmentId || !await requireEnvironmentAction(app.db, request.admin!, reply, environmentId, "web", "manage", request.params.entryId, { error: "NOT_FOUND", message: "Web 入口不存在" })) return;
       const id = randomUUID();
       const now = new Date().toISOString();
       const nextOrder = await app.db.prepare(`
@@ -304,11 +293,10 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
     "/api/v1/web-entries/:entryId/credentials/order",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!requireManager(request, reply)) return;
       const body = parseBody(orderSchema, request.body, reply);
       if (!body) return;
       const environmentId = await entryEnvironmentId(app, request.params.entryId);
-      if (!environmentId || !await canAccessEnvironment(app.db, request.admin!, environmentId)) return reply.code(404).send({ error: "NOT_FOUND", message: "Web 入口不存在" });
+      if (!environmentId || !await requireEnvironmentAction(app.db, request.admin!, reply, environmentId, "web", "manage", request.params.entryId, { error: "NOT_FOUND", message: "Web 入口不存在" })) return;
       const rows = await app.db.prepare("SELECT id FROM web_credentials WHERE web_entry_id = ?").all(request.params.entryId) as Array<{ id: string }>;
       if (!hasExactIds(body.orderedIds, rows.map((row) => row.id))) {
         return reply.code(400).send({ error: "INVALID_WEB_CREDENTIAL_ORDER", message: "登录账号排序必须包含当前入口的全部账号" });
@@ -335,11 +323,10 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
     "/api/v1/web-credentials/:id",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!requireManager(request, reply)) return;
       const body = parseBody(credentialUpdateSchema, request.body, reply);
       if (!body) return;
-      const environmentId = await credentialEnvironmentId(app, request.params.id);
-      if (!environmentId || !await canAccessEnvironment(app.db, request.admin!, environmentId)) return reply.code(404).send({ error: "NOT_FOUND", message: "登录账号不存在" });
+      const target = await credentialTarget(app, request.params.id);
+      if (!target || !await requireEnvironmentAction(app.db, request.admin!, reply, target.environmentId, "web", "manage", target.entryId, { error: "NOT_FOUND", message: "登录账号不存在" })) return;
       const existing = await app.db.prepare("SELECT password_ciphertext FROM web_credentials WHERE id = ?").get(request.params.id) as { password_ciphertext: string } | undefined;
       if (!existing) return reply.code(404).send({ error: "NOT_FOUND", message: "登录账号不存在" });
       await app.db.prepare("UPDATE web_credentials SET username = ?, password_ciphertext = ?, note = ?, custom_fields_json = ?, updated_at = ? WHERE id = ?")
@@ -353,9 +340,8 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
     "/api/v1/web-credentials/:id",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!requireManager(request, reply)) return;
-      const environmentId = await credentialEnvironmentId(app, request.params.id);
-      if (!environmentId || !await canAccessEnvironment(app.db, request.admin!, environmentId)) return reply.code(404).send({ error: "NOT_FOUND", message: "登录账号不存在" });
+      const target = await credentialTarget(app, request.params.id);
+      if (!target || !await requireEnvironmentAction(app.db, request.admin!, reply, target.environmentId, "web", "manage", target.entryId, { error: "NOT_FOUND", message: "登录账号不存在" })) return;
       const credential = await app.db.prepare("SELECT username FROM web_credentials WHERE id = ?").get(request.params.id) as { username: string } | undefined;
       if (!credential) return reply.code(404).send({ error: "NOT_FOUND", message: "登录账号不存在" });
       await app.webAccountViews.purgeCredential(request.params.id);
@@ -369,9 +355,8 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
     "/api/v1/web-credentials/:id/reveal",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!requireManager(request, reply)) return;
-      const environmentId = await credentialEnvironmentId(app, request.params.id);
-      if (!environmentId || !await canAccessEnvironment(app.db, request.admin!, environmentId)) return reply.code(404).send({ error: "NOT_FOUND", message: "登录账号不存在" });
+      const target = await credentialTarget(app, request.params.id);
+      if (!target || !await requireEnvironmentAction(app.db, request.admin!, reply, target.environmentId, "web", "manage", target.entryId, { error: "NOT_FOUND", message: "登录账号不存在" })) return;
       const credential = await app.db.prepare(`
         SELECT username, password_ciphertext FROM web_credentials WHERE id = ?
       `).get(request.params.id) as { username: string; password_ciphertext: string } | undefined;

@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { writeAudit } from "../audit.js";
-import { canAccessConnection, canManageWorkspace, getWorkspaceAccess, type AuthenticatedUser, workspaceParams, workspaceWhere } from "../access-control.js";
+import { canAccessConnection, canManageWorkspace, getWorkspaceAccess, requireConnectionConfig, type AuthenticatedUser, workspaceParams, workspaceWhere } from "../access-control.js";
+import { deleteAccessTargets } from "../access-authorizations.js";
 import {
   connectionEnvironmentMap,
   environmentsExist,
@@ -708,7 +709,6 @@ export async function registerConnectionRoutes(app: FastifyInstance): Promise<vo
   });
 
   app.post("/api/v1/ssh-connections", async (request, reply) => {
-    if (!requireWorkspaceManager(request, reply)) return;
     const body = parseBody(sshConnectionCreateSchema, request.body, reply);
     if (!body) return;
     const copySource = body.copyFromId
@@ -722,6 +722,7 @@ export async function registerConnectionRoutes(app: FastifyInstance): Promise<vo
     if (!await environmentsExist(app.db, environmentIds, workspaceParams(request))) {
       return reply.code(400).send({ error: "INVALID_ENVIRONMENT", message: "所选环境中存在无效项" });
     }
+    if (!await requireConnectionConfig(app.db, request.admin!, reply, "ssh", null, environmentIds)) return;
     if (!await connectionGroupExists(app, body.connectionGroupId, "ssh", workspaceParams(request))) {
       return reply.code(400).send({ error: "INVALID_CONNECTION_GROUP", message: "所选 SSH 连接组不存在" });
     }
@@ -772,7 +773,7 @@ export async function registerConnectionRoutes(app: FastifyInstance): Promise<vo
   });
 
   app.put<{ Params: { id: string } }>("/api/v1/ssh-connections/:id", async (request, reply) => {
-    if (!requireWorkspaceManager(request, reply)) return;
+    if (!await requireConnectionConfig(app.db, request.admin!, reply, "ssh", request.params.id, [])) return;
     const body = parseBody(sshConnectionSchema, request.body, reply);
     if (!body) return;
     const existing = await app.db.prepare(`SELECT name, auth_type, ssh_key_id, credential_ciphertext, connection_group_id, options_json, tags_json, sort_order FROM ssh_connections WHERE id = ? AND ${workspaceWhere()}`).get(request.params.id, ...workspaceParams(request)) as
@@ -831,12 +832,13 @@ export async function registerConnectionRoutes(app: FastifyInstance): Promise<vo
   });
 
   app.delete<{ Params: { id: string } }>("/api/v1/ssh-connections/:id", async (request, reply) => {
-    if (!requireWorkspaceManager(request, reply)) return;
     const row = await app.db.prepare(`SELECT name FROM ssh_connections WHERE id = ? AND ${workspaceWhere()}`).get(request.params.id, ...workspaceParams(request)) as { name: string } | undefined;
     if (!row) return reply.code(404).send({ error: "NOT_FOUND", message: "SSH 连接不存在" });
+    if (!await requireConnectionConfig(app.db, request.admin!, reply, "ssh", request.params.id, [])) return;
     await app.db.prepare("DELETE FROM ssh_connections WHERE id = ?").run(request.params.id);
     await app.db.prepare("DELETE FROM connection_inspection_results WHERE connection_type = 'ssh' AND connection_id = ?").run(request.params.id);
     await app.db.prepare("DELETE FROM resource_grants WHERE resource_type = 'ssh_connection' AND resource_id = ?").run(request.params.id);
+    await deleteAccessTargets(app.db, request.params.id);
     await Promise.all([closeSshConnectionPool(app, request.params.id), closeDatabaseConnectionPool(app), closeRedisConnectionPool(app)]);
     await revokeWorkspaceRuntime(app, request.admin!.workspace);
     await refreshPendingExistingConnections(app.db);
@@ -851,7 +853,6 @@ export async function registerConnectionRoutes(app: FastifyInstance): Promise<vo
   });
 
   app.post("/api/v1/database-connections", async (request, reply) => {
-    if (!requireWorkspaceManager(request, reply)) return;
     const body = parseBody(databaseConnectionCreateSchema, request.body, reply);
     if (!body) return;
     const copySource = body.copyFromId
@@ -865,6 +866,7 @@ export async function registerConnectionRoutes(app: FastifyInstance): Promise<vo
     if (!await environmentsExist(app.db, environmentIds, workspaceParams(request))) {
       return reply.code(400).send({ error: "INVALID_ENVIRONMENT", message: "所选环境中存在无效项" });
     }
+    if (!await requireConnectionConfig(app.db, request.admin!, reply, "database", null, environmentIds)) return;
     if (!await connectionGroupExists(app, body.connectionGroupId, "database", workspaceParams(request))) {
       return reply.code(400).send({ error: "INVALID_CONNECTION_GROUP", message: "所选数据库连接组不存在" });
     }
@@ -902,7 +904,7 @@ export async function registerConnectionRoutes(app: FastifyInstance): Promise<vo
   });
 
   app.post<{ Params: { id: string } }>("/api/v1/database-connections/:id/profiles", async (request, reply) => {
-    if (!requireWorkspaceManager(request, reply)) return;
+    if (!await requireConnectionConfig(app.db, request.admin!, reply, "database", request.params.id, [])) return;
     const body = parseBody(databaseConnectionProfileSchema, request.body, reply);
     if (!body) return;
     const parent = await app.db.prepare(`
@@ -961,7 +963,7 @@ export async function registerConnectionRoutes(app: FastifyInstance): Promise<vo
   });
 
   app.put<{ Params: { id: string; profileId: string } }>("/api/v1/database-connections/:id/profiles/:profileId", async (request, reply) => {
-    if (!requireWorkspaceManager(request, reply)) return;
+    if (!await requireConnectionConfig(app.db, request.admin!, reply, "database", request.params.id, [])) return;
     const body = parseBody(databaseConnectionProfileSchema, request.body, reply);
     if (!body) return;
     const profile = await app.db.prepare(`
@@ -1015,7 +1017,7 @@ export async function registerConnectionRoutes(app: FastifyInstance): Promise<vo
   });
 
   app.post<{ Params: { id: string; profileId: string } }>("/api/v1/database-connections/:id/profiles/:profileId/duplicate", async (request, reply) => {
-    if (!requireWorkspaceManager(request, reply)) return;
+    if (!await requireConnectionConfig(app.db, request.admin!, reply, "database", request.params.id, [])) return;
     const body = parseBody(databaseConnectionProfileDuplicateSchema, request.body, reply);
     if (!body) return;
     const profile = await app.db.prepare(`
@@ -1078,7 +1080,7 @@ export async function registerConnectionRoutes(app: FastifyInstance): Promise<vo
   });
 
   app.put<{ Params: { id: string } }>("/api/v1/database-connections/:id/profiles/active", async (request, reply) => {
-    if (!requireWorkspaceManager(request, reply)) return;
+    if (!await requireConnectionConfig(app.db, request.admin!, reply, "database", request.params.id, [])) return;
     const body = parseBody(databaseConnectionActiveProfileSchema, request.body, reply);
     if (!body) return;
     const root = await app.db.prepare(`SELECT options_json FROM database_connections WHERE id = ? AND profile_parent_id IS NULL AND ${workspaceWhere()}`)
@@ -1107,7 +1109,7 @@ export async function registerConnectionRoutes(app: FastifyInstance): Promise<vo
   });
 
   app.delete<{ Params: { id: string; profileId: string } }>("/api/v1/database-connections/:id/profiles/:profileId", async (request, reply) => {
-    if (!requireWorkspaceManager(request, reply)) return;
+    if (!await requireConnectionConfig(app.db, request.admin!, reply, "database", request.params.id, [])) return;
     const profile = await app.db.prepare(`
       SELECT p.profile_name, root.options_json FROM database_connections p
       JOIN database_connections root ON root.id = p.profile_parent_id
@@ -1131,7 +1133,7 @@ export async function registerConnectionRoutes(app: FastifyInstance): Promise<vo
   });
 
   app.put<{ Params: { id: string } }>("/api/v1/database-connections/:id", async (request, reply) => {
-    if (!requireWorkspaceManager(request, reply)) return;
+    if (!await requireConnectionConfig(app.db, request.admin!, reply, "database", request.params.id, [])) return;
     const body = parseBody(databaseConnectionSchema, request.body, reply);
     if (!body) return;
     const existing = await app.db.prepare(`SELECT name, credential_ciphertext, connection_group_id FROM database_connections WHERE id = ? AND ${workspaceWhere()}`).get(request.params.id, ...workspaceParams(request)) as
@@ -1194,13 +1196,14 @@ export async function registerConnectionRoutes(app: FastifyInstance): Promise<vo
   });
 
   app.delete<{ Params: { id: string } }>("/api/v1/database-connections/:id", async (request, reply) => {
-    if (!requireWorkspaceManager(request, reply)) return;
     const row = await app.db.prepare(`SELECT name FROM database_connections WHERE id = ? AND ${workspaceWhere()}`).get(request.params.id, ...workspaceParams(request)) as { name: string } | undefined;
     if (!row) return reply.code(404).send({ error: "NOT_FOUND", message: "数据库连接不存在" });
+    if (!await requireConnectionConfig(app.db, request.admin!, reply, "database", request.params.id, [])) return;
     await app.db.prepare("DELETE FROM database_connections WHERE profile_parent_id = ?").run(request.params.id);
     await app.db.prepare("DELETE FROM database_connections WHERE id = ?").run(request.params.id);
     await app.db.prepare("DELETE FROM connection_inspection_results WHERE connection_type = 'database' AND connection_id = ?").run(request.params.id);
     await app.db.prepare("DELETE FROM resource_grants WHERE resource_type = 'database_connection' AND resource_id = ?").run(request.params.id);
+    await deleteAccessTargets(app.db, request.params.id);
     await closeDatabaseConnectionPool(app, request.params.id);
     await revokeWorkspaceRuntime(app, request.admin!.workspace);
     await refreshPendingExistingConnections(app.db);

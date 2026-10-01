@@ -4,7 +4,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { writeAudit } from "../audit.js";
 import { isUniqueConstraintError } from "../database-errors.js";
-import { canAccessEnvironment, canAccessEnvironmentLog, canManageWorkspace } from "../access-control.js";
+import { canAccessEnvironmentLog, getWorkspaceAccess, requireEnvironmentAction } from "../access-control.js";
 import {
   DEFAULT_ENVIRONMENT_LOG_LINES,
   MAX_ENVIRONMENT_LOG_FILES,
@@ -67,12 +67,6 @@ async function connectionBelongsToEnvironment(app: FastifyInstance, connectionId
   `).get(connectionId, environmentId));
 }
 
-function requireManager(request: Parameters<typeof canManageWorkspace>[0], reply: { code: (status: number) => { send: (body: unknown) => unknown } }): boolean {
-  if (canManageWorkspace(request)) return true;
-  void reply.code(403).send({ error: "WORKSPACE_ADMIN_REQUIRED", message: "只有工作空间管理员可以修改日志配置" });
-  return false;
-}
-
 function mapLog(row: Record<string, unknown>) {
   const filePaths = parseStoredLogFilePaths(row.file_paths_json, row.file_path);
   return {
@@ -97,9 +91,8 @@ export async function registerEnvironmentLogRoutes(app: FastifyInstance): Promis
     "/api/v1/environments/:environmentId/logs",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!await canAccessEnvironment(app.db, request.admin!, request.params.environmentId)) {
-        return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
-      }
+      if (!await requireEnvironmentAction(app.db, request.admin!, reply, request.params.environmentId, "logs", "view", undefined, { error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" })) return;
+      const access = await getWorkspaceAccess(app.db, request.admin!);
       const rows = await app.db.prepare(`
         SELECT l.*, s.name AS connection_name, s.host, s.port, s.username, s.source_deleted,
           EXISTS (
@@ -111,7 +104,7 @@ export async function registerEnvironmentLogRoutes(app: FastifyInstance): Promis
         WHERE l.environment_id = ?
         ORDER BY l.sort_order ASC, l.updated_at DESC, l.name ASC, l.id ASC
       `).all(request.params.environmentId) as Record<string, unknown>[];
-      return { items: rows.map(mapLog) };
+      return { items: rows.filter((row) => access.allowsEnvironment(request.params.environmentId, "logs", "view", String(row.id))).map(mapLog) };
     },
   );
 
@@ -119,12 +112,9 @@ export async function registerEnvironmentLogRoutes(app: FastifyInstance): Promis
     "/api/v1/environments/:environmentId/logs/order",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!requireManager(request, reply)) return;
       const body = parseBody(logOrderSchema, request.body, reply);
       if (!body) return;
-      if (!await canAccessEnvironment(app.db, request.admin!, request.params.environmentId)) {
-        return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
-      }
+      if (!await requireEnvironmentAction(app.db, request.admin!, reply, request.params.environmentId, "logs", "manage", undefined, { error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" }, true)) return;
       const rows = await app.db.prepare("SELECT id FROM environment_logs WHERE environment_id = ? ORDER BY sort_order ASC, updated_at DESC, name ASC, id ASC")
         .all(request.params.environmentId) as Array<{ id: string }>;
       const currentIds = rows.map((row) => row.id);
@@ -154,12 +144,9 @@ export async function registerEnvironmentLogRoutes(app: FastifyInstance): Promis
     "/api/v1/environments/:environmentId/logs",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!requireManager(request, reply)) return;
       const body = parseBody(environmentLogSchema, request.body, reply);
       if (!body) return;
-      if (!await canAccessEnvironment(app.db, request.admin!, request.params.environmentId)) {
-        return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
-      }
+      if (!await requireEnvironmentAction(app.db, request.admin!, reply, request.params.environmentId, "logs", "manage", undefined, { error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" }, true)) return;
       if (!await connectionBelongsToEnvironment(app, body.sshConnectionId, request.params.environmentId)) {
         return reply.code(400).send({ error: "INVALID_SSH_CONNECTION", message: "请选择当前环境中可用的 SSH 连接" });
       }
@@ -196,14 +183,12 @@ export async function registerEnvironmentLogRoutes(app: FastifyInstance): Promis
     "/api/v1/environment-logs/:id",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!requireManager(request, reply)) return;
       const body = parseBody(environmentLogSchema, request.body, reply);
       if (!body) return;
       const existing = await app.db.prepare("SELECT environment_id FROM environment_logs WHERE id = ?").get(request.params.id) as
         | { environment_id: string }
         | undefined;
-      if (!existing) return reply.code(404).send({ error: "LOG_NOT_FOUND", message: "日志配置不存在" });
-      if (!await canAccessEnvironment(app.db, request.admin!, existing.environment_id)) return reply.code(404).send({ error: "LOG_NOT_FOUND", message: "日志配置不存在" });
+      if (!existing || !await requireEnvironmentAction(app.db, request.admin!, reply, existing.environment_id, "logs", "manage", request.params.id, { error: "LOG_NOT_FOUND", message: "日志配置不存在" })) return;
       if (!await connectionBelongsToEnvironment(app, body.sshConnectionId, existing.environment_id)) {
         return reply.code(400).send({ error: "INVALID_SSH_CONNECTION", message: "请选择当前环境中可用的 SSH 连接" });
       }
@@ -237,12 +222,10 @@ export async function registerEnvironmentLogRoutes(app: FastifyInstance): Promis
     "/api/v1/environment-logs/:id",
     { preHandler: requireAdmin },
     async (request, reply) => {
-      if (!requireManager(request, reply)) return;
       const log = await app.db.prepare("SELECT name, environment_id FROM environment_logs WHERE id = ?").get(request.params.id) as
         | { name: string; environment_id: string }
         | undefined;
-      if (!log) return reply.code(404).send({ error: "LOG_NOT_FOUND", message: "日志配置不存在" });
-      if (!await canAccessEnvironment(app.db, request.admin!, log.environment_id)) return reply.code(404).send({ error: "LOG_NOT_FOUND", message: "日志配置不存在" });
+      if (!log || !await requireEnvironmentAction(app.db, request.admin!, reply, log.environment_id, "logs", "manage", request.params.id, { error: "LOG_NOT_FOUND", message: "日志配置不存在" })) return;
       await app.db.prepare("DELETE FROM environment_logs WHERE id = ?").run(request.params.id);
       await writeAudit(app.db, {
         action: "environment_log.deleted",

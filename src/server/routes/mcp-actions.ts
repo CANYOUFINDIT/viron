@@ -89,7 +89,8 @@ export async function registerMcpActionRoutes(app: FastifyInstance): Promise<voi
   app.post<{ Params: { id: string } }>("/api/v1/mcp/ssh-connections/:id/command", { preHandler: requireAdmin }, async (request, reply) => {
     const body = parseBody(sshCommandSchema, request.body ?? {}, reply);
     if (!body || !request.admin) return;
-    if (!await canAccessConnection(app.db, request.admin, "ssh", request.params.id)) return reply.code(404).send({ error: "NOT_FOUND", message: "SSH 连接不存在" });
+    if (!await canAccessConnection(app.db, request.admin, "ssh", request.params.id, "view")) return reply.code(404).send({ error: "NOT_FOUND", message: "SSH 连接不存在" });
+    if (!await canAccessConnection(app.db, request.admin, "ssh", request.params.id, "use")) return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有这项操作权限" });
     const connection = await app.db.prepare("SELECT name FROM ssh_connections WHERE id = ?").get(request.params.id) as { name: string } | undefined;
     try {
       const result = await executeSshCommand(app, request.params.id, body.command, { timeoutMs: body.timeoutMs, maxBytes: body.maxBytes });
@@ -118,7 +119,8 @@ export async function registerMcpActionRoutes(app: FastifyInstance): Promise<voi
   app.post<{ Params: { id: string } }>("/api/v1/mcp/ssh-connections/:id/commands", { preHandler: requireAdmin }, async (request, reply) => {
     const body = parseBody(sshCommandBatchSchema, request.body ?? {}, reply);
     if (!body || !request.admin) return;
-    if (!await canAccessConnection(app.db, request.admin, "ssh", request.params.id)) return reply.code(404).send({ error: "NOT_FOUND", message: "SSH 连接不存在" });
+    if (!await canAccessConnection(app.db, request.admin, "ssh", request.params.id, "view")) return reply.code(404).send({ error: "NOT_FOUND", message: "SSH 连接不存在" });
+    if (!await canAccessConnection(app.db, request.admin, "ssh", request.params.id, "use")) return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有这项操作权限" });
     if (body.commands.some((command) => sshCommandRiskLevel(command) !== "low")) {
       return reply.code(400).send({ error: "SSH_BATCH_NOT_READ_ONLY", message: "SSH 批量读取只允许可证明为只读的命令" });
     }

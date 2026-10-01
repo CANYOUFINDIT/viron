@@ -118,7 +118,7 @@ export async function registerSshSessionRoutes(app: FastifyInstance): Promise<vo
   app.delete<{ Params: { id: string } }>("/api/v1/ssh-recordings/:id", { preHandler: requireAdmin }, async (request, reply) => {
     const row = await app.db.prepare("SELECT connection_id, recording_path, status FROM ssh_terminal_recordings WHERE id = ? AND owner_user_id = ?").get(request.params.id, request.admin!.id) as { connection_id: string; recording_path: string; status: string } | undefined;
     if (!row) return reply.code(404).send({ error: "RECORDING_NOT_FOUND", message: "终端录像不存在" });
-    if (!await canAccessConnection(app.db, request.admin!, "ssh", row.connection_id)) return reply.code(404).send({ error: "RECORDING_NOT_FOUND", message: "终端录像不存在" });
+    if (!await canAccessConnection(app.db, request.admin!, "ssh", row.connection_id, "manage")) return reply.code(404).send({ error: "RECORDING_NOT_FOUND", message: "终端录像不存在" });
     if (row.status === "recording") return reply.code(409).send({ error: "RECORDING_ACTIVE", message: "活动会话的录像不能删除" });
     await unlink(row.recording_path).catch(() => undefined);
     await app.db.prepare("DELETE FROM ssh_terminal_recordings WHERE id = ?").run(request.params.id);
@@ -133,7 +133,7 @@ export async function registerSshSessionRoutes(app: FastifyInstance): Promise<vo
   app.post("/api/v1/ssh-sessions", { preHandler: requireAdmin }, async (request, reply) => {
     const body = parseBody(createSessionSchema, request.body, reply);
     if (!body || !request.admin) return;
-    if (!await canAccessConnection(app.db, request.admin, "ssh", body.connectionId)) return reply.code(404).send({ error: "NOT_FOUND", message: "SSH 连接不存在" });
+    if (!await canAccessConnection(app.db, request.admin, "ssh", body.connectionId, "use")) return reply.code(404).send({ error: "NOT_FOUND", message: "SSH 连接不存在" });
     if (body.originEnvironmentId && !await canAccessEnvironment(app.db, request.admin, body.originEnvironmentId)) {
       return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "来源环境不存在或无权访问" });
     }
@@ -182,7 +182,7 @@ export async function registerSshSessionRoutes(app: FastifyInstance): Promise<vo
           throw new DesktopReportError(403, "DESKTOP_REPORT_CONTEXT_MISMATCH", "桌面 Agent 授权与当前 SSH 现场不匹配");
         }
         const target = app.sshSessions.agentTarget(request.params.id, request.admin!, scope);
-        if (!await canAccessConnection(app.db, request.admin!, "ssh", target.connectionId)) {
+        if (!await canAccessConnection(app.db, request.admin!, "ssh", target.connectionId, "use")) {
           throw new DesktopReportError(404, "SESSION_NOT_FOUND", "SSH 会话不存在或已经结束");
         }
         snapshot = app.sshSessions.agentContext(request.params.id, request.admin!, scope);
@@ -225,7 +225,7 @@ export async function registerSshSessionRoutes(app: FastifyInstance): Promise<vo
           throw new DesktopReportError(403, "DESKTOP_REPORT_CONTEXT_MISMATCH", "桌面 Agent 授权与当前 SSH 诊断不匹配");
         }
         const currentTarget = app.sshSessions.agentTarget(request.params.id, request.admin!, scope);
-        if (!await canAccessConnection(app.db, request.admin!, "ssh", currentTarget.connectionId)) {
+        if (!await canAccessConnection(app.db, request.admin!, "ssh", currentTarget.connectionId, "use")) {
           throw new DesktopReportError(404, "SESSION_NOT_FOUND", "SSH 会话不存在或已经结束");
         }
         payload = report.payload;
@@ -293,7 +293,7 @@ export async function registerSshSessionRoutes(app: FastifyInstance): Promise<vo
           throw new DesktopReportError(403, "DESKTOP_REPORT_CONTEXT_MISMATCH", "桌面 Agent 授权与当前 SSH 取消请求不匹配");
         }
         const currentTarget = app.sshSessions.agentTarget(request.params.id, request.admin!, scope);
-        if (!await canAccessConnection(app.db, request.admin!, "ssh", currentTarget.connectionId)) {
+        if (!await canAccessConnection(app.db, request.admin!, "ssh", currentTarget.connectionId, "use")) {
           throw new DesktopReportError(404, "SESSION_NOT_FOUND", "SSH 会话不存在或已经结束");
         }
         target = currentTarget;

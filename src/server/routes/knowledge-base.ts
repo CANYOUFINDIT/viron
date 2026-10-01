@@ -195,19 +195,86 @@ function hasGrantedAncestor(node: KnowledgeNodeRow, byId: Map<string, KnowledgeN
 }
 
 async function permissionsForNodes(app: FastifyInstance, user: AuthenticatedUser, rows: KnowledgeNodeRow[]) {
-  const canManage = user.workspace.role === "owner" || user.workspace.role === "admin";
+  const access = await getWorkspaceAccess(app.db, user);
+  const canManage = access.canManage;
   const organizationId = user.workspace.type === "organization" ? user.workspace.id : null;
   const grants = !canManage && organizationId ? await grantedNodeIds(app, user, organizationId) : new Set<string>();
   const byId = new Map(rows.map((node) => [node.id, node]));
+  const directEnvironmentIds = new Map<string, Set<string>>();
+  if (!canManage && rows.length) {
+    for (const row of rows) {
+      if (!row.environment_id) continue;
+      const ids = directEnvironmentIds.get(row.id) ?? new Set<string>();
+      ids.add(row.environment_id);
+      directEnvironmentIds.set(row.id, ids);
+    }
+    const associations = await app.db.prepare(`
+      SELECT ke.node_id, ke.environment_id
+      FROM knowledge_node_environments ke
+      JOIN environments e ON e.id = ke.environment_id
+      WHERE e.workspace_type = ? AND e.workspace_id = ?
+    `).all(user.workspace.type, user.workspace.id) as Array<{ node_id: string; environment_id: string }>;
+    for (const association of associations) {
+      const ids = directEnvironmentIds.get(association.node_id) ?? new Set<string>();
+      ids.add(association.environment_id);
+      directEnvironmentIds.set(association.node_id, ids);
+    }
+  }
+  const environmentKnowledge = (node: KnowledgeNodeRow, action: "view" | "edit") => {
+    const chain: KnowledgeNodeRow[] = [];
+    let current: KnowledgeNodeRow | undefined = node;
+    const visited = new Set<string>();
+    while (current && !visited.has(current.id)) {
+      chain.push(current);
+      visited.add(current.id);
+      current = current.parent_id ? byId.get(current.parent_id) : undefined;
+    }
+    const environments = new Set<string>();
+    for (const item of chain) for (const id of directEnvironmentIds.get(item.id) ?? []) environments.add(id);
+    for (const environmentId of environments) {
+      for (const item of chain) {
+        if (access.allowsEnvironment(environmentId, "knowledge", action, item.id)) return true;
+      }
+    }
+    return false;
+  };
   return {
     canManage,
     byId,
+    canView(node: KnowledgeNodeRow) {
+      return canManage
+        || (node.type === "document" && node.created_by_user_id === user.id)
+        || hasGrantedAncestor(node, byId, grants)
+        || environmentKnowledge(node, "view");
+    },
     canEdit(node: KnowledgeNodeRow) {
       return canManage
         || (node.type === "document" && node.created_by_user_id === user.id)
-        || hasGrantedAncestor(node, byId, grants);
+        || hasGrantedAncestor(node, byId, grants)
+        || environmentKnowledge(node, "edit");
     },
   };
+}
+
+function visibleKnowledgeRows(
+  rows: KnowledgeNodeRow[],
+  permissions: { canView(node: KnowledgeNodeRow): boolean; byId: Map<string, KnowledgeNodeRow> },
+  contextOnlyIds: Set<string>,
+) {
+  const visible = new Set<string>();
+  const contextOnly = new Set(contextOnlyIds);
+  for (const row of rows) if (permissions.canView(row)) visible.add(row.id);
+  for (const id of [...visible]) {
+    let parentId = permissions.byId.get(id)?.parent_id ?? null;
+    const visited = new Set<string>();
+    while (parentId && !visited.has(parentId)) {
+      visited.add(parentId);
+      if (!visible.has(parentId)) contextOnly.add(parentId);
+      visible.add(parentId);
+      parentId = permissions.byId.get(parentId)?.parent_id ?? null;
+    }
+  }
+  return { rows: rows.filter((row) => visible.has(row.id)), contextOnlyIds: contextOnly };
 }
 
 async function knowledgeContext(app: FastifyInstance, user: AuthenticatedUser, environmentId?: string): Promise<KnowledgeContext> {
@@ -245,7 +312,8 @@ async function knowledgeContext(app: FastifyInstance, user: AuthenticatedUser, e
 
   const contextOnlyIds = new Set<string>();
   if (!environmentId) {
-    return { allRows, rows: allRows, permissions, environments, directEnvironmentIds, effectiveEnvironmentIds, contextOnlyIds, environmentRootId: null };
+    const visible = visibleKnowledgeRows(allRows, permissions, contextOnlyIds);
+    return { allRows, rows: visible.rows, permissions, environments, directEnvironmentIds, effectiveEnvironmentIds, contextOnlyIds: visible.contextOnlyIds, environmentRootId: null };
   }
   const environment = environments.find((item) => item.id === environmentId);
   const legacyRootCandidates = allRows.filter((row) => row.type === "folder"
@@ -270,14 +338,15 @@ async function knowledgeContext(app: FastifyInstance, user: AuthenticatedUser, e
       parentId = permissions.byId.get(parentId)?.parent_id ?? null;
     }
   }
+  const visible = visibleKnowledgeRows(allRows.filter((row) => includedIds.has(row.id)), permissions, contextOnlyIds);
   return {
     allRows,
-    rows: allRows.filter((row) => includedIds.has(row.id)),
+    rows: visible.rows,
     permissions,
     environments,
     directEnvironmentIds,
     effectiveEnvironmentIds,
-    contextOnlyIds,
+    contextOnlyIds: visible.contextOnlyIds,
     environmentRootId,
   };
 }
@@ -629,7 +698,9 @@ function knowledgeResponse(context: KnowledgeContext) {
     items: context.rows.filter((node) => node.id !== context.environmentRootId).map((node) => mapNode(node, context)),
     environments: context.environments,
     canManage: context.permissions.canManage,
-    canCreateDocument: true,
+    canCreateDocument: context.environmentRootId
+      ? Boolean(context.permissions.byId.get(context.environmentRootId) && context.permissions.canEdit(context.permissions.byId.get(context.environmentRootId)!))
+      : true,
     canCreateRootFolder: context.permissions.canManage,
     imageLimitBytes: MAX_IMAGE_BYTES,
     environmentRootId: context.environmentRootId,
@@ -659,6 +730,8 @@ async function createKnowledgeNode(
   if (body.type === "folder") {
     const canCreateFolder = parent ? context.permissions.canEdit(parent) : context.permissions.canManage;
     if (!canCreateFolder) return reply.code(403).send({ error: "KNOWLEDGE_EDIT_REQUIRED", message: "你没有在此位置创建文件夹的权限" });
+  } else if (parent && !context.permissions.canEdit(parent)) {
+    return reply.code(403).send({ error: "KNOWLEDGE_EDIT_REQUIRED", message: "你没有在此位置创建文档的权限" });
   }
   try {
     const created = await createNode(app, request.admin!, parentId, body.type, body.name, request.admin!.id, environmentId);
@@ -691,6 +764,7 @@ export async function registerKnowledgeBaseRoutes(app: FastifyInstance): Promise
       return reply.code(404).send({ error: "NOT_FOUND", message: "文档不存在" });
     }
     const context = await knowledgeContext(app, request.admin!);
+    if (!context.permissions.canView(node)) return reply.code(404).send({ error: "NOT_FOUND", message: "文档不存在" });
     const includeAssetData = request.query.includeAssetData !== "false";
     return {
       item: { ...mapNode(node, context), content: node.content },
@@ -985,6 +1059,9 @@ export async function registerKnowledgeBaseRoutes(app: FastifyInstance): Promise
     const visibleIds = new Set(result.rows.map((node) => node.id));
     const parent = parentId ? result.permissions.byId.get(parentId) : null;
     if (parentId && (!parent || parent.type !== "folder" || !visibleIds.has(parent.id))) return reply.code(400).send({ error: "INVALID_PARENT", message: "目标文件夹不存在" });
+    if (extension === ".md" && parent && !result.permissions.canEdit(parent)) {
+      return reply.code(403).send({ error: "KNOWLEDGE_EDIT_REQUIRED", message: "你没有在此位置导入文档的权限" });
+    }
     if (extension === ".zip" && !(parent ? result.permissions.canEdit(parent) : result.permissions.canManage)) {
       return reply.code(403).send({ error: "KNOWLEDGE_EDIT_REQUIRED", message: "导入 ZIP 目录结构需要目标文件夹编辑权限" });
     }
@@ -1046,12 +1123,24 @@ export async function registerKnowledgeBaseRoutes(app: FastifyInstance): Promise
     const node = await nodeById(app, request.params.id);
     if (!nodeBelongsToWorkspace(node, request.admin!)) return reply.code(404).send({ error: "NOT_FOUND", message: "知识库节点不存在" });
     const rows = await workspaceNodeRows(app, request.admin!);
+    const permissions = await permissionsForNodes(app, request.admin!, rows);
+    if (!permissions.canView(node)) return reply.code(404).send({ error: "NOT_FOUND", message: "知识库节点不存在" });
     if (node.type === "document") {
       const content = replaceAssetReferencesWithDataUris(node.content, await assetsForDocument(app, node.id));
       return sendDownload(reply, "text/markdown; charset=utf-8", node.name, Buffer.from(content, "utf8"));
     }
     const ids = descendantIds(rows, node.id);
-    const selected = rows.filter((row) => ids.has(row.id));
+    const visibleIds = new Set(rows.filter((row) => ids.has(row.id) && permissions.canView(row)).map((row) => row.id));
+    for (const id of [...visibleIds]) {
+      let parentId = permissions.byId.get(id)?.parent_id ?? null;
+      const visited = new Set<string>();
+      while (parentId && ids.has(parentId) && !visited.has(parentId)) {
+        visited.add(parentId);
+        visibleIds.add(parentId);
+        parentId = permissions.byId.get(parentId)?.parent_id ?? null;
+      }
+    }
+    const selected = rows.filter((row) => visibleIds.has(row.id));
     const zip = await zipForNodes(app, selected);
     return sendDownload(reply, "application/zip", `${node.name}.zip`, zip.outputStream);
   });

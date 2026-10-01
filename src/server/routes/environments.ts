@@ -4,6 +4,8 @@ import { z } from "zod";
 import { writeAudit } from "../audit.js";
 import { isUniqueConstraintError } from "../database-errors.js";
 import { canAccessEnvironment, canManageWorkspace, getWorkspaceAccess, workspaceParams, workspaceWhere } from "../access-control.js";
+import { deleteAccessForGroup, deleteAccessTargets } from "../access-authorizations.js";
+import type { PermissionMap } from "../../shared/access-permissions.js";
 import { parseBody } from "../validation.js";
 import { requireAdmin } from "./auth.js";
 import { revokeWorkspaceRuntime } from "../user-runtime.js";
@@ -40,7 +42,7 @@ const environmentPreferenceSchema = z.object({
   favorite: z.boolean().optional(),
 }).refine((preference) => preference.alias !== undefined || preference.favorite !== undefined, "至少需要提供一项环境偏好");
 
-function mapEnvironment(row: Record<string, unknown>) {
+function mapEnvironment(row: Record<string, unknown>, permissions?: PermissionMap) {
   return {
     id: row.id,
     groupId: row.group_id,
@@ -64,6 +66,7 @@ function mapEnvironment(row: Record<string, unknown>) {
     sortOrder: Number(row.sort_order ?? 0),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    permissions: permissions ?? null,
   };
 }
 
@@ -239,6 +242,7 @@ export async function registerEnvironmentRoutes(app: FastifyInstance): Promise<v
     if (!group) return reply.code(404).send({ error: "NOT_FOUND", message: "环境组不存在" });
     await app.db.prepare(`DELETE FROM environment_groups WHERE id = ? AND ${workspaceWhere()}`).run(request.params.id, ...workspaceParams(request));
     await app.db.prepare("DELETE FROM resource_grants WHERE resource_type = 'environment_group' AND resource_id = ?").run(request.params.id);
+    await deleteAccessForGroup(app.db, request.params.id);
     await revokeWorkspaceRuntime(app, request.admin!.workspace);
     await writeAudit(app.db, {
       action: "environment_group.deleted",
@@ -294,7 +298,7 @@ export async function registerEnvironmentRoutes(app: FastifyInstance): Promise<v
         ORDER BY CASE WHEN e.group_id IS NULL THEN 1 ELSE 0 END, g.sort_order, g.name, e.sort_order, e.name
       `).all(request.admin!.id, ...params) as Record<string, unknown>[];
       await applyKnowledgeDocumentCounts(app, rows);
-      return { items: rows.map(mapEnvironment) };
+      return { items: rows.map((row) => mapEnvironment(row, access.environmentPermissions(String(row.id)))) };
     },
   );
 
@@ -353,7 +357,8 @@ export async function registerEnvironmentRoutes(app: FastifyInstance): Promise<v
     `).get(request.admin!.id, request.params.id) as Record<string, unknown> | undefined;
     if (!row) return reply.code(404).send({ error: "NOT_FOUND", message: "环境不存在" });
     await applyKnowledgeDocumentCounts(app, [row]);
-    return { item: mapEnvironment(row) };
+    const access = await getWorkspaceAccess(app.db, request.admin!);
+    return { item: mapEnvironment(row, access.environmentPermissions(request.params.id)) };
   });
 
   app.post("/api/v1/environments", async (request, reply) => {
@@ -519,6 +524,7 @@ export async function registerEnvironmentRoutes(app: FastifyInstance): Promise<v
         ) WHERE environment_id IS NULL AND ${workspaceWhere()};
       `).run(...workspaceParams(request));
       await app.db.prepare("DELETE FROM resource_grants WHERE resource_type = 'environment' AND resource_id = ?").run(request.params.id);
+      await deleteAccessTargets(app.db, request.params.id);
     })();
     await revokeWorkspaceRuntime(app, request.admin!.workspace);
     await writeAudit(app.db, {

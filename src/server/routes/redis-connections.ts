@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { canManageWorkspace, getWorkspaceAccess, workspaceParams, workspaceWhere } from "../access-control.js";
+import { canManageWorkspace, getWorkspaceAccess, requireConnectionConfig, workspaceParams, workspaceWhere } from "../access-control.js";
+import { deleteAccessTargets } from "../access-authorizations.js";
 import { writeAudit } from "../audit.js";
 import { connectionEnvironmentMap, environmentsExist, normalizeEnvironmentIds, replaceConnectionEnvironments } from "../connection-environments.js";
 import { connectionGroupExists, resolveConnectionGroupId } from "../connection-groups.js";
@@ -164,7 +165,6 @@ export async function registerRedisConnectionRoutes(app: FastifyInstance): Promi
   });
 
   app.post("/api/v1/redis-connections", async (request, reply) => {
-    if (!requireWorkspaceManager(request, reply)) return;
     const body = parseBody(redisConnectionCreateSchema, request.body, reply);
     if (!body) return;
     const copySource = body.copyFromId
@@ -174,6 +174,7 @@ export async function registerRedisConnectionRoutes(app: FastifyInstance): Promi
     if (body.copyFromId && !copySource) return reply.code(404).send({ error: "NOT_FOUND", message: "要复制的 Redis 连接不存在" });
     const environmentIds = normalizeEnvironmentIds(body.environmentIds, body.environmentId);
     if (!await environmentsExist(app.db, environmentIds, workspaceParams(request))) return reply.code(400).send({ error: "INVALID_ENVIRONMENT", message: "所选环境中存在无效项" });
+    if (!await requireConnectionConfig(app.db, request.admin!, reply, "redis", null, environmentIds)) return;
     if (!await connectionGroupExists(app, body.connectionGroupId, "redis", workspaceParams(request))) return reply.code(400).send({ error: "INVALID_CONNECTION_GROUP", message: "所选 Redis 连接组不存在" });
     const invalidTunnel = await tunnelError(app, body.connectionMode, body.options.sshConnectionId, workspaceParams(request));
     if (invalidTunnel) return reply.code(400).send({ error: "INVALID_SSH_TUNNEL", message: invalidTunnel });
@@ -205,7 +206,7 @@ export async function registerRedisConnectionRoutes(app: FastifyInstance): Promi
   });
 
   app.put<{ Params: { id: string } }>("/api/v1/redis-connections/:id", async (request, reply) => {
-    if (!requireWorkspaceManager(request, reply)) return;
+    if (!await requireConnectionConfig(app.db, request.admin!, reply, "redis", request.params.id, [])) return;
     const body = parseBody(redisConnectionSchema, request.body, reply);
     if (!body) return;
     const existing = await app.db.prepare(`SELECT credential_ciphertext, connection_group_id FROM redis_connections WHERE id = ? AND ${workspaceWhere()}`).get(request.params.id, ...workspaceParams(request)) as { credential_ciphertext: string; connection_group_id: string | null } | undefined;
@@ -234,12 +235,13 @@ export async function registerRedisConnectionRoutes(app: FastifyInstance): Promi
   });
 
   app.delete<{ Params: { id: string } }>("/api/v1/redis-connections/:id", async (request, reply) => {
-    if (!requireWorkspaceManager(request, reply)) return;
     const row = await app.db.prepare(`SELECT name FROM redis_connections WHERE id = ? AND ${workspaceWhere()}`).get(request.params.id, ...workspaceParams(request)) as { name: string } | undefined;
     if (!row) return reply.code(404).send({ error: "NOT_FOUND", message: "Redis 连接不存在" });
+    if (!await requireConnectionConfig(app.db, request.admin!, reply, "redis", request.params.id, [])) return;
     await app.db.prepare("DELETE FROM redis_connections WHERE id = ?").run(request.params.id);
     await app.db.prepare("DELETE FROM connection_inspection_results WHERE connection_type = 'redis' AND connection_id = ?").run(request.params.id);
     await app.db.prepare("DELETE FROM resource_grants WHERE resource_type = 'redis_connection' AND resource_id = ?").run(request.params.id);
+    await deleteAccessTargets(app.db, request.params.id);
     await closeRedisConnectionPool(app, request.params.id);
     await revokeWorkspaceRuntime(app, request.admin!.workspace);
     await writeAudit(app.db, { action: "connection.redis_deleted", resourceType: "redis_connection", resourceId: request.params.id, summary: `删除 Redis 连接 ${row.name}`, request });

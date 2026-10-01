@@ -5,6 +5,7 @@ import { localizeMessage } from "../../i18n";
 const { m } = defineProps<{ m: Record<string, any> }>();
 const {
   payload,
+  selectedService,
   selectedDeploymentIds,
   activeWorkspace,
   runningAction,
@@ -17,7 +18,7 @@ const {
 </script>
 
 <template>
-  <div v-if="payload.canOperate && selectedDeploymentIds.length && activeWorkspace === 'service'" class="maintenance-batch-bar">
+  <div v-if="(payload.canOperate || (selectedService?.actions ?? []).includes('control')) && selectedDeploymentIds.length && activeWorkspace === 'service'" class="maintenance-batch-bar">
     <strong>{{ selectedDeploymentIds.length }} {{ $t('节点') }}</strong>
     <el-button @click="clearDeploymentSelection">{{ $t('取消选择') }}</el-button>
     <el-button :disabled="runningAction !== ''" @click="runBatchMaintenanceAction('start')">{{ $t('批量启动') }}</el-button>

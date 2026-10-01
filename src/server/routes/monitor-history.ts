@@ -6,7 +6,7 @@ import {
   type MonitorPressureSnapshot,
   type MonitorProcessSnapshot,
 } from "../../shared/monitor-performance.js";
-import { canAccessConnection, canAccessEnvironment } from "../access-control.js";
+import { requireEnvironmentAction } from "../access-control.js";
 import { visibleMonitorDisks } from "../../shared/monitor-alerts.js";
 import { MONITORING_MAX_POINTS, MONITORING_TOP_PROCESSES, capSeriesPoints } from "../../shared/monitoring.js";
 import { monitorAlertSettingsForEnvironment } from "../monitor-alerts.js";
@@ -243,10 +243,7 @@ export async function registerMonitorHistoryRoutes(app: FastifyInstance): Promis
       const query = historyQuerySchema.safeParse(request.query);
       if (!query.success) return reply.code(400).send({ error: "INVALID_MONITOR_HISTORY_RANGE", message: "监控时间范围无效" });
       const { environmentId, connectionId } = request.params;
-      if (!await canAccessEnvironment(app.db, request.admin!, environmentId)
-        || !await canAccessConnection(app.db, request.admin!, "ssh", connectionId)) {
-        return reply.code(404).send({ error: "MONITOR_HOST_NOT_FOUND", message: "监控主机不存在" });
-      }
+      if (!await requireEnvironmentAction(app.db, request.admin!, reply, environmentId, "maintenance", "view", `host:${connectionId}`, { error: "MONITOR_HOST_NOT_FOUND", message: "监控主机不存在" })) return;
       const connection = await app.db.prepare(`
         SELECT c.id, c.host, c.port, c.jump_connection_id,
           c.workspace_type, c.workspace_id, h.agent_id

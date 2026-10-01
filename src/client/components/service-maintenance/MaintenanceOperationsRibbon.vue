@@ -22,7 +22,7 @@ const {
       :key="action.id"
       type="button"
       class="script-action-button"
-      :disabled="runningScriptActionId !== '' || selectedService.status !== 'active' || !selectedService.deployments.length || !payload.canOperate"
+      :disabled="runningScriptActionId !== '' || selectedService.status !== 'active' || !selectedService.deployments.length || !((payload.canRunScripts ?? payload.canOperate) || (selectedService.actions ?? []).includes('script'))"
       @click="executeScriptAction(action)"
     >
       <component :is="resolveScriptActionIcon(action.icon)" :size="15" />

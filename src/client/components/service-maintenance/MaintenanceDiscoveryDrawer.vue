@@ -55,6 +55,14 @@ function peakTemperatureC(temperatures: Array<{ celsius: number }>) {
   return Math.max(...temperatures.map((item) => item.celsius)).toFixed(1);
 }
 
+function hostCanInstall(host: { sshConnectionId?: string } | null | undefined) {
+  if (!host?.sshConnectionId) return false;
+  const current = unref(payload);
+  if (current.canInstall ?? current.canOperate) return true;
+  const summary = current.discovery?.hosts?.find((item: { sshConnectionId?: string; actions?: string[] }) => item.sshConnectionId === host.sshConnectionId);
+  return Array.isArray(summary?.actions) && summary.actions.includes("install");
+}
+
 function onMonitorHostCommand(command: string | number | object) {
   const host = unref(selectedHost);
   if (!host?.sshConnectionId) return;
@@ -75,7 +83,7 @@ function onMonitorHostCommand(command: string | number | object) {
         <p :title="`${selectedHost.username}@${selectedHost.host}:${selectedHost.port} · ${formatTime(selectedHost.lastCollectedAt)}`">{{ hostPresence(selectedHost).label }} · {{ formatRelativeCollected(selectedHost.lastCollectedAt) }}<template v-if="selectedHost.snapshot?.operatingSystem"> · {{ selectedHost.snapshot.operatingSystem }} {{ selectedHost.snapshot.architecture }}</template></p>
         <p v-if="selectedHost.lastError && selectedHost.snapshot" class="deployment-warning">{{ localizeMessage(selectedHost.lastError) }}</p>
       </div>
-      <div v-if="payload.canOperate" class="host-observatory__actions">
+      <div v-if="hostCanInstall(selectedHost)" class="host-observatory__actions">
         <el-button v-if="selectedInstallTask && (isInstallTaskActive(selectedInstallTask) || selectedInstallTask.status === 'error')" :disabled="installingHosts.has(selectedHost.sshConnectionId)" :type="selectedInstallTask.status === 'error' ? 'danger' : 'primary'" plain @click="openInstallProgress(selectedHost)"><Clock3 v-if="isInstallTaskActive(selectedInstallTask)" :size="15" /><CircleAlert v-else :size="15" />{{ isInstallTaskActive(selectedInstallTask) ? $t('查看安装进度') : $t('查看安装失败详情') }}</el-button>
         <el-button v-else-if="selectedHost.monitorUpdateAvailable || !isMonitorInstalled(selectedHost)" :loading="installingHosts.has(selectedHost.sshConnectionId)" :disabled="refreshingHosts.has(selectedHost.sshConnectionId) || clearingHosts.has(selectedHost.sshConnectionId) || restartingHosts.has(selectedHost.sshConnectionId) || uninstallingHosts.has(selectedHost.sshConnectionId)" type="primary" @click="installMonitorOnHost(selectedHost)"><Download :size="15" />{{ isMonitorInstalled(selectedHost) ? $t('一键升级') : $t('一键安装监控服务') }}</el-button>
         <el-button :loading="refreshingHosts.has(selectedHost.sshConnectionId)" :disabled="installingHosts.has(selectedHost.sshConnectionId) || clearingHosts.has(selectedHost.sshConnectionId) || restartingHosts.has(selectedHost.sshConnectionId) || uninstallingHosts.has(selectedHost.sshConnectionId) || isInstallTaskActive(selectedInstallTask)" @click="refreshHost(selectedHost)"><ScanSearch :size="15" />{{ $t('扫描并拉取') }}</el-button>
@@ -134,7 +142,7 @@ function onMonitorHostCommand(command: string | number | object) {
         :services="payload.services"
         :managed-keys="discoveryManagedKeys"
         :can-configure="payload.canConfigure"
-        :can-operate="payload.canOperate"
+        :can-operate="payload.canInstall ?? payload.canOperate"
         :target-service-id="discoveryTargetServiceId"
         @enroll="beginCandidateEnrollment"
         @update:target-service-id="assignDiscoveryTarget"

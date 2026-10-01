@@ -3,7 +3,7 @@ import { useOrganizationContext } from "./context";
 import { ArrowRight, Building2, FolderKanban, FolderPlus, Pencil, Plus, Server, ShieldCheck, Trash2, UserRound, Users } from "@lucide/vue";
 import TipIcon from "../../components/TipIcon.vue";
 
-const { activateWorkspace, canManageOrganization, changeRole, createOrganizationDialog, deleteProject, detail, openCreateProject, openEditProject, openGrantDialog, openProjectMembersById, organizations, removeMember, resourceNames, resourceTypeLabels, revokeGrant, selectStructureNode, selectedGrantRows, selectedGrantTarget, selectedMember, selectedMemberProjects, selectedNode, selectedProject, selectedProjectChildren, selectedProjectPath, structureTree } = useOrganizationContext();
+const { activateWorkspace, canManageOrganization, changeRole, createOrganizationDialog, deleteProject, detail, openCreateProject, openEditGrant, openEditProject, openGrantDialog, openProjectMembersById, organizations, removeMember, revokeGrant, selectStructureNode, selectedGrantRows, selectedGrantTarget, selectedMember, selectedMemberProjects, selectedNode, selectedProject, selectedProjectChildren, selectedProjectPath, structureTree } = useOrganizationContext();
 </script>
 
 <template>
@@ -115,12 +115,13 @@ const { activateWorkspace, canManageOrganization, changeRole, createOrganization
                     </span>
                   </header>
                   <div v-if="selectedGrantRows.length" class="grant-ledger">
-                    <div class="grant-ledger__head"><span>{{ $t('资源') }}</span><span>{{ $t('类型') }}</span><span>{{ $t('授权来源') }}</span><span>{{ $t('操作') }}</span></div>
+                    <div class="grant-ledger__head"><span>{{ $t('资源') }}</span><span>{{ $t('权限') }}</span><span>{{ $t('到期') }}</span><span>{{ $t('来源') }}</span><span>{{ $t('操作') }}</span></div>
                     <div v-for="row in selectedGrantRows" :key="row.grant.id" class="grant-ledger__row">
-                      <span><Server :size="15" /><strong>{{ resourceNames.get(`${row.grant.resourceType}:${row.grant.resourceId}`) || row.grant.resourceId }}</strong></span>
-                      <span>{{ resourceTypeLabels[row.grant.resourceType] }}</span>
+                      <span><Server :size="15" /><strong :title="row.grant.label">{{ row.grant.label || row.grant.resourceId }}</strong></span>
+                      <span :title="row.grant.permissionText">{{ row.grant.permissionText }}</span>
+                      <span>{{ row.grant.expired ? $t('已过期') : row.grant.expiresAt ? new Date(row.grant.expiresAt).toLocaleString($locale()) : $t('永久') }}</span>
                       <span><em :class="{ 'is-inherited': row.inherited }">{{ row.inherited ? $t('继承自 {0}', [row.source]) : row.source }}</em></span>
-                      <span><button v-if="!row.inherited || selectedNode.type === 'organization'" type="button" @click="revokeGrant(row.grant)">{{ $t('撤销') }}</button><small v-else>{{ $t('在来源节点管理') }}</small></span>
+                      <span class="grant-ledger__actions"><template v-if="!row.inherited || selectedNode.type === 'organization'"><button type="button" class="is-edit" @click="openEditGrant(row.grant)">{{ $t('修改') }}</button><button type="button" @click="revokeGrant(row.grant)">{{ $t('撤销') }}</button></template><small v-else>{{ $t('在来源节点管理') }}</small></span>
                     </div>
                   </div>
                   <div v-else class="grant-empty"><ShieldCheck :size="24" /><span>{{ $t('暂无有效授权') }}</span></div>

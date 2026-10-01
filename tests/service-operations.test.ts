@@ -251,8 +251,8 @@ describe("service operation API contract", () => {
         headers: operationHeaders(),
         payload: { action: "restart" },
       });
-      expect(memberForbidden.statusCode).toBe(403);
-      expect(memberForbidden.json().error).toBe("WORKSPACE_ADMIN_REQUIRED");
+      expect(memberForbidden.statusCode).toBe(404);
+      expect(memberForbidden.json().error).toBe("DEPLOYMENT_NOT_FOUND");
     } finally {
       await app.close();
     }

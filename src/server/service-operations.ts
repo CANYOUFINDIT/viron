@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { isUniqueConstraintError } from "./database-errors.js";
-import { canAccessEnvironment, workspaceParams } from "./access-control.js";
+import { environmentCapability, workspaceParams } from "./access-control.js";
 import { writeAudit } from "./audit.js";
 import {
   SERVICE_OPERATION_BATCH_LIMIT,
@@ -19,6 +19,12 @@ import {
   type ServiceOperationTargetResult,
   type ServiceOperationType,
 } from "../shared/service-operations.js";
+
+const expiredOperationIds = new Set<string>();
+
+export function expireServiceOperation(operationId: string): void {
+  expiredOperationIds.add(operationId);
+}
 
 export class ServiceOperationError extends Error {
   readonly code: string;
@@ -99,9 +105,9 @@ export async function getServiceOperation(
     SELECT * FROM service_operation_runs WHERE id = ? AND workspace_type = ? AND workspace_id = ?
   `).get(operationId, workspaceType, workspaceId) as Record<string, unknown> | undefined;
   if (!row) throw new ServiceOperationError("OPERATION_NOT_FOUND", "操作不存在", 404);
-  if (!await canAccessEnvironment(app.db, request.admin!, String(row.environment_id))) {
-    throw new ServiceOperationError("OPERATION_NOT_FOUND", "操作不存在", 404);
-  }
+  const visibility = await environmentCapability(app.db, request.admin!, String(row.environment_id), "maintenance", "view");
+  if (visibility === "missing") throw new ServiceOperationError("OPERATION_NOT_FOUND", "操作不存在", 404);
+  if (visibility === "forbidden") throw new ServiceOperationError("ACTION_FORBIDDEN", "没有这项操作权限", 403);
   return mapOperationRow(row);
 }
 
@@ -233,7 +239,7 @@ export async function runServiceOperation(
     }).catch(() => undefined);
   }
   const deadline = Date.now() + SERVICE_OPERATION_TOTAL_TIMEOUT_MS;
-  const shouldContinue = () => Date.now() <= deadline;
+  const shouldContinue = () => Date.now() <= deadline && !expiredOperationIds.has(operationId);
   let targets: ServiceOperationTargetResult[] = [];
   let failure: unknown;
   try {
@@ -246,27 +252,33 @@ export async function runServiceOperation(
     failure = error;
   }
   const compact = capOperationResult(targets);
-  const timedOut = !shouldContinue() || targets.some((item) => item.errorCode === "OPERATION_TIMEOUT")
-    || (failure instanceof ServiceOperationError && failure.code === "OPERATION_TIMEOUT");
+  const expired = expiredOperationIds.has(operationId);
+  const timedOut = !expired && (!shouldContinue() || targets.some((item) => item.errorCode === "OPERATION_TIMEOUT")
+    || (failure instanceof ServiceOperationError && failure.code === "OPERATION_TIMEOUT"));
   const succeeded = compact.targets.filter((item) => item.ok).length;
   const failed = compact.targets.length - succeeded;
-  const status: ServiceOperationStatus = timedOut
-    ? "timed_out"
-    : failure
-      ? "failed"
-      : failed === 0
-        ? "succeeded"
-        : succeeded === 0
-          ? "failed"
-          : "partial";
+  const status: ServiceOperationStatus = expired
+    ? "failed"
+    : timedOut
+      ? "timed_out"
+      : failure
+        ? "failed"
+        : failed === 0
+          ? "succeeded"
+          : succeeded === 0
+            ? "failed"
+            : "partial";
   const completed = new Date().toISOString();
-  const errorCode = status === "succeeded"
-    ? ""
-    : status === "timed_out"
-      ? "OPERATION_TIMEOUT"
-      : status === "partial"
-        ? "OPERATION_PARTIAL"
-        : "OPERATION_FAILED";
+  const errorCode = expired
+    ? "ACCESS_EXPIRED"
+    : status === "succeeded"
+      ? ""
+      : status === "timed_out"
+        ? "OPERATION_TIMEOUT"
+        : status === "partial"
+          ? "OPERATION_PARTIAL"
+          : "OPERATION_FAILED";
+  expiredOperationIds.delete(operationId);
   await app.db.prepare(`
     UPDATE service_operation_runs SET
       status = ?, progress_json = ?, result_json = ?, error_code = ?, completed_at = ?, updated_at = ?

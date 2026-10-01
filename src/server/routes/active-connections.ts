@@ -87,8 +87,8 @@ function sendReservationError(error: unknown, reply: FastifyReply) {
 async function canReserveDesktop(app: FastifyInstance, user: NonNullable<Parameters<typeof canAccessConnection>[1]>, body: z.infer<typeof desktopReservationSchema>): Promise<boolean> {
   if (body.type === "web") return canAccessWebCredential(app.db, user, body.resourceId);
   if (body.type === "logs") return canAccessEnvironmentLog(app.db, user, body.resourceId);
-  if (!await canAccessConnection(app.db, user, "ssh", body.resourceId)) return false;
-  return !body.relatedResourceId || canAccessConnection(app.db, user, "ssh", body.relatedResourceId);
+  if (!await canAccessConnection(app.db, user, "ssh", body.resourceId, "use")) return false;
+  return !body.relatedResourceId || canAccessConnection(app.db, user, "ssh", body.relatedResourceId, "use");
 }
 
 export async function registerActiveConnectionRoutes(app: FastifyInstance): Promise<void> {
