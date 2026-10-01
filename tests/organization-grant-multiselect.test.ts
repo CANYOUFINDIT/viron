@@ -11,7 +11,9 @@ describe("organization resource grant selector", () => {
 
   it("submits the selected environments or connections with one duration", () => {
     expect(view).toContain("<OrganizationGrantDialog />");
-    expect(dialog).toContain('v-model="targetIds" multiple filterable clearable collapse-tags collapse-tags-tooltip');
+    expect(dialog).toContain('class="grant-kind-switch"');
+    expect(dialog).toContain('class="grant-picker-row"');
+    expect(dialog).not.toContain("<el-select");
     expect(dialog).toContain("wholeGroup");
     expect(dialog).toContain("expiresAt: expiryValue()");
     expect(dialog).toContain("scopeKind,");
