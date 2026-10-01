@@ -46,6 +46,18 @@
   --el-color-primary-dark-2: #105f52;
   --el-border-radius-base: 7px;
   --el-font-family: var(--font-ui);
+  --viron-menu-bg: #f5f7f7;
+  --viron-menu-border: #e2e8e7;
+  --viron-menu-text: #182127;
+  --viron-menu-text-active: #0f171b;
+  --viron-menu-hover: #e8eeee;
+  --viron-menu-icon: #74898e;
+  --viron-menu-danger: #a94d47;
+  --viron-menu-danger-icon: #a96862;
+  --viron-menu-disabled: #b2bdbc;
+  --viron-menu-radius: 15px;
+  --viron-menu-item-radius: 9px;
+  --viron-menu-shadow: 0 16px 34px rgba(15, 28, 31, .18), 0 2px 8px rgba(15, 28, 31, .08);
 }
 
 :root.dark {
@@ -104,6 +116,16 @@
   --el-color-info-dark-2: #d7e3df;
   --el-mask-color: rgba(8, 16, 18, .72);
   --el-mask-color-extra-light: rgba(8, 16, 18, .36);
+  --viron-menu-bg: #1b292c;
+  --viron-menu-border: #314244;
+  --viron-menu-text: #e7ecea;
+  --viron-menu-text-active: #f4f7f6;
+  --viron-menu-hover: #243538;
+  --viron-menu-icon: #8ea29c;
+  --viron-menu-danger: #e7a29c;
+  --viron-menu-danger-icon: #e7a29c;
+  --viron-menu-disabled: #6d817d;
+  --viron-menu-shadow: 0 16px 34px rgba(0, 0, 0, .38), 0 2px 8px rgba(0, 0, 0, .24);
 }
 
 * { box-sizing: border-box; }
@@ -217,14 +239,14 @@ button { color: inherit; }
 .workspace-switcher__copy small { color: #5e7671; font-size: 9px; font-weight: 700; letter-spacing: .06em; line-height: 1.2; }
 .workspace-switcher__copy strong { margin-top: 2px; color: #dce7e4; font-size: 12px; font-weight: 700; line-height: 1.25; }
 .workspace-switcher__chevrons { flex: 0 0 auto; color: #607a74; }
-.workspace-switcher-popper.el-popper { padding: 0; border: 1px solid var(--ink-100); border-radius: 12px; background: var(--surface); box-shadow: 0 16px 38px rgba(8,22,25,.18), 0 3px 10px rgba(8,22,25,.08); overflow: hidden; }
+.workspace-switcher-popper.el-popper { padding: 0; border: 1px solid var(--viron-menu-border); border-radius: var(--viron-menu-radius); background: var(--viron-menu-bg); box-shadow: var(--viron-menu-shadow); overflow: hidden; }
 .workspace-switcher-popper .el-popper__arrow { display: none; }
-.workspace-menu.el-dropdown-menu { min-width: 246px; padding: 7px; background: var(--surface); }
+.workspace-switcher-popper .workspace-menu.el-dropdown-menu { min-width: 246px; padding: 7px; background: var(--viron-menu-bg); }
 .workspace-menu__heading { padding: 8px 9px 5px; color: var(--ink-400); font-size: 10px; font-weight: 800; letter-spacing: .08em; line-height: 1; list-style: none; }
-.workspace-menu .el-dropdown-menu__item { min-height: 47px; padding: 6px 9px; border-radius: 8px; color: var(--ink-700); gap: 9px; line-height: 1.2; }
-.workspace-menu .el-dropdown-menu__item:hover, .workspace-menu .el-dropdown-menu__item:focus, .workspace-menu .el-dropdown-menu__item.is-current { background: var(--teal-50); color: var(--teal-700); }
+.workspace-switcher-popper .workspace-menu .el-dropdown-menu__item { min-height: 47px; padding: 6px 9px; border-radius: var(--viron-menu-item-radius); color: var(--viron-menu-text); gap: 9px; line-height: 1.2; }
+.workspace-switcher-popper .workspace-menu .el-dropdown-menu__item:hover, .workspace-switcher-popper .workspace-menu .el-dropdown-menu__item:focus, .workspace-switcher-popper .workspace-menu .el-dropdown-menu__item.is-current { background: var(--viron-menu-hover); color: var(--viron-menu-text-active); }
 .workspace-menu__icon { width: 30px; height: 30px; flex: 0 0 30px; border-radius: 7px; background: var(--ink-50); color: var(--ink-500); display: grid; place-items: center; }
-.workspace-menu .el-dropdown-menu__item.is-current .workspace-menu__icon { background: var(--teal-100); color: var(--teal-700); }
+.workspace-switcher-popper .workspace-menu .el-dropdown-menu__item.is-current .workspace-menu__icon { background: var(--ink-50); color: var(--ink-500); }
 .workspace-menu__copy { min-width: 0; flex: 1; }
 .workspace-menu__copy strong, .workspace-menu__copy small { display: block; max-width: 156px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-menu__copy strong { font-size: 12px; font-weight: 750; }
@@ -1289,15 +1311,15 @@ button { color: inherit; }
 .workbench-connection-group + .workbench-connection-group { margin-top: 9px; }
 .workbench-connection-context-target { width: 100%; max-width: 100%; min-width: 0; display: block; }
 .workbench-connection-action--danger { color: var(--el-color-danger); }
-.workbench-connection-menu-popper.el-popper { --el-bg-color-overlay: #f5f7f7; padding: 0; border: 1px solid #e2e8e7; border-radius: 15px; background: #f5f7f7; box-shadow: 0 16px 34px rgba(15, 28, 31, .18), 0 2px 8px rgba(15, 28, 31, .08); overflow: hidden; }
+.workbench-connection-menu-popper.el-popper { --el-bg-color-overlay: var(--viron-menu-bg); padding: 0; border: 1px solid var(--viron-menu-border); border-radius: var(--viron-menu-radius); background: var(--viron-menu-bg); box-shadow: var(--viron-menu-shadow); overflow: hidden; }
 .workbench-connection-menu-popper .el-popper__arrow { display: none; }
-.workbench-connection-actions.el-dropdown-menu { min-width: 210px; padding: 7px; border-radius: 15px; background: #f5f7f7; }
-.workbench-connection-actions .el-dropdown-menu__item { min-height: 40px; padding: 0 10px; border-radius: 9px; color: #182127; gap: 11px; font-family: "SF Pro Text", "Avenir Next", "PingFang SC", "Noto Sans SC", sans-serif; font-size: 14px; font-weight: 500; line-height: 1; }
-.workbench-connection-actions .el-dropdown-menu__item:hover:not(.is-disabled), .workbench-connection-actions .el-dropdown-menu__item:focus:not(.is-disabled) { background: #e8eeee; color: #0f171b; }
-.workbench-connection-actions .el-dropdown-menu__item > svg { color: #74898e; }
+.workbench-connection-actions.el-dropdown-menu { min-width: 210px; padding: 7px; border-radius: var(--viron-menu-radius); background: var(--viron-menu-bg); }
+.workbench-connection-actions .el-dropdown-menu__item { min-height: 40px; padding: 0 10px; border-radius: var(--viron-menu-item-radius); color: var(--viron-menu-text); gap: 11px; font-family: "SF Pro Text", "Avenir Next", "PingFang SC", "Noto Sans SC", sans-serif; font-size: 14px; font-weight: 500; line-height: 1; }
+.workbench-connection-actions .el-dropdown-menu__item:hover:not(.is-disabled), .workbench-connection-actions .el-dropdown-menu__item:focus:not(.is-disabled) { background: var(--viron-menu-hover); color: var(--viron-menu-text-active); }
+.workbench-connection-actions .el-dropdown-menu__item > svg { color: var(--viron-menu-icon); }
 .workbench-connection-actions .el-dropdown-menu__item--divided { margin-top: 3px; border-top: 0; }
-.workbench-connection-actions .workbench-connection-action--danger { color: #a94d47; }
-.workbench-connection-actions .workbench-connection-action--danger > svg { color: #a96862; }
+.workbench-connection-actions .workbench-connection-action--danger { color: var(--viron-menu-danger); }
+.workbench-connection-actions .workbench-connection-action--danger > svg { color: var(--viron-menu-danger-icon); }
 .database-navigator-menu { position: fixed; z-index: 5200; min-width: 228px; max-width: 310px; padding: 4px; border: 1px solid rgba(121, 134, 137, .3); border-radius: 7px; background: rgba(247, 248, 248, .99); color: #1d2529; box-shadow: 0 14px 34px rgba(18, 28, 31, .22), 0 2px 8px rgba(18, 28, 31, .12); backdrop-filter: blur(14px) saturate(1.08); overflow: visible; outline: none; }
 .database-navigator-menu__row { position: relative; }
 .database-navigator-menu__row > .database-navigator-menu__submenu { display: none; }
@@ -1536,12 +1558,7 @@ button { color: inherit; }
 .sftp-filter-popover input::placeholder { color: #5e746f; }
 .sftp-filter-popover button { width: 23px; height: 23px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: #6f837e; display: grid; place-items: center; cursor: pointer; }
 .sftp-filter-popover button:hover { background: #263b37; color: #dce7e4; }
-.sftp-actions-popper.el-popper { padding: 0; border: 1px solid #dce3e2; border-radius: 10px; background: #f7f9f9; box-shadow: 0 16px 34px rgba(5,18,21,.28); overflow: hidden; }
-.sftp-actions-popper .el-popper__arrow { display: none; }
-.sftp-actions-menu.el-dropdown-menu { min-width: 186px; padding: 5px; background: #f7f9f9; }
-.sftp-actions-menu .el-dropdown-menu__item { min-height: 34px; padding: 0 9px; border-radius: 6px; color: #28363a; gap: 8px; font-size: 11px; }
-.sftp-actions-menu .el-dropdown-menu__item:hover:not(.is-disabled) { background: #e7efed; color: #176c58; }
-.sftp-actions-menu .el-dropdown-menu__item.is-disabled { color: #b2bdbc; }
+.sftp-actions-menu.el-dropdown-menu { min-width: 210px; }
 .sftp-pathbar { padding: 7px 9px; border-bottom: 1px solid #243538; display: grid; grid-template-columns: 28px 28px minmax(0, 1fr) 28px; align-items: center; gap: 3px; }
 .sftp-pathbar button { width: 28px; height: 28px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: #718681; display: grid; place-items: center; cursor: pointer; }
 .sftp-pathbar button:hover:not(:disabled) { background: #20332f; color: #63cfad; }
@@ -2495,14 +2512,7 @@ button { color: inherit; }
 .table-rule-row.is-sort { width: min(620px, 100%); grid-template-columns: 20px minmax(180px, 1fr) 126px 28px; }
 .table-rule-row .el-select { width: 100%; }
 .database-console-select-popper.el-select__popper.el-popper {
-  --el-bg-color-overlay: #202526;
-  --el-border-color-light: #3a4244;
-  --el-fill-color-light: #303637;
-  --el-text-color-regular: #d2d9d7;
-  --el-text-color-secondary: #aab3b0;
-  --el-text-color-placeholder: #98a19e;
-  --el-box-shadow-light: 0 8px 20px rgba(0, 0, 0, .32);
-  color-scheme: dark;
+  /* Shared menu popper. Do not restore the Element Plus select dropdown. */
 }
 .table-rule-row .table-rule-remove { width: 28px; padding: 0; border-color: transparent; background: transparent; color: #78817f; }
 .table-sort-chips { min-height: 34px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
@@ -3176,16 +3186,7 @@ button { color: inherit; }
 }
 :root.bright .database-workbench { --el-mask-color: #f4f7f7; }
 :root.bright .database-workbench .el-loading-spinner .path { stroke: #18806d; }
-:root.bright .database-console-select-popper.el-select__popper.el-popper {
-  --el-bg-color-overlay: #ffffff;
-  --el-border-color-light: #d5dfe0;
-  --el-fill-color-light: #eef3f2;
-  --el-text-color-regular: #40565b;
-  --el-text-color-secondary: #647a7f;
-  --el-text-color-placeholder: #647a7f;
-  --el-box-shadow-light: 0 8px 20px rgba(22, 40, 44, .16);
-  color-scheme: light;
-}
+
 :root.bright .database-workbench .db-connections,
 :root.bright .database-workbench .db-explorer { border-color: #d7e0e1; background: #f4f7f7; color: #26393e; }
 :root.bright .database-workbench .db-connections > header strong,
@@ -5106,4 +5107,80 @@ button { color: inherit; }
     animation-duration: .01ms !important;
     animation-delay: 0s !important;
   }
+}
+
+/* Approved dropdown: the SSH connection menu (15px panel, 7px inset, 40px rounded items, gray hover, dark text, no arrow).
+   Banned: the Element Plus select dropdown — flat full-bleed rows, a visible arrow, and selected text in the primary color. */
+.el-select__popper.el-popper,
+.el-dropdown__popper.el-popper {
+  --el-bg-color-overlay: var(--viron-menu-bg);
+  --el-border-color-light: var(--viron-menu-border);
+  --el-fill-color-light: var(--viron-menu-hover);
+  --el-text-color-regular: var(--viron-menu-text);
+  --el-text-color-secondary: var(--viron-menu-icon);
+  --el-dropdown-menuItem-hover-fill: var(--viron-menu-hover);
+  --el-dropdown-menuItem-hover-color: var(--viron-menu-text-active);
+  --el-dropdown-menu-box-shadow: var(--viron-menu-shadow);
+  --el-box-shadow-light: var(--viron-menu-shadow);
+  padding: 0;
+  border: 1px solid var(--viron-menu-border);
+  border-radius: var(--viron-menu-radius);
+  background: var(--viron-menu-bg);
+  box-shadow: var(--viron-menu-shadow);
+  overflow: hidden;
+}
+.el-select__popper.el-popper > .el-popper__arrow,
+.el-dropdown__popper.el-popper > .el-popper__arrow { display: none; }
+.el-select__popper .el-select-dropdown,
+.el-dropdown__popper .el-dropdown-menu {
+  border: 0;
+  border-radius: var(--viron-menu-radius);
+  background: var(--viron-menu-bg);
+  box-shadow: none;
+}
+.el-dropdown__popper .el-dropdown-menu,
+.el-select__popper .el-select-dropdown__list { margin: 0; padding: 7px; }
+.el-select__popper .el-select-dropdown__item,
+.el-dropdown__popper .el-dropdown-menu__item {
+  height: auto;
+  min-height: 40px;
+  margin: 0;
+  padding: 0 10px;
+  border-radius: var(--viron-menu-item-radius);
+  color: var(--viron-menu-text);
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  font-family: "SF Pro Text", "Avenir Next", "PingFang SC", "Noto Sans SC", sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1;
+}
+.el-select__popper .el-select-dropdown__item.is-hovering,
+.el-select__popper .el-select-dropdown__item.is-selected,
+.el-select__popper .el-select-dropdown__item.hover,
+.el-select__popper .el-select-dropdown__item:hover,
+.el-dropdown__popper .el-dropdown-menu__item:not(.is-disabled):hover,
+.el-dropdown__popper .el-dropdown-menu__item:not(.is-disabled):focus {
+  background: var(--viron-menu-hover);
+  color: var(--viron-menu-text-active);
+  font-weight: 500;
+}
+.el-dropdown__popper .el-dropdown-menu__item > svg,
+.el-select__popper .el-select-dropdown__item > svg { color: var(--viron-menu-icon); }
+.el-dropdown__popper .el-dropdown-menu__item--divided { margin-top: 3px; border-top: 0; }
+.el-dropdown__popper .el-dropdown-menu__item.is-disabled,
+.el-select__popper .el-select-dropdown__item.is-disabled {
+  background: transparent;
+  color: var(--viron-menu-disabled);
+  cursor: not-allowed;
+}
+.el-select__popper .el-select-dropdown.is-multiple .el-select-dropdown__item { padding-right: 32px; }
+.el-select__popper .el-select-dropdown.is-multiple .el-select-dropdown__item.is-selected::after { background-color: var(--viron-menu-icon); }
+.el-dropdown__popper .el-dropdown-menu__item.workbench-connection-action--danger { color: var(--viron-menu-danger); }
+.el-dropdown__popper .el-dropdown-menu__item.workbench-connection-action--danger > svg { color: var(--viron-menu-danger-icon); }
+.el-dropdown__popper .el-dropdown-menu__item.workbench-connection-action--danger:not(.is-disabled):hover,
+.el-dropdown__popper .el-dropdown-menu__item.workbench-connection-action--danger:not(.is-disabled):focus {
+  background: var(--viron-menu-hover);
+  color: var(--viron-menu-danger);
 }

@@ -98,9 +98,9 @@
   font-weight: 700;
 }
 .organization-switcher :deep(.el-select__prefix) { color: var(--teal-600); }
-.organization-switcher__option { min-width: 0; display: flex; align-items: center; gap: var(--space-sm); }
-.organization-switcher__option strong { min-width: 0; overflow: hidden; font-weight: 700; text-overflow: ellipsis; }
-.organization-switcher__option small { margin-inline-start: auto; color: var(--color-muted); font-size: var(--text-2xs); font-weight: 600; }
+.organization-switcher__option { width: 100%; min-width: 0; display: flex; align-items: center; gap: var(--space-sm); }
+.organization-switcher__option strong { min-width: 0; overflow: hidden; color: inherit; font-weight: 600; text-overflow: ellipsis; }
+.organization-switcher__option small { margin-inline-start: auto; color: var(--viron-menu-icon, var(--color-muted)); font-size: var(--text-2xs); font-weight: 600; }
 :global(.organization-switcher-popper) { min-width: 240px; }
 .workspace-console {
   border: 0;
