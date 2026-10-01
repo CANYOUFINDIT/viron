@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from "vue";
-import { Check, Database, FolderTree, MemoryStick, Search, Server, ShieldCheck } from "@lucide/vue";
+import { computed, nextTick, reactive, ref, watch } from "vue";
+import { ArrowLeft, ArrowRight, Boxes, Check, ChevronDown, ChevronRight, Database, EllipsisVertical, FolderTree, Globe2, MemoryStick, Search, Server, ShieldCheck, Star, TerminalSquare, X } from "@lucide/vue";
 import { api } from "../../api";
 import {
   ACTION_LABELS,
@@ -26,6 +26,7 @@ interface CatalogEnvironment {
   description: string;
   groupId: string | null;
   tags: string[];
+  favorite: boolean;
   webCount: number;
   sshCount: number;
   databaseCount: number;
@@ -48,10 +49,9 @@ interface EnvironmentSection {
   id: string;
   name: string;
   color: string;
-  description: string;
   canAuthorizeGroup: boolean;
+  isFavorite: boolean;
   items: CatalogEnvironment[];
-  showEmpty: boolean;
 }
 interface ConnectionSection { path: string; items: CatalogConnection[] }
 
@@ -77,6 +77,10 @@ const pickerReady = ref(false);
 const pickerGroups = ref<CatalogGroup[]>([]);
 const pickerEnvironments = ref<CatalogEnvironment[]>([]);
 const pickerConnections = ref<CatalogConnection[]>([]);
+const collapsedGroupIds = ref(new Set<string>());
+const collapsedConnectionPaths = ref(new Set<string>());
+const activeGroup = ref("");
+const sectionElements = new Map<string, HTMLElement>();
 let pickerRequest = 0;
 
 const durations: Array<{ id: DurationId; hours: number; label: string }> = [
@@ -112,7 +116,7 @@ const searchPlaceholder = computed(() => {
   if (activeFamily.value === "ssh_connection") return "搜索主机或标签";
   if (activeFamily.value === "database_connection") return "搜索数据库连接";
   if (activeFamily.value === "redis_connection") return "搜索 Redis 连接";
-  return "搜索环境、别称或环境组";
+  return "搜索环境名称、别称或标签";
 });
 
 const catalogGroupSource = computed(() => pickerReady.value ? pickerGroups.value : resources.value
@@ -127,6 +131,7 @@ const catalogEnvironmentSource = computed(() => pickerReady.value ? pickerEnviro
     description: "",
     groupId: item.groupId ?? null,
     tags: [],
+    favorite: false,
     webCount: 0,
     sshCount: 0,
     databaseCount: 0,
@@ -154,6 +159,10 @@ const environmentSections = computed<EnvironmentSection[]>(() => {
   const knownGroups = new Set(groups.map((group) => group.id));
   const environments = catalogEnvironmentSource.value;
   const sections: EnvironmentSection[] = [];
+  const favorites = environments.filter((item) => item.favorite && (!query || environmentMatches(item, query)));
+  if (!query || favorites.length) {
+    sections.push({ id: "favorites", name: "收藏", color: "#d49a2a", canAuthorizeGroup: false, isFavorite: true, items: favorites });
+  }
   for (const group of groups) {
     const members = environments.filter((item) => item.groupId === group.id);
     const groupMatches = !query || `${group.name} ${group.description}`.toLowerCase().includes(query);
@@ -163,24 +172,15 @@ const environmentSections = computed<EnvironmentSection[]>(() => {
       id: group.id,
       name: group.name,
       color: group.color || "#7d8891",
-      description: group.description,
       canAuthorizeGroup: true,
+      isFavorite: false,
       items,
-      showEmpty: !items.length,
     });
   }
   const ungrouped = environments.filter((item) => !item.groupId || !knownGroups.has(item.groupId));
   const ungroupedItems = query ? ungrouped.filter((item) => environmentMatches(item, query)) : ungrouped;
-  if (ungroupedItems.length) {
-    sections.push({
-      id: "ungrouped",
-      name: "未分组",
-      color: "#7d8891",
-      description: "",
-      canAuthorizeGroup: false,
-      items: ungroupedItems,
-      showEmpty: false,
-    });
+  if (!query || ungroupedItems.length) {
+    sections.push({ id: "ungrouped", name: "未分组", color: "#7d8891", canAuthorizeGroup: false, isFavorite: false, items: ungroupedItems });
   }
   return sections;
 });
@@ -205,7 +205,9 @@ const connectionSections = computed<ConnectionSection[]>(() => {
     })
     .map(([path, sectionItems]) => ({ path, items: sectionItems }));
 });
-const pickerEmpty = computed(() => activeFamily.value === "environment" ? environmentSections.value.length === 0 : connectionSections.value.length === 0);
+const pickerEmpty = computed(() => activeFamily.value === "environment"
+  ? !environmentSections.value.some((section) => section.items.length)
+  : connectionSections.value.length === 0);
 const emptyLabel = computed(() => {
   if (keyword.value.trim()) return activeFamily.value === "environment" ? "没有匹配的环境" : "没有匹配的连接";
   if (activeFamily.value === "ssh_connection") return "没有可用 SSH 连接";
@@ -265,8 +267,13 @@ function environmentTitle(item: CatalogEnvironment) {
   return item.alias.trim() || item.name;
 }
 
-function environmentSecondary(item: CatalogEnvironment) {
-  return item.alias.trim() && item.alias.trim() !== item.name ? item.name : "";
+function environmentAccent(item: CatalogEnvironment, section: EnvironmentSection) {
+  if (!section.isFavorite) return section.color;
+  return catalogGroupSource.value.find((group) => group.id === item.groupId)?.color || "#7d8891";
+}
+
+function sectionLabel(section: EnvironmentSection) {
+  return section.isFavorite || section.id === "ungrouped";
 }
 
 function connectionEndpoint(item: CatalogConnection) {
@@ -298,6 +305,8 @@ function applyGrant() {
   blankChecks();
   catalog.value = {};
   keyword.value = "";
+  collapsedGroupIds.value = new Set();
+  collapsedConnectionPaths.value = new Set();
   step.value = "pick";
   if (!grant) {
     kind.value = "environment";
@@ -306,6 +315,7 @@ function applyGrant() {
     targetIds.value = [];
     duration.value = "8h";
     customEnd.value = "";
+    focusDirectory();
     hydrating.value = false;
     return;
   }
@@ -325,7 +335,12 @@ function applyGrant() {
     duration.value = "custom";
     customEnd.value = toLocalInput(grant.expiresAt);
   }
+  focusDirectory();
   hydrating.value = false;
+}
+
+function focusDirectory() {
+  activeGroup.value = environmentSections.value[0]?.id ?? "";
 }
 
 function normalizeGroup(item: { id?: string; name?: string; description?: string; color?: string }): CatalogGroup | null {
@@ -342,6 +357,7 @@ function normalizeEnvironment(item: Partial<CatalogEnvironment> & { id?: string;
     description: item.description ?? "",
     groupId: item.groupId ?? null,
     tags: Array.isArray(item.tags) ? item.tags : [],
+    favorite: Boolean(item.favorite),
     webCount: Number(item.webCount ?? 0),
     sshCount: Number(item.sshCount ?? 0),
     databaseCount: Number(item.databaseCount ?? 0),
@@ -393,6 +409,9 @@ watch(grantDialog, (open) => {
   applyGrant();
   void loadPicker();
 }, { immediate: true });
+watch(environmentSections, (sections) => {
+  if (!sections.some((section) => section.id === activeGroup.value)) activeGroup.value = sections[0]?.id ?? "";
+}, { immediate: true });
 watch([targetIds, wholeGroup, kind], () => { void loadCatalog(); });
 
 async function loadCatalog() {
@@ -414,6 +433,43 @@ function chooseFamily(next: Family) {
   wholeGroup.value = false;
   targetIds.value = [];
   keyword.value = "";
+  collapsedGroupIds.value = new Set();
+  collapsedConnectionPaths.value = new Set();
+  focusDirectory();
+}
+
+function setSectionRef(element: unknown, id: string) {
+  if (element instanceof HTMLElement) sectionElements.set(id, element);
+  else if (!element) sectionElements.delete(id);
+}
+
+function toggleCollapsedGroup(id: string) {
+  const next = new Set(collapsedGroupIds.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  collapsedGroupIds.value = next;
+}
+
+async function scrollToGroup(id: string) {
+  activeGroup.value = id;
+  if (collapsedGroupIds.value.has(id)) {
+    const next = new Set(collapsedGroupIds.value);
+    next.delete(id);
+    collapsedGroupIds.value = next;
+    await nextTick();
+  }
+  sectionElements.get(id)?.scrollIntoView({ block: "nearest" });
+}
+
+function connectionGroupOpen(path: string) {
+  return !collapsedConnectionPaths.value.has(path);
+}
+
+function toggleConnectionGroup(path: string) {
+  const next = new Set(collapsedConnectionPaths.value);
+  if (next.has(path)) next.delete(path);
+  else next.add(path);
+  collapsedConnectionPaths.value = next;
 }
 
 function groupSelected(id: string) {
@@ -546,7 +602,7 @@ function submit() {
 </script>
 
 <template>
-  <el-dialog append-to-body v-model="grantDialog" align-center class="envman-dialog grant-auth-dialog" :title="editingGrant ? $t('修改授权') : $t('授权资源')" width="min(980px, calc(100% - 32px))" @closed="editingGrant = null">
+  <el-dialog append-to-body v-model="grantDialog" align-center class="envman-dialog grant-auth-dialog" :title="editingGrant ? $t('修改授权') : $t('授权资源')" width="min(1280px, calc(100vw - 32px))" @closed="editingGrant = null">
     <div v-if="subject" class="dialog-subject">
       <span class="dialog-subject__icon"><ShieldCheck :size="18" /></span>
       <div>
@@ -565,51 +621,149 @@ function submit() {
           <template #prefix><Search :size="15" /></template>
         </el-input>
 
-        <div class="grant-picker" :aria-label="activeFamily === 'environment' ? $t('环境总览') : $t(families.find((item) => item.value === activeFamily)?.label || '资源')" v-loading="pickerLoading && pickerEmpty">
-          <template v-if="activeFamily === 'environment'">
-            <section v-for="section in environmentSections" :key="section.id" class="grant-picker-section">
-              <header class="grant-picker-group" :class="{ 'is-selected': groupSelected(section.id) }">
-                <i :style="{ background: section.color }"></i>
-                <strong :title="section.description || section.name">{{ section.id === 'ungrouped' ? $t(section.name) : section.name }}</strong>
-                <small>{{ section.items.length }} {{ $t('个环境') }}</small>
-                <button v-if="section.canAuthorizeGroup" type="button" class="grant-whole-group" :class="{ 'is-active': groupSelected(section.id) }" :aria-pressed="groupSelected(section.id)" :title="$t('整个组，以后新加的环境也算')" @click="selectWholeGroup(section.id)">{{ $t('整个组') }}</button>
-              </header>
-              <p v-if="section.showEmpty && !groupSelected(section.id)" class="grant-picker-note">{{ $t('这一组里还没有环境') }}</p>
-              <button v-for="item in section.items" :key="item.id" type="button" class="grant-picker-row" :class="{ 'is-selected': environmentSelected(item.id) }" :aria-pressed="environmentSelected(item.id)" @click="toggleEnvironment(item.id)">
-                <span class="grant-picker-copy">
-                  <strong>{{ environmentTitle(item) }}</strong>
-                  <small v-if="environmentSecondary(item)">{{ environmentSecondary(item) }}</small>
-                  <small v-if="item.detailed" class="grant-picker-meta"><span>Web {{ item.webCount }}</span><span>SSH {{ item.sshCount }}</span><span>{{ $t('数据库') }} {{ item.databaseCount }}</span><span>Redis {{ item.redisCount }}</span></small>
-                </span>
-                <Check v-if="environmentSelected(item.id)" class="grant-picker-check" :size="16" />
-              </button>
-            </section>
-          </template>
-          <template v-else>
-            <section v-for="section in connectionSections" :key="section.path || 'ungrouped'" class="grant-picker-section">
-              <header class="grant-picker-group">
-                <FolderTree :size="14" />
-                <strong>{{ section.path || $t('未分组') }}</strong>
-                <small>{{ section.items.length }}</small>
-                <button type="button" class="grant-whole-group" :class="{ 'is-active': sectionFullySelected(section.items) }" :aria-pressed="sectionFullySelected(section.items)" @click="toggleConnectionSection(section.items)">{{ $t('全选') }}</button>
-              </header>
-              <button v-for="item in section.items" :key="item.id" type="button" class="grant-picker-row" :class="{ 'is-selected': connectionSelected(item.id) }" :aria-pressed="connectionSelected(item.id)" @click="toggleConnection(item.id)">
-                <Server v-if="item.type === 'ssh'" :size="16" />
-                <Database v-else-if="item.type === 'database'" :size="16" />
-                <MemoryStick v-else :size="16" />
-                <span class="grant-picker-copy">
-                  <strong>{{ item.name }}</strong>
-                  <small v-if="connectionEndpoint(item)">{{ connectionEndpoint(item) }}</small>
-                  <small v-if="item.tags.length" class="grant-picker-meta"><span v-for="tag in item.tags.slice(0, 3)" :key="tag">{{ tag }}</span></small>
-                </span>
-                <Check v-if="connectionSelected(item.id)" class="grant-picker-check" :size="16" />
-              </button>
-            </section>
-          </template>
-          <div v-if="pickerEmpty" class="grant-picker-empty">
+        <div v-if="activeFamily === 'environment'" class="grant-overview" :aria-label="$t('环境总览')" v-loading="pickerLoading && !pickerReady">
+          <div v-if="pickerLoading && !pickerReady" class="grant-picker-empty"></div>
+          <div v-else-if="environmentSections.length" class="overview-directory-layout">
+            <aside class="environment-directory" :aria-label="$t('环境目录')">
+              <div class="environment-directory__title"><Boxes :size="16" /><strong>{{ $t('环境目录') }}</strong><small>{{ catalogEnvironmentSource.length }}</small></div>
+              <nav>
+                <button v-for="section in environmentSections" :key="section.id" type="button" class="environment-directory__link" :class="{ 'is-active': activeGroup === section.id }" @click="scrollToGroup(section.id)">
+                  <span class="group-color" :style="{ background: section.color }"></span>
+                  <span>{{ sectionLabel(section) ? $t(section.name) : section.name }}</span>
+                  <small>{{ section.items.length }}</small>
+                </button>
+              </nav>
+            </aside>
+            <main class="environment-sections">
+              <section v-for="section in environmentSections" :key="section.id" :ref="(element) => setSectionRef(element, section.id)" class="environment-section" :class="{ 'is-favorites': section.isFavorite, 'is-collapsed': collapsedGroupIds.has(section.id), 'is-whole-group': groupSelected(section.id) }">
+                <header>
+                  <button class="section-toggle" type="button" :aria-expanded="!collapsedGroupIds.has(section.id)" @click="toggleCollapsedGroup(section.id)">
+                    <ChevronDown :size="16" :class="{ 'is-collapsed': collapsedGroupIds.has(section.id) }" />
+                    <span class="group-color" :style="{ background: section.color }"></span>
+                    <h3>{{ sectionLabel(section) ? $t(section.name) : section.name }}</h3>
+                    <small>{{ section.items.length }} {{ $t('个环境') }}</small>
+                  </button>
+                  <button v-if="section.canAuthorizeGroup" type="button" class="grant-whole-group" :class="{ 'is-active': groupSelected(section.id) }" :aria-pressed="groupSelected(section.id)" :title="$t('整个组，以后新加的环境也算')" @click="selectWholeGroup(section.id)">{{ $t('整个组') }}</button>
+                </header>
+                <template v-if="!collapsedGroupIds.has(section.id)">
+                  <div v-if="section.items.length" class="environment-grid">
+                    <article v-for="item in section.items" :key="item.id" class="environment-card-shell">
+                      <button type="button" class="environment-card" :class="{ 'is-selected': environmentSelected(item.id) }" :style="{ '--environment-card-accent': environmentAccent(item, section) }" :aria-pressed="environmentSelected(item.id)" @click="toggleEnvironment(item.id)">
+                        <div class="environment-browser__chrome">
+                          <div class="environment-browser__windowbar">
+                            <span class="environment-browser__tab">
+                              <i></i>
+                              <strong :title="environmentTitle(item)">{{ environmentTitle(item) }}</strong>
+                              <X class="environment-browser__tab-close" :size="11" aria-hidden="true" />
+                            </span>
+                            <Check v-if="environmentSelected(item.id)" class="grant-card-check" :size="16" />
+                          </div>
+                          <div class="environment-browser__toolbar">
+                            <ArrowLeft :size="14" class="is-muted" aria-hidden="true" />
+                            <ArrowRight :size="14" class="is-muted" aria-hidden="true" />
+                            <span class="environment-browser__address"><i></i><strong>{{ item.name }}</strong></span>
+                            <span class="grant-card-star" :class="{ 'is-favorite': item.favorite }"><Star :size="13" :fill="item.favorite ? 'currentColor' : 'none'" aria-hidden="true" /></span>
+                            <EllipsisVertical :size="14" aria-hidden="true" />
+                          </div>
+                        </div>
+                        <div class="environment-browser__page">
+                          <div class="environment-browser__summary">
+                            <span class="environment-avatar">{{ item.name.slice(0, 2) }}</span>
+                            <p class="environment-card__description">{{ item.description || $t('暂无环境说明') }}</p>
+                          </div>
+                          <div class="resource-counts" :aria-label="$t('环境资源数量')">
+                            <span :title="$t('{0} 个 Web 入口', [item.webCount])"><Globe2 :size="14" aria-hidden="true" /><strong>{{ item.webCount }}</strong><small>Web</small></span>
+                            <span :title="$t('{0} 个 SSH 连接', [item.sshCount])"><TerminalSquare :size="14" aria-hidden="true" /><strong>{{ item.sshCount }}</strong><small>SSH</small></span>
+                            <span :title="$t('{0} 个数据库连接', [item.databaseCount])"><Database :size="14" aria-hidden="true" /><strong>{{ item.databaseCount }}</strong><small>{{ $t('数据库') }}</small></span>
+                            <span :title="$t('{0} 个 Redis 连接', [item.redisCount])"><MemoryStick :size="14" aria-hidden="true" /><strong>{{ item.redisCount }}</strong><small>Redis</small></span>
+                          </div>
+                        </div>
+                      </button>
+                    </article>
+                  </div>
+                  <div v-else class="environment-group-empty">
+                    <Server :size="20" />
+                    <span>{{ section.isFavorite ? (keyword.trim() ? $t('当前筛选下没有收藏环境') : $t('暂无收藏环境')) : (keyword.trim() ? $t('当前筛选下没有环境') : $t('暂无环境')) }}</span>
+                  </div>
+                </template>
+              </section>
+            </main>
+          </div>
+          <div v-else class="grant-picker-empty">
             <Search v-if="keyword.trim()" :size="20" />
             <Server v-else :size="20" />
             <span>{{ $t(emptyLabel) }}</span>
+          </div>
+        </div>
+
+        <div v-else-if="activeFamily === 'ssh_connection'" class="ssh-workbench grant-ssh-list" :aria-label="$t('SSH 连接')" v-loading="pickerLoading && !pickerReady">
+          <div v-if="pickerLoading && !pickerReady" class="grant-picker-empty"></div>
+          <aside v-else class="ssh-hosts">
+            <div class="ssh-host-list">
+              <section v-for="section in connectionSections" :key="section.path || 'ungrouped'" class="workbench-connection-group">
+                <div class="grant-workbench-head">
+                  <button class="workbench-group-toggle" type="button" :aria-expanded="connectionGroupOpen(section.path)" @click="toggleConnectionGroup(section.path)"><ChevronDown v-if="connectionGroupOpen(section.path)" :size="14" /><ChevronRight v-else :size="14" /><FolderTree :size="13" /><span>{{ section.path || $t('未分组') }}</span><em>{{ section.items.length }}</em></button>
+                  <button type="button" class="grant-whole-group" :class="{ 'is-active': sectionFullySelected(section.items) }" :aria-pressed="sectionFullySelected(section.items)" @click="toggleConnectionSection(section.items)">{{ $t('全选') }}</button>
+                </div>
+                <div v-for="item in connectionGroupOpen(section.path) ? section.items : []" :key="item.id" class="ssh-host-card" :class="{ 'is-selected': connectionSelected(item.id) }">
+                  <button class="connection-card-main" type="button" :aria-pressed="connectionSelected(item.id)" @click="toggleConnection(item.id)">
+                    <span class="ssh-host-card__icon"><Server :size="16" /></span>
+                    <span class="ssh-host-card__details">
+                      <strong>{{ item.name }}</strong>
+                      <small v-if="connectionEndpoint(item)" class="ssh-host-card__endpoint"><em v-if="item.username">{{ item.username }}@</em><span>{{ item.host }}:{{ item.port }}</span></small>
+                      <span v-if="item.tags.length" class="ssh-host-tags"><i v-for="tag in item.tags.slice(0, 3)" :key="tag">{{ tag }}</i></span>
+                    </span>
+                  </button>
+                  <Check v-if="connectionSelected(item.id)" class="grant-host-check" :size="15" />
+                </div>
+              </section>
+              <div v-if="pickerEmpty" class="sidebar-empty"><Search v-if="keyword.trim()" :size="20" /><Server v-else :size="22" /><span>{{ $t(emptyLabel) }}</span></div>
+            </div>
+          </aside>
+        </div>
+
+        <div v-else-if="activeFamily === 'database_connection'" class="database-navigator grant-db-list" :aria-label="$t('数据库连接')" v-loading="pickerLoading && !pickerReady">
+          <div v-if="pickerLoading && !pickerReady" class="grant-picker-empty"></div>
+          <div v-else class="database-navigation-tree">
+            <section v-for="section in connectionSections" :key="section.path || 'ungrouped'" class="database-navigation-group">
+              <div class="grant-workbench-head">
+                <button class="database-navigation-group-toggle" type="button" :aria-expanded="connectionGroupOpen(section.path)" @click="toggleConnectionGroup(section.path)"><ChevronDown v-if="connectionGroupOpen(section.path)" :size="12" /><ChevronRight v-else :size="12" /><FolderTree :size="13" /><span>{{ section.path || $t('未分组') }}</span></button>
+                <button type="button" class="grant-whole-group" :class="{ 'is-active': sectionFullySelected(section.items) }" :aria-pressed="sectionFullySelected(section.items)" @click="toggleConnectionSection(section.items)">{{ $t('全选') }}</button>
+              </div>
+              <div v-for="item in connectionGroupOpen(section.path) ? section.items : []" :key="item.id" class="database-navigation-connection-row" :class="{ 'is-selected': connectionSelected(item.id) }">
+                <span class="database-navigation-placeholder"></span>
+                <button class="database-navigation-connection" type="button" :aria-pressed="connectionSelected(item.id)" :title="connectionEndpoint(item) || item.name" @click="toggleConnection(item.id)">
+                  <Database :size="14" />
+                  <span class="database-navigation-connection-label">{{ item.name }}</span>
+                  <Check v-if="connectionSelected(item.id)" :size="13" />
+                  <span v-else></span>
+                  <i></i>
+                </button>
+              </div>
+            </section>
+            <div v-if="pickerEmpty" class="sidebar-empty"><Search v-if="keyword.trim()" :size="20" /><Database v-else :size="22" /><span>{{ $t(emptyLabel) }}</span></div>
+          </div>
+        </div>
+
+        <div v-else class="grant-redis-list" :aria-label="$t('Redis 连接')" v-loading="pickerLoading && !pickerReady">
+          <div v-if="pickerLoading && !pickerReady" class="grant-picker-empty"></div>
+          <div v-else class="redis-connection-list">
+            <section v-for="section in connectionSections" :key="section.path || 'ungrouped'">
+              <h4>
+                <button type="button" @click="toggleConnectionGroup(section.path)"><ChevronDown v-if="connectionGroupOpen(section.path)" :size="13" /><ChevronRight v-else :size="13" /><FolderTree :size="13" /><span>{{ section.path || $t('未分组') }}</span></button>
+                <small>{{ section.items.length }}</small>
+                <button type="button" class="grant-whole-group" :class="{ 'is-active': sectionFullySelected(section.items) }" :aria-pressed="sectionFullySelected(section.items)" @click="toggleConnectionSection(section.items)">{{ $t('全选') }}</button>
+              </h4>
+              <button v-for="item in connectionGroupOpen(section.path) ? section.items : []" :key="item.id" type="button" :class="{ 'is-active': connectionSelected(item.id) }" :aria-pressed="connectionSelected(item.id)" @click="toggleConnection(item.id)">
+                <span class="redis-connection-icon"><MemoryStick :size="14" /></span>
+                <div>
+                  <strong>{{ item.name }}</strong>
+                  <small v-if="connectionEndpoint(item)">{{ connectionEndpoint(item) }}</small>
+                </div>
+                <Check v-if="connectionSelected(item.id)" :size="14" />
+              </button>
+            </section>
+            <div v-if="pickerEmpty" class="grant-picker-empty"><Search v-if="keyword.trim()" :size="20" /><MemoryStick v-else :size="20" /><span>{{ $t(emptyLabel) }}</span></div>
           </div>
         </div>
 
@@ -680,34 +834,49 @@ function submit() {
 .grant-kind-switch { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
 .grant-kind-switch button { min-height: 36px; padding: 0 8px; border: 1px solid var(--color-rule-strong); border-radius: 8px; background: var(--color-paper); color: var(--color-ink-soft); cursor: pointer; font-size: 13px; }
 .grant-kind-switch button:hover { color: var(--color-ink); }
-.grant-kind-switch button:focus-visible, .grant-picker-row:focus-visible, .grant-whole-group:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.grant-kind-switch button:focus-visible, .grant-whole-group:focus-visible, .grant-overview .environment-card:focus-visible, .grant-overview .environment-directory__link:focus-visible, .grant-ssh-list .connection-card-main:focus-visible, .grant-db-list .database-navigation-connection:focus-visible, .grant-redis-list button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 .grant-kind-switch button.is-active { border-color: var(--color-accent); background: var(--color-accent-soft); color: var(--color-accent-strong); font-weight: 650; }
-.grant-picker { max-height: min(420px, 48vh); margin-top: 12px; border: 1px solid var(--color-rule); border-radius: 10px; background: var(--color-paper); overflow: auto; }
-.grant-picker-section + .grant-picker-section { border-top: 1px solid var(--color-rule); }
-.grant-picker-group { position: sticky; top: 0; z-index: 1; min-height: 40px; padding: 0 10px 0 12px; display: flex; align-items: center; gap: 8px; background: color-mix(in srgb, var(--color-ink) 4%, var(--color-paper)); color: var(--color-ink); }
-.grant-picker-group.is-selected { background: var(--color-accent-soft); }
-.grant-picker-group > i { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; }
-.grant-picker-group > strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
-.grant-picker-group > small, .grant-picker-note, .grant-pick-summary small, .grant-selection-bar span { color: var(--color-muted); font-size: 12px; }
-.grant-picker-group > svg { flex: 0 0 auto; color: var(--color-muted); }
-.grant-whole-group { margin-left: auto; min-height: 28px; padding: 0 8px; border: 1px solid var(--color-rule-strong); border-radius: 7px; background: var(--color-paper); color: var(--color-ink-soft); cursor: pointer; font-size: 12px; }
+.grant-overview { margin-top: 12px; }
+.grant-overview .overview-directory-layout { margin-top: 0; }
+.grant-overview .environment-directory { top: 0; }
+.grant-overview .environment-section > header { gap: 8px; }
+.grant-overview .environment-section.is-whole-group > header { padding-right: 4px; border-radius: 8px; background: var(--color-accent-soft); }
+.grant-overview .environment-card { width: 100%; padding: 0; border: 1px solid var(--color-rule-strong); font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.grant-overview .environment-card.is-selected .environment-browser__page { background: color-mix(in srgb, var(--color-accent-soft) 70%, var(--color-paper-raised)); }
+.grant-card-check { flex: 0 0 auto; margin: 0 10px 6px 0; color: #7dcea0; }
+.grant-card-star { width: 22px; height: 22px; color: var(--color-sidebar-muted); display: grid; place-items: center; }
+.grant-card-star.is-favorite { color: #e0a13a; }
+.grant-whole-group { flex: 0 0 auto; margin-left: auto; min-height: 28px; padding: 0 8px; border: 1px solid var(--color-rule-strong); border-radius: 7px; background: var(--color-paper); color: var(--color-ink-soft); cursor: pointer; font-size: 12px; }
 .grant-whole-group:hover { color: var(--color-ink); }
 .grant-whole-group.is-active { border-color: var(--color-accent); background: var(--color-accent-soft); color: var(--color-accent-strong); }
-.grant-picker-note { margin: 0; padding: 6px 12px 8px 28px; }
-.grant-picker-row { width: 100%; min-height: 44px; padding: 8px 12px 8px 28px; border: 0; background: transparent; color: var(--color-ink); display: flex; align-items: center; gap: 10px; cursor: pointer; text-align: left; }
-.grant-picker-row > svg { flex: 0 0 auto; color: var(--color-muted); }
-.grant-picker-row:hover { background: color-mix(in srgb, var(--color-ink) 4%, transparent); }
-.grant-picker-row.is-selected { background: var(--color-accent-soft); }
-.grant-picker-row.is-selected:hover { background: var(--color-accent-soft); }
-.grant-picker-row.is-selected > strong, .grant-picker-copy strong { font-weight: 650; }
-.grant-picker-row.is-selected .grant-picker-copy strong { color: var(--color-accent-strong); }
-.grant-picker-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
-.grant-picker-copy strong, .grant-picker-copy > small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.grant-picker-copy strong { font-size: 13px; }
-.grant-picker-copy > small, .grant-picker-meta { color: var(--color-muted); font-size: 11px; }
-.grant-picker-meta { display: flex; flex-wrap: wrap; gap: 2px 10px; white-space: normal; }
-.grant-picker-check { flex: 0 0 auto; color: var(--color-accent); }
 .grant-picker-empty { min-height: 168px; display: grid; place-items: center; align-content: center; gap: 8px; color: var(--color-muted); font-size: 13px; }
+.grant-ssh-list.ssh-workbench { height: auto; min-height: 0; max-height: min(560px, 54vh); margin-top: 12px; display: flex; background: #101c1f; overflow: auto; }
+.grant-ssh-list .ssh-hosts { flex: 1; border-right: 0; }
+.grant-ssh-list .ssh-host-card__endpoint { grid-area: endpoint; display: flex; align-items: baseline; min-width: 0; overflow: hidden; color: #687d78; font-size: 12px; line-height: 1.35; white-space: nowrap; }
+.grant-ssh-list .ssh-host-card.is-selected { border-color: #315148; background: #1a2d29; }
+.grant-host-check { position: absolute; top: 10px; right: 10px; color: #5dd0ac; }
+:root.bright .grant-ssh-list.ssh-workbench,
+:root.bright .grant-workbench-head { background: #f4f7f7; }
+:root.bright .grant-ssh-list .ssh-host-card.is-selected { border-color: #8fbfb0; background: #e7f1ee; }
+:root.bright .grant-ssh-list .ssh-host-card__endpoint { color: #6b7f83; }
+:root.bright .grant-host-check { color: #126f60; }
+:root.bright .grant-db-list.database-navigator { border-color: #d3dbdc; }
+.grant-workbench-head { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 6px; background: #101c1f; }
+.grant-workbench-head .workbench-group-toggle, .grant-workbench-head .database-navigation-group-toggle { flex: 1; min-width: 0; }
+.grant-db-list.database-navigator { height: auto; min-height: 0; max-height: min(560px, 54vh); margin-top: 12px; display: block; border: 1px solid #293a3d; border-radius: 10px; overflow: auto; }
+.grant-redis-list { min-height: 0; max-height: min(560px, 54vh); margin-top: 12px; padding: 8px; border: 1px solid var(--color-rule); border-radius: 10px; background: color-mix(in srgb, var(--color-paper) 76%, var(--color-paper-raised)); overflow: auto; }
+.grant-redis-list .redis-connection-list { display: flex; flex-direction: column; gap: 8px; }
+.grant-redis-list h4 { min-height: 32px; margin: 0; display: flex; align-items: center; gap: 6px; color: var(--color-muted); font-size: 12px; }
+.grant-redis-list h4 > button:first-child { min-width: 0; flex: 1; padding: 0; border: 0; background: transparent; color: inherit; display: flex; align-items: center; gap: 6px; cursor: pointer; text-align: left; font: inherit; font-weight: 700; }
+.grant-redis-list h4 > button:first-child span, .grant-redis-list .redis-connection-list button strong, .grant-redis-list .redis-connection-list button small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.grant-redis-list h4 small { font-family: var(--font-mono); }
+.grant-redis-list .redis-connection-list section > button { width: 100%; min-height: 46px; padding: 6px 8px; border: 0; border-radius: 7px; background: transparent; color: var(--color-ink-soft); display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 8px; text-align: left; cursor: pointer; }
+.grant-redis-list .redis-connection-list section > button:hover { background: color-mix(in srgb, var(--color-ink) 5%, transparent); }
+.grant-redis-list .redis-connection-list section > button.is-active { background: var(--color-accent-soft); color: var(--color-accent-strong); }
+.grant-redis-list .redis-connection-icon { width: 28px; height: 28px; border: 1px solid var(--color-rule); border-radius: 6px; display: grid; place-items: center; }
+.grant-redis-list .redis-connection-list button > div { min-width: 0; display: flex; flex-direction: column; }
+.grant-redis-list .redis-connection-list button small { color: var(--color-muted); font-family: var(--font-mono); font-size: 11px; }
+.grant-pick-summary small, .grant-selection-bar span { color: var(--color-muted); font-size: 12px; }
 .grant-pick-summary { min-height: 22px; margin: 12px 0 0; display: flex; align-items: baseline; gap: 8px; }
 .grant-pick-summary strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-ink); font-size: 13px; }
 .grant-pick-summary.is-empty { color: var(--color-muted); font-size: 12px; }

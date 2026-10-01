@@ -12,7 +12,10 @@ describe("organization resource grant selector", () => {
   it("submits the selected environments or connections with one duration", () => {
     expect(view).toContain("<OrganizationGrantDialog />");
     expect(dialog).toContain('class="grant-kind-switch"');
-    expect(dialog).toContain('class="grant-picker-row"');
+    expect(dialog).toContain('class="environment-card"');
+    expect(dialog).toContain('class="ssh-host-card"');
+    expect(dialog).toContain('class="database-navigation-connection"');
+    expect(dialog).toContain('class="redis-connection-list"');
     expect(dialog).not.toContain("<el-select");
     expect(dialog).toContain("wholeGroup");
     expect(dialog).toContain("expiresAt: expiryValue()");
