@@ -1,9 +1,58 @@
 <script setup lang="ts">
-import { useOrganizationContext } from "./context";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { ArrowRight, Building2, FolderKanban, FolderPlus, Pencil, Plus, Server, ShieldCheck, Trash2, UserRound, Users } from "@lucide/vue";
 import TipIcon from "../../components/TipIcon.vue";
+import { currentLocale, translate } from "../../i18n";
+import { useOrganizationContext } from "./context";
+import { GRANT_TIMELINE_LEGEND, buildGrantTimeline, grantRemainingCopy, type GrantTimelineBar } from "./grant-timeline";
 
 const { activateWorkspace, canManageOrganization, changeRole, createOrganizationDialog, deleteProject, detail, openCreateProject, openEditGrant, openEditProject, openGrantDialog, openProjectMembersById, organizations, removeMember, revokeGrant, selectStructureNode, selectedGrantRows, selectedGrantTarget, selectedMember, selectedMemberProjects, selectedNode, selectedProject, selectedProjectChildren, selectedProjectPath, structureTree } = useOrganizationContext();
+
+const grantView = ref<"list" | "timeline">("list");
+const timelineNow = ref(Date.now());
+const DAY_MS = 86_400_000;
+let timelineClock: ReturnType<typeof setInterval> | undefined;
+
+onMounted(() => {
+  timelineClock = setInterval(() => { timelineNow.value = Date.now(); }, 60_000);
+});
+onBeforeUnmount(() => {
+  if (timelineClock) clearInterval(timelineClock);
+});
+
+const grantTimeline = computed(() => buildGrantTimeline(selectedGrantRows.value.map((row) => ({
+  id: row.grant.id,
+  label: row.grant.label || row.grant.resourceId,
+  createdAt: row.grant.createdAt,
+  expiresAt: row.grant.expiresAt,
+  expired: row.grant.expired,
+})), timelineNow.value));
+
+const grantTimelineRows = computed(() => {
+  const rows = new Map(selectedGrantRows.value.map((row) => [row.grant.id, row]));
+  return grantTimeline.value.bars.flatMap((bar) => {
+    const row = rows.get(bar.id);
+    return row ? [{ bar, row, remain: grantRemainingCopy(bar.remainingMs) }] : [];
+  });
+});
+
+function timelineTick(time: number): string {
+  const span = grantTimeline.value.axisEnd - grantTimeline.value.axisStart;
+  const options: Intl.DateTimeFormatOptions = span < 2 * DAY_MS
+    ? { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }
+    : { year: "numeric", month: "numeric", day: "numeric" };
+  return new Date(time).toLocaleString(currentLocale(), options);
+}
+
+function timelineBarTitle(bar: GrantTimelineBar, permissionText: string): string {
+  const start = new Date(bar.start).toLocaleString(currentLocale());
+  const end = bar.end === null ? translate("永久") : new Date(bar.end).toLocaleString(currentLocale());
+  return `${permissionText} · ${start} – ${end}`;
+}
+
+function grantSource(row: { source: string; inherited: boolean }): string {
+  return row.inherited ? translate("继承自 {0}", [row.source]) : row.source;
+}
 </script>
 
 <template>
@@ -110,18 +159,52 @@ const { activateWorkspace, canManageOrganization, changeRole, createOrganization
                   <header>
                     <div><strong>{{ selectedNode.type === 'organization' ? $t('组织授权总览') : $t('连接与资源授权') }}</strong><small>{{ selectedGrantRows.length }} {{ $t('项有效授权') }}</small></div>
                     <span class="node-grants__tools">
+                      <div v-if="selectedGrantRows.length" class="grant-view-switch" role="radiogroup" :aria-label="$t('授权视角')">
+                        <button type="button" role="radio" :aria-checked="grantView === 'list'" :class="{ 'is-active': grantView === 'list' }" @click="grantView = 'list'">{{ $t('列表') }}</button>
+                        <button type="button" role="radio" :aria-checked="grantView === 'timeline'" :class="{ 'is-active': grantView === 'timeline' }" @click="grantView = 'timeline'">{{ $t('时间线') }}</button>
+                      </div>
                       <TipIcon :content="$t('子项目组继承父项目组授权；成员权限是个人直授与所属项目组、祖先项目组授权的并集。')" placement="left" />
                       <el-button v-if="selectedGrantTarget" type="primary" @click="openGrantDialog"><ShieldCheck :size="15" />{{ $t('授权资源') }}</el-button>
                     </span>
                   </header>
-                  <div v-if="selectedGrantRows.length" class="grant-ledger">
+                  <div v-if="selectedGrantRows.length && grantView === 'list'" class="grant-ledger">
                     <div class="grant-ledger__head"><span>{{ $t('资源') }}</span><span>{{ $t('权限') }}</span><span>{{ $t('到期') }}</span><span>{{ $t('来源') }}</span><span>{{ $t('操作') }}</span></div>
                     <div v-for="row in selectedGrantRows" :key="row.grant.id" class="grant-ledger__row">
                       <span><Server :size="15" /><strong :title="row.grant.label">{{ row.grant.label || row.grant.resourceId }}</strong></span>
                       <span :title="row.grant.permissionText">{{ row.grant.permissionText }}</span>
                       <span>{{ row.grant.expired ? $t('已过期') : row.grant.expiresAt ? new Date(row.grant.expiresAt).toLocaleString($locale()) : $t('永久') }}</span>
-                      <span><em :class="{ 'is-inherited': row.inherited }">{{ row.inherited ? $t('继承自 {0}', [row.source]) : row.source }}</em></span>
+                      <span><em :class="{ 'is-inherited': row.inherited }">{{ grantSource(row) }}</em></span>
                       <span class="grant-ledger__actions"><template v-if="!row.inherited || selectedNode.type === 'organization'"><button type="button" class="is-edit" @click="openEditGrant(row.grant)">{{ $t('修改') }}</button><button type="button" @click="revokeGrant(row.grant)">{{ $t('撤销') }}</button></template><small v-else>{{ $t('在来源节点管理') }}</small></span>
+                    </div>
+                  </div>
+                  <div v-else-if="selectedGrantRows.length" class="grant-timeline">
+                    <div class="grant-timeline__legend">
+                      <span v-for="item in GRANT_TIMELINE_LEGEND" :key="item.tone" :class="`is-${item.tone}`">{{ $t(item.label) }}</span>
+                    </div>
+                    <div class="grant-timeline__scale">
+                      <span class="grant-timeline__pad"></span>
+                      <div class="grant-timeline__axis">
+                        <span>{{ timelineTick(grantTimeline.axisStart) }}</span>
+                        <span class="grant-timeline__now-label" :style="{ left: `clamp(16px, ${grantTimeline.nowLeft}%, calc(100% - 16px))` }">{{ $t('现在') }}</span>
+                        <span>{{ timelineTick(grantTimeline.axisEnd) }}</span>
+                      </div>
+                      <span class="grant-timeline__pad"></span>
+                      <span class="grant-timeline__pad"></span>
+                    </div>
+                    <div v-for="item in grantTimelineRows" :key="item.bar.id" class="grant-timeline__row">
+                      <span class="grant-timeline__identity">
+                        <Server :size="15" />
+                        <span>
+                          <strong :title="item.row.grant.label">{{ item.row.grant.label || item.row.grant.resourceId }}</strong>
+                          <small :title="`${item.row.grant.permissionText} · ${grantSource(item.row)}`">{{ item.row.grant.permissionText }} · {{ grantSource(item.row) }}</small>
+                        </span>
+                      </span>
+                      <div class="grant-timeline__track" :title="timelineBarTitle(item.bar, item.row.grant.permissionText)">
+                        <i class="grant-timeline__now" :style="{ left: `${grantTimeline.nowLeft}%` }"></i>
+                        <b class="grant-timeline__bar" :class="`is-${item.bar.tone}`" :style="{ left: `${item.bar.left}%`, width: `${item.bar.width}%` }"></b>
+                      </div>
+                      <span class="grant-timeline__remain" :class="`is-${item.bar.tone}`">{{ $t(item.remain.key, item.remain.values) }}</span>
+                      <span class="grant-ledger__actions"><template v-if="!item.row.inherited || selectedNode.type === 'organization'"><button type="button" class="is-edit" @click="openEditGrant(item.row.grant)">{{ $t('修改') }}</button><button type="button" @click="revokeGrant(item.row.grant)">{{ $t('撤销') }}</button></template><small v-else>{{ $t('在来源节点管理') }}</small></span>
                     </div>
                   </div>
                   <div v-else class="grant-empty"><ShieldCheck :size="24" /><span>{{ $t('暂无有效授权') }}</span></div>
