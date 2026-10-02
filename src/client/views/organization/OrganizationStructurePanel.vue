@@ -38,10 +38,14 @@ const grantTimelineRows = computed(() => {
 
 function timelineTick(time: number): string {
   const span = grantTimeline.value.axisEnd - grantTimeline.value.axisStart;
-  const options: Intl.DateTimeFormatOptions = span < 2 * DAY_MS
-    ? { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }
-    : { year: "numeric", month: "numeric", day: "numeric" };
-  return new Date(time).toLocaleString(currentLocale(), options);
+  const locale = currentLocale();
+  if (span < 2 * DAY_MS) {
+    return new Date(time).toLocaleString(locale, { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
+  }
+  const sameYear = new Date(grantTimeline.value.axisStart).getFullYear() === new Date(grantTimeline.value.axisEnd).getFullYear();
+  return new Date(time).toLocaleDateString(locale, sameYear
+    ? { month: "numeric", day: "numeric" }
+    : { year: "numeric", month: "numeric", day: "numeric" });
 }
 
 function timelineBarTitle(bar: GrantTimelineBar, permissionText: string): string {
@@ -185,7 +189,7 @@ function grantSource(row: { source: string; inherited: boolean }): string {
                       <span class="grant-timeline__pad"></span>
                       <div class="grant-timeline__axis">
                         <span>{{ timelineTick(grantTimeline.axisStart) }}</span>
-                        <span class="grant-timeline__now-label" :style="{ left: `clamp(16px, ${grantTimeline.nowLeft}%, calc(100% - 16px))` }">{{ $t('现在') }}</span>
+                        <span class="grant-timeline__now-label" :style="{ left: `${grantTimeline.nowLeft}%` }">{{ $t('现在') }}</span>
                         <span>{{ timelineTick(grantTimeline.axisEnd) }}</span>
                       </div>
                       <span class="grant-timeline__pad"></span>
@@ -196,7 +200,10 @@ function grantSource(row: { source: string; inherited: boolean }): string {
                         <Server :size="15" />
                         <span>
                           <strong :title="item.row.grant.label">{{ item.row.grant.label || item.row.grant.resourceId }}</strong>
-                          <small :title="`${item.row.grant.permissionText} · ${grantSource(item.row)}`">{{ item.row.grant.permissionText }} · {{ grantSource(item.row) }}</small>
+                          <small>
+                            <em :class="{ 'is-inherited': item.row.inherited }">{{ grantSource(item.row) }}</em>
+                            <span v-if="item.row.grant.permissionText" :title="item.row.grant.permissionText">{{ item.row.grant.permissionText }}</span>
+                          </small>
                         </span>
                       </span>
                       <div class="grant-timeline__track" :title="timelineBarTitle(item.bar, item.row.grant.permissionText)">

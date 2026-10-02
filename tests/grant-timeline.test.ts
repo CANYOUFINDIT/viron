@@ -31,6 +31,16 @@ describe("grant timeline", () => {
     expect(forever.remainingMs).toBe(Number.POSITIVE_INFINITY);
   });
 
+  it("leaves room after now when every grant is permanent", () => {
+    const model = buildGrantTimeline([
+      { id: "local", label: "本地K8s", createdAt: iso(-75 * DAY), expiresAt: null },
+      { id: "default", label: "默认", createdAt: iso(-40 * DAY), expiresAt: null },
+    ], now);
+    expect(model.nowLeft).toBeGreaterThan(55);
+    expect(model.nowLeft).toBeLessThan(70);
+    expect(model.bars.every((bar) => bar.left + bar.width > model.nowLeft)).toBe(true);
+  });
+
   it("keeps an expired flag ahead of a later end time", () => {
     const model = buildGrantTimeline([
       { id: "flagged", label: "标记过期", createdAt: iso(-5 * DAY), expiresAt: iso(10 * DAY), expired: true },

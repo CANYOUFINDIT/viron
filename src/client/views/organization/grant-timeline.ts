@@ -67,8 +67,10 @@ export function buildGrantTimeline(grants: readonly GrantTimelineSource[], now =
   const finiteEnds = grants.map((grant) => parsed(grant.expiresAt)).filter((value): value is number => value !== null);
   let axisEnd = Math.max(now, ...(finiteEnds.length ? finiteEnds : [now]));
   const span = Math.max(axisEnd - axisStart, DAY);
-  axisStart -= span * 0.06;
-  axisEnd = Math.max(axisEnd + span * 0.12, now + span * 0.2);
+  axisStart -= span * 0.04;
+  axisEnd += span * 0.08;
+  // Keep a stretch of future on the axis. Otherwise permanent grants pin 现在 against the end date.
+  axisEnd = Math.max(axisEnd, now + Math.max(now - axisStart, DAY) * 0.5);
   const axisSpan = Math.max(axisEnd - axisStart, 1);
   const place = (start: number, end: number) => {
     let width = ((end - start) / axisSpan) * 100;
