@@ -8,6 +8,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import ElementPlus from "element-plus";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ref } from "vue";
+import { api } from "../src/client/api";
 import OrganizationGrantDialog from "../src/client/views/organization/OrganizationGrantDialog.vue";
 import { provideOrganizationContext, type OrganizationContext } from "../src/client/views/organization/context";
 import { i18nPlugin, language } from "../src/client/i18n";
@@ -43,6 +44,7 @@ function mountDialog(resources: Array<{ id: string; type: "environment_group" | 
 describe("organization grant dialog", () => {
   afterEach(() => {
     document.body.innerHTML = "";
+    vi.mocked(api).mockImplementation(async () => ({}));
   });
 
   it("checks the lighter actions when a heavier one is chosen and saves one duration", async () => {
@@ -164,6 +166,88 @@ describe("organization grant dialog", () => {
       targetIds: ["ssh-1", "ssh-2"],
       permissions: expect.objectContaining({ ssh: ["view", "use", "manage"] }),
       expiresAt: null,
+    }));
+    wrapper.unmount();
+  });
+
+  it("scopes a capability to named items grouped by environment", async () => {
+    language.value = "zh-CN";
+    vi.mocked(api).mockImplementation(async (path: string) => {
+      if (path.includes("grant-catalog")) {
+        return {
+          web: [
+            { id: "web-1", name: "Nacos", environmentId: "env-1", environmentName: "开发环境" },
+            { id: "web-2", name: "agione-算模方", environmentId: "env-2", environmentName: "Test" },
+            { id: "web-3", name: "dev-harbor", environmentId: "env-2", environmentName: "Test" },
+          ],
+          ssh: [],
+          logs: [],
+          database: [],
+          redis: [],
+          knowledge: [],
+          maintenance: [],
+        };
+      }
+      return {};
+    });
+    const { wrapper, saveGrant } = mountDialog([
+      { id: "env-1", type: "environment", name: "开发环境", groupId: "group-1" },
+      { id: "env-2", type: "environment", name: "Test", groupId: "group-1" },
+    ]);
+    await flushPromises();
+    for (const name of ["开发环境", "Test"]) {
+      const option = [...document.body.querySelectorAll("button")].find((item) => item.textContent?.includes(name));
+      option!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    }
+    await flushPromises();
+    const next = [...document.body.querySelectorAll("button")].find((button) => button.textContent?.trim() === "下一步") as HTMLButtonElement;
+    next.click();
+    await flushPromises();
+
+    const webRow = [...document.body.querySelectorAll(".grant-matrix__row")].find((row) => row.textContent?.includes("Web 入口")) as HTMLElement;
+    const view = [...webRow.querySelectorAll("label")].find((label) => label.textContent?.includes("查看并打开"));
+    const input = view!.querySelector("input") as HTMLInputElement;
+    input.checked = true;
+    input.dispatchEvent(new Event("change"));
+    await flushPromises();
+
+    expect(webRow.textContent).toContain("全部");
+    expect(webRow.textContent).toContain("指定");
+    expect(webRow.textContent).not.toContain("这一整块");
+    expect(webRow.textContent).not.toContain("只选其中几个");
+    const whole = [...webRow.querySelectorAll("button")].find((button) => button.textContent?.trim() === "全部") as HTMLButtonElement;
+    expect(whole.title).toBe("以后新增的也算");
+
+    const specify = [...webRow.querySelectorAll("button")].find((button) => button.textContent?.trim() === "指定") as HTMLButtonElement;
+    specify.click();
+    await flushPromises();
+
+    expect([...webRow.querySelectorAll(".grant-item-list h4")].map((heading) => heading.textContent)).toEqual(["开发环境", "Test"]);
+    const choices = [...webRow.querySelectorAll(".grant-item-list label")].map((label) => label.textContent?.trim());
+    expect(choices).toEqual(["Nacos", "agione-算模方", "dev-harbor"]);
+    expect(webRow.textContent).toContain("已选 0/3");
+    expect(webRow.textContent).toContain("至少选一个");
+
+    const nacos = [...webRow.querySelectorAll(".grant-item-list label")].find((label) => label.textContent?.includes("Nacos"));
+    const nacosInput = nacos!.querySelector("input") as HTMLInputElement;
+    nacosInput.checked = true;
+    nacosInput.dispatchEvent(new Event("change"));
+    await flushPromises();
+    expect(nacos!.classList.contains("is-checked")).toBe(true);
+    expect(webRow.textContent).toContain("已选 1/3");
+    expect(webRow.textContent).not.toContain("至少选一个");
+
+    const forever = [...document.body.querySelectorAll("button")].find((button) => button.textContent === "永久") as HTMLButtonElement;
+    forever.click();
+    await flushPromises();
+    const save = [...document.body.querySelectorAll("button")].find((button) => button.textContent?.includes("确认授权")) as HTMLButtonElement;
+    save.click();
+    await flushPromises();
+    expect(saveGrant).toHaveBeenCalledWith(expect.objectContaining({
+      scopeKind: "environment",
+      targetIds: ["env-1", "env-2"],
+      permissions: expect.objectContaining({ web: ["view"] }),
+      items: { web: ["web-1"] },
     }));
     wrapper.unmount();
   });

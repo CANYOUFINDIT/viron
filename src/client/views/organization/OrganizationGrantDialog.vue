@@ -17,7 +17,8 @@ type Kind = "environment_group" | "environment" | "ssh_connection" | "database_c
 type Family = "environment" | "ssh_connection" | "database_connection" | "redis_connection";
 type DurationId = "1h" | "8h" | "1d" | "7d" | "30d" | "custom" | "forever";
 type Step = "pick" | "permissions";
-interface CatalogItem { id: string; name: string; environmentName: string }
+interface CatalogItem { id: string; name: string; environmentId?: string; environmentName: string }
+interface ScopeGroup { environmentName: string; items: CatalogItem[] }
 interface CatalogGroup { id: string; name: string; description: string; color: string }
 interface CatalogEnvironment {
   id: string;
@@ -71,6 +72,7 @@ const pickedItems = reactive<Record<string, string[]>>({});
 const duration = ref<DurationId>("8h");
 const customEnd = ref("");
 const catalog = ref<Record<string, CatalogItem[]>>({});
+const catalogLoading = ref(false);
 const hydrating = ref(false);
 const pickerLoading = ref(false);
 const pickerReady = ref(false);
@@ -82,6 +84,7 @@ const collapsedConnectionPaths = ref(new Set<string>());
 const activeGroup = ref("");
 const sectionElements = new Map<string, HTMLElement>();
 let pickerRequest = 0;
+let catalogRequest = 0;
 
 const durations: Array<{ id: DurationId; hours: number; label: string }> = [
   { id: "1h", hours: 1, label: "1 小时" },
@@ -415,15 +418,57 @@ watch(environmentSections, (sections) => {
 watch([targetIds, wholeGroup, kind], () => { void loadCatalog(); });
 
 async function loadCatalog() {
+  const requestId = ++catalogRequest;
   if (!showItems.value || !currentOrganizationId.value) {
     catalog.value = {};
+    catalogLoading.value = false;
     return;
   }
+  catalogLoading.value = true;
   try {
-    catalog.value = await api<Record<string, CatalogItem[]>>(`/api/v1/organizations/${currentOrganizationId.value}/grant-catalog?environmentIds=${encodeURIComponent(targetIds.value.join(","))}`);
+    const next = await api<Record<string, CatalogItem[]>>(`/api/v1/organizations/${currentOrganizationId.value}/grant-catalog?environmentIds=${encodeURIComponent(targetIds.value.join(","))}`);
+    if (requestId !== catalogRequest) return;
+    catalog.value = next && typeof next === "object" ? next : {};
   } catch {
+    if (requestId !== catalogRequest) return;
     catalog.value = {};
+  } finally {
+    if (requestId === catalogRequest) catalogLoading.value = false;
   }
+}
+
+function scopeItems(capability: string) {
+  const seen = new Set<string>();
+  const items: CatalogItem[] = [];
+  for (const item of catalog.value[capability] ?? []) {
+    if (!item?.id || seen.has(item.id)) continue;
+    seen.add(item.id);
+    items.push(item);
+  }
+  return items;
+}
+
+function scopeGroups(capability: string): ScopeGroup[] {
+  const nameById = new Map(catalogEnvironmentSource.value.map((item) => [item.id, item.name]));
+  const groups = new Map<string, CatalogItem[]>();
+  for (const id of targetIds.value) {
+    const name = nameById.get(id);
+    if (name) groups.set(name, groups.get(name) ?? []);
+  }
+  for (const item of scopeItems(capability)) {
+    const name = item.environmentName || "";
+    const bucket = groups.get(name) ?? [];
+    bucket.push(item);
+    groups.set(name, bucket);
+  }
+  return [...groups.entries()]
+    .filter(([, items]) => items.length)
+    .map(([environmentName, items]) => ({ environmentName, items }));
+}
+
+function scopePickedCount(capability: string) {
+  const ids = new Set(scopeItems(capability).map((item) => item.id));
+  return (pickedItems[capability] ?? []).filter((id) => ids.has(id)).length;
 }
 
 function chooseFamily(next: Family) {
@@ -792,17 +837,28 @@ function submit() {
             </div>
             <div v-if="!isConnection" class="grant-matrix__scope">
               <template v-if="showItems && (checked[capability] ?? []).length">
-                <div class="grant-scope-choice">
-                  <button type="button" :class="{ 'is-active': itemMode[capability] !== 'some' }" @click="itemMode[capability] = 'all'">{{ $t('这一整块') }}</button>
-                  <button type="button" :class="{ 'is-active': itemMode[capability] === 'some' }" @click="itemMode[capability] = 'some'">{{ $t('只选其中几个') }}</button>
+                <div class="grant-scope-choice" role="radiogroup" :aria-label="$t('范围')">
+                  <button type="button" role="radio" :aria-checked="itemMode[capability] !== 'some'" :class="{ 'is-active': itemMode[capability] !== 'some' }" :title="$t('以后新增的也算')" @click="itemMode[capability] = 'all'">{{ $t('全部') }}</button>
+                  <button type="button" role="radio" :aria-checked="itemMode[capability] === 'some'" :class="{ 'is-active': itemMode[capability] === 'some' }" :title="$t('只包含勾选的这些')" @click="itemMode[capability] = 'some'">{{ $t('指定') }}</button>
                 </div>
-                <div v-if="itemMode[capability] === 'some'" class="grant-item-list">
-                  <label v-for="item in catalog[capability] ?? []" :key="item.id">
-                    <input type="checkbox" :checked="(pickedItems[capability] ?? []).includes(item.id)" @change="toggleItem(capability, item.id, ($event.target as HTMLInputElement).checked)">
-                    <span>{{ item.name }}</span>
-                    <small v-if="targetIds.length > 1">{{ item.environmentName }}</small>
-                  </label>
-                  <span v-if="!(catalog[capability] ?? []).length" class="grant-item-empty">{{ $t('这一块里还没有可选项') }}</span>
+                <div v-if="itemMode[capability] === 'some'" class="grant-scope-panel">
+                  <p v-if="catalogLoading" class="grant-scope-note">{{ $t('正在读取可选项') }}</p>
+                  <template v-else-if="scopeItems(capability).length">
+                    <p class="grant-scope-meta">
+                      <span>{{ $t('已选 {0}/{1}', [scopePickedCount(capability), scopeItems(capability).length]) }}</span>
+                      <span v-if="!scopePickedCount(capability)" class="is-needed">{{ $t('至少选一个') }}</span>
+                    </p>
+                    <div class="grant-item-list">
+                      <section v-for="group in scopeGroups(capability)" :key="group.environmentName || 'ungrouped'">
+                        <h4 v-if="scopeGroups(capability).length > 1">{{ group.environmentName || $t('未分组') }}</h4>
+                        <label v-for="item in group.items" :key="item.id" :class="{ 'is-checked': (pickedItems[capability] ?? []).includes(item.id) }">
+                          <input type="checkbox" :checked="(pickedItems[capability] ?? []).includes(item.id)" @change="toggleItem(capability, item.id, ($event.target as HTMLInputElement).checked)">
+                          <span>{{ item.name }}</span>
+                        </label>
+                      </section>
+                    </div>
+                  </template>
+                  <p v-else class="grant-scope-note">{{ $t('还没有可选项') }}</p>
                 </div>
               </template>
               <span v-else-if="wholeGroup && kind === 'environment_group'" class="grant-item-empty">{{ $t('整个组使用同一套操作') }}</span>
@@ -834,7 +890,7 @@ function submit() {
 .grant-kind-switch { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
 .grant-kind-switch button { min-height: 36px; padding: 0 8px; border: 1px solid var(--color-rule-strong); border-radius: 8px; background: var(--color-paper); color: var(--color-ink-soft); cursor: pointer; font-size: 13px; }
 .grant-kind-switch button:hover { color: var(--color-ink); }
-.grant-kind-switch button:focus-visible, .grant-whole-group:focus-visible, .grant-overview .environment-card:focus-visible, .grant-overview .environment-directory__link:focus-visible, .grant-ssh-list .connection-card-main:focus-visible, .grant-db-list .database-navigation-connection:focus-visible, .grant-redis-list button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.grant-kind-switch button:focus-visible, .grant-whole-group:focus-visible, .grant-overview .environment-card:focus-visible, .grant-overview .environment-directory__link:focus-visible, .grant-ssh-list .connection-card-main:focus-visible, .grant-db-list .database-navigation-connection:focus-visible, .grant-redis-list button:focus-visible, .grant-scope-choice button:focus-visible, .grant-item-list label:focus-within { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 .grant-kind-switch button.is-active { border-color: var(--color-accent); background: var(--color-accent-soft); color: var(--color-accent-strong); font-weight: 650; }
 .grant-overview { margin-top: 12px; }
 .grant-overview .overview-directory-layout { margin-top: 0; }
@@ -883,20 +939,35 @@ function submit() {
 .grant-selection-bar { margin-bottom: 14px; padding: 10px 12px; border: 1px solid var(--color-rule); border-radius: 10px; background: var(--color-paper); }
 .grant-selection-bar small, .grant-selection-bar strong, .grant-selection-bar span { display: block; }
 .grant-selection-bar strong { margin-top: 2px; color: var(--color-ink); font-size: 14px; }
-.grant-scope-choice { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
-.grant-scope-choice button, .grant-duration button { min-height: 34px; padding: 0 10px; border: 1px solid var(--color-rule-strong); border-radius: 8px; background: var(--color-paper); color: var(--color-ink-soft); cursor: pointer; font-size: 12px; }
-.grant-scope-choice button.is-active, .grant-duration button.is-active { border-color: var(--color-accent); background: var(--color-accent-soft); color: var(--color-accent-strong); }
+.grant-matrix__scope { min-width: 0; }
+.grant-scope-choice { display: grid; grid-template-columns: 1fr 1fr; width: 100%; border: 1px solid var(--color-rule-strong); border-radius: 8px; overflow: hidden; background: var(--color-paper); }
+.grant-scope-choice button { min-height: 32px; padding: 0 8px; border: 0; background: transparent; color: var(--color-ink-soft); cursor: pointer; font-size: 12px; }
+.grant-scope-choice button + button { border-left: 1px solid var(--color-rule-strong); }
+.grant-scope-choice button:hover { color: var(--color-ink); }
+.grant-scope-choice button.is-active { background: var(--color-accent-soft); color: var(--color-accent-strong); font-weight: 650; }
+.grant-scope-choice button:focus-visible { outline-offset: -2px; }
+.grant-scope-note, .grant-scope-meta { margin: 6px 2px 0; color: var(--color-muted); font-size: 12px; }
+.grant-scope-meta { display: flex; align-items: center; gap: 8px; }
+.grant-scope-meta .is-needed { color: var(--color-accent-strong); }
+.grant-duration button { min-height: 34px; padding: 0 10px; border: 1px solid var(--color-rule-strong); border-radius: 8px; background: var(--color-paper); color: var(--color-ink-soft); cursor: pointer; font-size: 12px; }
+.grant-duration button.is-active { border-color: var(--color-accent); background: var(--color-accent-soft); color: var(--color-accent-strong); }
 .grant-matrix { margin: 4px 0 16px; border: 1px solid var(--color-rule); border-radius: 10px; overflow: hidden; }
 .grant-matrix__head, .grant-matrix__row { display: grid; grid-template-columns: 112px minmax(220px, 1.1fr) minmax(220px, 1fr); gap: 12px; align-items: start; }
 .grant-matrix.is-connection .grant-matrix__head, .grant-matrix.is-connection .grant-matrix__row { grid-template-columns: 112px minmax(0, 1fr); }
 .grant-matrix__head { min-height: 36px; padding: 0 12px; align-items: center; background: color-mix(in srgb, var(--color-ink) 6%, var(--color-paper)); color: var(--color-muted); font-size: 12px; font-weight: 650; }
 .grant-matrix__row { padding: 12px; border-top: 1px solid var(--color-rule); }
 .grant-matrix__row > strong { padding-top: 4px; color: var(--color-ink); font-size: 13px; }
-.grant-matrix__actions, .grant-item-list { display: flex; flex-wrap: wrap; gap: 8px 14px; }
-.grant-matrix__actions label, .grant-item-list label { display: inline-flex; align-items: center; gap: 6px; color: var(--color-ink-soft); font-size: 12px; }
-.grant-matrix__actions input, .grant-item-list input { width: 15px; height: 15px; margin: 0; accent-color: var(--color-accent); }
-.grant-item-list { max-height: 148px; margin-top: 8px; overflow: auto; }
-.grant-item-list small, .grant-item-empty { color: var(--color-muted); font-size: 11px; }
+.grant-matrix__actions { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.grant-matrix__actions label { display: inline-flex; align-items: center; gap: 6px; color: var(--color-ink-soft); font-size: 12px; }
+.grant-matrix__actions input, .grant-item-list input { width: 15px; height: 15px; margin: 0; accent-color: var(--color-accent); flex: 0 0 auto; }
+.grant-item-list { display: flex; flex-direction: column; gap: 2px; max-height: 280px; margin-top: 6px; overflow: auto; }
+.grant-item-list h4 { margin: 6px 2px 2px; color: var(--color-muted); font-size: 11px; font-weight: 650; }
+.grant-item-list section:first-child h4 { margin-top: 0; }
+.grant-item-list label { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 8px; border-radius: 7px; color: var(--color-ink-soft); font-size: 12px; cursor: pointer; }
+.grant-item-list label:hover { background: color-mix(in srgb, var(--color-ink) 5%, transparent); }
+.grant-item-list label.is-checked { background: var(--color-accent-soft); color: var(--color-accent-strong); }
+.grant-item-list label span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.grant-item-empty { color: var(--color-muted); font-size: 11px; }
 .grant-duration { display: flex; flex-wrap: wrap; gap: 8px; }
 .grant-datetime { width: 100%; max-width: 280px; height: 36px; margin-top: 10px; padding: 0 10px; border: 1px solid var(--color-rule-strong); border-radius: 8px; background: var(--color-paper); color: var(--color-ink); }
 .grant-footer { display: flex; align-items: center; gap: 8px; width: 100%; }

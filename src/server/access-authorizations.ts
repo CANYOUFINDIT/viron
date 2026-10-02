@@ -622,7 +622,7 @@ function sanitizeItems(items: ItemMap): ItemMap {
   for (const capability of CAPABILITIES) {
     const values = items[capability];
     if (!values) continue;
-    if (!values.length) throw new AccessAuthorizationError("INVALID_ITEMS", 400, "只选其中几个时至少选择一个对象");
+    if (!values.length) throw new AccessAuthorizationError("INVALID_ITEMS", 400, "指定时至少选择一个");
     result[capability] = [...new Set(values)];
   }
   return result;
