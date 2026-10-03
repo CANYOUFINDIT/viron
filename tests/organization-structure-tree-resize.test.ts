@@ -78,9 +78,19 @@ describe("organization structure tree resizer", () => {
     const carets = wrapper.findAll(".el-tree-node__expand-icon");
     expect(carets.some((icon) => !icon.classes().includes("is-leaf"))).toBe(true);
     expect(carets.some((icon) => icon.classes().includes("is-leaf"))).toBe(true);
+    const orgRow = wrapper.get(".structure-node[title='onepro']");
+    const orgNode = orgRow.element.closest(".el-tree-node")!;
+    expect(orgNode.getAttribute("aria-expanded")).toBe("true");
+    await orgRow.trigger("click");
+    expect(orgNode.getAttribute("aria-expanded")).toBe("false");
+    expect(selectStructureNode).toHaveBeenCalledWith(expect.objectContaining({ type: "organization", entityId: "org-1" }), expect.anything(), expect.anything(), expect.anything());
+    await orgRow.trigger("click");
+    expect(orgNode.getAttribute("aria-expanded")).toBe("true");
     wrapper.unmount();
   });
 });
+
+const selectStructureNode = vi.fn();
 
 const Host = defineComponent({
   setup() {
@@ -105,7 +115,7 @@ const Host = defineComponent({
       organizations: ref([]),
       removeMember: vi.fn(),
       revokeGrant: vi.fn(),
-      selectStructureNode: vi.fn(),
+      selectStructureNode,
       selectedGrantRows: ref([]),
       selectedGrantTarget: ref(null),
       selectedMember: ref(null),

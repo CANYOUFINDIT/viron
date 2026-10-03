@@ -122,7 +122,7 @@ function grantExpiry(grant: { expired: boolean; expiresAt?: string | null }): st
                   <button v-if="canManageOrganization" type="button" :aria-label="$t('创建根项目组')" @click="openCreateProject(null)"><FolderPlus :size="16" /></button>
                 </header>
                 <div class="structure-tree__body">
-                  <el-tree :data="structureTree" node-key="key" default-expand-all :expand-on-click-node="false" @node-click="selectStructureNode">
+                  <el-tree :data="structureTree" node-key="key" default-expand-all @node-click="selectStructureNode">
                     <template #default="{ data }">
                       <span class="structure-node" :class="{ 'is-selected': selectedNode.type === data.type && selectedNode.id === data.entityId }" :title="data.label">
                         <span class="structure-node__icon" :class="`is-${data.type}`">
