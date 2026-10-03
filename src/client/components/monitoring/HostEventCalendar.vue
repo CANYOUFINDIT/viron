@@ -57,6 +57,7 @@ const loadingMonthKeys = ref<string[]>([]);
 const failedMonthKeys = ref<string[]>([]);
 
 let calendarAbort: AbortController | null = null;
+let calendarQuery = "";
 let eventsAbort: AbortController | null = null;
 
 function offsetMonth(monthKey: string, delta: number) {
@@ -389,6 +390,9 @@ function eventMetric(event: MonitorHostEventItem) {
 async function loadCalendar() {
   if (!isPlatform.value && (!props.environmentId || !props.hostId)) return;
   const neededMonths = activeMonths.value;
+  const queryKey = JSON.stringify([props.mode, props.environmentId, props.hostId, timezone, neededMonths]);
+  if (calendarAbort && calendarQuery === queryKey) return;
+  calendarQuery = queryKey;
   const cacheKeyForMonth = (monthKey: string) => isPlatform.value
     ? platformEventCalendarCacheKey(props.environmentId, timezone, [monthKey])
     : monitorEventCalendarCacheKey(props.environmentId, props.hostId, timezone, [monthKey]);
@@ -442,6 +446,7 @@ async function loadCalendar() {
     if (!controller.signal.aborted && firstError) error.value = firstError;
   } finally {
     if (calendarAbort === controller) {
+      calendarAbort = null;
       loading.value = false;
       loadingMonthKeys.value = [];
     }

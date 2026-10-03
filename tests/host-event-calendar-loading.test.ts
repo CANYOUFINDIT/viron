@@ -85,6 +85,18 @@ afterEach(() => {
 });
 
 describe("platform event calendar loading state", () => {
+  it("shares pending month queries across repeated refresh ticks", async () => {
+    mockedApi.mockImplementation(() => new Promise(() => undefined));
+    const wrapper = mountCalendar();
+    await flushPromises();
+    const signals = mockedApi.mock.calls.map(([, init]) => init!.signal!);
+    await wrapper.setProps({ refreshKey: "1" });
+    await wrapper.setProps({ refreshKey: "2" });
+    expect(mockedApi).toHaveBeenCalledTimes(3);
+    expect(signals.every((signal) => !signal.aborted)).toBe(true);
+    wrapper.unmount();
+  });
+
   it("does not paint unloaded platform months as green no-alert days", async () => {
     mockedApi.mockImplementation(() => new Promise(() => undefined));
 

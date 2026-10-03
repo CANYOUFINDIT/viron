@@ -67,6 +67,7 @@ const props = defineProps<{
   hosts: MonitoringHostCard[];
   selectedHostId: string;
   canOperate: boolean;
+  loading?: boolean;
   loadingMore?: boolean;
   loadedCount?: number;
   hostTotal?: number;
@@ -507,7 +508,7 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
 
 <template>
   <section class="host-fleet" :class="{ 'is-detail-mode': detailMode }">
-    <div class="host-list-page">
+    <div class="host-list-page" v-loading="loading" :class="{ 'is-loading': loading }" :aria-busy="loading">
       <div v-if="detailMode" class="host-compact-head">
         <strong>{{ $t('主机节点') }}</strong>
         <el-input v-model="hostQuery" clearable :placeholder="$t('筛选节点')" />
@@ -661,7 +662,7 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
           </div>
         </section>
       </div>
-      <div v-else-if="!loadingMore" class="host-empty">
+      <div v-else-if="!loading && !loadingMore" class="host-empty">
         <Server :size="28" />
         <span>{{ $t('暂无监控主机') }}</span>
       </div>
@@ -787,6 +788,7 @@ function resultStatusLabel(status: (typeof probeResults.value)[number]["status"]
 }
 
 .host-list-page { min-width: 0; }
+.host-list-page.is-loading { min-height: 320px; }
 
 .host-fleet.is-detail-mode .host-list-page {
   position: sticky;

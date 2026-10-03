@@ -57,6 +57,7 @@ const overview = ref<OverviewPayload | null>(null);
 const lastUpdated = ref("");
 const error = ref("");
 const hostsLoadingMore = ref(false);
+const eventRefreshKey = ref(0);
 let overviewAbort: AbortController | null = null;
 let refreshTimer: number | undefined;
 
@@ -126,8 +127,9 @@ async function loadOverview(silent = false) {
   overviewAbort?.abort();
   overviewAbort = new AbortController();
   const signal = overviewAbort.signal;
-  if (!silent) loading.value = true;
-  else refreshing.value = true;
+  hostsLoadingMore.value = false;
+  loading.value = !silent || !overview.value;
+  refreshing.value = silent && Boolean(overview.value);
   const seenIds = new Set<string>();
   try {
     const first = await api<OverviewPayload>(
@@ -178,11 +180,18 @@ async function loadOverview(silent = false) {
     else ElMessage.warning(caught instanceof Error ? caught.message : tr("部分主机监控数据加载失败"));
   } finally {
     if (overviewAbort?.signal === signal) {
+      overviewAbort = null;
       loading.value = false;
       refreshing.value = false;
       hostsLoadingMore.value = false;
     }
   }
+}
+
+function refreshMonitoring() {
+  // Event queries refresh once per cycle, independently of host page completions.
+  eventRefreshKey.value += 1;
+  if (!overviewAbort) void loadOverview(true);
 }
 
 function stopRefresh() {
@@ -196,24 +205,23 @@ function startRefresh() {
   if (!refreshSeconds.value) return;
   refreshTimer = window.setInterval(() => {
     if (document.hidden || !isMonitoringRoute()) return;
-    void loadOverview(true);
+    refreshMonitoring();
   }, refreshSeconds.value * 1000);
 }
 
 function onVisibility() {
   if (document.hidden || !isMonitoringRoute()) return;
-  void loadOverview(true);
+  refreshMonitoring();
 }
 
 onMounted(async () => {
   document.addEventListener("visibilitychange", onVisibility);
+  startRefresh();
   try {
-    await loadEnvironments();
-    await loadOverview();
-    startRefresh();
+    await Promise.all([loadEnvironments(), loadOverview()]);
   } catch (caught) {
+    if (!isMonitoringRoute()) return;
     error.value = caught instanceof Error ? caught.message : tr("读取监控概览失败");
-    loading.value = false;
   }
 });
 
@@ -225,7 +233,8 @@ onBeforeUnmount(() => {
 
 watch(environmentId, () => {
   if (!isMonitoringRoute()) return;
-  void loadOverview(true);
+  overview.value = null;
+  void loadOverview();
 });
 watch(() => route.name, (name) => {
   if (name === "monitoring") return;
@@ -283,7 +292,7 @@ const summary = computed(() => overview.value?.summary ?? {
 </script>
 
 <template>
-  <section class="monitoring-view" v-loading="loading">
+  <section class="monitoring-view">
     <PageHeader :title="$t('监控大盘')">
       <template #actions>
         <el-select
@@ -309,7 +318,7 @@ const summary = computed(() => overview.value?.summary ?? {
           <Radio :size="14" />
           {{ $t('NOC 大屏') }}
         </el-button>
-        <el-button type="primary" plain :loading="refreshing" @click="loadOverview(true)">
+        <el-button type="primary" plain :loading="refreshing" @click="refreshMonitoring">
           <RefreshCw :size="14" :class="{ 'is-spinning': refreshing }" />
           {{ $t('刷新') }}
         </el-button>
@@ -348,7 +357,9 @@ const summary = computed(() => overview.value?.summary ?? {
         :environment-id="environmentId"
         :environments="environments"
         :services="overview?.services ?? []"
-        :refresh-key="overview?.generatedAt"
+        :services-loading="loading"
+        :services-refreshing="refreshing"
+        :refresh-key="String(eventRefreshKey)"
         @open-event="openEvent"
         @open-service="openService"
       />
@@ -357,11 +368,12 @@ const summary = computed(() => overview.value?.summary ?? {
         :hosts="overview?.hosts ?? []"
         :selected-host-id="selectedHostId"
         :can-operate="canOperate"
+        :loading="loading"
         :loading-more="hostsLoadingMore"
         :loaded-count="overview?.hosts.length ?? 0"
         :host-total="summary.hostTotal"
         @select="selectHost"
-        @refresh="loadOverview(true)"
+        @refresh="refreshMonitoring"
         @open-maintenance="openHostMaintenance"
       />
       <NocScreen

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { RefreshCw } from "@lucide/vue";
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import type {
   MonitorAlertSeverity,
@@ -16,6 +17,8 @@ const props = defineProps<{
   environmentId: string;
   environments: Array<{ id: string; name: string }>;
   services: MonitoringServiceCard[];
+  servicesLoading?: boolean;
+  servicesRefreshing?: boolean;
   refreshKey?: string;
 }>();
 
@@ -32,6 +35,7 @@ const eventStatus = ref<"all" | "active" | "recovered" | "event">("all");
 const topEvents = ref<MonitorPlatformEventItem[]>([]);
 const topEventTotal = ref(0);
 const topEventsLoading = ref(false);
+const topEventsReady = ref(false);
 const topEventsError = ref("");
 const allEventsOpen = ref(false);
 const allEvents = ref<MonitorPlatformEventItem[]>([]);
@@ -45,6 +49,8 @@ const todayKey = monitorAlertLocalDateKey(new Date().toISOString());
 const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 let eventsAbort: AbortController | null = null;
 let allEventsAbort: AbortController | null = null;
+let topEventsQuery = "";
+let allEventsQuery = "";
 
 function addDays(key: string, delta: number) {
   const [year, month, day] = key.split("-").map(Number) as [number, number, number];
@@ -90,59 +96,73 @@ function eventQuery(options: {
 }
 
 async function loadTopEvents() {
+  const query = eventQuery({
+    page: 1,
+    pageSize: 5,
+    order: "priority",
+    environmentId: props.environmentId,
+  }).toString();
+  if (eventsAbort && topEventsQuery === query) return;
+  if (topEventsQuery !== query) {
+    topEventsReady.value = false;
+    topEvents.value = [];
+    topEventTotal.value = 0;
+  }
+  topEventsQuery = query;
   eventsAbort?.abort();
   eventsAbort = new AbortController();
   const controller = eventsAbort;
   topEventsLoading.value = true;
   topEventsError.value = "";
   try {
-    const query = eventQuery({
-      page: 1,
-      pageSize: 5,
-      order: "priority",
-      environmentId: props.environmentId,
-    });
     const response = await api<MonitorPlatformEventListResponse>(`/api/v1/monitoring/events?${query}`, { signal: controller.signal });
     if (controller.signal.aborted) return;
     topEvents.value = response.items;
     topEventTotal.value = response.total;
+    topEventsReady.value = true;
   } catch (caught) {
-    if ((caught as { name?: string }).name === "AbortError") return;
-    topEvents.value = [];
-    topEventTotal.value = 0;
+    if (controller.signal.aborted || (caught as { name?: string }).name === "AbortError") return;
     topEventsError.value = caught instanceof Error ? caught.message : tr("读取系统告警事件失败");
   } finally {
-    if (eventsAbort === controller) topEventsLoading.value = false;
+    if (eventsAbort === controller) {
+      eventsAbort = null;
+      topEventsLoading.value = false;
+    }
   }
 }
 
 async function loadAllEvents() {
   if (!allEventsOpen.value) return;
+  const query = eventQuery({
+    page: allEventPage.value,
+    pageSize: allEventPageSize,
+    order: "recent",
+    environmentId: effectiveEventEnvironmentId.value,
+    severity: eventSeverity.value,
+    status: eventStatus.value,
+  }).toString();
+  if (allEventsAbort && !allEventsAbort.signal.aborted && allEventsQuery === query) return;
+  allEventsQuery = query;
   allEventsAbort?.abort();
   allEventsAbort = new AbortController();
   const controller = allEventsAbort;
   allEventsLoading.value = true;
   allEventsError.value = "";
   try {
-    const query = eventQuery({
-      page: allEventPage.value,
-      pageSize: allEventPageSize,
-      order: "recent",
-      environmentId: effectiveEventEnvironmentId.value,
-      severity: eventSeverity.value,
-      status: eventStatus.value,
-    });
     const response = await api<MonitorPlatformEventListResponse>(`/api/v1/monitoring/events?${query}`, { signal: controller.signal });
     if (controller.signal.aborted) return;
     allEvents.value = response.items;
     allEventTotal.value = response.total;
   } catch (caught) {
-    if ((caught as { name?: string }).name === "AbortError") return;
+    if (controller.signal.aborted || (caught as { name?: string }).name === "AbortError") return;
     allEvents.value = [];
     allEventTotal.value = 0;
     allEventsError.value = caught instanceof Error ? caught.message : tr("读取系统告警事件失败");
   } finally {
-    if (allEventsAbort === controller) allEventsLoading.value = false;
+    if (allEventsAbort === controller) {
+      allEventsAbort = null;
+      allEventsLoading.value = false;
+    }
   }
 }
 
@@ -275,10 +295,10 @@ onBeforeUnmount(() => {
     />
 
     <div class="observe-split">
-    <section class="observe-panel priority-event-panel" v-loading="topEventsLoading">
+    <section class="observe-panel priority-event-panel">
       <header class="observe-panel__head">
         <div>
-          <h3>{{ $t('重点告警事件') }}</h3>
+          <h3>{{ $t('重点告警事件') }} <RefreshCw v-if="topEventsLoading && topEventsReady" :size="14" class="module-refresh-indicator" :aria-label="$t('刷新')" /></h3>
           <small>{{ eventRangeLabel }} · {{ $t('按严重等级展示最需要关注的 5 条') }}</small>
         </div>
         <button type="button" class="all-events-link" @click="openAllEvents">
@@ -298,7 +318,8 @@ onBeforeUnmount(() => {
 
       </div>
       <div v-if="topEventsError" class="event-list-error">{{ topEventsError }}</div>
-      <div v-else-if="!topEvents.length && !topEventsLoading" class="observe-empty compact">{{ $t('当前时间范围没有告警事件') }}</div>
+      <div class="priority-event-body" v-loading="topEventsLoading && !topEventsReady" :aria-busy="topEventsLoading">
+      <div v-if="!topEvents.length && !topEventsLoading && !topEventsError" class="observe-empty compact">{{ $t('当前时间范围没有告警事件') }}</div>
       <div v-else class="event-list">
         <div class="event-row is-head">
           <span>{{ $t('状态') }}</span>
@@ -329,21 +350,22 @@ onBeforeUnmount(() => {
           <span class="tone-badge" :class="event.status === 'active' ? 'is-critical' : event.status === 'recovered' && event.details.ignored !== true ? 'is-healthy' : 'is-info'">{{ statusLabel(event) }}</span>
         </button>
       </div>
+      </div>
     </section>
 
     <section class="observe-panel service-section">
       <header class="observe-panel__head">
-        <h3>{{ $t('服务') }}</h3>
+        <h3>{{ $t('服务') }} <RefreshCw v-if="servicesRefreshing" :size="14" class="module-refresh-indicator" :aria-label="$t('刷新')" /></h3>
         <el-input v-model="serviceQuery" clearable class="service-search" :placeholder="$t('按服务名或环境搜索')" />
       </header>
-      <div class="service-table">
+      <div class="service-table" v-loading="servicesLoading" :aria-busy="servicesLoading || servicesRefreshing">
         <div class="service-row is-head">
           <span>{{ $t('服务 / 环境') }}</span>
           <span>{{ $t('运行状态') }}</span>
           <span>{{ $t('活动告警') }}</span>
           <span></span>
         </div>
-        <div v-if="!visibleServices.length" class="observe-empty">{{ $t('暂无服务实例') }}</div>
+        <div v-if="!visibleServices.length && !servicesLoading" class="observe-empty">{{ $t('暂无服务实例') }}</div>
         <div v-for="service in visibleServices" :key="service.id" class="service-row">
           <div>
             <strong>{{ service.name }}</strong>
@@ -764,8 +786,18 @@ onBeforeUnmount(() => {
 .observe-empty.compact { min-height: 160px; padding: 24px 16px; }
 
 .service-section { overflow: hidden; }
-.event-list,
-.service-table { flex: 1; }
+.priority-event-body,
+.service-table { flex: 1; position: relative; min-height: 160px; }
+
+.module-refresh-indicator {
+  vertical-align: middle;
+  color: var(--brand);
+  animation: module-refresh-spin 1s linear infinite;
+}
+
+@keyframes module-refresh-spin {
+  to { transform: rotate(360deg); }
+}
 
 .service-table { min-width: 0; overflow-x: auto; }
 
