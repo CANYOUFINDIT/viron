@@ -63,6 +63,7 @@ import { registerMonitoringRoutes } from "./routes/monitoring.js";
 import { McpOperationStore } from "./mcp/operation-store.js";
 import { migrateDatabaseTlsCredentials } from "./database-credentials.js";
 import { startMonitorHostPuller } from "./service-monitor.js";
+import { reconcileMissingMonitorHostAlerts } from "./monitor-alerts.js";
 import { startTlsEndpointPuller } from "./tls-certificates.js";
 import { interruptStaleServiceOperations } from "./service-operations.js";
 import { startAccessExpirySweep } from "./access-expiry.js";
@@ -186,6 +187,7 @@ export async function buildApp(options: BuildAppOptions) {
   await app.register(registerMcpOperationRoutes);
   await app.register(registerMcpRoutes);
   await app.connectionSourceScheduler.start();
+  await reconcileMissingMonitorHostAlerts(app);
   const stopMonitorHostPuller = startMonitorHostPuller(app);
   const stopTlsEndpointPuller = startTlsEndpointPuller(app);
   const stopAccessExpirySweep = startAccessExpirySweep(app);

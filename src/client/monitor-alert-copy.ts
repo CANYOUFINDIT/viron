@@ -35,10 +35,17 @@ export function monitorAlertTitle(alert: MonitorAlertItem, phase: MonitorAlertNo
     : tr("监控已恢复 · {0}", [location]);
 }
 
+export function monitorAlertRecoveryLabel(alert: Pick<MonitorAlertItem, "details">): string {
+  return alert.details.ignored === true ? tr("已结束") : tr("已恢复");
+}
+
 export function monitorAlertBody(alert: MonitorAlertBodySource, phase: MonitorAlertNotificationPhase): string {
   const target = alert.targetName || alert.connectionName;
   const recovered = phase === "recovered";
   if (alert.ruleType === "host_offline") {
+    if (alert.details.ignored === true && alert.details.reason === "monitor_missing") {
+      return tr("{0} 的监控探针未安装，离线告警已结束", [target]);
+    }
     return recovered
       ? tr("{0} 的监控采集已恢复", [target])
       : tr("{0} 连续两次无法取得有效监控数据", [target]);

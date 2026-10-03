@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { monitorAlertBody, monitorAlertTitle } from "../src/client/monitor-alert-copy.js";
+import { monitorAlertBody, monitorAlertRecoveryLabel, monitorAlertTitle } from "../src/client/monitor-alert-copy.js";
 import { monitorAlertNavigationQuery, type MonitorAlertItem } from "../src/shared/monitor-alerts.js";
 
 describe("desktop monitor alert notification", () => {
@@ -58,5 +58,20 @@ describe("desktop monitor alert notification", () => {
     };
     expect(monitorAlertTitle(alert, "active")).toBe("监控事件 · 核心业务组 / 生产环境");
     expect(monitorAlertBody(alert, "active")).toBe("node-01 检测到新增磁盘挂载 /dev/sdc1 · /archive");
+  });
+
+  it("explains alerts ended by probe removal without reporting recovered collection", () => {
+    const alert = {
+      ruleType: "host_offline" as const,
+      ruleKey: "",
+      targetName: "node-01",
+      connectionName: "生产节点",
+      serviceName: "",
+      details: { ignored: true, reason: "monitor_missing" },
+    };
+    expect(monitorAlertBody(alert, "recovered")).toBe("node-01 的监控探针未安装，离线告警已结束");
+    expect(monitorAlertRecoveryLabel(alert)).toBe("已结束");
+    expect(monitorAlertRecoveryLabel({ details: { reason: "healthy" } })).toBe("已恢复");
+    expect(monitorAlertBody({ ...alert, details: { reason: "healthy" } }, "recovered")).toBe("node-01 的监控采集已恢复");
   });
 });

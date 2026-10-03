@@ -13,7 +13,7 @@ import { api } from "../../api";
 import { currentLocale, translate as tr } from "../../i18n";
 import { monitorHostEventDiskLabel, monitorHostEventDurationMinutes } from "../../monitor-host-event-display";
 import { monitorEventCalendarCacheKey, platformEventCalendarCacheKey, readMonitorUiCache, writeMonitorUiCache } from "../../monitor-ui-cache";
-import { monitorAlertRuleLabel } from "../../monitor-alert-copy";
+import { monitorAlertRecoveryLabel, monitorAlertRuleLabel } from "../../monitor-alert-copy";
 
 const props = withDefaults(defineProps<{
   environmentId?: string;
@@ -783,7 +783,7 @@ onBeforeUnmount(() => {
           <header>
             <span class="event-badge">{{ severityLabel(event.peakSeverity) }}</span>
             <strong>{{ monitorAlertRuleLabel(event) }}</strong>
-            <em>{{ event.status === 'active' ? $t('进行中') : event.status === 'event' ? $t('事件') : $t('已恢复') }}</em>
+            <em>{{ event.status === 'active' ? $t('进行中') : event.status === 'event' ? $t('事件') : monitorAlertRecoveryLabel(event) }}</em>
           </header>
           <p>{{ event.targetName }}</p>
           <div class="event-day-drawer__meta">

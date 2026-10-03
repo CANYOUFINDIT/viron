@@ -69,6 +69,7 @@ interface MonitorAlertObservation {
   breached: boolean | null;
   details: Record<string, unknown>;
   event?: boolean;
+  suppressed?: boolean;
 }
 
 interface MonitorAlertStateRow {
@@ -557,6 +558,7 @@ async function applyObservations(
       `).get(environment.id, observation.targetType, observation.targetId, observation.ruleType, hash) as Promise<MonitorAlertStateRow | undefined>;
       let state = await selectState();
       if (state && Date.parse(state.last_evaluated_at) >= Date.parse(evaluatedAt)) continue;
+      if (!state && observation.suppressed) continue;
       if (!state) {
         const id = randomUUID();
         const inserted = await app.db.prepare(`
@@ -593,7 +595,20 @@ async function applyObservations(
       const activeAlertId = state.active_alert_id || null;
       let breachCount = Number(state.breach_count);
       let recoveryCount = Number(state.recovery_count);
-      if (observation.breached) {
+      if (observation.suppressed) {
+        // A confirmed absent probe ends monitoring; it is not a healthy sample.
+        breachCount = 0;
+        recoveryCount = 0;
+        if (activeAlertId) {
+          await app.db.prepare(`
+            UPDATE monitor_alerts SET status = 'recovered', details_json = ?, recovered_at = ?,
+              last_seen_at = ?, updated_at = ? WHERE id = ? AND status = 'active'
+          `).run(JSON.stringify(observation.details), evaluatedAt, evaluatedAt, now, activeAlertId);
+        }
+        state.active_alert_id = null;
+        state.last_recovered_alert_id = null;
+        state.last_recovered_at = null;
+      } else if (observation.breached) {
         recoveryCount = 0;
         if (!activeAlertId) breachCount += 1;
         if (!activeAlertId && breachCount >= environment.settings.consecutiveSamples) {
@@ -723,11 +738,12 @@ export async function evaluateMonitorHostAvailability(
   input: MonitorHostAvailabilityInput,
 ): Promise<void> {
   const row = await app.db.prepare(`
-    SELECT h.agent_id, h.latest_host_json, h.last_collected_at, c.workspace_type, c.workspace_id
+    SELECT h.agent_id, h.status, h.latest_host_json, h.last_collected_at, c.workspace_type, c.workspace_id
     FROM monitor_hosts h JOIN ssh_connections c ON c.id = h.ssh_connection_id
     WHERE h.ssh_connection_id = ?
   `).get(input.connectionId) as {
     agent_id: string;
+    status: string;
     latest_host_json: string;
     last_collected_at: string | null;
     workspace_type: string;
@@ -735,6 +751,7 @@ export async function evaluateMonitorHostAvailability(
   } | undefined;
   if (!row?.agent_id) return;
 
+  const missing = input.status === "missing" || row.status === "missing";
   const environments = await monitoredEnvironments(app, row.agent_id, row.workspace_type, row.workspace_id);
   const hostname = input.hostname?.trim() || storedHostname(row.latest_host_json);
   for (const environment of environments) {
@@ -750,17 +767,37 @@ export async function evaluateMonitorHostAvailability(
       targetName: hostname || environment.connectionName,
       connectionName: environment.connectionName,
       serviceName: "",
-      breached: !input.available,
+      breached: !missing && !input.available,
+      suppressed: missing,
       details: {
-        available: input.available,
-        status: input.status,
-        reason: input.reason,
+        available: missing ? false : input.available,
+        status: missing ? "missing" : input.status,
+        reason: missing ? "monitor_missing" : input.reason,
+        ...(missing ? { ignored: true } : {}),
         lastError: input.error?.slice(0, 500) ?? "",
         lastCollectedAt: input.lastCollectedAt ?? row.last_collected_at ?? null,
         sampleResolutionSeconds: input.sampleResolutionSeconds ?? null,
       },
     };
     await applyObservations(app, environment, [observation], input.checkedAt, new Set());
+  }
+}
+
+export async function reconcileMissingMonitorHostAlerts(app: FastifyInstance): Promise<void> {
+  const rows = await app.db.prepare(`
+    SELECT ssh_connection_id, last_error FROM monitor_hosts
+    WHERE status = 'missing' AND agent_id <> ''
+  `).all() as Array<{ ssh_connection_id: string; last_error: string }>;
+  const checkedAt = new Date().toISOString();
+  for (const row of rows) {
+    await evaluateMonitorHostAvailability(app, {
+      connectionId: row.ssh_connection_id,
+      checkedAt,
+      available: false,
+      status: "missing",
+      reason: "monitor_missing",
+      error: row.last_error,
+    });
   }
 }
 

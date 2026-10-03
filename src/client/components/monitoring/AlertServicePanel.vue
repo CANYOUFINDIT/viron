@@ -7,7 +7,7 @@ import type {
 } from "../../../shared/monitor-alerts";
 import { api } from "../../api";
 import { currentLocale, translate as tr } from "../../i18n";
-import { monitorAlertBody, monitorAlertRuleLabel } from "../../monitor-alert-copy";
+import { monitorAlertBody, monitorAlertRecoveryLabel, monitorAlertRuleLabel } from "../../monitor-alert-copy";
 import { monitorAlertLocalDateKey } from "../../monitor-host-event-display";
 import HostEventCalendar from "./HostEventCalendar.vue";
 import type { MonitoringServiceCard } from "./ServiceApmPanel.vue";
@@ -162,8 +162,8 @@ function severityLabel(value: MonitorAlertSeverity) {
   return ({ info: "INFO", warning: "WARNING", major: "MAJOR", critical: "CRITICAL" })[value];
 }
 
-function statusLabel(status: MonitorPlatformEventItem["status"]) {
-  return status === "active" ? tr("活动中") : status === "recovered" ? tr("已恢复") : tr("事件");
+function statusLabel(event: MonitorPlatformEventItem) {
+  return event.status === "active" ? tr("活动中") : event.status === "recovered" ? monitorAlertRecoveryLabel(event) : tr("事件");
 }
 
 function eventTime(event: MonitorPlatformEventItem) {
@@ -326,7 +326,7 @@ onBeforeUnmount(() => {
             <strong>{{ eventTarget(event) }}</strong>
             <small>{{ event.environmentName }}</small>
           </span>
-          <span class="tone-badge" :class="event.status === 'active' ? 'is-critical' : event.status === 'recovered' ? 'is-healthy' : 'is-info'">{{ statusLabel(event.status) }}</span>
+          <span class="tone-badge" :class="event.status === 'active' ? 'is-critical' : event.status === 'recovered' && event.details.ignored !== true ? 'is-healthy' : 'is-info'">{{ statusLabel(event) }}</span>
         </button>
       </div>
     </section>
@@ -422,7 +422,7 @@ onBeforeUnmount(() => {
               <strong>{{ eventTarget(event) }}</strong>
               <small>{{ event.environmentName }}</small>
             </span>
-            <span class="tone-badge" :class="event.status === 'active' ? 'is-critical' : event.status === 'recovered' ? 'is-healthy' : 'is-info'">{{ statusLabel(event.status) }}</span>
+            <span class="tone-badge" :class="event.status === 'active' ? 'is-critical' : event.status === 'recovered' && event.details.ignored !== true ? 'is-healthy' : 'is-info'">{{ statusLabel(event) }}</span>
           </button>
         </div>
         <footer v-if="allEventTotal > allEventPageSize" class="event-pagination">

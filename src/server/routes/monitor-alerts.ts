@@ -207,7 +207,7 @@ async function claimAlertNotification(
     }
     const details = parseJson(alert.details_json);
     const recoveryEligible = Boolean(state.active_notified_at) || (alert.rule_type === "disk_missing" && details.recovered === true);
-    if (alert.status !== "recovered" || !recoveryEligible || state.recovery_notified_at) return false;
+    if (alert.status !== "recovered" || details.ignored === true || !recoveryEligible || state.recovery_notified_at) return false;
     await app.db.prepare(`
       UPDATE monitor_alert_user_states SET recovery_notified_at = ?, updated_at = ?
       WHERE alert_id = ? AND user_id = ? AND recovery_notified_at IS NULL
@@ -343,7 +343,7 @@ function mapAlert(row: Record<string, unknown>): MonitorAlertItem {
       ? "active"
       : status === "active" && activeNotifiedAt && monitorAlertSeverityRank(peakSeverity) > monitorAlertSeverityRank(notifiedSeverity)
         ? "escalated"
-      : status === "recovered" && (Boolean(activeNotifiedAt) || (row.rule_type === "disk_missing" && details.recovered === true)) && !recoveryNotifiedAt
+      : status === "recovered" && details.ignored !== true && (Boolean(activeNotifiedAt) || (row.rule_type === "disk_missing" && details.recovered === true)) && !recoveryNotifiedAt
         ? "recovered"
         : null,
     read: Boolean(row.read_at),

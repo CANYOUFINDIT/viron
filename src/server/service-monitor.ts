@@ -344,7 +344,8 @@ async function markMonitorFailure(app: FastifyInstance, connectionId: string, st
       latest_host_json, latest_candidates_json, latest_kubernetes_configs_json
     ) VALUES (?, ?, ?, ?, ?, 'null', '[]', '[]')
     ON CONFLICT(ssh_connection_id) DO UPDATE SET
-      status = excluded.status,
+      status = CASE WHEN monitor_hosts.status = 'missing' AND excluded.status = 'error'
+        THEN 'missing' ELSE excluded.status END,
       last_error = excluded.last_error,
       last_pulled_at = excluded.last_pulled_at,
       updated_at = excluded.updated_at

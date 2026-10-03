@@ -45,7 +45,14 @@ beforeEach(() => {
 });
 
 describe("alert service panel", () => {
-  it("renders the complete alert body below the rule title", async () => {
+  it.each([
+    { event: diskMissingEvent, title: "掉盘", body: "192.168.5.146 的磁盘 sda1 · /data 已重新出现", status: "已恢复", tone: "is-healthy" },
+    {
+      event: { ...diskMissingEvent, ruleType: "host_offline" as const, details: { ignored: true, reason: "monitor_missing" } },
+      title: "宿主机离线", body: "192.168.5.146 的监控探针未安装，离线告警已结束", status: "已结束", tone: "is-info",
+    },
+  ])("renders $title with its alert body and $status status", async ({ event, title, body, status, tone }) => {
+    mockedApi.mockResolvedValue({ items: [event], total: 1, page: 1, pageSize: 5 });
     const wrapper = mount(AlertServicePanel, {
       props: {
         environmentId: "env-1",
@@ -69,7 +76,10 @@ describe("alert service panel", () => {
     await flushPromises();
 
     const row = wrapper.get(".priority-event-panel button.event-row");
-    expect(row.get("strong").text()).toBe("掉盘");
-    expect(row.get(".event-message").text()).toBe("192.168.5.146 的磁盘 sda1 · /data 已重新出现");
+    expect(row.get("strong").text()).toBe(title);
+    expect(row.get(".event-message").text()).toBe(body);
+    const statusBadge = row.findAll(".tone-badge").at(-1)!;
+    expect(statusBadge.text()).toBe(status);
+    expect(statusBadge.classes()).toContain(tone);
   });
 });

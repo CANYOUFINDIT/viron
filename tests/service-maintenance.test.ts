@@ -318,14 +318,14 @@ describe("service maintenance", () => {
     }
   });
 
-  it("routes monitor pull failures and recovery through host offline alerts", async () => {
+  it("suppresses offline alerts for absent probes, resets failures, and reconciles legacy alerts on startup", async () => {
     const directory = mkdtempSync(join(tmpdir(), "viron-maintenance-offline-alert-test-"));
     directories.push(directory);
     const ssh = await startSshServer();
     const config = testConfig(directory);
     const db = await openDatabase(config);
     await ensureAdmin(db, config);
-    const app = await buildApp({ config, db, logger: false });
+    let app = await buildApp({ config, db, logger: false });
     try {
       const login = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { username: "admin", password: config.adminPassword } });
       const cookies = { envman_session: login.cookies.find((item) => item.name === "envman_session")!.value };
@@ -347,7 +347,8 @@ describe("service maintenance", () => {
         },
       });
       const connectionId = connection.json().id as string;
-      expect((await app.inject({ method: "POST", url: `/api/v1/environments/${environmentId}/monitor-hosts/${connectionId}/refresh`, cookies })).statusCode).toBe(200);
+      const refresh = () => app.inject({ method: "POST", url: `/api/v1/environments/${environmentId}/monitor-hosts/${connectionId}/refresh`, cookies });
+      expect((await refresh()).statusCode).toBe(200);
       expect((await app.inject({
         method: "PUT",
         url: `/api/v1/environments/${environmentId}/monitor-alert-settings`,
@@ -366,15 +367,79 @@ describe("service maintenance", () => {
       })).statusCode).toBe(200);
 
       ssh.state.monitorInstalled = false;
-      await app.inject({ method: "POST", url: `/api/v1/environments/${environmentId}/monitor-hosts/${connectionId}/refresh`, cookies });
+      await refresh();
       expect((await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies })).json().items).toHaveLength(0);
-      await app.inject({ method: "POST", url: `/api/v1/environments/${environmentId}/monitor-hosts/${connectionId}/refresh`, cookies });
-      expect((await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies })).json().items[0]).toMatchObject({ ruleType: "host_offline", status: "active", details: { reason: "monitor_missing" } });
+      await refresh();
+      expect((await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies })).json().items).toHaveLength(0);
+      expect(await app.db.prepare("SELECT status, agent_id FROM monitor_hosts WHERE ssh_connection_id = ?").get(connectionId))
+        .toEqual({ status: "missing", agent_id: monitorPayload().agentId });
 
       ssh.state.monitorInstalled = true;
-      await app.inject({ method: "POST", url: `/api/v1/environments/${environmentId}/monitor-hosts/${connectionId}/refresh`, cookies });
-      await app.inject({ method: "POST", url: `/api/v1/environments/${environmentId}/monitor-hosts/${connectionId}/refresh`, cookies });
+      ssh.state.monitorExitCode = 1;
+      expect((await refresh()).statusCode).toBe(502);
+      expect((await refresh()).statusCode).toBe(502);
+      expect(await app.db.prepare("SELECT status FROM monitor_hosts WHERE ssh_connection_id = ?").get(connectionId)).toEqual({ status: "missing" });
+      expect((await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies })).json().items).toHaveLength(0);
+
+      // A missing check must discard a failure accumulated before uninstalling.
+      ssh.state.monitorExitCode = 0;
+      await refresh();
+      ssh.state.monitorExitCode = 1;
+      await refresh();
+      ssh.state.monitorInstalled = false;
+      await refresh();
+      expect(await app.db.prepare("SELECT breach_count, recovery_count, active_alert_id FROM monitor_alert_states WHERE environment_id = ? AND rule_type = 'host_offline'").get(environmentId))
+        .toEqual({ breach_count: 0, recovery_count: 0, active_alert_id: null });
+      ssh.state.monitorInstalled = true;
+      ssh.state.monitorExitCode = 0;
+      await refresh();
+      ssh.state.monitorExitCode = 1;
+      await refresh();
+      expect((await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies })).json().items).toHaveLength(0);
+      await refresh();
+      let listed = (await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies })).json();
+      expect(listed.items[0]).toMatchObject({ ruleType: "host_offline", status: "active", details: { reason: "pull_failed" } });
+      const endedAlertId = listed.items[0].id as string;
+      await app.inject({ method: "POST", url: `/api/v1/monitor-alerts/${endedAlertId}/notified`, cookies, payload: { phase: "active" } });
+
+      // Confirmed absence closes an active alert immediately without claiming recovery.
+      ssh.state.monitorInstalled = false;
+      await refresh();
+      listed = (await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies })).json();
+      expect(listed.items[0]).toMatchObject({
+        id: endedAlertId, status: "recovered", notificationPhase: null,
+        details: { available: false, status: "missing", reason: "monitor_missing", ignored: true },
+      });
+      expect((await app.inject({ method: "POST", url: `/api/v1/monitor-alerts/${endedAlertId}/notified`, cookies, payload: { phase: "recovered" } })).json()).toMatchObject({ claimed: false });
+      expect(await app.db.prepare("SELECT breach_count, recovery_count, active_alert_id, last_recovered_alert_id, last_recovered_at FROM monitor_alert_states WHERE environment_id = ? AND rule_type = 'host_offline'").get(environmentId))
+        .toEqual({ breach_count: 0, recovery_count: 0, active_alert_id: null, last_recovered_alert_id: null, last_recovered_at: null });
+
+      ssh.state.monitorInstalled = true;
+      ssh.state.monitorExitCode = 0;
+      await refresh();
+      ssh.state.monitorExitCode = 1;
+      await refresh();
+      await refresh();
+      listed = (await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies })).json();
+      const newAlertId = listed.items[0].id as string;
+      expect(newAlertId).not.toBe(endedAlertId);
+      expect(listed.items[0]).toMatchObject({ status: "active", occurrenceCount: 1 });
+      ssh.state.monitorExitCode = 0;
+      await refresh();
+      expect((await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies })).json().items[0].status).toBe("active");
+      await refresh();
       expect((await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies })).json().items[0]).toMatchObject({ ruleType: "host_offline", status: "recovered", details: { reason: "healthy" } });
+
+      // Reproduce an active monitor_missing alert written by an older app version.
+      await app.db.prepare("UPDATE monitor_alerts SET status = 'active', details_json = ?, recovered_at = NULL WHERE id = ?")
+        .run(JSON.stringify({ reason: "monitor_missing" }), newAlertId);
+      await app.db.prepare("UPDATE monitor_alert_states SET active_alert_id = ?, breach_count = 2 WHERE environment_id = ? AND rule_type = 'host_offline'")
+        .run(newAlertId, environmentId);
+      await app.db.prepare("UPDATE monitor_hosts SET status = 'missing' WHERE ssh_connection_id = ?").run(connectionId);
+      await app.close();
+      app = await buildApp({ config, db: await openDatabase(config), logger: false });
+      listed = (await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies })).json();
+      expect(listed.items.find((item: { id: string }) => item.id === newAlertId)).toMatchObject({ status: "recovered", notificationPhase: null, details: { reason: "monitor_missing", ignored: true } });
     } finally {
       await app.close();
       await new Promise<void>((resolve) => ssh.server.close(() => resolve()));
