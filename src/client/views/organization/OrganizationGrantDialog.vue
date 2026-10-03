@@ -467,8 +467,77 @@ function scopeGroups(capability: string): ScopeGroup[] {
 }
 
 function scopePickedCount(capability: string) {
-  const ids = new Set(scopeItems(capability).map((item) => item.id));
+  const items = scopeItems(capability);
+  if (!items.length) return 0;
+  if (itemMode[capability] === "all") return items.length;
+  const ids = new Set(items.map((item) => item.id));
   return (pickedItems[capability] ?? []).filter((id) => ids.has(id)).length;
+}
+
+function isScopeAll(capability: string): boolean {
+  const items = scopeItems(capability);
+  if (!items.length) return true;
+  return itemMode[capability] === "all" || scopePickedCount(capability) === items.length;
+}
+
+function isScopeIndeterminate(capability: string): boolean {
+  const items = scopeItems(capability);
+  if (!items.length) return false;
+  const count = scopePickedCount(capability);
+  return count > 0 && count < items.length;
+}
+
+function isItemChecked(capability: string, id: string): boolean {
+  if (itemMode[capability] === "all") return true;
+  return (pickedItems[capability] ?? []).includes(id);
+}
+
+function toggleScopeAll(capability: string, on: boolean) {
+  const items = scopeItems(capability);
+  if (on) {
+    itemMode[capability] = "all";
+    pickedItems[capability] = items.map((item) => item.id);
+  } else {
+    itemMode[capability] = "some";
+    pickedItems[capability] = [];
+  }
+}
+
+function groupPickedCount(capability: string, group: ScopeGroup): number {
+  if (itemMode[capability] === "all") return group.items.length;
+  const picked = new Set(pickedItems[capability] ?? []);
+  return group.items.filter((item) => picked.has(item.id)).length;
+}
+
+function groupAllSelected(capability: string, group: ScopeGroup): boolean {
+  if (!group.items.length) return false;
+  return groupPickedCount(capability, group) === group.items.length;
+}
+
+function groupIndeterminate(capability: string, group: ScopeGroup): boolean {
+  if (!group.items.length) return false;
+  const count = groupPickedCount(capability, group);
+  return count > 0 && count < group.items.length;
+}
+
+function toggleScopeGroup(capability: string, group: ScopeGroup, on: boolean) {
+  const items = scopeItems(capability);
+  const currentIds = new Set(
+    itemMode[capability] === "all"
+      ? items.map((item) => item.id)
+      : (pickedItems[capability] ?? [])
+  );
+  for (const item of group.items) {
+    if (on) currentIds.add(item.id);
+    else currentIds.delete(item.id);
+  }
+  if (items.length > 0 && currentIds.size >= items.length) {
+    itemMode[capability] = "all";
+    pickedItems[capability] = items.map((item) => item.id);
+  } else {
+    itemMode[capability] = "some";
+    pickedItems[capability] = items.filter((item) => currentIds.has(item.id)).map((item) => item.id);
+  }
 }
 
 function chooseFamily(next: Family) {
@@ -595,10 +664,22 @@ function toggleAction(capability: Capability, action: string, on: boolean) {
 }
 
 function toggleItem(capability: string, id: string, on: boolean) {
-  const next = new Set(pickedItems[capability] ?? []);
-  if (on) next.add(id);
-  else next.delete(id);
-  pickedItems[capability] = [...next];
+  const items = scopeItems(capability);
+  const currentIds = new Set(
+    itemMode[capability] === "all"
+      ? items.map((item) => item.id)
+      : (pickedItems[capability] ?? [])
+  );
+  if (on) currentIds.add(id);
+  else currentIds.delete(id);
+
+  if (items.length > 0 && currentIds.size >= items.length) {
+    itemMode[capability] = "all";
+    pickedItems[capability] = items.map((item) => item.id);
+  } else {
+    itemMode[capability] = "some";
+    pickedItems[capability] = items.filter((item) => currentIds.has(item.id)).map((item) => item.id);
+  }
 }
 
 function expiryValue() {
@@ -837,22 +918,33 @@ function submit() {
             </div>
             <div v-if="!isConnection" class="grant-matrix__scope">
               <template v-if="showItems && (checked[capability] ?? []).length">
-                <div class="grant-scope-choice" role="radiogroup" :aria-label="$t('范围')">
-                  <button type="button" role="radio" :aria-checked="itemMode[capability] !== 'some'" :class="{ 'is-active': itemMode[capability] !== 'some' }" :title="$t('以后新增的也算')" @click="itemMode[capability] = 'all'">{{ $t('全部') }}</button>
-                  <button type="button" role="radio" :aria-checked="itemMode[capability] === 'some'" :class="{ 'is-active': itemMode[capability] === 'some' }" :title="$t('只包含勾选的这些')" @click="itemMode[capability] = 'some'">{{ $t('指定') }}</button>
-                </div>
-                <div v-if="itemMode[capability] === 'some'" class="grant-scope-panel">
+                <div class="grant-scope-panel">
                   <p v-if="catalogLoading" class="grant-scope-note">{{ $t('正在读取可选项') }}</p>
                   <template v-else-if="scopeItems(capability).length">
-                    <p class="grant-scope-meta">
-                      <span>{{ $t('已选 {0}/{1}', [scopePickedCount(capability), scopeItems(capability).length]) }}</span>
-                      <span v-if="!scopePickedCount(capability)" class="is-needed">{{ $t('至少选一个') }}</span>
-                    </p>
+                    <div class="grant-scope-header">
+                      <label class="grant-scope-all">
+                        <input type="checkbox" :checked="isScopeAll(capability)" :indeterminate.prop="isScopeIndeterminate(capability)" @change="toggleScopeAll(capability, ($event.target as HTMLInputElement).checked)">
+                        <span>{{ $t('全部') }}</span>
+                        <small class="grant-scope-hint" :title="$t('以后新增的也算')">{{ $t('含新增') }}</small>
+                      </label>
+                      <div class="grant-scope-meta">
+                        <span v-if="isScopeAll(capability)">{{ $t('已选全部 ({0})', [scopeItems(capability).length]) }}</span>
+                        <span v-else-if="scopePickedCount(capability) > 0">{{ $t('已指定 {0}/{1}', [scopePickedCount(capability), scopeItems(capability).length]) }}</span>
+                        <span v-else>{{ $t('已选 {0}/{1}', [0, scopeItems(capability).length]) }}</span>
+                        <span v-if="!scopePickedCount(capability)" class="is-needed">{{ $t('至少选一个') }}</span>
+                      </div>
+                    </div>
                     <div class="grant-item-list">
                       <section v-for="group in scopeGroups(capability)" :key="group.environmentName || 'ungrouped'">
-                        <h4 v-if="scopeGroups(capability).length > 1">{{ group.environmentName || $t('未分组') }}</h4>
-                        <label v-for="item in group.items" :key="item.id" :class="{ 'is-checked': (pickedItems[capability] ?? []).includes(item.id) }">
-                          <input type="checkbox" :checked="(pickedItems[capability] ?? []).includes(item.id)" @change="toggleItem(capability, item.id, ($event.target as HTMLInputElement).checked)">
+                        <div v-if="scopeGroups(capability).length > 1" class="grant-group-head">
+                          <label class="grant-group-label">
+                            <input type="checkbox" :checked="groupAllSelected(capability, group)" :indeterminate.prop="groupIndeterminate(capability, group)" @change="toggleScopeGroup(capability, group, ($event.target as HTMLInputElement).checked)">
+                            <span>{{ group.environmentName || $t('未分组') }}</span>
+                          </label>
+                          <small class="grant-group-count">{{ groupPickedCount(capability, group) }}/{{ group.items.length }}</small>
+                        </div>
+                        <label v-for="item in group.items" :key="item.id" :class="{ 'is-checked': isItemChecked(capability, item.id) }">
+                          <input type="checkbox" :checked="isItemChecked(capability, item.id)" @change="toggleItem(capability, item.id, ($event.target as HTMLInputElement).checked)">
                           <span>{{ item.name }}</span>
                         </label>
                       </section>
@@ -890,7 +982,7 @@ function submit() {
 .grant-kind-switch { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
 .grant-kind-switch button { min-height: 36px; padding: 0 8px; border: 1px solid var(--color-rule-strong); border-radius: 8px; background: var(--color-paper); color: var(--color-ink-soft); cursor: pointer; font-size: 13px; }
 .grant-kind-switch button:hover { color: var(--color-ink); }
-.grant-kind-switch button:focus-visible, .grant-whole-group:focus-visible, .grant-overview .environment-card:focus-visible, .grant-overview .environment-directory__link:focus-visible, .grant-ssh-list .connection-card-main:focus-visible, .grant-db-list .database-navigation-connection:focus-visible, .grant-redis-list button:focus-visible, .grant-scope-choice button:focus-visible, .grant-item-list label:focus-within { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.grant-kind-switch button:focus-visible, .grant-whole-group:focus-visible, .grant-overview .environment-card:focus-visible, .grant-overview .environment-directory__link:focus-visible, .grant-ssh-list .connection-card-main:focus-visible, .grant-db-list .database-navigation-connection:focus-visible, .grant-redis-list button:focus-visible, .grant-scope-all input:focus-visible, .grant-group-label input:focus-visible, .grant-item-list label:focus-within { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 .grant-kind-switch button.is-active { border-color: var(--color-accent); background: var(--color-accent-soft); color: var(--color-accent-strong); font-weight: 650; }
 .grant-overview { margin-top: 12px; }
 .grant-overview .overview-directory-layout { margin-top: 0; }
@@ -940,15 +1032,13 @@ function submit() {
 .grant-selection-bar small, .grant-selection-bar strong, .grant-selection-bar span { display: block; }
 .grant-selection-bar strong { margin-top: 2px; color: var(--color-ink); font-size: 14px; }
 .grant-matrix__scope { min-width: 0; }
-.grant-scope-choice { display: grid; grid-template-columns: 1fr 1fr; width: 100%; border: 1px solid var(--color-rule-strong); border-radius: 8px; overflow: hidden; background: var(--color-paper); }
-.grant-scope-choice button { min-height: 32px; padding: 0 8px; border: 0; background: transparent; color: var(--color-ink-soft); cursor: pointer; font-size: 12px; }
-.grant-scope-choice button + button { border-left: 1px solid var(--color-rule-strong); }
-.grant-scope-choice button:hover { color: var(--color-ink); }
-.grant-scope-choice button.is-active { background: var(--color-accent-soft); color: var(--color-accent-strong); font-weight: 650; }
-.grant-scope-choice button:focus-visible { outline-offset: -2px; }
-.grant-scope-note, .grant-scope-meta { margin: 6px 2px 0; color: var(--color-muted); font-size: 12px; }
-.grant-scope-meta { display: flex; align-items: center; gap: 8px; }
-.grant-scope-meta .is-needed { color: var(--color-accent-strong); }
+.grant-scope-panel { border: 1px solid var(--color-rule); border-radius: 8px; background: color-mix(in srgb, var(--color-paper) 70%, var(--color-paper-raised)); overflow: hidden; }
+.grant-scope-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 34px; padding: 0 10px; border-bottom: 1px solid var(--color-rule); background: color-mix(in srgb, var(--color-ink) 4%, var(--color-paper)); font-size: 12px; }
+.grant-scope-all { display: inline-flex; align-items: center; gap: 6px; color: var(--color-ink); font-weight: 600; cursor: pointer; user-select: none; }
+.grant-scope-hint { padding: 1px 5px; border-radius: 4px; background: color-mix(in srgb, var(--color-accent-soft) 80%, transparent); color: var(--color-accent-strong); font-size: 10px; font-weight: normal; }
+.grant-scope-meta { display: flex; align-items: center; gap: 8px; color: var(--color-muted); font-size: 11px; }
+.grant-scope-meta .is-needed { color: var(--color-danger); font-weight: 600; }
+.grant-scope-note { margin: 8px 10px; color: var(--color-muted); font-size: 12px; }
 .grant-duration button { min-height: 34px; padding: 0 10px; border: 1px solid var(--color-rule-strong); border-radius: 8px; background: var(--color-paper); color: var(--color-ink-soft); cursor: pointer; font-size: 12px; }
 .grant-duration button.is-active { border-color: var(--color-accent); background: var(--color-accent-soft); color: var(--color-accent-strong); }
 .grant-matrix { margin: 4px 0 16px; border: 1px solid var(--color-rule); border-radius: 10px; overflow: hidden; }
@@ -959,13 +1049,16 @@ function submit() {
 .grant-matrix__row > strong { padding-top: 4px; color: var(--color-ink); font-size: 13px; }
 .grant-matrix__actions { display: flex; flex-wrap: wrap; gap: 8px 14px; }
 .grant-matrix__actions label { display: inline-flex; align-items: center; gap: 6px; color: var(--color-ink-soft); font-size: 12px; }
-.grant-matrix__actions input, .grant-item-list input { width: 15px; height: 15px; margin: 0; accent-color: var(--color-accent); flex: 0 0 auto; }
-.grant-item-list { display: flex; flex-direction: column; gap: 2px; max-height: 280px; margin-top: 6px; overflow: auto; }
-.grant-item-list h4 { margin: 6px 2px 2px; color: var(--color-muted); font-size: 11px; font-weight: 650; }
-.grant-item-list section:first-child h4 { margin-top: 0; }
-.grant-item-list label { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 8px; border-radius: 7px; color: var(--color-ink-soft); font-size: 12px; cursor: pointer; }
+.grant-matrix__actions input, .grant-item-list input, .grant-scope-header input, .grant-group-head input { width: 15px; height: 15px; margin: 0; accent-color: var(--color-accent); flex: 0 0 auto; }
+.grant-group-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 4px 6px 2px; margin-top: 4px; border-bottom: 1px dashed var(--color-rule); color: var(--color-muted); font-size: 11px; }
+.grant-group-head:first-child { margin-top: 0; }
+.grant-group-label { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; cursor: pointer; user-select: none; }
+.grant-group-label span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.grant-group-count { font-family: var(--font-mono); font-size: 10px; color: var(--color-muted); }
+.grant-item-list { display: flex; flex-direction: column; gap: 2px; max-height: 180px; padding: 4px 6px; overflow-y: auto; }
+.grant-item-list label { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 0 8px; border-radius: 6px; color: var(--color-ink-soft); font-size: 12px; cursor: pointer; user-select: none; }
 .grant-item-list label:hover { background: color-mix(in srgb, var(--color-ink) 5%, transparent); }
-.grant-item-list label.is-checked { background: var(--color-accent-soft); color: var(--color-accent-strong); }
+.grant-item-list label.is-checked { background: var(--color-accent-soft); color: var(--color-accent-strong); font-weight: 500; }
 .grant-item-list label span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .grant-item-empty { color: var(--color-muted); font-size: 11px; }
 .grant-duration { display: flex; flex-wrap: wrap; gap: 8px; }

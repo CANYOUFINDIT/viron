@@ -212,29 +212,31 @@ describe("organization grant dialog", () => {
     await flushPromises();
 
     expect(webRow.textContent).toContain("全部");
-    expect(webRow.textContent).toContain("指定");
+    expect(webRow.textContent).toContain("含新增");
+    expect(webRow.textContent).toContain("已选全部 (3)");
     expect(webRow.textContent).not.toContain("这一整块");
     expect(webRow.textContent).not.toContain("只选其中几个");
-    const whole = [...webRow.querySelectorAll("button")].find((button) => button.textContent?.trim() === "全部") as HTMLButtonElement;
-    expect(whole.title).toBe("以后新增的也算");
 
-    const specify = [...webRow.querySelectorAll("button")].find((button) => button.textContent?.trim() === "指定") as HTMLButtonElement;
-    specify.click();
+    expect([...webRow.querySelectorAll(".grant-group-label span")].map((heading) => heading.textContent)).toEqual(["开发环境", "Test"]);
+    const choices = [...webRow.querySelectorAll(".grant-item-list label:not(.grant-group-label)")].map((label) => label.textContent?.trim());
+    expect(choices).toEqual(["Nacos", "agione-算模方", "dev-harbor"]);
+
+    const allCheckbox = webRow.querySelector(".grant-scope-all input") as HTMLInputElement;
+    expect(allCheckbox.checked).toBe(true);
+    allCheckbox.checked = false;
+    allCheckbox.dispatchEvent(new Event("change"));
     await flushPromises();
 
-    expect([...webRow.querySelectorAll(".grant-item-list h4")].map((heading) => heading.textContent)).toEqual(["开发环境", "Test"]);
-    const choices = [...webRow.querySelectorAll(".grant-item-list label")].map((label) => label.textContent?.trim());
-    expect(choices).toEqual(["Nacos", "agione-算模方", "dev-harbor"]);
     expect(webRow.textContent).toContain("已选 0/3");
     expect(webRow.textContent).toContain("至少选一个");
 
-    const nacos = [...webRow.querySelectorAll(".grant-item-list label")].find((label) => label.textContent?.includes("Nacos"));
+    const nacos = [...webRow.querySelectorAll(".grant-item-list label:not(.grant-group-label)")].find((label) => label.textContent?.includes("Nacos"));
     const nacosInput = nacos!.querySelector("input") as HTMLInputElement;
     nacosInput.checked = true;
     nacosInput.dispatchEvent(new Event("change"));
     await flushPromises();
     expect(nacos!.classList.contains("is-checked")).toBe(true);
-    expect(webRow.textContent).toContain("已选 1/3");
+    expect(webRow.textContent).toContain("已指定 1/3");
     expect(webRow.textContent).not.toContain("至少选一个");
 
     const forever = [...document.body.querySelectorAll("button")].find((button) => button.textContent === "永久") as HTMLButtonElement;
