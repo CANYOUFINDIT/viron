@@ -127,9 +127,53 @@ describe("organization access authorizations", () => {
 
       await db.prepare("UPDATE access_authorizations SET expires_at = ? WHERE id = ?").run("2000-01-01T00:00:00.000Z", grantId);
       expect((await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}`, cookies: member })).statusCode).toBe(404);
+      const expiredList = await app.inject({ method: "GET", url: `/api/v1/organizations/${organizationId}`, cookies: admin });
+      expect(expiredList.json().grants).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: grantId, expired: true, permissions: { web: ["view"] } }),
+      ]));
+      const futureStart = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+      const futureEnd = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+      const scheduled = await app.inject({
+        method: "PUT",
+        url: `/api/v1/organizations/${organizationId}/grants/${grantId}`,
+        cookies: admin,
+        payload: {
+          granteeType: "user",
+          granteeId: memberId,
+          scopeKind: "environment",
+          targetIds: [environmentId],
+          permissions: { web: ["view"] },
+          startsAt: futureStart,
+          expiresAt: futureEnd,
+        },
+      });
+      expect(scheduled.statusCode).toBe(200);
+      expect((await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}`, cookies: member })).statusCode).toBe(404);
+      const pendingList = await app.inject({ method: "GET", url: `/api/v1/organizations/${organizationId}`, cookies: admin });
+      expect(pendingList.json().grants).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: grantId, pending: true, startsAt: futureStart }),
+      ]));
+      const reversed = await app.inject({
+        method: "PUT",
+        url: `/api/v1/organizations/${organizationId}/grants/${grantId}`,
+        cookies: admin,
+        payload: {
+          granteeType: "user",
+          granteeId: memberId,
+          scopeKind: "environment",
+          targetIds: [environmentId],
+          permissions: { web: ["view"] },
+          startsAt: futureEnd,
+          expiresAt: futureStart,
+        },
+      });
+      expect(reversed.statusCode).toBe(400);
+      expect(reversed.json().error).toBe("INVALID_WINDOW");
+      await db.prepare("UPDATE access_authorizations SET starts_at = ? WHERE id = ?").run("2000-01-01T00:00:00.000Z", grantId);
+      expect((await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}`, cookies: member })).statusCode).toBe(200);
       const listed = await app.inject({ method: "GET", url: `/api/v1/organizations/${organizationId}`, cookies: admin });
       expect(listed.json().grants).toEqual(expect.arrayContaining([
-        expect.objectContaining({ id: grantId, expired: true, permissions: { web: ["view"] } }),
+        expect.objectContaining({ id: grantId, expired: false, pending: false, startsAt: "2000-01-01T00:00:00.000Z" }),
       ]));
 
       const restored = await app.inject({

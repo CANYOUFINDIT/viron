@@ -16,6 +16,7 @@ export interface GrantTimelineSource {
   id: string;
   label: string;
   createdAt: string;
+  startsAt?: string | null;
   expiresAt: string | null;
   expired?: boolean;
 }
@@ -101,8 +102,12 @@ export function grantTimelineWindow(now: number, days: GrantTimelineSpan = 7): G
   return { start: now - pastDays * DAY, end: now + (days - pastDays) * DAY };
 }
 
+function grantStart(grant: GrantTimelineSource): number | null {
+  return parsed(grant.startsAt) ?? parsed(grant.createdAt);
+}
+
 function fullTimelineRange(grants: readonly GrantTimelineSource[], now: number): GrantTimelineRange {
-  const starts = grants.map((grant) => parsed(grant.createdAt)).filter((value): value is number => value !== null);
+  const starts = grants.map((grant) => grantStart(grant)).filter((value): value is number => value !== null);
   let axisStart = Math.min(now, ...(starts.length ? starts : [now]));
   const finiteEnds = grants.map((grant) => parsed(grant.expiresAt)).filter((value): value is number => value !== null);
   let axisEnd = Math.max(now, ...(finiteEnds.length ? finiteEnds : [now]));
@@ -133,7 +138,7 @@ export function buildGrantTimeline(
     return { left, width };
   };
   const bars: GrantTimelineBar[] = grants.map((grant) => {
-    const start = parsed(grant.createdAt) ?? now;
+    const start = grantStart(grant) ?? now;
     const end = parsed(grant.expiresAt);
     const openEnded = end === null;
     const remainingMs = openEnded ? (grant.expired ? 0 : Number.POSITIVE_INFINITY) : end - now;

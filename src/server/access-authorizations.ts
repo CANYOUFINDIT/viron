@@ -50,6 +50,7 @@ export interface AuthorizationInput {
   targetIds: string[];
   permissions: PermissionMap;
   items: ItemMap;
+  startsAt?: string | null;
   expiresAt: string | null;
 }
 
@@ -60,6 +61,7 @@ export interface StoredAuthorization extends AuthorizationInput {
   label: string;
   permissionText: string;
   expired: boolean;
+  pending: boolean;
   createdAt: string;
   resourceType: ScopeKind;
   resourceId: string;
@@ -121,8 +123,8 @@ export async function resolveOrganizationAccess(db: EnvmanDatabase, user: Authen
   const authorizations = await db.prepare(`
     SELECT id, scope_kind, whole_group, group_id, permissions_json, items_json
     FROM access_authorizations
-    WHERE organization_id = ? AND (expires_at IS NULL OR expires_at > ?) AND ${granteeSql}
-  `).all(user.workspace.id, now, user.id, ...projectIds) as Array<Record<string, unknown>>;
+    WHERE organization_id = ? AND (starts_at IS NULL OR starts_at <= ?) AND (expires_at IS NULL OR expires_at > ?) AND ${granteeSql}
+  `).all(user.workspace.id, now, now, user.id, ...projectIds) as Array<Record<string, unknown>>;
   const legacy = await db.prepare(`
     SELECT resource_type, resource_id FROM resource_grants
     WHERE organization_id = ? AND ${granteeSql}
@@ -284,6 +286,7 @@ export async function listOrganizationGrants(db: EnvmanDatabase, organizationId:
     const groupId = row.group_id ? String(row.group_id) : null;
     const targetIds = targetsById.get(String(row.id)) ?? [];
     const permissions = parsePermissions(row.permissions_json);
+    const startsAt = row.starts_at ? String(row.starts_at) : null;
     const expiresAt = row.expires_at ? String(row.expires_at) : null;
     if (wholeGroup && groupId) nameIds.environment_group.add(groupId);
     else for (const id of targetIds) nameIds[scopeKind].add(id);
@@ -299,8 +302,10 @@ export async function listOrganizationGrants(db: EnvmanDatabase, organizationId:
       targetIds,
       permissions,
       items: parseItems(row.items_json),
+      startsAt,
       expiresAt,
       expired: Boolean(expiresAt && expiresAt <= now),
+      pending: Boolean(startsAt && startsAt > now),
       createdAt: String(row.created_at),
       permissionText: permissionSummary(permissions),
       resourceType: scopeKind,
@@ -325,8 +330,10 @@ export async function listOrganizationGrants(db: EnvmanDatabase, organizationId:
       targetIds: wholeGroup ? [] : [resourceId],
       permissions,
       items: {},
+      startsAt: null,
       expiresAt: null,
       expired: false,
+      pending: false,
       createdAt: String(row.created_at),
       permissionText: permissionSummary(permissions),
       resourceType: scopeKind,
@@ -612,7 +619,7 @@ export async function normalizeAuthorization(db: EnvmanDatabase, organizationId:
     targetIds: wholeGroup ? [] : targetIds,
     permissions,
     items: wholeGroup || input.scopeKind.endsWith("connection") ? {} : items,
-    expiresAt: normalizeExpiry(input.expiresAt),
+    ...normalizeWindow(input.startsAt, input.expiresAt),
   };
 }
 
@@ -639,11 +646,22 @@ function sanitizeItems(items: ItemMap): ItemMap {
   return result;
 }
 
-function normalizeExpiry(value: string | null): string | null {
+function parseInstant(value: string | null | undefined, code: string, message: string): number | null {
   if (!value) return null;
   const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed) || parsed <= Date.now()) throw new AccessAuthorizationError("INVALID_EXPIRY", 400, "授权结束时间必须晚于现在");
-  return new Date(parsed).toISOString();
+  if (!Number.isFinite(parsed)) throw new AccessAuthorizationError(code, 400, message);
+  return parsed;
+}
+
+function normalizeWindow(startsAt: string | null | undefined, expiresAt: string | null | undefined): { startsAt: string | null; expiresAt: string | null } {
+  const start = parseInstant(startsAt, "INVALID_START", "开始时间无效");
+  const end = parseInstant(expiresAt, "INVALID_EXPIRY", "授权结束时间无效");
+  if (end !== null && end <= Date.now()) throw new AccessAuthorizationError("INVALID_EXPIRY", 400, "授权结束时间必须晚于现在");
+  if (start !== null && end !== null && start >= end) throw new AccessAuthorizationError("INVALID_WINDOW", 400, "开始时间必须早于结束时间");
+  return {
+    startsAt: start === null ? null : new Date(start).toISOString(),
+    expiresAt: end === null ? null : new Date(end).toISOString(),
+  };
 }
 
 async function assertResources(db: EnvmanDatabase, organizationId: string, kind: ScopeKind, ids: string[]): Promise<void> {
@@ -717,8 +735,8 @@ async function insertAuthorization(db: EnvmanDatabase, id: string, organizationI
   await db.prepare(`
     INSERT INTO access_authorizations (
       id, organization_id, grantee_type, grantee_id, scope_kind, whole_group, group_id,
-      permissions_json, items_json, expires_at, created_by_user_id, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      permissions_json, items_json, starts_at, expires_at, created_by_user_id, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     organizationId,
@@ -729,6 +747,7 @@ async function insertAuthorization(db: EnvmanDatabase, id: string, organizationI
     input.groupId,
     JSON.stringify(input.permissions),
     JSON.stringify(input.items),
+    input.startsAt ?? null,
     input.expiresAt,
     actorId,
     createdAt,

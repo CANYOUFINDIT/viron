@@ -22,6 +22,7 @@ export interface AccessGrantSnapshot {
   permissions: PermissionMap;
   items: ItemMap;
   itemNames?: Record<string, Array<{ id: string; name: string }>>;
+  startsAt?: string | null;
   expiresAt: string | null;
   label: string;
   permissionText: string;

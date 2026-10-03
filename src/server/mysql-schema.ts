@@ -185,6 +185,7 @@ CREATE TABLE IF NOT EXISTS access_authorizations (
   group_id VARCHAR(64) NULL,
   permissions_json LONGTEXT NOT NULL,
   items_json LONGTEXT NOT NULL,
+  starts_at VARCHAR(40) NULL,
   expires_at VARCHAR(40) NULL,
   created_by_user_id VARCHAR(64) NOT NULL,
   created_at VARCHAR(40) NOT NULL,

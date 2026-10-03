@@ -102,6 +102,49 @@ describe("organization grant dialog", () => {
     wrapper.unmount();
   });
 
+  it("keeps the start and end fields on their own row and submits both times", async () => {
+    language.value = "zh-CN";
+    const { wrapper, saveGrant } = mountDialog();
+    await flushPromises();
+    const option = [...document.body.querySelectorAll("button")].find((item) => item.textContent?.includes("生产"));
+    option!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushPromises();
+    ([...document.body.querySelectorAll("button")].find((button) => button.textContent?.trim() === "下一步") as HTMLButtonElement).click();
+    await flushPromises();
+    expect(document.body.textContent).toContain("开始时间");
+    expect(document.body.textContent).toContain("结束时间");
+    expect(document.body.textContent).toContain("留空则立即生效");
+    expect(document.body.querySelector("input[type='datetime-local']")).toBeNull();
+    expect(document.body.querySelector(".grant-validity .grant-window")).toBeTruthy();
+
+    const pickers = wrapper.findAllComponents({ name: "ElDatePicker" });
+    expect(pickers).toHaveLength(2);
+    await pickers[0].setValue?.("2026-10-05T09:00");
+    pickers[0].vm.$emit("update:modelValue", "2026-10-05T09:00");
+    pickers[0].vm.$emit("change", "2026-10-05T09:00");
+    await pickers[1].vm.$emit("update:modelValue", "2026-10-05T18:00");
+    pickers[1].vm.$emit("change", "2026-10-05T18:00");
+    await flushPromises();
+
+    const reason = document.body.querySelector('textarea[aria-label="操作原因"]') as HTMLTextAreaElement;
+    reason.value = "生产排障";
+    reason.dispatchEvent(new Event("input", { bubbles: true }));
+    const view = [...document.body.querySelectorAll("label")].find((label) => label.textContent?.includes("查看并打开"));
+    const input = view!.querySelector("input") as HTMLInputElement;
+    input.checked = true;
+    input.dispatchEvent(new Event("change"));
+    await flushPromises();
+    const save = [...document.body.querySelectorAll("button")].find((button) => button.textContent?.includes("确认授权")) as HTMLButtonElement;
+    expect(save.disabled).toBe(false);
+    save.click();
+    await flushPromises();
+    expect(saveGrant).toHaveBeenCalledWith(expect.objectContaining({
+      startsAt: new Date("2026-10-05T09:00").toISOString(),
+      expiresAt: new Date("2026-10-05T18:00").toISOString(),
+    }));
+    wrapper.unmount();
+  });
+
   it("authorizes a whole environment group from the overview list", async () => {
     language.value = "zh-CN";
     const { wrapper, saveGrant } = mountDialog([

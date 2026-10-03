@@ -71,7 +71,8 @@ const checked = reactive<Record<string, string[]>>({});
 const itemMode = reactive<Record<string, "all" | "some">>({});
 const pickedItems = reactive<Record<string, string[]>>({});
 const duration = ref<DurationId>("8h");
-const customEnd = ref("");
+const customStart = ref<string | null>("");
+const customEnd = ref<string | null>("");
 const catalog = ref<Record<string, CatalogItem[]>>({});
 const catalogLoading = ref(false);
 const hydrating = ref(false);
@@ -93,7 +94,7 @@ const durations: Array<{ id: DurationId; hours: number; label: string }> = [
   { id: "1d", hours: 24, label: "1 天" },
   { id: "7d", hours: 168, label: "7 天" },
   { id: "30d", hours: 720, label: "30 天" },
-  { id: "custom", hours: 0, label: "自己指定结束时间" },
+  { id: "custom", hours: 0, label: "自定义" },
   { id: "forever", hours: 0, label: "永久" },
 ];
 const families: Array<{ value: Family; label: string }> = [
@@ -321,7 +322,8 @@ function applyGrant() {
     wholeGroup.value = false;
     targetIds.value = [];
     duration.value = "8h";
-    customEnd.value = "";
+    customStart.value = "";
+    customEnd.value = presetEnd("8h");
     focusDirectory();
     hydrating.value = false;
     return;
@@ -335,6 +337,7 @@ function applyGrant() {
     pickedItems[capability] = [...(grant.items[capability] ?? [])];
     itemMode[capability] = grant.items[capability]?.length ? "some" : "all";
   }
+  customStart.value = grant.startsAt ? toLocalInput(grant.startsAt) : "";
   if (!grant.expiresAt) {
     duration.value = "forever";
     customEnd.value = "";
@@ -709,22 +712,71 @@ function toggleItem(capability: string, id: string, on: boolean) {
   }
 }
 
-function expiryValue() {
+function parsedInstant(value: string | null): number | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function presetEnd(id: DurationId, start = parsedInstant(customStart.value)): string {
+  const hours = durations.find((item) => item.id === id)?.hours ?? 0;
+  return toLocalInput(new Date((start ?? Date.now()) + hours * 60 * 60 * 1000).toISOString());
+}
+
+function selectDuration(id: DurationId) {
+  duration.value = id;
+  if (id === "forever") {
+    customEnd.value = "";
+    return;
+  }
+  if (id === "custom") {
+    if (!customEnd.value) customEnd.value = presetEnd("8h");
+    return;
+  }
+  customEnd.value = presetEnd(id);
+}
+
+function onStartChange() {
+  if (duration.value !== "custom" && duration.value !== "forever") customEnd.value = presetEnd(duration.value);
+}
+
+function onEndChange(value: string | null) {
+  if (duration.value === "forever") return;
+  if (!value || (duration.value !== "custom" && value !== presetEnd(duration.value))) duration.value = "custom";
+}
+
+function startValue(): string | null {
+  const parsed = parsedInstant(customStart.value);
+  return parsed === null ? null : new Date(parsed).toISOString();
+}
+
+function expiryValue(): string | null {
   if (duration.value === "forever") return null;
   if (duration.value === "custom") {
-    const parsed = Date.parse(customEnd.value);
-    return Number.isFinite(parsed) ? new Date(parsed).toISOString() : "";
+    const parsed = parsedInstant(customEnd.value);
+    return parsed === null ? "" : new Date(parsed).toISOString();
   }
   const hours = durations.find((item) => item.id === duration.value)?.hours ?? 8;
-  return new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
+  const start = parsedInstant(customStart.value);
+  return new Date((start ?? Date.now()) + hours * 60 * 60 * 1000).toISOString();
 }
+
+const windowError = computed(() => {
+  if (customStart.value && parsedInstant(customStart.value) === null) return "开始时间无效";
+  const start = parsedInstant(customStart.value);
+  const end = duration.value === "forever" ? null : parsedInstant(expiryValue() || "");
+  if (duration.value !== "forever" && end === null) return "请填写结束时间";
+  if (start !== null && end !== null && start >= end) return "开始时间必须早于结束时间";
+  if (end !== null && end <= Date.now()) return "授权结束时间必须晚于现在";
+  return "";
+});
 
 const canSave = computed(() => {
   const selected = visibleCapabilities.value.some((capability) => (checked[capability] ?? []).length);
   const itemsOk = visibleCapabilities.value.every((capability) => (
     !(checked[capability] ?? []).length || !showItems.value || itemMode[capability] !== "some" || (pickedItems[capability] ?? []).length > 0
   ));
-  return selected && targetsOk.value && itemsOk && expiryValue() !== "" && Boolean(reason.value.trim());
+  return selected && targetsOk.value && itemsOk && !windowError.value && Boolean(reason.value.trim());
 });
 
 function continueToPermissions() {
@@ -749,6 +801,7 @@ function submit() {
     targetIds: kind.value === "environment_group" && wholeGroup.value ? [] : [...targetIds.value],
     permissions,
     items,
+    startsAt: startValue(),
     expiresAt: expiryValue(),
     reason: reason.value.trim(),
   });
@@ -1006,10 +1059,23 @@ function submit() {
         </el-form-item>
         <p v-if="grantRequestMode" class="grant-scope-note">{{ $t('审批全部通过后生效；审批期间有效期仍会计时。') }}</p>
         <el-form-item :label="$t('有效期')">
-          <div class="grant-duration" role="radiogroup" :aria-label="$t('授权时长')">
-            <button v-for="item in durations" :key="item.id" type="button" :class="{ 'is-active': duration === item.id }" @click="duration = item.id">{{ $t(item.label) }}</button>
+          <div class="grant-validity">
+            <div class="grant-duration" role="radiogroup" :aria-label="$t('授权时长')">
+              <button v-for="item in durations" :key="item.id" type="button" :class="{ 'is-active': duration === item.id }" @click="selectDuration(item.id)">{{ $t(item.label) }}</button>
+            </div>
+            <div class="grant-window">
+              <label class="grant-window__field">
+                <span>{{ $t('开始时间') }}</span>
+                <el-date-picker v-model="customStart" type="datetime" format="YYYY/MM/DD HH:mm" value-format="YYYY-MM-DDTHH:mm" :placeholder="$t('立即生效')" :aria-label="$t('开始时间')" @change="onStartChange" />
+                <small>{{ $t('留空则立即生效') }}</small>
+              </label>
+              <label class="grant-window__field">
+                <span>{{ $t('结束时间') }}</span>
+                <el-date-picker v-model="customEnd" type="datetime" format="YYYY/MM/DD HH:mm" value-format="YYYY-MM-DDTHH:mm" :disabled="duration === 'forever'" :placeholder="duration === 'forever' ? $t('不设结束时间') : $t('结束时间')" :aria-label="$t('结束时间')" @change="onEndChange" />
+              </label>
+            </div>
+            <p v-if="windowError" class="grant-window__error">{{ $t(windowError) }}</p>
           </div>
-          <input v-if="duration === 'custom'" v-model="customEnd" class="grant-datetime" type="datetime-local" :aria-label="$t('自己指定结束时间')">
         </el-form-item>
       </template>
     </el-form>
@@ -1112,8 +1178,15 @@ function submit() {
 .grant-item-list label.is-checked { background: var(--color-accent-soft); color: var(--color-accent-strong); font-weight: 500; }
 .grant-item-list label span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .grant-item-empty { color: var(--color-muted); font-size: 11px; }
+.grant-validity { width: 100%; display: flex; flex-direction: column; gap: 10px; }
 .grant-duration { display: flex; flex-wrap: wrap; gap: 8px; }
-.grant-datetime { width: 100%; max-width: 280px; height: 36px; margin-top: 10px; padding: 0 10px; border: 1px solid var(--color-rule-strong); border-radius: 8px; background: var(--color-paper); color: var(--color-ink); }
+.grant-window { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.grant-window__field { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.grant-window__field > span { color: var(--ink-600); font-size: 12px; font-weight: 650; line-height: 1.3; }
+.grant-window__field small { color: var(--ink-500); font-size: 12px; line-height: 1.4; }
+.grant-window__field :deep(.el-date-editor.el-input) { --el-date-editor-width: 100%; --el-input-height: 42px; width: 100%; height: 42px; }
+.grant-window__error { margin: 0; color: var(--red-600); font-size: 12px; line-height: 1.4; }
+:deep(.el-form-item__content:has(.grant-validity)) { display: block; }
 .grant-footer { display: flex; align-items: center; gap: 8px; width: 100%; }
 .grant-footer-spacer { flex: 1; }
 @media (max-width: 760px) {
@@ -1122,5 +1195,6 @@ function submit() {
   .grant-matrix__head > span:not(:first-child):not(.grant-matrix__ops-head) { display: none; }
   .grant-matrix__ops-head > span:first-child { display: none; }
   .grant-pick-summary { align-items: flex-start; flex-direction: column; gap: 2px; }
+  .grant-window { grid-template-columns: 1fr; }
 }
 </style>

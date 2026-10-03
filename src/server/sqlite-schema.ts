@@ -178,6 +178,7 @@ CREATE TABLE IF NOT EXISTS access_authorizations (
   group_id TEXT,
   permissions_json TEXT NOT NULL,
   items_json TEXT NOT NULL DEFAULT '{}',
+  starts_at TEXT,
   expires_at TEXT,
   created_by_user_id TEXT NOT NULL REFERENCES admin_users(id),
   created_at TEXT NOT NULL,

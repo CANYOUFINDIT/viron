@@ -15,7 +15,7 @@ export const authorizationBodySchema = z.object({
   wholeGroup: z.boolean().default(false), groupId: z.string().uuid().nullable().default(null),
   targetIds: z.array(z.string().uuid()).max(500).default([]),
   permissions: z.record(z.string(), z.array(z.string())).default({}), items: z.record(z.string(), z.array(z.string())).default({}),
-  expiresAt: z.string().nullable().default(null), reason: z.string().trim().min(1).max(2000).optional(),
+  startsAt: z.string().nullable().default(null), expiresAt: z.string().nullable().default(null), reason: z.string().trim().min(1).max(2000).optional(),
 });
 const workflowSchema = z.object({ name: z.string().trim().min(1).max(120), stages: z.array(z.object({
   name: z.string().trim().min(1).max(120), mode: z.enum(["any", "all"]).default("any"),

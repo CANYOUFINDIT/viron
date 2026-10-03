@@ -39,6 +39,11 @@ const workflowValid = computed(() => Boolean(workflowDraft.value.name.trim()) &&
 
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : tr("读取授权中心失败"); }
 function formatDate(value: string | null): string { return value ? new Date(value).toLocaleString(currentLocale()) : tr("永久"); }
+function validityText(snapshot: { startsAt?: string | null; expiresAt: string | null }): string {
+  return snapshot.startsAt
+    ? tr("{{0}} 起，至 {{1}}", [formatDate(snapshot.startsAt), formatDate(snapshot.expiresAt)])
+    : `${tr("有效至")} ${formatDate(snapshot.expiresAt)}`;
+}
 function stageNames(item: AccessRequest, index: number): string {
   return item.workflow.stages[index]?.approverIds.map((id) => item.approverNames[id] ?? id).join("、") ?? "";
 }
@@ -191,7 +196,7 @@ onMounted(() => { void load(); });
   <el-dialog append-to-body v-model="requestDialog" align-center class="envman-dialog access-detail-dialog" :title="$t('授权申请详情')" width="min(820px, calc(100vw - 32px))">
     <template v-if="selectedRequest">
       <div class="access-detail-heading"><div><h3>{{ selectedRequest.snapshot.label }}</h3><p>{{ selectedRequest.requesterName }} · {{ formatDate(selectedRequest.createdAt) }}</p></div><em class="access-status" :class="`is-${selectedRequest.status}`">{{ $t(statuses[selectedRequest.status]) }}</em></div>
-      <dl class="access-facts"><div><dt>{{ $t('申请理由') }}</dt><dd>{{ selectedRequest.reason }}</dd></div><div><dt>{{ $t('权限') }}</dt><dd>{{ permissionText(selectedRequest.snapshot.permissions) }}</dd></div><div><dt>{{ $t('对象范围') }}</dt><dd>{{ snapshotItemScope(selectedRequest.snapshot) }}</dd></div><div><dt>{{ $t('有效至') }}</dt><dd>{{ formatDate(selectedRequest.snapshot.expiresAt) }}</dd></div></dl>
+      <dl class="access-facts"><div><dt>{{ $t('申请理由') }}</dt><dd>{{ selectedRequest.reason }}</dd></div><div><dt>{{ $t('权限') }}</dt><dd>{{ permissionText(selectedRequest.snapshot.permissions) }}</dd></div><div><dt>{{ $t('对象范围') }}</dt><dd>{{ snapshotItemScope(selectedRequest.snapshot) }}</dd></div><div><dt>{{ $t('有效期') }}</dt><dd>{{ validityText(selectedRequest.snapshot) }}</dd></div></dl>
       <h4 class="access-section-title"><GitBranch :size="15" />{{ selectedRequest.workflow.name }}</h4>
       <ol class="approval-flow">
         <li v-for="(stage, index) in selectedRequest.workflow.stages" :key="index" :class="{ 'is-complete': index < selectedRequest.stageIndex, 'is-current': index === selectedRequest.stageIndex && selectedRequest.status === 'pending' }">
@@ -229,7 +234,7 @@ onMounted(() => { void load(); });
     <template v-if="selectedEvent">
       <div class="access-detail-heading"><div><h3>{{ $t(actions[selectedEvent.action]) }}</h3><p>{{ selectedEvent.actorName }} · {{ formatDate(selectedEvent.createdAt) }}</p></div><em v-if="selectedEvent.details.selfApproved" class="access-self">{{ $t('自审批') }}</em></div>
       <dl class="access-facts"><div><dt>{{ $t('原因') }}</dt><dd>{{ selectedEvent.reason }}</dd></div><div><dt>{{ $t('授权来源') }}</dt><dd>{{ $t(selectedEvent.source === 'request' ? '申请审批' : selectedEvent.source === 'system' ? '系统处理' : '主动授权') }}</dd></div><div v-if="selectedEvent.requestId"><dt>{{ $t('申请单号') }}</dt><dd class="access-reference">{{ selectedEvent.requestId }}</dd></div><div v-if="selectedEvent.grantId"><dt>{{ $t('授权编号') }}</dt><dd class="access-reference">{{ selectedEvent.grantId }}</dd></div></dl>
-      <div class="access-snapshots"><section v-for="entry in [{ label: '变更前', snapshot: selectedEvent.before }, { label: '变更后', snapshot: selectedEvent.after }].filter((entry) => entry.snapshot)" :key="entry.label"><h4>{{ $t(entry.label) }}</h4><strong>{{ entry.snapshot!.label }}</strong><p>{{ entry.snapshot!.granteeName }}</p><p>{{ permissionText(entry.snapshot!.permissions) }}</p><small>{{ snapshotItemScope(entry.snapshot!) }}</small><time>{{ $t('有效至') }} {{ formatDate(entry.snapshot!.expiresAt) }}</time></section></div>
+      <div class="access-snapshots"><section v-for="entry in [{ label: '变更前', snapshot: selectedEvent.before }, { label: '变更后', snapshot: selectedEvent.after }].filter((entry) => entry.snapshot)" :key="entry.label"><h4>{{ $t(entry.label) }}</h4><strong>{{ entry.snapshot!.label }}</strong><p>{{ entry.snapshot!.granteeName }}</p><p>{{ permissionText(entry.snapshot!.permissions) }}</p><small>{{ snapshotItemScope(entry.snapshot!) }}</small><time>{{ validityText(entry.snapshot!) }}</time></section></div>
       <div v-if="selectedEvent.action === 'workflow_updated'" class="access-snapshots"><section v-for="entry in [{ label: '变更前', flow: selectedEvent.details.before as ApprovalWorkflow | null }, { label: '变更后', flow: selectedEvent.details.after as ApprovalWorkflow | null }].filter((entry) => entry.flow)" :key="entry.label"><h4>{{ $t(entry.label) }} · {{ entry.flow!.name }}</h4><ol><li v-for="stage in entry.flow!.stages" :key="stage.name">{{ stage.name }} · {{ $t(stage.mode === 'all' ? '全部审批人通过' : '任一审批人通过') }}</li></ol></section></div>
     </template>
     <template #footer><el-button @click="eventDialog = false">{{ $t('关闭') }}</el-button></template>

@@ -31,8 +31,10 @@ interface Grant {
   targetIds: string[];
   permissions: Record<string, string[]>;
   items: Record<string, string[]>;
+  startsAt: string | null;
   expiresAt: string | null;
   expired: boolean;
+  pending: boolean;
   createdAt: string;
   label: string;
   permissionText: string;
@@ -46,6 +48,7 @@ interface GrantDraft {
   targetIds: string[];
   permissions: Record<string, string[]>;
   items: Record<string, string[]>;
+  startsAt: string | null;
   expiresAt: string | null;
   reason: string;
 }

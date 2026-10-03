@@ -102,6 +102,14 @@ describe("grant timeline", () => {
     expect(model.axisEnd - model.axisStart).toBe(7 * DAY);
   });
 
+  it("starts a scheduled grant at its start time", () => {
+    const model = buildGrantTimeline([
+      { id: "scheduled", label: "预约", createdAt: iso(-2 * DAY), startsAt: iso(2 * DAY), expiresAt: iso(3 * DAY) },
+    ], now);
+    expect(model.bars[0].start).toBe(now + 2 * DAY);
+    expect(model.bars[0].end).toBe(now + 3 * DAY);
+  });
+
   it("keeps an expired flag ahead of a later end time", () => {
     const model = buildGrantTimeline([
       { id: "flagged", label: "标记过期", createdAt: iso(-5 * DAY), expiresAt: iso(10 * DAY), expired: true },

@@ -51,6 +51,7 @@ export async function readGrantSnapshot(db: EnvmanDatabase, organizationId: stri
       scopeKind: fine.scope_kind as ScopeKind, wholeGroup: Number(fine.whole_group) === 1,
       groupId: fine.group_id ? String(fine.group_id) : null, targetIds: targets.map((row) => row.resource_id),
       permissions: JSON.parse(String(fine.permissions_json)), items: JSON.parse(String(fine.items_json)),
+      startsAt: fine.starts_at ? String(fine.starts_at) : null,
       expiresAt: fine.expires_at ? String(fine.expires_at) : null,
     });
   }
@@ -59,12 +60,12 @@ export async function readGrantSnapshot(db: EnvmanDatabase, organizationId: stri
     const scopeKind = legacy.resource_type as ScopeKind;
     return authorizationSnapshot(db, { granteeType: legacy.grantee_type as "user" | "project", granteeId: String(legacy.grantee_id),
       scopeKind, wholeGroup: scopeKind === "environment_group", groupId: scopeKind === "environment_group" ? String(legacy.resource_id) : null,
-      targetIds: scopeKind === "environment_group" ? [] : [String(legacy.resource_id)], permissions: fullPermissions(scopeKind), items: {}, expiresAt: null });
+      targetIds: scopeKind === "environment_group" ? [] : [String(legacy.resource_id)], permissions: fullPermissions(scopeKind), items: {}, startsAt: null, expiresAt: null });
   }
   const knowledge = await db.prepare("SELECT * FROM knowledge_node_grants WHERE organization_id = ? AND id = ?").get<Record<string, unknown>>(organizationId, grantId);
   return knowledge ? authorizationSnapshot(db, { granteeType: knowledge.grantee_type as "user" | "project", granteeId: String(knowledge.grantee_id),
     scopeKind: "knowledge_node", wholeGroup: false, groupId: null, targetIds: [String(knowledge.node_id)],
-    permissions: { knowledge: ["view", "edit"] }, items: {}, expiresAt: null }) : null;
+    permissions: { knowledge: ["view", "edit"] }, items: {}, startsAt: null, expiresAt: null }) : null;
 }
 
 export async function recordAccessEvent(db: EnvmanDatabase, organizationId: string, input: {

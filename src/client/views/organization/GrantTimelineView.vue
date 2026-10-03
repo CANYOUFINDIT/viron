@@ -21,6 +21,7 @@ export interface GrantRowItem {
     resourceId: string;
     permissionText?: string;
     createdAt: string;
+    startsAt?: string | null;
     expiresAt: string | null;
     expired: boolean;
   };
@@ -84,6 +85,7 @@ const grantTimeline = computed(() => {
       id: row.grant.id,
       label: row.grant.label || row.grant.resourceId,
       createdAt: row.grant.createdAt,
+      startsAt: row.grant.startsAt,
       expiresAt: row.grant.expiresAt,
       expired: row.grant.expired,
     })),

@@ -107,9 +107,14 @@ function grantSource(row: { source: string; inherited: boolean }): string {
   return row.inherited ? translate("继承自 {0}", [row.source]) : row.source;
 }
 
-function grantExpiry(grant: { expired: boolean; expiresAt?: string | null }): string {
+function grantExpiry(grant: { expired: boolean; pending?: boolean; startsAt?: string | null; expiresAt?: string | null }): string {
   if (grant.expired) return translate("已过期");
-  return grant.expiresAt ? new Date(grant.expiresAt).toLocaleString(currentLocale()) : translate("永久");
+  const end = grant.expiresAt ? new Date(grant.expiresAt).toLocaleString(currentLocale()) : translate("永久");
+  if (grant.pending && grant.startsAt) {
+    const start = new Date(grant.startsAt).toLocaleString(currentLocale());
+    return grant.expiresAt ? translate("{{0}} 起，至 {{1}}", [start, end]) : translate("{{0}} 起生效", [start]);
+  }
+  return end;
 }
 </script>
 

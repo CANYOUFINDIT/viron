@@ -30,6 +30,7 @@ export async function openDatabase(config: AppConfig): Promise<EnvmanDatabase> {
     // CREATE TABLE IF NOT EXISTS does not upgrade ledgers created without an event sequence.
     // Keep the legacy id primary key; AUTO_INCREMENT only requires a unique index.
     await addMysqlColumnIfMissing(db, "access_governance_events", "event_order", "BIGINT NOT NULL AUTO_INCREMENT UNIQUE");
+    await addMysqlColumnIfMissing(db, "access_authorizations", "starts_at", "VARCHAR(40) NULL");
     await addMysqlColumnIfMissing(db, "api_keys", "mcp_approval_mode", "VARCHAR(16) NOT NULL DEFAULT 'always'");
     await addMysqlColumnIfMissing(db, "audit_events", "source", "VARCHAR(16) NOT NULL DEFAULT 'unknown'");
     await db.prepare("UPDATE audit_events SET source = 'mcp' WHERE source = 'unknown' AND action LIKE 'mcp.%'").run();
@@ -109,6 +110,7 @@ export async function openDatabase(config: AppConfig): Promise<EnvmanDatabase> {
   const db = new SqliteDatabaseClient(raw);
   raw.exec(SQLITE_SCHEMA);
   rebuildAccessGovernanceEventTable(raw);
+  addColumnIfMissing(raw, "access_authorizations", "starts_at", "TEXT");
   rebuildMonitorAlertRuleTables(raw);
   rebuildMonitorAlertTlsTables(raw);
   rebuildKnowledgeBaseTables(raw);
