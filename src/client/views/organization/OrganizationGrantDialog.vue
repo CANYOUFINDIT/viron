@@ -660,6 +660,26 @@ function isChecked(capability: string, action: string) {
   return (checked[capability] ?? []).includes(action);
 }
 
+function capabilityFullyChecked(capability: Capability) {
+  const selected = checked[capability] ?? [];
+  return CAPABILITY_ACTIONS[capability].every((action) => selected.includes(action));
+}
+
+function capabilityPartiallyChecked(capability: Capability) {
+  return (checked[capability] ?? []).length > 0 && !capabilityFullyChecked(capability);
+}
+
+const allActionsChecked = computed(() => visibleCapabilities.value.every((capability) => capabilityFullyChecked(capability)));
+const actionsIndeterminate = computed(() => !allActionsChecked.value && visibleCapabilities.value.some((capability) => (checked[capability] ?? []).length > 0));
+
+function setCapabilityActions(capability: Capability, on: boolean) {
+  checked[capability] = on ? [...CAPABILITY_ACTIONS[capability]] : [];
+}
+
+function setAllActions(on: boolean) {
+  for (const capability of visibleCapabilities.value) setCapabilityActions(capability, on);
+}
+
 function toggleAction(capability: Capability, action: string, on: boolean) {
   const next = new Set(checked[capability] ?? []);
   if (on) for (const item of expandActions(capability, [action])) next.add(item);
@@ -915,9 +935,24 @@ function submit() {
         </div>
 
         <div class="grant-matrix" :class="{ 'is-connection': isConnection }" role="table" :aria-label="$t('操作权限')">
-          <div class="grant-matrix__head" role="row"><span>{{ $t('资源') }}</span><span>{{ $t('操作') }}</span><span v-if="!isConnection">{{ $t('范围') }}</span></div>
+          <div class="grant-matrix__head" role="row">
+            <span>{{ $t('资源') }}</span>
+            <span class="grant-matrix__ops-head">
+              <span>{{ $t('操作') }}</span>
+              <label class="grant-action-all">
+                <input type="checkbox" :checked="allActionsChecked" :indeterminate.prop="actionsIndeterminate" :aria-label="$t('全选操作')" @change="setAllActions(($event.target as HTMLInputElement).checked)">
+                <span>{{ $t('全选') }}</span>
+              </label>
+            </span>
+            <span v-if="!isConnection">{{ $t('范围') }}</span>
+          </div>
           <div v-for="capability in visibleCapabilities" :key="capability" class="grant-matrix__row" role="row">
-            <strong>{{ $t(CAPABILITY_LABELS[capability]) }}</strong>
+            <strong class="grant-matrix__name">
+              <label class="grant-action-all">
+                <input type="checkbox" :checked="capabilityFullyChecked(capability)" :indeterminate.prop="capabilityPartiallyChecked(capability)" :aria-label="$t('全选{{0}}', [$t(CAPABILITY_LABELS[capability])])" @change="setCapabilityActions(capability, ($event.target as HTMLInputElement).checked)">
+              </label>
+              <span>{{ $t(CAPABILITY_LABELS[capability]) }}</span>
+            </strong>
             <div class="grant-matrix__actions">
               <label v-for="action in CAPABILITY_ACTIONS[capability]" :key="action">
                 <input type="checkbox" :checked="isChecked(capability, action)" @change="toggleAction(capability, action, ($event.target as HTMLInputElement).checked)">
@@ -994,7 +1029,7 @@ function submit() {
 .grant-kind-switch { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
 .grant-kind-switch button { min-height: 36px; padding: 0 8px; border: 1px solid var(--color-rule-strong); border-radius: 8px; background: var(--color-paper); color: var(--color-ink-soft); cursor: pointer; font-size: 13px; }
 .grant-kind-switch button:hover { color: var(--color-ink); }
-.grant-kind-switch button:focus-visible, .grant-whole-group:focus-visible, .grant-overview .environment-card:focus-visible, .grant-overview .environment-directory__link:focus-visible, .grant-ssh-list .connection-card-main:focus-visible, .grant-db-list .database-navigation-connection:focus-visible, .grant-redis-list button:focus-visible, .grant-scope-all input:focus-visible, .grant-group-label input:focus-visible, .grant-item-list label:focus-within { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.grant-kind-switch button:focus-visible, .grant-whole-group:focus-visible, .grant-overview .environment-card:focus-visible, .grant-overview .environment-directory__link:focus-visible, .grant-ssh-list .connection-card-main:focus-visible, .grant-db-list .database-navigation-connection:focus-visible, .grant-redis-list button:focus-visible, .grant-action-all input:focus-visible, .grant-scope-all input:focus-visible, .grant-group-label input:focus-visible, .grant-item-list label:focus-within { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 .grant-kind-switch button.is-active { border-color: var(--color-accent); background: var(--color-accent-soft); color: var(--color-accent-strong); font-weight: 650; }
 .grant-overview { margin-top: 12px; }
 .grant-overview .overview-directory-layout { margin-top: 0; }
@@ -1054,14 +1089,18 @@ function submit() {
 .grant-duration button { min-height: 34px; padding: 0 10px; border: 1px solid var(--color-rule-strong); border-radius: 8px; background: var(--color-paper); color: var(--color-ink-soft); cursor: pointer; font-size: 12px; }
 .grant-duration button.is-active { border-color: var(--color-accent); background: var(--color-accent-soft); color: var(--color-accent-strong); }
 .grant-matrix { margin: 4px 0 16px; border: 1px solid var(--color-rule); border-radius: 10px; overflow: hidden; }
-.grant-matrix__head, .grant-matrix__row { display: grid; grid-template-columns: 112px minmax(220px, 1.1fr) minmax(220px, 1fr); gap: 12px; align-items: start; }
-.grant-matrix.is-connection .grant-matrix__head, .grant-matrix.is-connection .grant-matrix__row { grid-template-columns: 112px minmax(0, 1fr); }
+.grant-matrix__head, .grant-matrix__row { display: grid; grid-template-columns: 136px minmax(220px, 1.1fr) minmax(220px, 1fr); gap: 12px; align-items: start; }
+.grant-matrix.is-connection .grant-matrix__head, .grant-matrix.is-connection .grant-matrix__row { grid-template-columns: 136px minmax(0, 1fr); }
 .grant-matrix__head { min-height: 36px; padding: 0 12px; align-items: center; background: color-mix(in srgb, var(--color-ink) 6%, var(--color-paper)); color: var(--color-muted); font-size: 12px; font-weight: 650; }
+.grant-matrix__ops-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .grant-matrix__row { padding: 12px; border-top: 1px solid var(--color-rule); }
-.grant-matrix__row > strong { padding-top: 4px; color: var(--color-ink); font-size: 13px; }
+.grant-matrix__name { display: flex; align-items: flex-start; gap: 8px; min-width: 0; padding-top: 1px; color: var(--color-ink); font-size: 13px; }
+.grant-matrix__name > span { min-width: 0; line-height: 1.35; }
+.grant-action-all { display: inline-flex; align-items: center; gap: 6px; min-height: 18px; margin: 0; color: var(--color-ink-soft); font-weight: 650; cursor: pointer; user-select: none; }
+.grant-action-all:hover { color: var(--color-ink); }
 .grant-matrix__actions { display: flex; flex-wrap: wrap; gap: 8px 14px; }
-.grant-matrix__actions label { display: inline-flex; align-items: center; gap: 6px; color: var(--color-ink-soft); font-size: 12px; }
-.grant-matrix__actions input, .grant-item-list input, .grant-scope-header input, .grant-group-head input { width: 15px; height: 15px; margin: 0; accent-color: var(--color-accent); flex: 0 0 auto; }
+.grant-matrix__actions label { display: inline-flex; align-items: center; gap: 6px; color: var(--color-ink-soft); font-size: 12px; cursor: pointer; }
+.grant-action-all input, .grant-matrix__actions input, .grant-item-list input, .grant-scope-header input, .grant-group-head input { width: 15px; height: 15px; margin: 0; accent-color: var(--color-accent); flex: 0 0 auto; }
 .grant-group-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 4px 6px 2px; margin-top: 4px; border-bottom: 1px dashed var(--color-rule); color: var(--color-muted); font-size: 11px; }
 .grant-group-head:first-child { margin-top: 0; }
 .grant-group-label { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; cursor: pointer; user-select: none; }
@@ -1080,7 +1119,8 @@ function submit() {
 @media (max-width: 760px) {
   .grant-kind-switch { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .grant-matrix__head, .grant-matrix__row { grid-template-columns: 1fr; }
-  .grant-matrix__head span:not(:first-child) { display: none; }
+  .grant-matrix__head > span:not(:first-child):not(.grant-matrix__ops-head) { display: none; }
+  .grant-matrix__ops-head > span:first-child { display: none; }
   .grant-pick-summary { align-items: flex-start; flex-direction: column; gap: 2px; }
 }
 </style>

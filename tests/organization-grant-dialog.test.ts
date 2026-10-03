@@ -12,6 +12,7 @@ import { api } from "../src/client/api";
 import OrganizationGrantDialog from "../src/client/views/organization/OrganizationGrantDialog.vue";
 import { provideOrganizationContext, type OrganizationContext } from "../src/client/views/organization/context";
 import { i18nPlugin, language } from "../src/client/i18n";
+import { CAPABILITIES, CAPABILITY_ACTIONS } from "../src/shared/access-permissions";
 
 const Host = defineComponent({
   props: { context: { type: Object, required: true } },
@@ -76,10 +77,10 @@ describe("organization grant dialog", () => {
     input.dispatchEvent(new Event("change"));
     await flushPromises();
 
-    const checked = [...document.body.querySelectorAll(".grant-matrix__row")]
-      .find((row) => row.textContent?.includes("Web 入口"))
-      ?.querySelectorAll("input:checked");
-    expect(checked).toHaveLength(3);
+    const webRow = [...document.body.querySelectorAll(".grant-matrix__row")].find((row) => row.textContent?.includes("Web 入口")) as HTMLElement;
+    const actionInputs = [...webRow.querySelectorAll(".grant-matrix__actions input")] as HTMLInputElement[];
+    expect(actionInputs.map((input) => input.checked)).toEqual([true, true, true]);
+    expect((webRow.querySelector(".grant-action-all input") as HTMLInputElement).checked).toBe(true);
 
     const reason = document.body.querySelector('textarea[aria-label="操作原因"]') as HTMLTextAreaElement;
     reason.value = "生产排障";
@@ -159,6 +160,12 @@ describe("organization grant dialog", () => {
     expect(next.disabled).toBe(false);
     next.click();
     await flushPromises();
+    expect(document.body.querySelectorAll(".grant-matrix__row")).toHaveLength(1);
+    const selectAll = document.body.querySelector(".grant-matrix__head .grant-action-all input") as HTMLInputElement;
+    selectAll.checked = true;
+    selectAll.dispatchEvent(new Event("change"));
+    await flushPromises();
+    expect([...document.body.querySelectorAll(".grant-matrix__actions input")].every((input) => (input as HTMLInputElement).checked)).toBe(true);
     const manage = [...document.body.querySelectorAll("label")].find((label) => label.textContent?.includes("编辑连接"));
     const input = manage!.querySelector("input") as HTMLInputElement;
     input.checked = true;
@@ -268,6 +275,64 @@ describe("organization grant dialog", () => {
       targetIds: ["env-1", "env-2"],
       permissions: expect.objectContaining({ web: ["view"] }),
       items: { web: ["web-1"] },
+    }));
+    wrapper.unmount();
+  });
+
+  it("selects every visible action from the header and one capability from its row", async () => {
+    language.value = "zh-CN";
+    const { wrapper, saveGrant } = mountDialog();
+    await flushPromises();
+    const option = [...document.body.querySelectorAll("button")].find((item) => item.textContent?.includes("生产"));
+    option!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushPromises();
+    const next = [...document.body.querySelectorAll("button")].find((button) => button.textContent?.trim() === "下一步") as HTMLButtonElement;
+    next.click();
+    await flushPromises();
+
+    const header = document.body.querySelector(".grant-matrix__head .grant-action-all input") as HTMLInputElement;
+    expect(header.checked).toBe(false);
+    expect(header.indeterminate).toBe(false);
+    expect(header.getAttribute("aria-label")).toBe("全选操作");
+
+    const webRow = [...document.body.querySelectorAll(".grant-matrix__row")].find((row) => row.textContent?.includes("Web 入口")) as HTMLElement;
+    const webAll = webRow.querySelector(".grant-action-all input") as HTMLInputElement;
+    expect(webAll.getAttribute("aria-label")).toBe("全选Web 入口");
+    webAll.checked = true;
+    webAll.dispatchEvent(new Event("change"));
+    await flushPromises();
+
+    expect([...webRow.querySelectorAll(".grant-matrix__actions input")].every((input) => (input as HTMLInputElement).checked)).toBe(true);
+    const sshRow = [...document.body.querySelectorAll(".grant-matrix__row")].find((row) => row.textContent?.includes("SSH 终端")) as HTMLElement;
+    expect([...sshRow.querySelectorAll(".grant-matrix__actions input")].some((input) => (input as HTMLInputElement).checked)).toBe(false);
+    expect(header.indeterminate).toBe(true);
+
+    header.checked = true;
+    header.dispatchEvent(new Event("change"));
+    await flushPromises();
+    const actionInputs = [...document.body.querySelectorAll(".grant-matrix__actions input")] as HTMLInputElement[];
+    expect(actionInputs.every((input) => input.checked)).toBe(true);
+    expect(header.checked).toBe(true);
+    expect(header.indeterminate).toBe(false);
+
+    header.checked = false;
+    header.dispatchEvent(new Event("change"));
+    await flushPromises();
+    expect(actionInputs.every((input) => !input.checked)).toBe(true);
+
+    header.checked = true;
+    header.dispatchEvent(new Event("change"));
+    await flushPromises();
+    const reason = document.body.querySelector('textarea[aria-label="操作原因"]') as HTMLTextAreaElement;
+    reason.value = "生产排障";
+    reason.dispatchEvent(new Event("input", { bubbles: true }));
+    await flushPromises();
+    const save = [...document.body.querySelectorAll("button")].find((button) => button.textContent?.includes("确认授权")) as HTMLButtonElement;
+    save.click();
+    await flushPromises();
+    expect(saveGrant).toHaveBeenCalledWith(expect.objectContaining({
+      permissions: Object.fromEntries(CAPABILITIES.map((capability) => [capability, [...CAPABILITY_ACTIONS[capability]]])),
+      items: {},
     }));
     wrapper.unmount();
   });
