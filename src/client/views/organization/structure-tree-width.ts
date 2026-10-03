@@ -1,6 +1,6 @@
 export const STRUCTURE_TREE_WIDTH_KEY = "viron.organization.structure-tree-width";
 export const STRUCTURE_TREE_DEFAULT = 330;
-export const STRUCTURE_TREE_MIN = 144;
+export const STRUCTURE_TREE_MIN = 72;
 export const STRUCTURE_TREE_TEXT_MIN = 220;
 export const STRUCTURE_TREE_MAX = 560;
 export const STRUCTURE_INSPECTOR_MIN = 480;
