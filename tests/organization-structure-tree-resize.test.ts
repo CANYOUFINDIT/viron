@@ -11,14 +11,14 @@ import { i18nPlugin } from "../src/client/i18n";
 describe("organization structure tree width", () => {
   it("keeps a saved width between the tree minimum and the room left for the inspector", () => {
     expect(preferredStructureTreeWidth(null)).toBe(330);
-    expect(preferredStructureTreeWidth("80")).toBe(64);
-    expect(preferredStructureTreeWidth("200")).toBe(64);
-    expect(preferredStructureTreeWidth("40")).toBe(64);
+    expect(preferredStructureTreeWidth("80")).toBe(144);
+    expect(preferredStructureTreeWidth("200")).toBe(144);
+    expect(preferredStructureTreeWidth("40")).toBe(144);
     expect(preferredStructureTreeWidth("240")).toBe(240);
     expect(preferredStructureTreeWidth("900")).toBe(560);
     expect(clampStructureTreeWidth(500, 1200)).toBe(500);
     expect(clampStructureTreeWidth(500, 800)).toBe(320);
-    expect(clampStructureTreeWidth(500, 600)).toBe(120);
+    expect(clampStructureTreeWidth(500, 600)).toBe(144);
   });
 });
 
@@ -70,11 +70,15 @@ describe("organization structure tree resizer", () => {
     document.dispatchEvent(pointer("pointerup", 160));
     await flushPromises();
 
-    expect(wrapper.get(".structure-workbench").attributes("style")).toContain("--structure-tree-width: 64px");
-    expect(separator.attributes("aria-valuenow")).toBe("64");
-    expect(storage.get(STRUCTURE_TREE_WIDTH_KEY)).toBe("64");
+    expect(wrapper.get(".structure-workbench").attributes("style")).toContain("--structure-tree-width: 144px");
+    expect(separator.attributes("aria-valuenow")).toBe("144");
+    expect(storage.get(STRUCTURE_TREE_WIDTH_KEY)).toBe("144");
     expect(wrapper.get(".structure-tree").classes()).toContain("is-avatar-rail");
     expect(wrapper.get(".structure-node[title='付同永']").attributes("title")).toBe("付同永");
+    expect(wrapper.findAll(".el-tree-node__children").length).toBeGreaterThan(0);
+    const expandIcons = wrapper.findAll(".el-tree-node__expand-icon");
+    expect(expandIcons.length).toBeGreaterThan(0);
+    expect(expandIcons.every((icon) => getComputedStyle(icon.element).display !== "none")).toBe(true);
     wrapper.unmount();
   });
 });

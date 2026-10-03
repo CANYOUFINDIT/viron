@@ -180,21 +180,21 @@
 .structure-node__actions button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 .structure-node__actions button:active { transform: translateY(1px); }
 .structure-node__actions button:disabled { opacity: .55; cursor: not-allowed; transform: none; }
-.structure-tree.is-avatar-rail > header { justify-content: center; min-height: 52px; padding-inline: 0; }
+.structure-tree.is-avatar-rail > header { justify-content: flex-start; min-height: 52px; padding-inline: 4px 0; }
 .structure-tree.is-avatar-rail > header > div { display: none; }
 .structure-tree.is-avatar-rail > header:not(:has(button)) { display: none; }
-.structure-tree.is-avatar-rail .structure-tree__body { padding-inline: 0; }
-.structure-tree.is-avatar-rail :deep(.el-tree-node__expand-icon) { display: none; }
-.structure-tree.is-avatar-rail :deep(.el-tree-node__children) { margin-left: 0; }
-.structure-tree.is-avatar-rail :deep(.el-tree-node__children > .el-tree-node::before),
-.structure-tree.is-avatar-rail :deep(.el-tree-node__children > .el-tree-node > .el-tree-node__content::before) { display: none; }
-.structure-tree.is-avatar-rail :deep(.el-tree-node__content) { justify-content: center; }
+.structure-tree.is-avatar-rail .structure-tree__body { padding-inline: 4px; }
 .structure-tree.is-avatar-rail .structure-node,
 .structure-tree.is-avatar-rail :deep(.el-tree-node__children > .el-tree-node > .el-tree-node__content > .structure-node) {
   width: auto;
-  margin-left: 0;
-  justify-content: center;
-  padding-inline: 0;
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.structure-tree.is-avatar-rail .structure-node.is-selected { border: 0; background: transparent; }
+.structure-tree.is-avatar-rail .structure-node.is-selected .structure-node__icon {
+  box-shadow: 0 0 0 2px var(--color-paper-raised), 0 0 0 3.5px var(--color-accent);
 }
 .structure-tree.is-avatar-rail .structure-node__copy {
   position: absolute;
