@@ -14,6 +14,7 @@
 .data-list--members .data-list__head:not(:has(span:nth-child(5))), .data-list--members .data-list__row:not(:has(.row-actions)) { grid-template-columns: minmax(170px, 1fr) 110px 135px minmax(120px, .7fr); }
 .member-identity { min-width: 0; display: flex; align-items: center; gap: 10px; }
 .member-identity > i { width: 31px; height: 31px; flex: 0 0 auto; border-radius: 8px; background: var(--teal-50); color: var(--teal-700); display: grid; place-items: center; font-size: 11px; font-style: normal; font-weight: 900; }
+.member-identity > i.is-wide { font-size: 10px; letter-spacing: -0.04em; }
 .member-identity strong, .member-identity small, .data-list__row > span > strong, .data-list__row > span > small { display: block; }
 .member-identity strong, .data-list__row > span > strong { color: var(--ink-800); font-size: 11px; }
 .member-identity small, .data-list__row > span > small { margin-top: 3px; color: var(--ink-400); font-size: 9px; }

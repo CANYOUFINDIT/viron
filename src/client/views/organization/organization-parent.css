@@ -39,6 +39,7 @@
 .grant-composer { border: 1px solid var(--ink-100); border-radius: 14px; background: var(--surface); }
 .member-identity { min-width: 0; display: flex; align-items: center; gap: 10px; }
 .member-identity > i { width: 31px; height: 31px; flex: 0 0 auto; border-radius: 8px; background: var(--teal-50); color: var(--teal-700); display: grid; place-items: center; font-size: 11px; font-style: normal; font-weight: 900; }
+.member-identity > i.is-wide { font-size: 10px; letter-spacing: -0.04em; }
 .member-identity strong, .member-identity small { display: block; }
 .member-identity strong { color: var(--ink-800); font-size: 11px; }
 .member-identity small { margin-top: 3px; color: var(--ink-400); font-size: 9px; }

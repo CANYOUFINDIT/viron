@@ -25,6 +25,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, readonly, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { isDesktopApp } from "../desktop";
+import { nameInitials } from "../../shared/name-initials";
 import { initializeAppShortcuts, onAppShortcut, shortcutActionFromKeyboardEvent } from "../keyboard-shortcuts";
 import { environmentOverviewNavigationTarget, updateRememberedEnvironmentId } from "../environment-overview-navigation";
 import { session, switchWorkspace } from "../session";
@@ -462,7 +463,7 @@ onBeforeUnmount(() => {
           </button>
           <div class="header-user-control" :class="{ 'is-settings-active': route.name === 'settings' }">
             <button class="header-admin-chip" type="button" :aria-label="$t('打开用户 {0} 的个人信息', [session.user?.username])" :title="sidebarExpanded ? undefined : session.user?.username" @click="openProfile">
-              <span class="admin-avatar">{{ session.user?.username.slice(0, 1).toUpperCase() }}</span>
+              <span class="admin-avatar" :class="{ 'is-wide': nameInitials(session.user?.username ?? '').length > 1 }">{{ nameInitials(session.user?.username ?? '') }}</span>
               <span class="sidebar-label-wrap"><span class="header-admin-name sidebar-label">{{ session.user?.username }}</span></span>
               <Settings class="header-user-settings-icon" :size="16" aria-hidden="true" />
             </button>

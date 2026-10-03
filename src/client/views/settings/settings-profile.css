@@ -1,5 +1,6 @@
 .profile-summary { margin-top: 22px; padding: 17px; border: 1px solid var(--ink-100); border-radius: 12px; background: linear-gradient(135deg, var(--surface), color-mix(in srgb, var(--teal-50) 36%, var(--surface))); display: grid; grid-template-columns: 58px minmax(150px, .7fr) minmax(300px, 1.3fr); align-items: center; gap: 16px; }
 .profile-avatar { width: 58px; height: 58px; border-radius: 16px 16px 16px 6px; background: var(--teal-600); color: white; box-shadow: 0 10px 24px color-mix(in srgb, var(--teal-600) 22%, transparent); display: grid; place-items: center; font-family: var(--font-display); font-size: 25px; font-weight: 800; }
+.profile-avatar.is-wide { font-size: 18px; letter-spacing: -0.04em; }
 .profile-identity { min-width: 0; }
 .profile-identity small, .profile-identity strong, .profile-identity em { display: block; }
 .profile-identity small { color: var(--teal-600); font-family: var(--font-mono); font-size: 9px; font-weight: 800; letter-spacing: .12em; }

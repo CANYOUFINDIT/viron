@@ -49,7 +49,8 @@
   justify-content: space-between;
   gap: var(--space-sm);
 }
-.structure-tree > header strong, .structure-tree > header small { display: block; }
+.structure-tree > header > div { min-width: 0; }
+.structure-tree > header strong, .structure-tree > header small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .structure-tree > header strong { color: var(--color-ink); font-size: var(--text-sm); }
 .structure-tree > header small { margin-block-start: var(--space-2xs); color: var(--color-muted); font-size: var(--text-2xs); }
 .structure-tree > header button {
@@ -146,6 +147,10 @@
 }
 .structure-node__icon.is-organization { background: var(--color-sidebar-raised); color: var(--color-accent-on-dark); }
 .structure-node__icon.is-project { color: var(--color-accent); }
+.structure-node__icon.is-member { background: var(--color-accent-soft); color: var(--color-accent-strong); font-size: 13px; font-weight: 700; letter-spacing: -0.03em; }
+.structure-node__icon.is-member:has(.is-wide) { font-size: 10px; letter-spacing: -0.05em; }
+.structure-node.is-selected .structure-node__icon.is-member { background: var(--color-paper-raised); }
+.structure-node__initials { line-height: 1; }
 .structure-node__copy { min-width: 0; flex: 1; }
 .structure-node__copy strong, .structure-node__copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .structure-node__copy strong { color: var(--color-ink); font-size: var(--text-xs); }
@@ -175,6 +180,34 @@
 .structure-node__actions button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 .structure-node__actions button:active { transform: translateY(1px); }
 .structure-node__actions button:disabled { opacity: .55; cursor: not-allowed; transform: none; }
+.structure-tree.is-avatar-rail > header { justify-content: center; min-height: 52px; padding-inline: 0; }
+.structure-tree.is-avatar-rail > header > div { display: none; }
+.structure-tree.is-avatar-rail > header:not(:has(button)) { display: none; }
+.structure-tree.is-avatar-rail .structure-tree__body { padding-inline: 0; }
+.structure-tree.is-avatar-rail :deep(.el-tree-node__expand-icon) { display: none; }
+.structure-tree.is-avatar-rail :deep(.el-tree-node__children) { margin-left: 0; }
+.structure-tree.is-avatar-rail :deep(.el-tree-node__children > .el-tree-node::before),
+.structure-tree.is-avatar-rail :deep(.el-tree-node__children > .el-tree-node > .el-tree-node__content::before) { display: none; }
+.structure-tree.is-avatar-rail :deep(.el-tree-node__content) { justify-content: center; }
+.structure-tree.is-avatar-rail .structure-node,
+.structure-tree.is-avatar-rail :deep(.el-tree-node__children > .el-tree-node > .el-tree-node__content > .structure-node) {
+  width: auto;
+  margin-left: 0;
+  justify-content: center;
+  padding-inline: 0;
+}
+.structure-tree.is-avatar-rail .structure-node__copy {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.structure-tree.is-avatar-rail .structure-node__actions { display: none; }
 
 .node-inspector { min-width: 0; }
 .node-inspector__header {
@@ -196,7 +229,9 @@
   place-items: center;
 }
 .node-inspector__mark.is-organization { background: var(--color-sidebar-raised); color: var(--color-accent-on-dark); }
-.node-inspector__mark.is-member { color: var(--color-ink-soft); }
+.node-inspector__mark.is-member { background: var(--color-accent-soft); color: var(--color-accent-strong); font-size: 18px; font-weight: 700; letter-spacing: -0.03em; }
+.node-inspector__mark.is-member.is-wide { font-size: 15px; letter-spacing: -0.04em; }
+.node-inspector__initials { line-height: 1; }
 .node-inspector__header > div { min-width: 0; }
 .node-inspector__header small, .node-inspector__header h3, .node-inspector__header p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .node-inspector__header small { color: var(--color-accent); font-family: var(--font-mono); font-size: var(--text-2xs); }

@@ -2,6 +2,7 @@
 import { ArrowRight, Ban, Building2, Check, Clock3, Copy, KeyRound, Link2, Network, Plus, RefreshCw, ShieldCheck, UserPlus } from "@lucide/vue";
 import PageHeader from "../components/PageHeader.vue";
 import TipIcon from "../components/TipIcon.vue";
+import { nameInitials } from "../../shared/name-initials";
 import { provideOrganizationContext } from "./organization/context";
 import OrganizationAccessPanel from "./organization/OrganizationAccessPanel.vue";
 import OrganizationGrantDialog from "./organization/OrganizationGrantDialog.vue";
@@ -140,7 +141,7 @@ function selectOrganization(organizationId: string) {
       <div v-if="selectedInvitation" class="invitation-users-summary"><span><Link2 :size="16" /></span><div><strong>{{ selectedInvitation.token ? `…${selectedInvitation.token.slice(-10)}` : $t('历史邀请') }}</strong><small>{{ selectedInvitation.project?.name || $t('组织直属') }} · {{ selectedInvitation.acceptedUsers.length }} {{ $t('名可追溯用户') }}</small></div></div>
       <div v-if="selectedInvitation?.acceptedUsers.length" class="accepted-user-list" role="table" :aria-label="$t('邀请链接加入用户')">
         <div class="accepted-user-list__head" role="row"><span>{{ $t('用户') }}</span><span>{{ $t('加入结果') }}</span><span>{{ $t('使用时间') }}</span></div>
-        <div v-for="user in selectedInvitation.acceptedUsers" :key="user.id" class="accepted-user-list__row" role="row"><span class="member-identity"><i>{{ user.username.slice(0, 1).toUpperCase() }}</i><strong>{{ user.username }}</strong></span><span><em>{{ invitationJoinResult(user) }}</em></span><time>{{ new Date(user.acceptedAt).toLocaleString($locale()) }}</time></div>
+        <div v-for="user in selectedInvitation.acceptedUsers" :key="user.id" class="accepted-user-list__row" role="row"><span class="member-identity"><i :class="{ 'is-wide': nameInitials(user.username).length > 1 }">{{ nameInitials(user.username) }}</i><strong>{{ user.username }}</strong></span><span><em>{{ invitationJoinResult(user) }}</em></span><time>{{ new Date(user.acceptedAt).toLocaleString($locale()) }}</time></div>
       </div>
       <p v-if="selectedInvitation && unattributedInvitationUses(selectedInvitation)" class="history-use-note">{{ $t('另有') }} {{ unattributedInvitationUses(selectedInvitation) }} {{ $t('次早期使用记录没有可关联的用户信息。') }}</p>
       <template #footer><el-button @click="invitationUsersDialog = false">{{ $t('关闭') }}</el-button></template>

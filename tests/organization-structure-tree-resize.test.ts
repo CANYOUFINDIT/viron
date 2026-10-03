@@ -11,11 +11,14 @@ import { i18nPlugin } from "../src/client/i18n";
 describe("organization structure tree width", () => {
   it("keeps a saved width between the tree minimum and the room left for the inspector", () => {
     expect(preferredStructureTreeWidth(null)).toBe(330);
-    expect(preferredStructureTreeWidth("80")).toBe(220);
+    expect(preferredStructureTreeWidth("80")).toBe(64);
+    expect(preferredStructureTreeWidth("200")).toBe(64);
+    expect(preferredStructureTreeWidth("40")).toBe(64);
+    expect(preferredStructureTreeWidth("240")).toBe(240);
     expect(preferredStructureTreeWidth("900")).toBe(560);
     expect(clampStructureTreeWidth(500, 1200)).toBe(500);
     expect(clampStructureTreeWidth(500, 800)).toBe(320);
-    expect(clampStructureTreeWidth(500, 600)).toBe(220);
+    expect(clampStructureTreeWidth(500, 600)).toBe(120);
   });
 });
 
@@ -59,6 +62,19 @@ describe("organization structure tree resizer", () => {
     expect(separator.attributes("aria-valuenow")).toBe("420");
     expect(storage.get(STRUCTURE_TREE_WIDTH_KEY)).toBe("420");
     expect(document.body.style.cursor).toBe("");
+    expect(wrapper.get(".structure-tree").classes()).not.toContain("is-avatar-rail");
+    expect(wrapper.findAll(".structure-node__initials").map((node) => node.text())).toEqual(["付", "MB"]);
+
+    separator.element.dispatchEvent(pointer("pointerdown", 80));
+    document.dispatchEvent(pointer("pointermove", 160));
+    document.dispatchEvent(pointer("pointerup", 160));
+    await flushPromises();
+
+    expect(wrapper.get(".structure-workbench").attributes("style")).toContain("--structure-tree-width: 64px");
+    expect(separator.attributes("aria-valuenow")).toBe("64");
+    expect(storage.get(STRUCTURE_TREE_WIDTH_KEY)).toBe("64");
+    expect(wrapper.get(".structure-tree").classes()).toContain("is-avatar-rail");
+    expect(wrapper.get(".structure-node[title='付同永']").attributes("title")).toBe("付同永");
     wrapper.unmount();
   });
 });
@@ -95,7 +111,17 @@ const Host = defineComponent({
       selectedProject: ref(null),
       selectedProjectChildren: ref([]),
       selectedProjectPath: ref(""),
-      structureTree: ref([]),
+      structureTree: ref([{
+        key: "organization:org-1",
+        type: "organization",
+        entityId: "org-1",
+        label: "onepro",
+        meta: "1 人",
+        children: [
+          { key: "member:root:u1", type: "member", entityId: "u1", label: "付同永", meta: "成员" },
+          { key: "member:root:u2", type: "member", entityId: "u2", label: "Michelle Bill", meta: "成员" },
+        ],
+      }]),
     } as never);
   },
   components: { OrganizationStructurePanel },

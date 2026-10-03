@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { nameInitials } from "../../../shared/name-initials";
 import { useSettingsContext } from "./context";
 import { CalendarDays, ChevronDown, Fingerprint, KeyRound, LogOut, ShieldCheck, UserRound } from "@lucide/vue";
 import TipIcon from "../../components/TipIcon.vue";
@@ -10,7 +11,7 @@ const { changePassword, closePasswordPanel, formatAccountCreatedAt, password, pa
 <section class="settings-section-panel settings-section-panel--profile">
           <header><span><UserRound :size="20" /></span><h3>{{ $t('个人信息') }}</h3></header>
           <div class="profile-summary">
-            <span class="profile-avatar">{{ session.user?.username.slice(0, 1).toUpperCase() }}</span>
+            <span class="profile-avatar" :class="{ 'is-wide': nameInitials(session.user?.username ?? '').length > 1 }">{{ nameInitials(session.user?.username ?? '') }}</span>
             <div class="profile-identity"><strong>{{ session.user?.username }}</strong><em>{{ session.user?.isPlatformAdmin ? $t('平台管理员') : $t('普通用户') }}</em></div>
             <dl>
               <div><dt><UserRound :size="14" />{{ $t('用户名') }}</dt><dd>{{ session.user?.username }}</dd></div>

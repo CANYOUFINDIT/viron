@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { nameInitials } from "../../../shared/name-initials";
 import { useOrganizationContext } from "./context";
 import { Ban, Check, Copy, Link2, RefreshCw, Trash2, UserPlus } from "@lucide/vue";
 
@@ -19,7 +20,7 @@ const { copiedInvitationKey, copyInvitationLink, deleteInvitationRecord, deletin
                   <span><strong>{{ invitation.project?.name || $t('组织直属') }}</strong><small>{{ invitation.project ? $t('自动归组') : $t('不指定项目组') }}</small></span>
                   <span class="invitation-users">
                     <button v-if="invitation.acceptedUsers.length" type="button" :aria-label="$t('查看 {0} 名加入用户', [invitation.acceptedUsers.length])" @click="openInvitationUsers(invitation)">
-                      <span class="avatar-stack" aria-hidden="true"><i v-for="user in invitation.acceptedUsers.slice(0, 3)" :key="user.id">{{ user.username.slice(0, 1).toUpperCase() }}</i></span>
+                      <span class="avatar-stack" aria-hidden="true"><i v-for="user in invitation.acceptedUsers.slice(0, 3)" :key="user.id" :class="{ 'is-wide': nameInitials(user.username).length > 1 }">{{ nameInitials(user.username) }}</i></span>
                       <span><strong>{{ invitation.acceptedUsers.length }} {{ $t('人') }}</strong><small>{{ unattributedInvitationUses(invitation) ? $t('另有 {0} 次历史使用', [unattributedInvitationUses(invitation)]) : $t('查看加入明细') }}</small></span>
                     </button>
                     <span v-else><strong>{{ $t('暂无用户') }}</strong><small>{{ invitation.usedCount ? $t('{0} 次历史使用未关联', [invitation.usedCount]) : $t('链接尚未使用') }}</small></span>

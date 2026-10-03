@@ -5,6 +5,7 @@ import { ElMessage } from "element-plus";
 import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { api, ApiError } from "../api";
+import { nameInitials } from "../../shared/name-initials";
 import TipIcon from "../components/TipIcon.vue";
 import { loadSession, session, switchWorkspace } from "../session";
 import vironLogoUrl from "../../../design/logo/viron-logo.svg?url";
@@ -106,7 +107,7 @@ onMounted(loadInvitation);
 
       <template v-else-if="invitation">
         <div class="invitation-identity">
-          <span class="inviter-avatar">{{ invitation.inviter.username.slice(0, 1).toUpperCase() }}</span>
+          <span class="inviter-avatar" :class="{ 'is-wide': nameInitials(invitation.inviter.username).length > 1 }">{{ nameInitials(invitation.inviter.username) }}</span>
           <span class="invitation-line"></span>
           <span class="organization-avatar"><Building2 :size="24" /></span>
         </div>
@@ -153,6 +154,7 @@ onMounted(loadInvitation);
 .invitation-identity { padding-top: 50px; display: grid; grid-template-columns: 64px 86px 64px; justify-content: center; align-items: center; }
 .inviter-avatar, .organization-avatar { width: 64px; height: 64px; border-radius: 17px; display: grid; place-items: center; }
 .inviter-avatar { border: 1px solid var(--ink-100); background: var(--ink-50); color: var(--ink-700); font-family: var(--font-display); font-size: 24px; font-weight: 900; }
+.inviter-avatar.is-wide { font-size: 18px; letter-spacing: -0.04em; }
 .organization-avatar { background: var(--ink-950); color: #65d2ae; box-shadow: 0 0 0 8px var(--teal-50); }
 .invitation-line { height: 1px; background: repeating-linear-gradient(90deg, var(--ink-200) 0 5px, transparent 5px 9px); position: relative; }
 .invitation-line::after { content: ">"; position: absolute; right: -2px; top: 50%; color: var(--ink-300); font-size: 10px; transform: translateY(-54%); }

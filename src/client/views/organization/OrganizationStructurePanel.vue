@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { ArrowRight, Building2, FolderKanban, FolderPlus, Pencil, Plus, Server, ShieldCheck, Trash2, UserRound, Users } from "@lucide/vue";
+import { ArrowRight, Building2, FolderKanban, FolderPlus, Pencil, Plus, Server, ShieldCheck, Trash2, Users } from "@lucide/vue";
 import TipIcon from "../../components/TipIcon.vue";
 import { currentLocale, translate } from "../../i18n";
+import { nameInitials } from "../../../shared/name-initials";
 import { useOrganizationContext } from "./context";
 import GrantTimelineView from "./GrantTimelineView.vue";
-import { STRUCTURE_TREE_MAX, STRUCTURE_TREE_MIN, STRUCTURE_TREE_WIDTH_KEY, clampStructureTreeWidth, preferredStructureTreeWidth } from "./structure-tree-width";
+import { STRUCTURE_TREE_MAX, STRUCTURE_TREE_MIN, STRUCTURE_TREE_TEXT_MIN, STRUCTURE_TREE_WIDTH_KEY, clampStructureTreeWidth, preferredStructureTreeWidth, settleStructureTreeWidth } from "./structure-tree-width";
 
 const { activateWorkspace, canManageOrganization, changeRole, createOrganizationDialog, deleteProject, detail, openCreateProject, openEditGrant, openEditProject, openGrantDialog, openGrantHistory, openProjectMembersById, organizations, removeMember, revokeGrant, selectStructureNode, selectedGrantRows, selectedGrantTarget, selectedMember, selectedMemberProjects, selectedNode, selectedProject, selectedProjectChildren, selectedProjectPath, structureTree } = useOrganizationContext();
 
@@ -14,6 +15,7 @@ const workbenchElement = ref<HTMLElement | null>(null);
 const containerWidth = ref(0);
 const preferredTreeWidth = ref(preferredStructureTreeWidth(readStoredTreeWidth()));
 const treeWidth = computed(() => clampStructureTreeWidth(preferredTreeWidth.value, containerWidth.value));
+const avatarRail = computed(() => treeWidth.value < STRUCTURE_TREE_TEXT_MIN);
 const workbenchStyle = computed(() => ({ "--structure-tree-width": `${treeWidth.value}px` }));
 let treeResizeObserver: ResizeObserver | undefined;
 let stopTreeResize: (() => void) | undefined;
@@ -26,8 +28,13 @@ function readStoredTreeWidth(): string | null {
   }
 }
 
+function previewTreeWidth(raw: number): void {
+  if (!Number.isFinite(raw)) return;
+  preferredTreeWidth.value = Math.round(Math.min(STRUCTURE_TREE_MAX, Math.max(STRUCTURE_TREE_MIN, raw)));
+}
+
 function rememberTreeWidth(value: number): void {
-  preferredTreeWidth.value = preferredStructureTreeWidth(String(value));
+  preferredTreeWidth.value = settleStructureTreeWidth(value);
   try {
     localStorage.setItem(STRUCTURE_TREE_WIDTH_KEY, String(preferredTreeWidth.value));
   } catch {
@@ -47,7 +54,7 @@ function startTreeResize(event: PointerEvent): void {
   body.style.userSelect = "none";
   const move = (moveEvent: PointerEvent) => {
     if (moveEvent.pointerId !== pointerId) return;
-    preferredTreeWidth.value = preferredStructureTreeWidth(String(moveEvent.clientX - bounds.left));
+    previewTreeWidth(moveEvent.clientX - bounds.left);
   };
   const cleanup = () => {
     document.removeEventListener("pointermove", move);
@@ -74,7 +81,12 @@ function startTreeResize(event: PointerEvent): void {
 }
 
 function nudgeTreeWidth(delta: number): void {
-  rememberTreeWidth(treeWidth.value + delta);
+  if (treeWidth.value < STRUCTURE_TREE_TEXT_MIN) {
+    if (delta > 0) rememberTreeWidth(STRUCTURE_TREE_TEXT_MIN);
+    return;
+  }
+  const next = treeWidth.value + delta;
+  rememberTreeWidth(next < STRUCTURE_TREE_TEXT_MIN ? STRUCTURE_TREE_MIN : next);
 }
 
 onMounted(() => {
@@ -104,7 +116,7 @@ function grantExpiry(grant: { expired: boolean; expiresAt?: string | null }): st
 <template>
 <section v-if="detail" class="console-panel structure-panel">
             <article ref="workbenchElement" class="structure-workbench" :style="workbenchStyle">
-              <aside class="structure-tree" :aria-label="$t('组织架构树')">
+              <aside class="structure-tree" :class="{ 'is-avatar-rail': avatarRail }" :aria-label="$t('组织架构树')">
                 <header>
                   <div><strong>{{ $t('组织架构') }}</strong><small>{{ detail.projects.length }} {{ $t('个项目组 ·') }} {{ detail.members.length }} {{ $t('名成员') }}</small></div>
                   <button v-if="canManageOrganization" type="button" :aria-label="$t('创建根项目组')" @click="openCreateProject(null)"><FolderPlus :size="16" /></button>
@@ -112,11 +124,11 @@ function grantExpiry(grant: { expired: boolean; expiresAt?: string | null }): st
                 <div class="structure-tree__body">
                   <el-tree :data="structureTree" node-key="key" default-expand-all :expand-on-click-node="false" @node-click="selectStructureNode">
                     <template #default="{ data }">
-                      <span class="structure-node" :class="{ 'is-selected': selectedNode.type === data.type && selectedNode.id === data.entityId }">
+                      <span class="structure-node" :class="{ 'is-selected': selectedNode.type === data.type && selectedNode.id === data.entityId }" :title="data.label">
                         <span class="structure-node__icon" :class="`is-${data.type}`">
                           <Building2 v-if="data.type === 'organization'" :size="15" />
                           <FolderKanban v-else-if="data.type === 'project'" :size="15" />
-                          <UserRound v-else :size="14" />
+                          <span v-else class="structure-node__initials" :class="{ 'is-wide': nameInitials(data.label).length > 1 }">{{ nameInitials(data.label) }}</span>
                         </span>
                         <span class="structure-node__copy"><strong>{{ data.label }}</strong><small>{{ data.meta }}</small></span>
                         <span
@@ -146,10 +158,10 @@ function grantExpiry(grant: { expired: boolean; expiresAt?: string | null }): st
 
               <section class="node-inspector">
                 <header class="node-inspector__header">
-                  <span class="node-inspector__mark" :class="`is-${selectedNode.type}`">
+                  <span class="node-inspector__mark" :class="[`is-${selectedNode.type}`, { 'is-wide': selectedMember && nameInitials(selectedMember.username).length > 1 }]">
                     <Building2 v-if="selectedNode.type === 'organization'" :size="22" />
                     <FolderKanban v-else-if="selectedNode.type === 'project'" :size="22" />
-                    <UserRound v-else :size="21" />
+                    <span v-else-if="selectedMember" class="node-inspector__initials">{{ nameInitials(selectedMember.username) }}</span>
                   </span>
                   <div v-if="selectedNode.type === 'organization'">
                     <small>{{ $t('组织根节点') }}</small>
