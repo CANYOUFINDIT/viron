@@ -2,6 +2,14 @@ const HOUR = 3_600_000;
 const DAY = 86_400_000;
 const MIN_BAR = 1.6;
 
+export const GRANT_TIMELINE_SPANS = [7, 14, 30, 90] as const;
+export type GrantTimelineSpan = (typeof GRANT_TIMELINE_SPANS)[number];
+
+export interface GrantTimelineRange {
+  start: number;
+  end: number;
+}
+
 export type GrantTimelineTone = "expired" | "soon" | "week" | "later" | "forever";
 
 export interface GrantTimelineSource {
@@ -31,6 +39,7 @@ export interface GrantTimelineBar {
   startLeft: number;
   endLeft: number | null;
   activeDays: number;
+  outsideRange: "before" | "after" | null;
 }
 
 export interface GrantTimelineModel {
@@ -38,6 +47,7 @@ export interface GrantTimelineModel {
   axisEnd: number;
   now: number;
   nowLeft: number;
+  nowVisible: boolean;
   bars: GrantTimelineBar[];
   ticks: GrantTimelineTick[];
   toneCounts: Record<GrantTimelineTone, number>;
@@ -86,7 +96,12 @@ function formatTickDate(time: number, axisStart: number, axisEnd: number): strin
   return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
 }
 
-export function buildGrantTimeline(grants: readonly GrantTimelineSource[], now = Date.now()): GrantTimelineModel {
+export function grantTimelineWindow(now: number, days: GrantTimelineSpan = 7): GrantTimelineRange {
+  const pastDays = Math.floor(days / 3);
+  return { start: now - pastDays * DAY, end: now + (days - pastDays) * DAY };
+}
+
+function fullTimelineRange(grants: readonly GrantTimelineSource[], now: number): GrantTimelineRange {
   const starts = grants.map((grant) => parsed(grant.createdAt)).filter((value): value is number => value !== null);
   let axisStart = Math.min(now, ...(starts.length ? starts : [now]));
   const finiteEnds = grants.map((grant) => parsed(grant.expiresAt)).filter((value): value is number => value !== null);
@@ -96,11 +111,23 @@ export function buildGrantTimeline(grants: readonly GrantTimelineSource[], now =
   axisEnd += span * 0.08;
   // Keep a stretch of future on the axis. Otherwise permanent grants pin 现在 against the end date.
   axisEnd = Math.max(axisEnd, now + Math.max(now - axisStart, DAY) * 0.5);
+  return { start: axisStart, end: axisEnd };
+}
+
+export function buildGrantTimeline(
+  grants: readonly GrantTimelineSource[],
+  now = Date.now(),
+  range: GrantTimelineRange | "all" = grantTimelineWindow(now),
+): GrantTimelineModel {
+  const requested = range === "all" ? fullTimelineRange(grants, now) : range;
+  const validRange = Number.isFinite(requested.start) && Number.isFinite(requested.end) && requested.end > requested.start;
+  const { start: axisStart, end: axisEnd } = validRange ? requested : grantTimelineWindow(now);
   const axisSpan = Math.max(axisEnd - axisStart, 1);
   const place = (start: number, end: number) => {
-    let width = ((end - start) / axisSpan) * 100;
-    let left = ((start - axisStart) / axisSpan) * 100;
-    width = Math.max(width, MIN_BAR);
+    const visibleStart = Math.max(axisStart, Math.min(axisEnd, start));
+    const visibleEnd = Math.max(visibleStart, Math.min(axisEnd, end));
+    const width = Math.min(100, Math.max(((visibleEnd - visibleStart) / axisSpan) * 100, MIN_BAR));
+    let left = ((visibleStart - axisStart) / axisSpan) * 100;
     if (left + width > 100) left = 100 - width;
     left = Math.max(0, Math.min(left, 100 - width));
     return { left, width };
@@ -115,6 +142,7 @@ export function buildGrantTimeline(grants: readonly GrantTimelineSource[], now =
     const startLeft = Math.max(0, Math.min(100, ((start - axisStart) / axisSpan) * 100));
     const endLeft = openEnded ? null : Math.max(0, Math.min(100, (((end ?? now) - axisStart) / axisSpan) * 100));
     const activeDays = Math.max(0, Math.floor((now - start) / DAY));
+    const outsideRange: GrantTimelineBar["outsideRange"] = start > axisEnd ? "after" : visualEnd < axisStart ? "before" : null;
     return {
       id: grant.id,
       label: grant.label,
@@ -127,6 +155,7 @@ export function buildGrantTimeline(grants: readonly GrantTimelineSource[], now =
       startLeft,
       endLeft,
       activeDays,
+      outsideRange,
     };
   }).sort((left, right) => {
     if (left.remainingMs !== right.remainingMs) return left.remainingMs < right.remainingMs ? -1 : 1;
@@ -158,5 +187,6 @@ export function buildGrantTimeline(grants: readonly GrantTimelineSource[], now =
     toneCounts[bar.tone] = (toneCounts[bar.tone] || 0) + 1;
   }
 
-  return { axisStart, axisEnd, now, nowLeft, bars, ticks, toneCounts };
+  const nowVisible = now >= axisStart && now <= axisEnd;
+  return { axisStart, axisEnd, now, nowLeft, nowVisible, bars, ticks, toneCounts };
 }

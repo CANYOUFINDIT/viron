@@ -5854,6 +5854,15 @@ const enOverrides: Record<string, string> = {
   "管理员分配知识库编辑权限": "Administrator granted knowledge editing access",
   "管理员撤销知识库编辑权限": "Administrator revoked knowledge editing access",
   "授权资源被删除": "Authorized resource was deleted",
+  "全部时间": "All time",
+  "自定义范围": "Custom range",
+  "自定义时间范围": "Custom time range",
+  "开始时间": "Start time",
+  "结束时间": "End time",
+  "至": "to",
+  "应用范围": "Apply range",
+  "← 早于当前范围": "← Before this range",
+  "晚于当前范围 →": "After this range →",
 };
 
 export const enMessages: Readonly<Record<string, string>> = { ...generatedEnMessages, ...enOverrides };

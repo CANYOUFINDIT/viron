@@ -1,12 +1,16 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { Server } from "@lucide/vue";
+import { CalendarRange, Server } from "@lucide/vue";
 import { currentLocale, translate } from "../../i18n";
 import {
   GRANT_TIMELINE_LEGEND,
+  GRANT_TIMELINE_SPANS,
   buildGrantTimeline,
   grantRemainingCopy,
+  grantTimelineWindow,
   type GrantTimelineBar,
+  type GrantTimelineRange,
+  type GrantTimelineSpan,
   type GrantTimelineTone,
 } from "./grant-timeline";
 
@@ -37,6 +41,20 @@ const emit = defineEmits<{
 
 const timelineNow = ref(Date.now());
 const activeFilter = ref<GrantTimelineTone | "all">("all");
+const selectedSpan = ref<GrantTimelineSpan | "all" | "custom">(7);
+const customRange = ref<GrantTimelineRange | null>(null);
+const draftRange = ref<[Date, Date] | null>(null);
+const draftTimestamps = computed(() => {
+  const start = draftRange.value?.[0]?.getTime();
+  const end = draftRange.value?.[1]?.getTime();
+  return start !== undefined && end !== undefined && Number.isFinite(start) && Number.isFinite(end) && end > start
+    ? { start, end } : null;
+});
+const timelineRange = computed(() => {
+  if (selectedSpan.value === "all") return "all";
+  if (selectedSpan.value === "custom") return customRange.value ?? grantTimelineWindow(timelineNow.value);
+  return grantTimelineWindow(timelineNow.value, selectedSpan.value);
+});
 const rulerScale = ref<HTMLElement | null>(null);
 const scaleWidth = ref(720);
 let timelineClock: ReturnType<typeof setInterval> | undefined;
@@ -70,6 +88,7 @@ const grantTimeline = computed(() => {
       expired: row.grant.expired,
     })),
     timelineNow.value,
+    timelineRange.value,
   );
 });
 
@@ -92,8 +111,8 @@ const rulerTicks = computed(() => {
   const ticks = grantTimeline.value.ticks.map((tick) => ({
     ...tick,
     x: (tick.left / 100) * width,
-    nearNow: Math.abs((tick.left / 100) * width - nowX) < 28,
-    showGuide: tick.left > 0.8 && tick.left < 99.2 && Math.abs(tick.left - nowLeft) > 1.4,
+    nearNow: grantTimeline.value.nowVisible && Math.abs((tick.left / 100) * width - nowX) < 28,
+    showGuide: tick.left > 0.8 && tick.left < 99.2 && (!grantTimeline.value.nowVisible || Math.abs(tick.left - nowLeft) > 1.4),
     edge: tick.left <= 0.5 ? "start" : tick.left >= 99.5 ? "end" : "",
     showLabel: false,
   }));
@@ -111,6 +130,25 @@ const rulerTicks = computed(() => {
   for (const tick of ticks) tick.showLabel = chosen.has(tick.time);
   return ticks;
 });
+
+function changeSpan(event: Event): void {
+  const value = (event.target as HTMLSelectElement).value;
+  if (value === "custom") {
+    const model = grantTimeline.value;
+    customRange.value ??= { start: model.axisStart, end: model.axisEnd };
+    draftRange.value = [new Date(customRange.value.start), new Date(customRange.value.end)];
+    selectedSpan.value = "custom";
+  } else if (value === "all") {
+    selectedSpan.value = "all";
+  } else {
+    const days = Number(value) as GrantTimelineSpan;
+    if (GRANT_TIMELINE_SPANS.includes(days)) selectedSpan.value = days;
+  }
+}
+
+function applyCustomRange(): void {
+  if (draftTimestamps.value) customRange.value = { ...draftTimestamps.value };
+}
 
 function grantSource(row: { source: string; inherited: boolean }): string {
   return row.inherited ? translate("继承自 {0}", [row.source]) : row.source;
@@ -171,6 +209,32 @@ function canManage(row: GrantRowItem): boolean {
             <b>{{ grantTimeline.toneCounts[item.tone] || 0 }}</b>
           </button>
         </div>
+        <label class="trace-range-control">
+          <CalendarRange :size="13" aria-hidden="true" />
+          <span>{{ $t('时间跨度') }}</span>
+          <select :value="selectedSpan" class="trace-range-select" :aria-label="$t('时间跨度')" @change="changeSpan">
+            <option v-for="days in GRANT_TIMELINE_SPANS" :key="days" :value="days" v-text="$t('{{0}} 天', [days])"></option>
+            <option value="all">{{ $t('全部时间') }}</option>
+            <option value="custom">{{ $t('自定义范围') }}</option>
+          </select>
+        </label>
+      </div>
+
+      <div v-if="selectedSpan === 'custom'" class="trace-custom-range">
+        <el-date-picker
+          v-model="draftRange"
+          type="datetimerange"
+          size="small"
+          format="YYYY/MM/DD HH:mm"
+          :range-separator="$t('至')"
+          :start-placeholder="$t('开始时间')"
+          :end-placeholder="$t('结束时间')"
+          :aria-label="$t('自定义时间范围')"
+          class="trace-range-picker"
+        />
+        <button type="button" class="trace-range-apply" :disabled="!draftTimestamps" @click="applyCustomRange">
+          {{ $t('应用范围') }}
+        </button>
       </div>
 
       <div class="trace-ruler trace-cols">
@@ -260,7 +324,11 @@ function canManage(row: GrantRowItem): boolean {
                 </div>
               </template>
               <div class="trace-hit">
+                <span v-if="item.bar.outsideRange" class="trace-outside" :class="`is-${item.bar.outsideRange}`">
+                  {{ item.bar.outsideRange === 'before' ? $t('← 早于当前范围') : $t('晚于当前范围 →') }}
+                </span>
                 <div
+                  v-else
                   class="trace-bar"
                   :style="{ left: `${item.bar.left}%`, width: `${item.bar.width}%` }"
                 >
@@ -294,7 +362,7 @@ function canManage(row: GrantRowItem): boolean {
           </div>
         </article>
 
-        <div class="trace-now-layer trace-cols" aria-hidden="true">
+        <div v-if="grantTimeline.nowVisible" class="trace-now-layer trace-cols" aria-hidden="true">
           <div></div>
           <div class="trace-scale">
             <span class="trace-now" :style="{ left: `${grantTimeline.nowLeft}%` }" :title="$t('当前时间点')">
@@ -328,10 +396,74 @@ function canManage(row: GrantRowItem): boolean {
 
 .trace-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
   min-height: 42px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--color-rule);
+}
+
+.trace-range-control {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  margin-inline-start: auto;
+  color: var(--color-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.trace-range-select {
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--color-rule-strong);
+  border-radius: 6px;
+  background: var(--color-paper-raised);
+  color: var(--color-ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.trace-range-select:focus-visible,
+.trace-range-apply:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.trace-custom-range {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-rule);
+}
+
+.trace-custom-range :deep(.trace-range-picker) {
+  flex: 0 1 360px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.trace-range-apply {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--color-accent);
+  border-radius: 6px;
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.trace-range-apply:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .trace-filters {
@@ -575,6 +707,24 @@ function canManage(row: GrantRowItem): boolean {
   overflow: hidden;
   border-radius: 999px;
   transform: translateY(-50%);
+}
+
+.trace-outside {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--color-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transform: translateY(-50%);
+}
+
+.trace-outside.is-after {
+  right: 0;
+  left: auto;
 }
 
 .trace-bar-track,
