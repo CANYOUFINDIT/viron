@@ -3,11 +3,12 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import {
   AlertTriangle,
   Clock,
+  History,
   Infinity as InfinityIcon,
-  Layers,
+  Pencil,
   Radio,
   Server,
-  ShieldCheck,
+  Trash2,
   XCircle,
 } from "@lucide/vue";
 import { currentLocale, translate } from "../../i18n";
@@ -15,7 +16,6 @@ import {
   GRANT_TIMELINE_LEGEND,
   buildGrantTimeline,
   grantRemainingCopy,
-  type GrantTimelineBar,
   type GrantTimelineTone,
 } from "./grant-timeline";
 
@@ -102,10 +102,18 @@ function formatFullDateTime(time: number | string | null): string {
     hour12: false,
   });
 }
+
+function formatShortDate(time: number | string | null): string {
+  if (!time) return "";
+  const ts = typeof time === "string" ? Date.parse(time) : time;
+  if (!Number.isFinite(ts)) return "";
+  const d = new Date(ts);
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
 </script>
 
 <template>
-  <div class="chrono-timeline">
+  <div class="chrono-container">
     <!-- Telemetry Filter Toolbar -->
     <div class="chrono-toolbar">
       <div class="chrono-filter-group" role="tablist" :aria-label="$t('时序状态筛选')">
@@ -145,55 +153,39 @@ function formatFullDateTime(time: number | string | null): string {
       </div>
     </div>
 
-    <!-- Timeline Frame -->
-    <div class="chrono-frame">
-      <!-- Chrono Header & Ruler -->
-      <div class="chrono-header-row">
-        <div class="chrono-col-identity">
-          <Layers :size="13" />
-          <span>{{ $t('资源与授权范围') }}</span>
-        </div>
+    <!-- Chrono Stage -->
+    <div class="chrono-stage">
+      <!-- Full-Width Panoramic Chrono-Ruler -->
+      <div class="chrono-ruler-bar">
+        <div class="chrono-ruler-track">
+          <!-- Calibrated Ticks -->
+          <div
+            v-for="(tick, idx) in grantTimeline.ticks"
+            :key="idx"
+            class="chrono-tick"
+            :style="{ left: `${tick.left}%` }"
+          >
+            <i class="chrono-tick-notch"></i>
+            <span class="chrono-tick-label">{{ tick.label }}</span>
+          </div>
 
-        <div class="chrono-col-axis">
-          <div class="chrono-ruler">
-            <!-- Calibrated Ticks -->
-            <div
-              v-for="(tick, idx) in grantTimeline.ticks"
-              :key="idx"
-              class="chrono-tick"
-              :style="{ left: `${tick.left}%` }"
-            >
-              <i class="chrono-tick-notch"></i>
-              <span class="chrono-tick-label">{{ tick.label }}</span>
-            </div>
-
-            <!-- Active NOW Beacon -->
-            <div
-              class="chrono-beacon-marker"
-              :style="{ left: `${grantTimeline.nowLeft}%` }"
-              :title="$t('当前时间点')"
-            >
-              <div class="chrono-beacon-tag">
-                <span class="chrono-beacon-ping"></span>
-                <span>{{ $t('现在') }}</span>
-              </div>
+          <!-- Active NOW Beacon -->
+          <div
+            class="chrono-beacon-marker"
+            :style="{ left: `${grantTimeline.nowLeft}%` }"
+            :title="$t('当前时间点')"
+          >
+            <div class="chrono-beacon-tag">
+              <span class="chrono-beacon-ping"></span>
+              <span>{{ $t('现在') }}</span>
             </div>
           </div>
         </div>
-
-        <div class="chrono-col-remain">
-          <Clock :size="13" />
-          <span>{{ $t('到期') }}</span>
-        </div>
-
-        <div class="chrono-col-actions">
-          <span>{{ $t('操作') }}</span>
-        </div>
       </div>
 
-      <!-- Tracks Container with Vertical Laser Guides -->
-      <div class="chrono-body">
-        <!-- Background Time Guides -->
+      <!-- Chrono Lanes Stream Area -->
+      <div class="chrono-stream-surface">
+        <!-- Background Laser Guides across entire height -->
         <div class="chrono-grid-overlay" aria-hidden="true">
           <div
             v-for="(tick, idx) in grantTimeline.ticks"
@@ -207,165 +199,185 @@ function formatFullDateTime(time: number | string | null): string {
           ></div>
         </div>
 
-        <!-- Tracks List -->
-        <div
-          v-for="item in grantTimelineRows"
-          :key="item.bar.id"
-          class="chrono-row"
-          :class="`is-${item.bar.tone}`"
-        >
-          <!-- Identity Column -->
-          <div class="chrono-col-identity">
-            <span class="chrono-resource-icon">
-              <Server :size="15" />
-            </span>
-            <div class="chrono-resource-meta">
-              <strong :title="item.row.grant.label || item.row.grant.resourceId">
-                {{ item.row.grant.label || item.row.grant.resourceId }}
-              </strong>
-              <small>
-                <em :class="{ 'is-inherited': item.row.inherited }">
+        <!-- Fused Chrono-Lanes List -->
+        <div class="chrono-lanes-list">
+          <article
+            v-for="item in grantTimelineRows"
+            :key="item.bar.id"
+            class="chrono-lane-card"
+            :class="`is-${item.bar.tone}`"
+          >
+            <!-- Integrated Info & Action Ribbon (Fusing Identity, Status, and Actions into one cohesive row) -->
+            <header class="chrono-lane-ribbon">
+              <!-- Left: Unified Identity & Metadata (Never truncated, full width) -->
+              <div class="chrono-lane-identity">
+                <span class="chrono-resource-icon">
+                  <Server :size="14" />
+                </span>
+                <strong class="chrono-lane-title" :title="item.row.grant.label || item.row.grant.resourceId">
+                  {{ item.row.grant.label || item.row.grant.resourceId }}
+                </strong>
+                <span class="chrono-source-tag" :class="{ 'is-inherited': item.row.inherited }">
                   {{ grantSource(item.row) }}
-                </em>
-                <span v-if="item.row.grant.permissionText" :title="item.row.grant.permissionText">
+                </span>
+                <span v-if="item.row.grant.permissionText" class="chrono-perm-tag" :title="item.row.grant.permissionText">
                   {{ item.row.grant.permissionText }}
                 </span>
-              </small>
-            </div>
-          </div>
+                <span class="chrono-duration-tag">
+                  <Radio :size="10" />
+                  {{ $t('持续运行') }} {{ item.bar.activeDays }} {{ $t('天') }}
+                </span>
+              </div>
 
-          <!-- Track Lane with Energy Capsule & Quantum Conduit -->
-          <div class="chrono-col-axis">
-            <el-tooltip
-              placement="top"
-              :show-after="80"
-              popper-class="chrono-hud-popper"
-              effect="dark"
-            >
-              <template #content>
-                <div class="chrono-hud-card">
-                  <header class="chrono-hud-card__head">
-                    <Server :size="14" class="chrono-hud-accent" />
-                    <strong>{{ item.row.grant.label || item.row.grant.resourceId }}</strong>
-                    <span class="chrono-hud-tag" :class="`is-${item.bar.tone}`">
-                      {{ item.bar.openEnded ? $t('永久有效') : $t(item.remain.key, item.remain.values) }}
-                    </span>
-                  </header>
+              <!-- Right: Smart Fused Status & Hover Quick Actions -->
+              <div class="chrono-lane-tools">
+                <!-- Status Badge -->
+                <span class="chrono-status-chip" :class="`is-${item.bar.tone}`">
+                  <InfinityIcon v-if="item.bar.openEnded" :size="12" />
+                  <AlertTriangle v-else-if="item.bar.tone === 'soon'" :size="12" />
+                  <Clock v-else-if="item.bar.tone === 'week' || item.bar.tone === 'later'" :size="12" />
+                  <XCircle v-else :size="12" />
+                  <span>{{ item.bar.openEnded ? $t('永久有效') : $t(item.remain.key, item.remain.values) }}</span>
+                </span>
 
-                  <div class="chrono-hud-card__grid">
-                    <div class="chrono-hud-metric">
-                      <small>{{ $t('权限范围') }}</small>
-                      <span>{{ item.row.grant.permissionText || '—' }}</span>
-                    </div>
-                    <div class="chrono-hud-metric">
-                      <small>{{ $t('授权来源') }}</small>
-                      <span>{{ grantSource(item.row) }}</span>
-                    </div>
-                    <div class="chrono-hud-metric">
-                      <small>{{ $t('起始时间') }}</small>
-                      <span class="chrono-mono">{{ formatFullDateTime(item.bar.start) }}</span>
-                    </div>
-                    <div class="chrono-hud-metric">
-                      <small>{{ $t('截止时间') }}</small>
-                      <span class="chrono-mono">{{ item.bar.openEnded ? $t('永久有效') : formatFullDateTime(item.bar.end) }}</span>
-                    </div>
-                  </div>
-
-                  <footer class="chrono-hud-card__foot">
-                    <span class="chrono-hud-stat">
-                      <Radio :size="12" />
-                      {{ $t('已生效运行') }} <b class="chrono-mono">{{ item.bar.activeDays }}</b> {{ $t('天') }}
-                    </span>
-                  </footer>
-                </div>
-              </template>
-
-              <div class="chrono-lane">
-                <div class="chrono-lane__slot">
-                  <!-- Origin Anchor Node -->
-                  <div
-                    class="chrono-node is-origin"
-                    :style="{ left: `${item.bar.startLeft}%` }"
-                    :title="`${$t('起始时间')}: ${formatFullDateTime(item.bar.start)}`"
+                <!-- Contextual Action Capsule (Sleek micro-actions) -->
+                <div class="chrono-action-pill">
+                  <button
+                    type="button"
+                    class="chrono-btn-action is-history"
+                    :title="$t('查看流转记录')"
+                    @click.stop="emit('history', item.row.grant)"
                   >
-                    <span class="chrono-node__core"></span>
-                  </div>
+                    <History :size="12" />
+                    <span>{{ $t('记录') }}</span>
+                  </button>
 
-                  <!-- Regular/Finite Bar -->
-                  <div
-                    v-if="!item.bar.openEnded"
-                    class="chrono-capsule"
-                    :class="`is-${item.bar.tone}`"
-                    :style="{ left: `${item.bar.left}%`, width: `${item.bar.width}%` }"
-                  >
-                    <span class="chrono-capsule__body"></span>
-                    <span class="chrono-capsule__terminal"></span>
-                  </div>
-
-                  <!-- Perpetual (Forever) Infinite Stream Conduit -->
-                  <div
-                    v-else
-                    class="chrono-perpetual-conduit"
-                    :style="{ left: `${item.bar.startLeft}%`, width: `${100 - item.bar.startLeft}%` }"
-                  >
-                    <!-- Active Past Segment: start to now -->
-                    <div
-                      class="chrono-stream__active"
-                      :style="{
-                        width: `${Math.max(0, Math.min(100, ((grantTimeline.nowLeft - item.bar.startLeft) / Math.max(0.1, 100 - item.bar.startLeft)) * 100))}%`
-                      }"
+                  <template v-if="!item.row.inherited || props.selectedNodeType === 'organization'">
+                    <button
+                      type="button"
+                      class="chrono-btn-action is-edit"
+                      :title="$t('修改授权')"
+                      @click.stop="emit('edit', item.row.grant)"
                     >
-                      <span class="chrono-stream__glow"></span>
-                    </div>
-
-                    <!-- Future Infinite Segment: now onwards -->
-                    <div class="chrono-stream__future">
-                      <span class="chrono-stream__chevrons"></span>
-                      <span class="chrono-stream__infinity-pill">
-                        <InfinityIcon :size="12" />
-                        <em>{{ $t('永久通道') }}</em>
-                      </span>
-                    </div>
-                  </div>
+                      <Pencil :size="12" />
+                      <span>{{ $t('修改') }}</span>
+                    </button>
+                    <button
+                      type="button"
+                      class="chrono-btn-action is-revoke"
+                      :title="$t('撤销授权')"
+                      @click.stop="emit('revoke', item.row.grant)"
+                    >
+                      <Trash2 :size="12" />
+                      <span>{{ $t('撤销') }}</span>
+                    </button>
+                  </template>
+                  <span v-else class="chrono-inherited-pill" :title="$t('在来源节点管理')">
+                    {{ $t('继承授权') }}
+                  </span>
                 </div>
               </div>
-            </el-tooltip>
-          </div>
+            </header>
 
-          <!-- Status Column -->
-          <div class="chrono-col-remain">
-            <span class="chrono-badge" :class="`is-${item.bar.tone}`">
-              <InfinityIcon v-if="item.bar.openEnded" :size="12" />
-              <AlertTriangle v-else-if="item.bar.tone === 'soon'" :size="12" />
-              <Clock v-else-if="item.bar.tone === 'week' || item.bar.tone === 'later'" :size="12" />
-              <XCircle v-else :size="12" />
-              <span class="chrono-badge-text">{{ $t(item.remain.key, item.remain.values) }}</span>
-            </span>
-          </div>
+            <!-- Full-Width Panoramic Timeline Track (Spans 100% of the lane, calibrated with the top ruler) -->
+            <div class="chrono-lane-track-wrapper">
+              <el-tooltip
+                placement="top"
+                :show-after="80"
+                popper-class="chrono-hud-popper"
+                effect="dark"
+              >
+                <template #content>
+                  <div class="chrono-hud-card">
+                    <header class="chrono-hud-card__head">
+                      <Server :size="14" class="chrono-hud-accent" />
+                      <strong>{{ item.row.grant.label || item.row.grant.resourceId }}</strong>
+                      <span class="chrono-hud-tag" :class="`is-${item.bar.tone}`">
+                        {{ item.bar.openEnded ? $t('永久有效') : $t(item.remain.key, item.remain.values) }}
+                      </span>
+                    </header>
 
-          <!-- Actions Column -->
-          <div class="chrono-col-actions">
-            <button type="button" class="chrono-action-btn" @click="emit('history', item.row.grant)">
-              {{ $t("记录") }}
-            </button>
-            <template v-if="!item.row.inherited || props.selectedNodeType === 'organization'">
-              <button
-                type="button"
-                class="chrono-action-btn is-edit"
-                @click="emit('edit', item.row.grant)"
-              >
-                {{ $t('修改') }}
-              </button>
-              <button
-                type="button"
-                class="chrono-action-btn is-revoke"
-                @click="emit('revoke', item.row.grant)"
-              >
-                {{ $t('撤销') }}
-              </button>
-            </template>
-            <small v-else class="chrono-action-inherited">{{ $t('在来源节点管理') }}</small>
-          </div>
+                    <div class="chrono-hud-card__grid">
+                      <div class="chrono-hud-metric">
+                        <small>{{ $t('权限范围') }}</small>
+                        <span>{{ item.row.grant.permissionText || '—' }}</span>
+                      </div>
+                      <div class="chrono-hud-metric">
+                        <small>{{ $t('授权来源') }}</small>
+                        <span>{{ grantSource(item.row) }}</span>
+                      </div>
+                      <div class="chrono-hud-metric">
+                        <small>{{ $t('起始时间') }}</small>
+                        <span class="chrono-mono">{{ formatFullDateTime(item.bar.start) }}</span>
+                      </div>
+                      <div class="chrono-hud-metric">
+                        <small>{{ $t('截止时间') }}</small>
+                        <span class="chrono-mono">{{ item.bar.openEnded ? $t('永久有效') : formatFullDateTime(item.bar.end) }}</span>
+                      </div>
+                    </div>
+
+                    <footer class="chrono-hud-card__foot">
+                      <span class="chrono-hud-stat">
+                        <Radio :size="12" />
+                        {{ $t('已生效运行') }} <b class="chrono-mono">{{ item.bar.activeDays }}</b> {{ $t('天') }}
+                      </span>
+                    </footer>
+                  </div>
+                </template>
+
+                <div class="chrono-lane-track">
+                  <div class="chrono-track-slot">
+                    <!-- Origin Milestone Node -->
+                    <div
+                      class="chrono-origin-pin"
+                      :style="{ left: `${item.bar.startLeft}%` }"
+                      :title="`${$t('起始时间')}: ${formatFullDateTime(item.bar.start)}`"
+                    >
+                      <span class="chrono-origin-dot"></span>
+                      <span class="chrono-origin-label">{{ formatShortDate(item.bar.start) }}</span>
+                    </div>
+
+                    <!-- Finite/Expiring Energy Capsule -->
+                    <div
+                      v-if="!item.bar.openEnded"
+                      class="chrono-energy-capsule"
+                      :class="`is-${item.bar.tone}`"
+                      :style="{ left: `${item.bar.left}%`, width: `${item.bar.width}%` }"
+                    >
+                      <span class="chrono-capsule-core"></span>
+                      <span class="chrono-capsule-cap"></span>
+                    </div>
+
+                    <!-- Perpetual Infinite Stream (Spans to the right edge with fluid quantum styling) -->
+                    <div
+                      v-else
+                      class="chrono-perpetual-stream"
+                      :style="{ left: `${item.bar.startLeft}%`, width: `${100 - item.bar.startLeft}%` }"
+                    >
+                      <!-- Active range: start to NOW -->
+                      <div
+                        class="chrono-stream-active"
+                        :style="{
+                          width: `${Math.max(0, Math.min(100, ((grantTimeline.nowLeft - item.bar.startLeft) / Math.max(0.1, 100 - item.bar.startLeft)) * 100))}%`
+                        }"
+                      >
+                        <span class="chrono-stream-active-sheen"></span>
+                      </div>
+
+                      <!-- Future infinite range: NOW to infinity -->
+                      <div class="chrono-stream-infinite">
+                        <span class="chrono-stream-stripes"></span>
+                        <span class="chrono-stream-badge">
+                          <InfinityIcon :size="11" />
+                          <em>{{ $t('持续生效') }}</em>
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </el-tooltip>
+            </div>
+          </article>
         </div>
       </div>
     </div>
@@ -374,10 +386,10 @@ function formatFullDateTime(time: number | string | null): string {
 
 <style scoped>
 /* ==========================================================================
-   Cyber-HUD Chrono-Timeline Styles
+   Smart Fused Cyber-HUD Chrono-Timeline
    ========================================================================== */
 
-.chrono-timeline {
+.chrono-container {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
@@ -385,13 +397,13 @@ function formatFullDateTime(time: number | string | null): string {
   width: 100%;
 }
 
-/* --- Toolbar & Filters --- */
+/* --- Filter Toolbar --- */
 .chrono-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-md);
-  padding: 6px 10px;
+  padding: 6px 12px;
   border-radius: var(--radius-control);
   background: color-mix(in srgb, var(--color-paper) 40%, var(--color-paper-raised));
   border: 1px solid var(--color-rule);
@@ -495,8 +507,8 @@ function formatFullDateTime(time: number | string | null): string {
   100% { transform: scale(2.2); opacity: 0; }
 }
 
-/* --- Timeline Frame & Grid Layout --- */
-.chrono-frame {
+/* --- Chrono Stage Frame --- */
+.chrono-stage {
   border: 1px solid var(--color-rule);
   border-radius: var(--radius-card);
   background: var(--color-paper-raised);
@@ -504,48 +516,20 @@ function formatFullDateTime(time: number | string | null): string {
   position: relative;
 }
 
-.chrono-header-row,
-.chrono-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(0, 2.75fr) minmax(4.5rem, 115px) 8.25rem;
-  align-items: center;
-  column-gap: var(--space-sm);
+/* --- Ruler Bar (Full Width) --- */
+.chrono-ruler-bar {
+  min-height: 38px;
   padding: 0 var(--space-md);
-  min-width: 0;
-}
-
-.chrono-header-row {
-  min-height: 40px;
   border-bottom: 1px solid var(--color-rule);
   background: color-mix(in srgb, var(--color-paper) 65%, var(--color-paper-raised));
-  color: var(--color-muted);
-  font-size: var(--text-2xs);
-}
-
-.chrono-header-row .chrono-col-identity,
-.chrono-header-row .chrono-col-remain,
-.chrono-header-row .chrono-col-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: 500;
-}
-
-/* --- Ruler & Axis Header --- */
-.chrono-col-axis {
   position: relative;
-  min-width: 0;
+  z-index: 3;
 }
 
-.chrono-col-remain {
-  min-width: 0;
-  overflow: hidden;
-}
-
-.chrono-ruler {
+.chrono-ruler-track {
   position: relative;
-  height: 32px;
   width: 100%;
+  height: 38px;
 }
 
 .chrono-tick {
@@ -574,23 +558,22 @@ function formatFullDateTime(time: number | string | null): string {
   white-space: nowrap;
 }
 
-/* --- NOW Beacon --- */
+/* NOW Beacon on Ruler */
 .chrono-beacon-marker {
   position: absolute;
-  top: 4px;
-  bottom: 0;
+  top: 7px;
   transform: translateX(-50%);
   display: flex;
   flex-direction: column;
   align-items: center;
-  z-index: 3;
+  z-index: 4;
 }
 
 .chrono-beacon-tag {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 2px 7px;
+  padding: 2px 8px;
   border-radius: 999px;
   background: var(--color-accent-strong);
   color: var(--color-accent-ink, #ffffff);
@@ -609,25 +592,17 @@ function formatFullDateTime(time: number | string | null): string {
   animation: chrono-radar-ping 1.6s ease-out infinite;
 }
 
-/* --- Body & Grid Overlay --- */
-.chrono-body {
+/* --- Chrono Stream Surface & Grid Overlay --- */
+.chrono-stream-surface {
   position: relative;
+  padding: var(--space-xs) var(--space-md) var(--space-md);
 }
 
 .chrono-grid-overlay {
   position: absolute;
-  inset: 0;
+  inset: 0 var(--space-md);
   pointer-events: none;
-  z-index: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(0, 2.75fr) minmax(4.5rem, 115px) 8.25rem;
-  column-gap: var(--space-sm);
-  padding: 0 var(--space-md);
-}
-
-.chrono-grid-overlay > .chrono-grid-line,
-.chrono-grid-overlay > .chrono-laser-beam {
-  grid-column: 2;
+  z-index: 1;
 }
 
 .chrono-grid-line {
@@ -651,194 +626,324 @@ function formatFullDateTime(time: number | string | null): string {
   );
   box-shadow: 0 0 7px var(--color-accent);
   transform: translateX(-50%);
-  z-index: 1;
-}
-
-/* --- Row Structure --- */
-.chrono-row {
-  position: relative;
   z-index: 2;
-  min-height: 56px;
-  border-bottom: 1px solid var(--color-rule);
-  transition: background var(--dur-micro) ease;
 }
 
-.chrono-row:last-child {
-  border-bottom: 0;
+/* --- Fused Chrono-Lane Card --- */
+.chrono-lanes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+  z-index: 3;
 }
 
-.chrono-row:hover {
-  background: color-mix(in srgb, var(--color-accent-soft) 30%, transparent);
+.chrono-lane-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--color-paper) 35%, var(--color-paper-raised));
+  border: 1px solid var(--color-rule);
+  transition: all var(--dur-micro) ease-out;
+  position: relative;
 }
 
-/* Identity column */
-.chrono-col-identity {
+.chrono-lane-card:hover {
+  background: color-mix(in srgb, var(--color-accent-soft) 22%, var(--color-paper-raised));
+  border-color: color-mix(in srgb, var(--color-accent) 35%, var(--color-rule));
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+/* --- Upper Ribbon: Identity + Status + Actions --- */
+.chrono-lane-ribbon {
   display: flex;
   align-items: center;
-  gap: var(--space-xs);
+  justify-content: space-between;
+  gap: var(--space-md);
+  min-height: 24px;
+}
+
+.chrono-lane-identity {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px var(--space-xs);
   min-width: 0;
 }
 
 .chrono-resource-icon {
-  width: 30px;
-  height: 30px;
+  width: 22px;
+  height: 22px;
   flex: 0 0 auto;
-  border-radius: var(--radius-control);
-  background: color-mix(in srgb, var(--color-paper) 70%, var(--color-paper-raised));
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--color-paper) 60%, var(--color-paper-raised));
   border: 1px solid var(--color-rule-strong);
   color: var(--color-accent);
   display: grid;
   place-items: center;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
-.chrono-resource-meta {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.chrono-resource-meta strong {
+.chrono-lane-title {
   color: var(--color-ink);
   font-size: var(--text-xs);
   font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.chrono-resource-meta small {
-  display: flex;
-  align-items: center;
-  color: var(--color-muted);
-  font-size: var(--text-2xs);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.chrono-resource-meta em {
-  flex: 0 0 auto;
+.chrono-source-tag {
   font-style: normal;
-  padding: 1px 5px;
+  padding: 1px 6px;
   border-radius: 4px;
   background: var(--color-accent-soft);
   color: var(--color-accent-strong);
+  font-size: var(--text-2xs);
   font-weight: 500;
+  white-space: nowrap;
 }
 
-.chrono-resource-meta em.is-inherited {
+.chrono-source-tag.is-inherited {
   background: var(--color-paper);
   color: var(--color-muted);
   border: 1px solid var(--color-rule);
 }
 
-.chrono-resource-meta span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.chrono-perm-tag {
+  color: var(--color-muted);
+  font-size: var(--text-2xs);
   white-space: nowrap;
 }
 
-.chrono-resource-meta span::before {
+.chrono-perm-tag::before {
   content: "·";
-  margin: 0 5px;
+  margin-right: 6px;
   color: var(--color-faint);
 }
 
-/* --- Telemetry Track Lane --- */
-.chrono-lane {
-  position: relative;
-  width: 100%;
-  height: 32px;
+.chrono-duration-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-muted);
+  white-space: nowrap;
+}
+
+.chrono-duration-tag svg {
+  color: var(--color-accent);
+}
+
+/* Right tools: Status & Actions */
+.chrono-lane-tools {
   display: flex;
   align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+/* Status Chip */
+.chrono-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: var(--text-2xs);
+  font-family: var(--font-mono);
+  font-weight: 500;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.chrono-status-chip.is-forever {
+  background: var(--color-accent-soft);
+  color: var(--color-accent-strong);
+  border-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+
+.chrono-status-chip.is-active,
+.chrono-status-chip.is-later {
+  background: var(--color-info-soft);
+  color: var(--color-info);
+  border-color: color-mix(in srgb, var(--color-info) 30%, transparent);
+}
+
+.chrono-status-chip.is-week {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+  border-color: color-mix(in srgb, var(--color-warning) 30%, transparent);
+}
+
+.chrono-status-chip.is-soon {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  border-color: color-mix(in srgb, var(--color-danger) 30%, transparent);
+}
+
+.chrono-status-chip.is-expired {
+  background: var(--color-paper);
+  color: var(--color-faint);
+  border-color: var(--color-rule);
+}
+
+/* Smart Action Pill */
+.chrono-action-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 3px;
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--color-paper) 60%, var(--color-paper-raised));
+  border: 1px solid var(--color-rule-strong);
+  transition: all var(--dur-micro) ease;
+}
+
+.chrono-btn-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  font-size: 11px;
+  color: var(--color-ink-soft);
+  cursor: pointer;
+  transition: all var(--dur-micro) ease;
+  white-space: nowrap;
+}
+
+.chrono-btn-action:hover {
+  background: var(--color-paper-raised);
+  color: var(--color-ink);
+}
+
+.chrono-btn-action.is-history:hover {
+  color: var(--color-accent-strong);
+  border-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+
+.chrono-btn-action.is-edit:hover {
+  color: var(--color-accent-strong);
+  border-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+
+.chrono-btn-action.is-revoke:hover {
+  color: var(--color-danger);
+  background: var(--color-danger-soft);
+  border-color: color-mix(in srgb, var(--color-danger) 35%, transparent);
+}
+
+.chrono-inherited-pill {
+  font-size: 10px;
+  color: var(--color-muted);
+  padding: 0 4px;
+}
+
+/* --- Lower Tier: Full-Width Timeline Track --- */
+.chrono-lane-track-wrapper {
+  width: 100%;
   cursor: pointer;
 }
 
-.chrono-lane__slot {
-  position: relative;
+.chrono-lane-track {
   width: 100%;
   height: 18px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--color-paper) 50%, var(--color-paper-raised));
-  border: 1px solid color-mix(in srgb, var(--color-rule) 80%, transparent);
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.05);
   display: flex;
   align-items: center;
 }
 
-/* Origin Node */
-.chrono-node.is-origin {
+.chrono-track-slot {
+  position: relative;
+  width: 100%;
+  height: 14px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-paper) 45%, var(--color-paper-raised));
+  border: 1px solid color-mix(in srgb, var(--color-rule) 85%, transparent);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.04);
+  display: flex;
+  align-items: center;
+}
+
+/* Origin Anchor Pin */
+.chrono-origin-pin {
   position: absolute;
   top: 50%;
   transform: translate(-50%, -50%);
-  width: 12px;
-  height: 12px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.chrono-origin-dot {
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   background: var(--color-paper-raised);
   border: 2px solid var(--color-accent);
-  display: grid;
-  place-items: center;
-  z-index: 4;
   box-shadow: 0 0 6px color-mix(in srgb, var(--color-accent) 60%, transparent);
 }
 
-.chrono-node__core {
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: var(--color-accent);
+.chrono-origin-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--color-muted);
+  opacity: 0.8;
+  white-space: nowrap;
 }
 
-/* Finite Capsule */
-.chrono-capsule {
+/* Finite Energy Capsule */
+.chrono-energy-capsule {
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
-  height: 10px;
-  border-radius: 5px;
-  z-index: 2;
+  height: 8px;
+  border-radius: 4px;
+  z-index: 3;
   display: flex;
   align-items: center;
 }
 
-.chrono-capsule__body {
+.chrono-capsule-core {
   width: 100%;
   height: 100%;
   border-radius: inherit;
   background: var(--capsule-gradient, var(--color-info));
-  box-shadow: 0 0 8px var(--capsule-glow, rgba(0, 0, 0, 0.1));
+  box-shadow: 0 0 6px var(--capsule-glow, rgba(0, 0, 0, 0.1));
 }
 
-.chrono-capsule__terminal {
+.chrono-capsule-cap {
   position: absolute;
   right: 0;
-  width: 6px;
-  height: 10px;
-  border-radius: 0 5px 5px 0;
+  width: 4px;
+  height: 8px;
+  border-radius: 0 4px 4px 0;
   background: #ffffff;
   opacity: 0.6;
 }
 
-.chrono-capsule.is-later {
+.chrono-energy-capsule.is-later {
   --capsule-gradient: linear-gradient(90deg, var(--color-info) 0%, color-mix(in srgb, var(--color-info) 70%, var(--color-accent)) 100%);
   --capsule-glow: color-mix(in srgb, var(--color-info) 40%, transparent);
 }
 
-.chrono-capsule.is-week {
+.chrono-energy-capsule.is-week {
   --capsule-gradient: linear-gradient(90deg, var(--color-warning) 0%, color-mix(in srgb, var(--color-warning) 80%, #ff8800) 100%);
   --capsule-glow: color-mix(in srgb, var(--color-warning) 50%, transparent);
 }
 
-.chrono-capsule.is-soon {
+.chrono-energy-capsule.is-soon {
   --capsule-gradient: linear-gradient(90deg, var(--color-danger) 0%, #ff4d4f 100%);
   --capsule-glow: color-mix(in srgb, var(--color-danger) 70%, transparent);
   animation: chrono-capsule-pulse 1.4s ease-in-out infinite alternate;
 }
 
-.chrono-capsule.is-expired {
+.chrono-energy-capsule.is-expired {
   --capsule-gradient: repeating-linear-gradient(45deg, var(--color-faint), var(--color-faint) 4px, transparent 4px, transparent 8px);
   --capsule-glow: transparent;
   opacity: 0.6;
@@ -849,56 +954,56 @@ function formatFullDateTime(time: number | string | null): string {
   to { filter: drop-shadow(0 0 8px var(--color-danger)); }
 }
 
-/* --- Perpetual Quantum Conduit --- */
-.chrono-perpetual-conduit {
+/* Perpetual Infinite Stream */
+.chrono-perpetual-stream {
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
-  height: 12px;
-  z-index: 2;
+  height: 10px;
+  z-index: 3;
   display: flex;
   align-items: center;
 }
 
-.chrono-stream__active {
+.chrono-stream-active {
   height: 100%;
-  border-radius: 6px 0 0 6px;
+  border-radius: 5px 0 0 5px;
   background: linear-gradient(
     90deg,
     var(--color-accent) 0%,
     color-mix(in srgb, var(--color-accent) 85%, #ffffff) 100%
   );
-  box-shadow: 0 0 10px color-mix(in srgb, var(--color-accent) 50%, transparent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--color-accent) 45%, transparent);
   position: relative;
   flex: 0 0 auto;
 }
 
-.chrono-stream__glow {
+.chrono-stream-active-sheen {
   position: absolute;
   inset: 0;
   border-radius: inherit;
   background: linear-gradient(to bottom, rgba(255, 255, 255, 0.4) 0%, transparent 60%);
 }
 
-.chrono-stream__future {
+.chrono-stream-infinite {
   position: relative;
   height: 100%;
   flex: 1;
   display: flex;
   align-items: center;
-  border-radius: 0 6px 6px 0;
+  border-radius: 0 5px 5px 0;
   background: linear-gradient(
     90deg,
-    color-mix(in srgb, var(--color-accent) 45%, transparent) 0%,
+    color-mix(in srgb, var(--color-accent) 40%, transparent) 0%,
     color-mix(in srgb, var(--color-accent) 15%, transparent) 80%,
     transparent 100%
   );
-  border-top: 1px dashed color-mix(in srgb, var(--color-accent) 50%, transparent);
-  border-bottom: 1px dashed color-mix(in srgb, var(--color-accent) 50%, transparent);
+  border-top: 1px dashed color-mix(in srgb, var(--color-accent) 45%, transparent);
+  border-bottom: 1px dashed color-mix(in srgb, var(--color-accent) 45%, transparent);
   overflow: hidden;
 }
 
-.chrono-stream__chevrons {
+.chrono-stream-stripes {
   position: absolute;
   inset: 0;
   background-image: repeating-linear-gradient(
@@ -911,159 +1016,39 @@ function formatFullDateTime(time: number | string | null): string {
   opacity: 0.8;
 }
 
-.chrono-stream__infinity-pill {
+.chrono-stream-badge {
   position: relative;
   z-index: 2;
   margin-left: 12px;
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 1px 7px;
+  padding: 0 6px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--color-accent-soft) 85%, var(--color-paper-raised));
   border: 1px solid color-mix(in srgb, var(--color-accent) 40%, transparent);
   color: var(--color-accent-strong);
-  font-size: 10px;
+  font-size: 9px;
   font-family: var(--font-mono);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
-.chrono-stream__infinity-pill em {
+.chrono-stream-badge em {
   font-style: normal;
   font-size: 9px;
   letter-spacing: 0.02em;
 }
 
-/* --- Status Badges --- */
-.chrono-badge {
-  display: inline-flex;
-  align-items: center;
-  max-width: 100%;
-  gap: 5px;
-  padding: 3px 8px;
-  border-radius: 999px;
-  font-size: var(--text-2xs);
-  font-family: var(--font-mono);
-  font-weight: 500;
-  border: 1px solid transparent;
-  white-space: nowrap;
-}
-
-.chrono-badge-text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.chrono-badge.is-forever {
-  background: var(--color-accent-soft);
-  color: var(--color-accent-strong);
-  border-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
-  box-shadow: 0 0 6px color-mix(in srgb, var(--color-accent) 15%, transparent);
-}
-
-.chrono-badge.is-later {
-  background: var(--color-info-soft);
-  color: var(--color-info);
-  border-color: color-mix(in srgb, var(--color-info) 30%, transparent);
-}
-
-.chrono-badge.is-week {
-  background: var(--color-warning-soft);
-  color: var(--color-warning);
-  border-color: color-mix(in srgb, var(--color-warning) 30%, transparent);
-}
-
-.chrono-badge.is-soon {
-  background: var(--color-danger-soft);
-  color: var(--color-danger);
-  border-color: color-mix(in srgb, var(--color-danger) 30%, transparent);
-}
-
-.chrono-badge.is-expired {
-  background: var(--color-paper);
-  color: var(--color-faint);
-  border-color: var(--color-rule);
-}
-
-/* --- Action Buttons --- */
-.chrono-col-actions {
-  min-width: 0;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-}
-
-.chrono-action-btn {
-  color: var(--color-ink-soft);
-  height: 26px;
-  flex: 0 0 auto;
-  padding: 0 8px;
-  border-radius: var(--radius-control);
-  font-size: var(--text-2xs);
-  white-space: nowrap;
-  cursor: pointer;
-  transition: all var(--dur-micro) ease;
-  background: transparent;
-  border: 1px solid var(--color-rule-strong);
-}
-
-.chrono-action-btn.is-edit {
-  color: var(--color-accent-strong);
-}
-
-.chrono-action-btn.is-edit:hover {
-  background: var(--color-accent-soft);
-  border-color: var(--color-accent);
-}
-
-.chrono-action-btn.is-revoke {
-  color: var(--color-danger);
-  border-color: color-mix(in srgb, var(--color-danger) 30%, var(--color-rule));
-}
-
-.chrono-action-btn.is-revoke:hover {
-  background: var(--color-danger-soft);
-  border-color: var(--color-danger);
-}
-
-.chrono-action-inherited {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--color-muted);
-  font-size: var(--text-2xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* --- Responsive Media Queries --- */
-@media (max-width: 900px) {
-  .chrono-header-row,
-  .chrono-row,
-  .chrono-grid-overlay {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(4rem, 90px) 8.25rem;
-    padding: 0 var(--space-xs);
-  }
-}
-
 @media (max-width: 680px) {
-  .chrono-header-row {
-    display: none;
-  }
-  .chrono-grid-overlay {
-    display: none;
-  }
-  .chrono-row {
-    display: flex;
+  .chrono-lane-ribbon {
     flex-direction: column;
-    align-items: stretch;
-    gap: 8px;
-    padding: var(--space-sm);
+    align-items: flex-start;
+    gap: 6px;
   }
-  .chrono-col-actions {
-    justify-content: flex-start;
+  .chrono-lane-tools {
+    width: 100%;
+    justify-content: space-between;
   }
 }
 </style>
