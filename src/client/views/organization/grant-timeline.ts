@@ -12,6 +12,12 @@ export interface GrantTimelineSource {
   expired?: boolean;
 }
 
+export interface GrantTimelineTick {
+  time: number;
+  left: number;
+  label: string;
+}
+
 export interface GrantTimelineBar {
   id: string;
   label: string;
@@ -21,6 +27,10 @@ export interface GrantTimelineBar {
   width: number;
   start: number;
   end: number | null;
+  openEnded: boolean;
+  startLeft: number;
+  endLeft: number | null;
+  activeDays: number;
 }
 
 export interface GrantTimelineModel {
@@ -29,6 +39,8 @@ export interface GrantTimelineModel {
   now: number;
   nowLeft: number;
   bars: GrantTimelineBar[];
+  ticks: GrantTimelineTick[];
+  toneCounts: Record<GrantTimelineTone, number>;
 }
 
 export const GRANT_TIMELINE_LEGEND: Array<{ tone: GrantTimelineTone; label: string }> = [
@@ -61,6 +73,19 @@ export function grantRemainingCopy(remainingMs: number): { key: string; values: 
   return { key: "剩余 {{0}} 天", values: [Math.max(1, Math.ceil(remainingMs / DAY))] };
 }
 
+function formatTickDate(time: number, axisStart: number, axisEnd: number): string {
+  const span = axisEnd - axisStart;
+  const d = new Date(time);
+  if (span < 2 * DAY) {
+    return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  }
+  const sameYear = new Date(axisStart).getFullYear() === new Date(axisEnd).getFullYear();
+  if (sameYear) {
+    return `${d.getMonth() + 1}/${d.getDate()}`;
+  }
+  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
+}
+
 export function buildGrantTimeline(grants: readonly GrantTimelineSource[], now = Date.now()): GrantTimelineModel {
   const starts = grants.map((grant) => parsed(grant.createdAt)).filter((value): value is number => value !== null);
   let axisStart = Math.min(now, ...(starts.length ? starts : [now]));
@@ -80,13 +105,16 @@ export function buildGrantTimeline(grants: readonly GrantTimelineSource[], now =
     left = Math.max(0, Math.min(left, 100 - width));
     return { left, width };
   };
-  const bars = grants.map((grant) => {
+  const bars: GrantTimelineBar[] = grants.map((grant) => {
     const start = parsed(grant.createdAt) ?? now;
     const end = parsed(grant.expiresAt);
     const openEnded = end === null;
     const remainingMs = openEnded ? (grant.expired ? 0 : Number.POSITIVE_INFINITY) : end - now;
     const tone = grantTimelineTone(grant.expired ? Math.min(remainingMs, 0) : remainingMs);
     const visualEnd = openEnded && !grant.expired ? axisEnd : Math.max(end ?? now, start);
+    const startLeft = Math.max(0, Math.min(100, ((start - axisStart) / axisSpan) * 100));
+    const endLeft = openEnded ? null : Math.max(0, Math.min(100, (((end ?? now) - axisStart) / axisSpan) * 100));
+    const activeDays = Math.max(0, Math.floor((now - start) / DAY));
     return {
       id: grant.id,
       label: grant.label,
@@ -95,11 +123,40 @@ export function buildGrantTimeline(grants: readonly GrantTimelineSource[], now =
       ...place(start, visualEnd),
       start,
       end: openEnded ? null : end,
+      openEnded,
+      startLeft,
+      endLeft,
+      activeDays,
     };
   }).sort((left, right) => {
     if (left.remainingMs !== right.remainingMs) return left.remainingMs < right.remainingMs ? -1 : 1;
     return left.label.localeCompare(right.label, "zh-CN");
   });
   const nowLeft = Math.max(0, Math.min(100, ((now - axisStart) / axisSpan) * 100));
-  return { axisStart, axisEnd, now, nowLeft, bars };
+
+  const tickCount = 5;
+  const tickStep = (axisEnd - axisStart) / (tickCount - 1);
+  const ticks: GrantTimelineTick[] = [];
+  for (let i = 0; i < tickCount; i++) {
+    const time = axisStart + i * tickStep;
+    const left = (i / (tickCount - 1)) * 100;
+    ticks.push({
+      time,
+      left,
+      label: formatTickDate(time, axisStart, axisEnd),
+    });
+  }
+
+  const toneCounts: Record<GrantTimelineTone, number> = {
+    expired: 0,
+    soon: 0,
+    week: 0,
+    later: 0,
+    forever: 0,
+  };
+  for (const bar of bars) {
+    toneCounts[bar.tone] = (toneCounts[bar.tone] || 0) + 1;
+  }
+
+  return { axisStart, axisEnd, now, nowLeft, bars, ticks, toneCounts };
 }

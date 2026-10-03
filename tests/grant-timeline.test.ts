@@ -62,4 +62,22 @@ describe("grant timeline", () => {
     expect(grantRemainingCopy(2 * HOUR)).toEqual({ key: "剩余 {{0}} 小时", values: [2] });
     expect(grantRemainingCopy(3 * DAY)).toEqual({ key: "剩余 {{0}} 天", values: [3] });
   });
+
+  it("calculates calibrated ticks and tone counts", () => {
+    const model = buildGrantTimeline([
+      { id: "forever", label: "默认", createdAt: iso(-10 * DAY), expiresAt: null },
+      { id: "soon", label: "今日到期", createdAt: iso(-10 * DAY), expiresAt: iso(5 * HOUR) },
+    ], now);
+
+    expect(model.ticks.length).toBe(5);
+    expect(model.ticks[0].left).toBe(0);
+    expect(model.ticks[4].left).toBe(100);
+    expect(model.toneCounts.forever).toBe(1);
+    expect(model.toneCounts.soon).toBe(1);
+    expect(model.toneCounts.expired).toBe(0);
+
+    const foreverBar = model.bars.find((b) => b.id === "forever");
+    expect(foreverBar?.openEnded).toBe(true);
+    expect(foreverBar?.activeDays).toBeGreaterThanOrEqual(9);
+  });
 });
