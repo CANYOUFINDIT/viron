@@ -503,10 +503,11 @@ function formatFullDateTime(time: number | string | null): string {
 .chrono-header-row,
 .chrono-row {
   display: grid;
-  grid-template-columns: minmax(180px, 1.25fr) minmax(260px, 2.75fr) 115px 125px;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 2.75fr) minmax(4.5rem, 115px) 8.25rem;
   align-items: center;
   column-gap: var(--space-sm);
   padding: 0 var(--space-md);
+  min-width: 0;
 }
 
 .chrono-header-row {
@@ -530,6 +531,11 @@ function formatFullDateTime(time: number | string | null): string {
 .chrono-col-axis {
   position: relative;
   min-width: 0;
+}
+
+.chrono-col-remain {
+  min-width: 0;
+  overflow: hidden;
 }
 
 .chrono-ruler {
@@ -610,7 +616,7 @@ function formatFullDateTime(time: number | string | null): string {
   pointer-events: none;
   z-index: 0;
   display: grid;
-  grid-template-columns: minmax(180px, 1.25fr) minmax(260px, 2.75fr) 115px 125px;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 2.75fr) minmax(4.5rem, 115px) 8.25rem;
   column-gap: var(--space-sm);
   padding: 0 var(--space-md);
 }
@@ -928,6 +934,7 @@ function formatFullDateTime(time: number | string | null): string {
 .chrono-badge {
   display: inline-flex;
   align-items: center;
+  max-width: 100%;
   gap: 5px;
   padding: 3px 8px;
   border-radius: 999px;
@@ -936,6 +943,12 @@ function formatFullDateTime(time: number | string | null): string {
   font-weight: 500;
   border: 1px solid transparent;
   white-space: nowrap;
+}
+
+.chrono-badge-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .chrono-badge.is-forever {
@@ -971,6 +984,7 @@ function formatFullDateTime(time: number | string | null): string {
 
 /* --- Action Buttons --- */
 .chrono-col-actions {
+  min-width: 0;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -979,9 +993,11 @@ function formatFullDateTime(time: number | string | null): string {
 
 .chrono-action-btn {
   height: 26px;
+  flex: 0 0 auto;
   padding: 0 8px;
   border-radius: var(--radius-control);
   font-size: var(--text-2xs);
+  white-space: nowrap;
   cursor: pointer;
   transition: all var(--dur-micro) ease;
   background: transparent;
@@ -1008,8 +1024,12 @@ function formatFullDateTime(time: number | string | null): string {
 }
 
 .chrono-action-inherited {
+  min-width: 0;
+  overflow: hidden;
   color: var(--color-muted);
   font-size: var(--text-2xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* --- Responsive Media Queries --- */
@@ -1017,7 +1037,7 @@ function formatFullDateTime(time: number | string | null): string {
   .chrono-header-row,
   .chrono-row,
   .chrono-grid-overlay {
-    grid-template-columns: minmax(140px, 1fr) minmax(180px, 2fr) 90px 100px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(4rem, 90px) 8.25rem;
     padding: 0 var(--space-xs);
   }
 }
