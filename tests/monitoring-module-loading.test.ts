@@ -215,6 +215,7 @@ describe("monitoring module loading", () => {
   });
 
   it("coalesces automatic refresh ticks while the first overview and alerts are still pending", async () => {
+
     let tick!: () => void;
     vi.spyOn(window, "setInterval").mockImplementation((callback) => {
       tick = callback as () => void;
@@ -239,6 +240,28 @@ describe("monitoring module loading", () => {
     expect(wrapper.get(".service-table").attributes("data-loading")).toBe("true");
     pendingEvents.resolve(eventResponse);
     pendingOverview.resolve(overview());
+    await flushPromises();
+  });
+
+  it("cancels remaining host pages when a page fails so they cannot overwrite a later refresh", async () => {
+    const failedPage = deferred<ReturnType<typeof overview>>();
+    const pendingPage = deferred<ReturnType<typeof overview>>();
+    mockedApi.mockImplementation((path) => {
+      if (path.includes("/monitoring/events?")) return Promise.resolve(eventResponse);
+      if (path.includes("/monitoring/overview")) {
+        if (path.includes("hostOffset=12")) return failedPage.promise;
+        if (path.includes("hostOffset=24")) return pendingPage.promise;
+        return Promise.resolve(overview(25));
+      }
+      return Promise.resolve({ items: [] });
+    });
+    await mountView();
+    await flushPromises();
+    const signal = mockedApi.mock.calls.find(([path]) => path.includes("hostOffset=24"))![1]!.signal!;
+    failedPage.reject(new Error("host page unavailable"));
+    await flushPromises();
+    expect(signal.aborted).toBe(true);
+    pendingPage.resolve(overview(25));
     await flushPromises();
   });
 

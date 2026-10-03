@@ -791,7 +791,7 @@ onBeforeUnmount(() => {
 
 .module-refresh-indicator {
   vertical-align: middle;
-  color: var(--brand);
+  color: var(--color-accent);
   animation: module-refresh-spin 1s linear infinite;
 }
 

@@ -176,6 +176,7 @@ async function loadOverview(silent = false) {
     }, false, seenIds);
   } catch (caught) {
     if ((caught as { name?: string }).name === "AbortError" || signal.aborted) return;
+    if (overviewAbort?.signal === signal) overviewAbort.abort();
     if (!overview.value) error.value = caught instanceof Error ? caught.message : tr("读取监控概览失败");
     else ElMessage.warning(caught instanceof Error ? caught.message : tr("部分主机监控数据加载失败"));
   } finally {
