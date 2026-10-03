@@ -765,6 +765,7 @@ const generatedEnMessages: Record<string, string> = {
   "调整 Web 登录账号顺序": "Adjust the order of web login accounts",
   "调整 Web 入口顺序": "Adjust the order of web portals",
   "调整导航窗格宽度": "Adjust navigation pane width",
+  "调整组织架构宽度": "Adjust organization structure width",
   "调整环境顺序": "Adjust the order of environments",
   "调整环境顺序与分组": "Adjust environment order and grouping",
   "调整环境组顺序": "Adjust the order of environment groups",

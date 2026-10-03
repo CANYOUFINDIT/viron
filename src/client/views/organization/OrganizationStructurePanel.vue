@@ -1,14 +1,95 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { ArrowRight, Building2, FolderKanban, FolderPlus, Pencil, Plus, Server, ShieldCheck, Trash2, UserRound, Users } from "@lucide/vue";
 import TipIcon from "../../components/TipIcon.vue";
 import { currentLocale, translate } from "../../i18n";
 import { useOrganizationContext } from "./context";
 import GrantTimelineView from "./GrantTimelineView.vue";
+import { STRUCTURE_TREE_MAX, STRUCTURE_TREE_MIN, STRUCTURE_TREE_WIDTH_KEY, clampStructureTreeWidth, preferredStructureTreeWidth } from "./structure-tree-width";
 
 const { activateWorkspace, canManageOrganization, changeRole, createOrganizationDialog, deleteProject, detail, openCreateProject, openEditGrant, openEditProject, openGrantDialog, openGrantHistory, openProjectMembersById, organizations, removeMember, revokeGrant, selectStructureNode, selectedGrantRows, selectedGrantTarget, selectedMember, selectedMemberProjects, selectedNode, selectedProject, selectedProjectChildren, selectedProjectPath, structureTree } = useOrganizationContext();
 
 const grantView = ref<"list" | "timeline">("list");
+const workbenchElement = ref<HTMLElement | null>(null);
+const containerWidth = ref(0);
+const preferredTreeWidth = ref(preferredStructureTreeWidth(readStoredTreeWidth()));
+const treeWidth = computed(() => clampStructureTreeWidth(preferredTreeWidth.value, containerWidth.value));
+const workbenchStyle = computed(() => ({ "--structure-tree-width": `${treeWidth.value}px` }));
+let treeResizeObserver: ResizeObserver | undefined;
+let stopTreeResize: (() => void) | undefined;
+
+function readStoredTreeWidth(): string | null {
+  try {
+    return localStorage.getItem(STRUCTURE_TREE_WIDTH_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function rememberTreeWidth(value: number): void {
+  preferredTreeWidth.value = preferredStructureTreeWidth(String(value));
+  try {
+    localStorage.setItem(STRUCTURE_TREE_WIDTH_KEY, String(preferredTreeWidth.value));
+  } catch {
+    // Private browsing can reject storage; the width still applies for this visit.
+  }
+}
+
+function startTreeResize(event: PointerEvent): void {
+  if (!event.isPrimary || event.button !== 0 || !workbenchElement.value) return;
+  event.preventDefault();
+  const bounds = workbenchElement.value.getBoundingClientRect();
+  const pointerId = event.pointerId;
+  const body = document.body;
+  const previousCursor = body.style.cursor;
+  const previousUserSelect = body.style.userSelect;
+  body.style.cursor = "col-resize";
+  body.style.userSelect = "none";
+  const move = (moveEvent: PointerEvent) => {
+    if (moveEvent.pointerId !== pointerId) return;
+    preferredTreeWidth.value = preferredStructureTreeWidth(String(moveEvent.clientX - bounds.left));
+  };
+  const cleanup = () => {
+    document.removeEventListener("pointermove", move);
+    document.removeEventListener("pointerup", finish);
+    document.removeEventListener("pointercancel", cancel);
+    body.style.cursor = previousCursor;
+    body.style.userSelect = previousUserSelect;
+    stopTreeResize = undefined;
+  };
+  const finish = (upEvent: PointerEvent) => {
+    if (upEvent.pointerId !== pointerId) return;
+    rememberTreeWidth(upEvent.clientX - bounds.left);
+    cleanup();
+  };
+  const cancel = (cancelEvent: PointerEvent) => {
+    if (cancelEvent.pointerId !== pointerId) return;
+    rememberTreeWidth(preferredTreeWidth.value);
+    cleanup();
+  };
+  stopTreeResize = cleanup;
+  document.addEventListener("pointermove", move);
+  document.addEventListener("pointerup", finish);
+  document.addEventListener("pointercancel", cancel);
+}
+
+function nudgeTreeWidth(delta: number): void {
+  rememberTreeWidth(treeWidth.value + delta);
+}
+
+onMounted(() => {
+  const element = workbenchElement.value;
+  if (!element || typeof ResizeObserver === "undefined") return;
+  treeResizeObserver = new ResizeObserver((entries) => {
+    containerWidth.value = entries[0]?.contentRect.width ?? 0;
+  });
+  treeResizeObserver.observe(element);
+});
+
+onBeforeUnmount(() => {
+  treeResizeObserver?.disconnect();
+  stopTreeResize?.();
+});
 
 function grantSource(row: { source: string; inherited: boolean }): string {
   return row.inherited ? translate("继承自 {0}", [row.source]) : row.source;
@@ -22,7 +103,7 @@ function grantExpiry(grant: { expired: boolean; expiresAt?: string | null }): st
 
 <template>
 <section v-if="detail" class="console-panel structure-panel">
-            <article class="structure-workbench">
+            <article ref="workbenchElement" class="structure-workbench" :style="workbenchStyle">
               <aside class="structure-tree" :aria-label="$t('组织架构树')">
                 <header>
                   <div><strong>{{ $t('组织架构') }}</strong><small>{{ detail.projects.length }} {{ $t('个项目组 ·') }} {{ detail.members.length }} {{ $t('名成员') }}</small></div>
@@ -61,6 +142,7 @@ function grantExpiry(grant: { expired: boolean; expiresAt?: string | null }): st
                   </el-tree>
                 </div>
               </aside>
+              <button class="structure-tree-resizer" type="button" role="separator" aria-orientation="vertical" :aria-label="$t('调整组织架构宽度')" :aria-valuemin="STRUCTURE_TREE_MIN" :aria-valuemax="STRUCTURE_TREE_MAX" :aria-valuenow="treeWidth" @pointerdown="startTreeResize" @keydown.left.prevent="nudgeTreeWidth(-20)" @keydown.right.prevent="nudgeTreeWidth(20)"><span></span></button>
 
               <section class="node-inspector">
                 <header class="node-inspector__header">
