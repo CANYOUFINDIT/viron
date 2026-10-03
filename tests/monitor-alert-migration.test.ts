@@ -105,6 +105,8 @@ describe("monitor alert database migration", () => {
       expect(stateColumns.map((column) => column.name)).toEqual(expect.arrayContaining(["last_recovered_alert_id", "last_recovered_at"]));
       const alertColumns = await db.prepare("PRAGMA table_info(monitor_alerts)").all() as Array<{ name: string }>;
       expect(alertColumns.map((column) => column.name)).toEqual(expect.arrayContaining(["severity", "peak_severity", "occurrence_count", "last_seen_at"]));
+      const indexes = await db.prepare("PRAGMA index_list(monitor_alerts)").all() as Array<{ name: string }>;
+      expect(indexes.map((index) => index.name)).toEqual(expect.arrayContaining(["monitor_alerts_calendar_trigger_idx", "monitor_alerts_calendar_recovery_idx"]));
     } finally {
       await db.close();
     }

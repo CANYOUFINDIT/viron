@@ -814,6 +814,8 @@ CREATE TABLE IF NOT EXISTS monitor_alerts (
   updated_at VARCHAR(32) NOT NULL,
   KEY monitor_alerts_environment_idx (environment_id, status, triggered_at),
   KEY monitor_alerts_host_history_idx (environment_id, target_type, target_id, triggered_at),
+  KEY monitor_alerts_calendar_trigger_idx (environment_id, triggered_at, status, recovered_at, peak_severity, severity),
+  KEY monitor_alerts_calendar_recovery_idx (environment_id, status, recovered_at, triggered_at, peak_severity, severity),
   CONSTRAINT monitor_alerts_environment_fk FOREIGN KEY (environment_id) REFERENCES environments(id) ON DELETE CASCADE,
   CONSTRAINT monitor_alerts_state_fk FOREIGN KEY (state_id) REFERENCES monitor_alert_states(id) ON DELETE SET NULL,
   CONSTRAINT monitor_alerts_connection_fk FOREIGN KEY (ssh_connection_id) REFERENCES ssh_connections(id) ON DELETE SET NULL,

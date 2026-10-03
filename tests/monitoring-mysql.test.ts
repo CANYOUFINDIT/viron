@@ -1,11 +1,14 @@
 import { execFileSync, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import type { FastifyInstance } from "fastify";
 import { ensureAdmin, openDatabase } from "../src/server/database.js";
 import type { EnvmanDatabase } from "../src/server/database.js";
 import { monitoringTestConfig, runMonitoringContractSuite } from "./helpers/monitoring-harness.js";
+import { loadMonitorHostEventCalendar, loadPlatformEventCalendar, loadPlatformEvents } from "../src/server/monitor-event-calendar.js";
 
 const enabled = process.env.VIRON_MONITOR_MYSQL_TEST === "1";
 const mysqlIt = enabled ? it : it.skip;
@@ -87,4 +90,57 @@ describe("monitoring MariaDB equivalence", () => {
     expect(result.firstPoint).toBeTruthy();
     expect(result.lastPoint).toBeTruthy();
   });
+
+  mysqlIt("matches SQLite alert statistics, interval merging and paginated queries", async () => {
+    const sqlite = await openDatabase({ ...monitoringTestConfig(directory), databasePath: join(directory, "alert-statistics.db") });
+    const mysql = await openDatabase(monitoringTestConfig(directory, { host: externalHost || "127.0.0.1", port, database: "viron_monitor" }));
+    const ownerId = randomUUID();
+    const environmentId = randomUUID();
+    const connectionId = randomUUID();
+    const now = "2026-03-25T12:00:00.000Z";
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.parse(now));
+    async function seedAndQuery(database: EnvmanDatabase) {
+      await database.prepare(`INSERT INTO environments (id, name, workspace_type, workspace_id, description, tags_json, created_at, updated_at)
+        VALUES (?, 'Statistics test', 'personal', ?, '', '[]', ?, ?)`).run(environmentId, ownerId, now, now);
+      await database.prepare(`INSERT INTO ssh_connections (id, name, host, port, username, credential_ciphertext, options_json, tags_json, created_at, updated_at)
+        VALUES (?, 'Statistics host', '127.0.0.1', 22, 'operator', 'test', '{}', '[]', ?, ?)`).run(connectionId, now, now);
+      await database.prepare("INSERT INTO ssh_connection_environments (connection_id, environment_id) VALUES (?, ?)").run(connectionId, environmentId);
+      const insert = database.prepare(`INSERT INTO monitor_alerts (
+        id, environment_id, target_type, target_id, rule_type, rule_key, ssh_connection_id, environment_name,
+        status, severity, peak_severity, details_json, triggered_at, recovered_at, last_seen_at, created_at, updated_at
+      ) VALUES (?, ?, 'host', 'statistics-agent', 'cpu', '', ?, 'Statistics test', ?, ?, ?, '{}', ?, ?, ?, ?, ?)`);
+      const events = [
+        { id: "earlier", start: "2026-02-28T23:00:00.000Z", end: "2026-03-01T02:00:00.000Z", severity: "major", status: "recovered" },
+        { id: "dst", start: "2026-03-08T05:00:00.000Z", end: "2026-03-09T04:00:00.000Z", severity: "critical", status: "recovered" },
+        { id: "ongoing", start: "2026-02-01T00:00:00.000Z", end: null, severity: "warning", status: "active" },
+        ...Array.from({ length: 2105 }, (_, index) => ({ id: `bulk-${index}`, start: "2026-03-01T01:00:00.000Z", end: "2026-03-01T09:00:00.000Z", severity: "critical", status: "recovered" })),
+      ];
+      await database.transaction(async () => {
+        for (const event of events) await insert.run(`${ownerId}-${event.id}`, environmentId, connectionId,
+          event.status, event.severity, event.severity, event.start, event.end, event.end ?? event.start, now, now);
+      })();
+      const app = { db: database } as FastifyInstance;
+      const query = { workspaceType: "personal", workspaceId: ownerId, month: "2026-03", timezone: "America/New_York" };
+      const platform = (await loadPlatformEventCalendar(app, query))!;
+      const host = await loadMonitorHostEventCalendar(app, environmentId, connectionId, query.month, query.timezone);
+      const eventQuery = { workspaceType: query.workspaceType, workspaceId: ownerId, from: Date.parse(platform.from), to: Date.parse(platform.to), order: "priority" as const, limit: 2 };
+      const eventsPage = await loadPlatformEvents(app, { ...eventQuery, offset: 1 });
+      const filtered = await loadPlatformEvents(app, { ...eventQuery, severity: "warning", status: "active" });
+      const denied = await loadPlatformEvents(app, { ...eventQuery, allowedEnvironmentIds: [] });
+      return { platform, host, eventsPage, filtered, denied };
+    }
+    try {
+      const expected = await seedAndQuery(sqlite);
+      const actual = await seedAndQuery(mysql);
+      expect(actual).toEqual(expected);
+      expect(actual.filtered.total).toBe(1);
+      expect(actual.denied).toEqual({ items: [], total: 0 });
+      expect(actual.host!.days[0]!.activeEventCount).toBe(2106);
+      expect(actual.platform.days.find((day) => day.date === "2026-03-08")!.affectedMinutes).toBe(1380);
+    } finally {
+      clock.mockRestore();
+      await sqlite.close();
+      await mysql.close();
+    }
+  }, 30_000);
 });

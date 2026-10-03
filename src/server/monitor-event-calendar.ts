@@ -1,12 +1,10 @@
 import type { FastifyInstance } from "fastify";
+import { loadMonitorAlertCalendarAggregates, monitorAlertRangeSql, type MonitorAlertSqlScope } from "./monitor-alert-query.js";
 import {
   MONITOR_ALERT_SEVERITIES,
-  monitorAlertSeverityRank,
-  monitorAlertSeverityWeight,
   type MonitorAlertRuleType,
   type MonitorAlertSeverity,
   type MonitorAlertTargetType,
-  type MonitorHostEventCalendarDay,
   type MonitorHostEventCalendarResponse,
   type MonitorHostEventItem,
   type MonitorPlatformEventItem,
@@ -74,8 +72,12 @@ function localDate(year: number, month: number, day: number): string {
   return new Date(Date.UTC(year, month - 1, day)).toISOString().slice(0, 10);
 }
 
+const timezoneFormatters = new Map<string, Intl.DateTimeFormat>();
+
 function zonedParts(timestamp: number, timezone: string): { year: number; month: number; day: number; hour: number; minute: number; second: number } {
-  const parts = new Intl.DateTimeFormat("en-US", {
+  let formatter = timezoneFormatters.get(timezone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-US", {
     timeZone: timezone,
     year: "numeric",
     month: "2-digit",
@@ -84,7 +86,11 @@ function zonedParts(timestamp: number, timezone: string): { year: number; month:
     minute: "2-digit",
     second: "2-digit",
     hourCycle: "h23",
-  }).formatToParts(timestamp);
+    });
+    if (timezoneFormatters.size >= 32) timezoneFormatters.delete(timezoneFormatters.keys().next().value!);
+    timezoneFormatters.set(timezone, formatter);
+  }
+  const parts = formatter.formatToParts(timestamp);
   const values = Object.fromEntries(parts.map((part) => [part.type, Number(part.value)]));
   return {
     year: values.year!,
@@ -103,6 +109,7 @@ function zonedMidnight(date: string, timezone: string): number {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const actual = zonedParts(candidate, timezone);
     const represented = Date.UTC(actual.year, actual.month - 1, actual.day, actual.hour, actual.minute, actual.second);
+    if (represented === desired) break;
     candidate += desired - represented;
   }
   return candidate;
@@ -217,68 +224,38 @@ async function resolveHostIdentity(app: FastifyInstance, environmentId: string, 
   };
 }
 
-async function loadEvents(
-  app: FastifyInstance,
-  environmentId: string,
-  connectionId: string,
-  from: number,
-  to: number,
-  limit = 2_000,
-  identity?: HostIdentity | null,
-): Promise<StoredEventRow[] | null> {
-  const resolved = identity ?? await hostIdentity(app, environmentId, connectionId);
-  if (!resolved) return null;
+function hostAlertScope(environmentId: string, resolved: HostIdentity): MonitorAlertSqlScope {
   const targetClauses: string[] = [];
   const targetParameters: unknown[] = [];
   if (resolved.agentIds.length) {
-    targetClauses.push(`target_id IN (${resolved.agentIds.map(() => "?").join(",")})`);
+    targetClauses.push(`a.target_id IN (${resolved.agentIds.map(() => "?").join(",")})`);
     targetParameters.push(...resolved.agentIds);
   }
   if (resolved.connectionIds.length) {
-    targetClauses.push(`ssh_connection_id IN (${resolved.connectionIds.map(() => "?").join(",")})`);
+    targetClauses.push(`a.ssh_connection_id IN (${resolved.connectionIds.map(() => "?").join(",")})`);
     targetParameters.push(...resolved.connectionIds);
   }
-  if (!targetClauses.length) return [];
+  return {
+    sql: `a.environment_id = ? AND a.target_type = 'host' AND (${targetClauses.join(" OR ") || "0 = 1"})`,
+    parameters: [environmentId, ...targetParameters],
+  };
+}
+
+async function loadEvents(
+  app: FastifyInstance, environmentId: string, connectionId: string,
+  from: number, to: number, limit = 500,
+): Promise<StoredEventRow[] | null> {
+  const identity = await hostIdentity(app, environmentId, connectionId);
+  if (!identity) return null;
+  const matched = monitorAlertRangeSql(hostAlertScope(environmentId, identity), "a.id, a.triggered_at", from, to, Date.now(), app.db.dialect);
   return app.db.prepare(`
-    SELECT id, rule_type, rule_key, status, severity, peak_severity, occurrence_count,
-      target_name, details_json, triggered_at, recovered_at, last_seen_at
-    FROM monitor_alerts
-    WHERE environment_id = ? AND target_type = 'host'
-      AND (${targetClauses.join(" OR ")})
-      AND triggered_at < ?
-      AND (CASE WHEN status = 'active' THEN ? WHEN recovered_at IS NOT NULL THEN recovered_at ELSE triggered_at END) >= ?
-    ORDER BY triggered_at DESC
-    LIMIT ${limit}
-  `).all(environmentId, ...targetParameters, new Date(to).toISOString(), new Date().toISOString(), new Date(from).toISOString()) as Promise<StoredEventRow[]>;
-}
-
-function mergeDuration(intervals: TimeInterval[]): number {
-  if (!intervals.length) return 0;
-  const sorted = intervals.slice().sort((left, right) => left.start - right.start);
-  let duration = 0;
-  let current = { ...sorted[0]! };
-  for (const interval of sorted.slice(1)) {
-    if (interval.start <= current.end) current.end = Math.max(current.end, interval.end);
-    else {
-      duration += Math.max(0, current.end - current.start);
-      current = { ...interval };
-    }
-  }
-  return duration + Math.max(0, current.end - current.start);
-}
-
-function eventInterval(event: StoredEventRow, generatedAt: number): TimeInterval {
-  const start = Date.parse(event.triggered_at);
-  const end = event.status === "active"
-    ? generatedAt
-    : event.recovered_at
-      ? Date.parse(event.recovered_at)
-      : start + 1;
-  return { start, end: Math.max(start + 1, end) };
-}
-
-function overlaps(interval: TimeInterval, start: number, end: number): boolean {
-  return interval.start < end && interval.end >= start;
+    WITH matched_alerts AS (${matched.sql}),
+    page_ids AS (SELECT id FROM matched_alerts ORDER BY triggered_at DESC, id DESC LIMIT ${limit})
+    SELECT a.id, a.rule_type, a.rule_key, a.status, a.severity, a.peak_severity, a.occurrence_count,
+      a.target_name, a.details_json, a.triggered_at, a.recovered_at, a.last_seen_at
+    FROM page_ids p JOIN monitor_alerts a ON a.id = p.id
+    ORDER BY a.triggered_at DESC, a.id DESC
+  `).all(...matched.parameters) as Promise<StoredEventRow[]>;
 }
 
 export function monitorSampleCoverageInterval(row: StoredSampleCoverageRow): TimeInterval | null {
@@ -336,53 +313,8 @@ async function coverageIntervals(
   });
 }
 
-function dayAggregate(day: { date: string; start: number; end: number }, events: StoredEventRow[], coverageMs: number, generatedAt: number): MonitorHostEventCalendarDay {
-  const eventIntervals = events.map((event) => ({ event, interval: eventInterval(event, generatedAt) }));
-  const active = eventIntervals.filter(({ interval }) => overlaps(interval, day.start, day.end));
-  const newEvents = events.filter((event) => {
-    const triggeredAt = Date.parse(event.triggered_at);
-    return triggeredAt >= day.start && triggeredAt < day.end;
-  });
-  const counts = { info: 0, warning: 0, major: 0, critical: 0 };
-  let peakSeverity: MonitorAlertSeverity | null = null;
-  for (const { event } of active) {
-    const eventSeverity = severity(event.peak_severity || event.severity);
-    counts[eventSeverity] += 1;
-    if (!peakSeverity || monitorAlertSeverityRank(eventSeverity) > monitorAlertSeverityRank(peakSeverity)) peakSeverity = eventSeverity;
-  }
-  const affectedMs = mergeDuration(active.map(({ interval }) => ({
-    start: Math.max(day.start, interval.start),
-    end: Math.min(day.end, interval.end),
-  })));
-  const effectiveEnd = Math.min(day.end, generatedAt);
-  const possibleMs = Math.max(0, effectiveEnd - day.start);
-  const future = day.start > generatedAt;
-  const affectedMinutes = Math.round(affectedMs / 60_000);
-  const weightedCount = Object.entries(counts).reduce((total, [key, value]) => (
-    total + monitorAlertSeverityWeight[key as MonitorAlertSeverity] * value
-  ), 0);
-  return {
-    date: day.date,
-    future,
-    coverageRatio: future || possibleMs === 0 ? 0 : Math.min(1, coverageMs / possibleMs),
-    newEventCount: newEvents.length,
-    activeEventCount: active.length,
-    infoCount: counts.info,
-    warningCount: counts.warning,
-    majorCount: counts.major,
-    criticalCount: counts.critical,
-    affectedMinutes,
-    peakSeverity,
-    burdenScore: Math.round((weightedCount + affectedMinutes / 60) * 10) / 10,
-  };
-}
-
 export async function loadMonitorHostEventCalendar(
-  app: FastifyInstance,
-  environmentId: string,
-  connectionId: string,
-  month: string,
-  timezone: string,
+  app: FastifyInstance, environmentId: string, connectionId: string, month: string, timezone: string,
 ): Promise<MonitorHostEventCalendarResponse | null> {
   const days = monitorMonthDays(month, timezone);
   if (!days.length) return null;
@@ -391,37 +323,24 @@ export async function loadMonitorHostEventCalendar(
   const to = days.at(-1)!.end;
   const identity = await hostIdentity(app, environmentId, connectionId);
   if (!identity) return null;
-  const [events, coverage] = await Promise.all([
-    loadEvents(app, environmentId, connectionId, from, to, 2_000, identity),
+  const [statistics, coverage] = await Promise.all([
+    loadMonitorAlertCalendarAggregates(app.db, hostAlertScope(environmentId, identity), days, generatedAt),
     coverageIntervals(app, identity, from, to),
   ]);
-  if (!events) return null;
   const coverageByDay = coverageMsByDay(days, coverage);
-  const aggregates = days.map((day, index) => dayAggregate(day, events, coverageByDay[index] ?? 0, generatedAt));
-  const triggeredInMonth = events.filter((event) => {
-    const triggeredAt = Date.parse(event.triggered_at);
-    return triggeredAt >= from && triggeredAt < to;
+  const aggregates = statistics.days.map((day, index) => {
+    const possibleMs = Math.max(0, Math.min(days[index]!.end, generatedAt) - days[index]!.start);
+    return { ...day, coverageRatio: day.future || !possibleMs ? 0 : Math.min(1, (coverageByDay[index] ?? 0) / possibleMs) };
   });
-  const recoveredDurations = triggeredInMonth.flatMap((event) => event.recovered_at
-    ? [Math.max(0, Date.parse(event.recovered_at) - Date.parse(event.triggered_at)) / 60_000]
-    : []);
   return {
-    month,
-    timezone,
-    from: new Date(from).toISOString(),
-    to: new Date(to).toISOString(),
-    generatedAt: new Date(generatedAt).toISOString(),
-    days: aggregates,
+    month, timezone, from: new Date(from).toISOString(), to: new Date(to).toISOString(),
+    generatedAt: new Date(generatedAt).toISOString(), days: aggregates,
     summary: {
       healthyDays: aggregates.filter((day) => !day.future && day.coverageRatio >= 0.8 && day.activeEventCount === 0).length,
       affectedDays: aggregates.filter((day) => !day.future && day.activeEventCount > 0).length,
       noDataDays: aggregates.filter((day) => !day.future && day.coverageRatio < 0.8 && day.activeEventCount === 0).length,
-      criticalEvents: triggeredInMonth.filter((event) => severity(event.peak_severity) === "critical").length,
-      totalEvents: triggeredInMonth.length,
-      affectedMinutes: aggregates.reduce((total, day) => total + day.affectedMinutes, 0),
-      meanRecoveryMinutes: recoveredDurations.length
-        ? Math.round(recoveredDurations.reduce((total, value) => total + value, 0) / recoveredDurations.length)
-        : null,
+      criticalEvents: statistics.criticalEvents, totalEvents: statistics.totalEvents,
+      affectedMinutes: statistics.affectedMinutes, meanRecoveryMinutes: statistics.meanRecoveryMinutes,
     },
   };
 }
@@ -467,21 +386,9 @@ export interface PlatformMonitorAlertQuery {
   offset?: number;
 }
 
-function platformAlertWhere(query: PlatformMonitorAlertQuery): { clauses: string[]; parameters: unknown[] } | null {
-  const generatedAt = new Date().toISOString();
-  const clauses = [
-    "e.workspace_type = ?",
-    "e.workspace_id = ?",
-    "a.triggered_at < ?",
-    "(CASE WHEN a.status = 'active' THEN ? WHEN a.recovered_at IS NOT NULL THEN a.recovered_at ELSE a.triggered_at END) >= ?",
-  ];
-  const parameters: unknown[] = [
-    query.workspaceType,
-    query.workspaceId,
-    new Date(query.to).toISOString(),
-    generatedAt,
-    new Date(query.from).toISOString(),
-  ];
+function platformAlertScope(query: PlatformMonitorAlertQuery): MonitorAlertSqlScope | null {
+  const clauses = ["a.environment_id IN (SELECT e.id FROM environments e WHERE e.workspace_type = ? AND e.workspace_id = ?)"];
+  const parameters: unknown[] = [query.workspaceType, query.workspaceId];
   if (query.environmentId) {
     clauses.push("a.environment_id = ?");
     parameters.push(query.environmentId);
@@ -499,51 +406,39 @@ function platformAlertWhere(query: PlatformMonitorAlertQuery): { clauses: string
     clauses.push("a.status = ?");
     parameters.push(query.status);
   }
-  return { clauses, parameters };
+  return { sql: clauses.join(" AND "), parameters };
 }
 
-async function loadPlatformAlertRows(
-  app: FastifyInstance,
-  query: PlatformMonitorAlertQuery,
-): Promise<PlatformStoredEventRow[]> {
-  const where = platformAlertWhere(query);
-  if (!where) return [];
+async function loadPlatformAlertRows(app: FastifyInstance, query: PlatformMonitorAlertQuery, generatedAt: number): Promise<PlatformStoredEventRow[]> {
+  const scope = platformAlertScope(query);
+  if (!scope) return [];
+  const matched = monitorAlertRangeSql(scope, "a.id, a.status, a.peak_severity, a.triggered_at, a.recovered_at, a.last_seen_at", query.from, query.to, generatedAt, app.db.dialect);
   const limit = query.limit === null ? null : Math.min(Math.max(1, query.limit ?? 100), 500);
   const offset = Math.max(0, Math.trunc(query.offset ?? 0));
   const pagination = limit === null ? "" : `LIMIT ${limit} OFFSET ${offset}`;
   const orderBy = query.order === "priority"
-    ? `CASE a.peak_severity
-         WHEN 'critical' THEN 4
-         WHEN 'major' THEN 3
-         WHEN 'warning' THEN 2
-         ELSE 1
-       END DESC,
-       CASE WHEN a.status = 'active' THEN 0 WHEN a.status = 'event' THEN 1 ELSE 2 END,
-       COALESCE(NULLIF(a.last_seen_at, ''), a.recovered_at, a.triggered_at) DESC,
-       a.triggered_at DESC`
-    : "CASE WHEN a.status = 'active' THEN 0 WHEN a.status = 'event' THEN 1 ELSE 2 END, a.triggered_at DESC";
+    ? `CASE peak_severity WHEN 'critical' THEN 4 WHEN 'major' THEN 3 WHEN 'warning' THEN 2 ELSE 1 END DESC,
+       CASE WHEN status = 'active' THEN 0 WHEN status = 'event' THEN 1 ELSE 2 END,
+       COALESCE(NULLIF(last_seen_at, ''), recovered_at, triggered_at) DESC, triggered_at DESC, id DESC`
+    : "CASE WHEN status = 'active' THEN 0 WHEN status = 'event' THEN 1 ELSE 2 END, triggered_at DESC, id DESC";
   return app.db.prepare(`
+    WITH matched_alerts AS (${matched.sql}),
+    page_ids AS (SELECT * FROM matched_alerts ORDER BY ${orderBy} ${pagination})
     SELECT a.id, a.rule_type, a.rule_key, a.status, a.severity, a.peak_severity, a.occurrence_count,
       a.target_name, a.details_json, a.triggered_at, a.recovered_at, a.last_seen_at,
       a.environment_id, a.environment_name, a.ssh_connection_id, a.service_id, a.service_name,
       a.connection_name, a.target_type
-    FROM monitor_alerts a
-    JOIN environments e ON e.id = a.environment_id
-    WHERE ${where.clauses.join(" AND ")}
-    ORDER BY ${orderBy}
-    ${pagination}
-  `).all(...where.parameters) as Promise<PlatformStoredEventRow[]>;
+    FROM page_ids p JOIN monitor_alerts a ON a.id = p.id
+    ORDER BY ${orderBy.replace(/\b(peak_severity|status|last_seen_at|recovered_at|triggered_at|id)\b/g, "p.$1")}
+  `).all(...matched.parameters) as Promise<PlatformStoredEventRow[]>;
 }
 
-async function countPlatformAlertRows(app: FastifyInstance, query: PlatformMonitorAlertQuery): Promise<number> {
-  const where = platformAlertWhere(query);
-  if (!where) return 0;
-  const row = await app.db.prepare(`
-    SELECT COUNT(*) AS count
-    FROM monitor_alerts a
-    JOIN environments e ON e.id = a.environment_id
-    WHERE ${where.clauses.join(" AND ")}
-  `).get(...where.parameters) as { count: number | string } | undefined;
+async function countPlatformAlertRows(app: FastifyInstance, query: PlatformMonitorAlertQuery, generatedAt: number): Promise<number> {
+  const scope = platformAlertScope(query);
+  if (!scope) return 0;
+  const counted = monitorAlertRangeSql(scope, "COUNT(*) AS count", query.from, query.to, generatedAt, app.db.dialect);
+  const row = await app.db.prepare(`SELECT SUM(count) AS count FROM (${counted.sql}) AS counted_alerts`)
+    .get(...counted.parameters) as { count: number | string } | undefined;
   return Math.max(0, Number(row?.count) || 0);
 }
 
@@ -580,48 +475,25 @@ export async function loadPlatformEventCalendar(
   const generatedAt = Date.now();
   const from = days[0]!.start;
   const to = days.at(-1)!.end;
-  // The platform calendar is a system fact view. It deliberately reads every
-  // matching alert row and never joins per-user read/cleared state.
-  const events = await loadPlatformAlertRows(app, { ...query, from, to, limit: null });
-  const aggregates = days.map((day) => ({
-    ...dayAggregate(day, events, 0, generatedAt),
-    coverageRatio: day.start > generatedAt ? 0 : 1,
-  }));
-  const triggeredInMonth = events.filter((event) => {
-    const triggeredAt = Date.parse(event.triggered_at);
-    return triggeredAt >= from && triggeredAt < to;
-  });
-  const recoveredDurations = triggeredInMonth.flatMap((event) => event.recovered_at
-    ? [Math.max(0, Date.parse(event.recovered_at) - Date.parse(event.triggered_at)) / 60_000]
-    : []);
+  const statistics = await loadMonitorAlertCalendarAggregates(app.db, platformAlertScope({ ...query, from, to }), days, generatedAt);
+  const aggregates = statistics.days.map((day) => ({ ...day, coverageRatio: day.future ? 0 : 1 }));
   return {
-    month: query.month,
-    timezone: query.timezone,
-    from: new Date(from).toISOString(),
-    to: new Date(to).toISOString(),
-    generatedAt: new Date(generatedAt).toISOString(),
-    days: aggregates,
+    month: query.month, timezone: query.timezone,
+    from: new Date(from).toISOString(), to: new Date(to).toISOString(),
+    generatedAt: new Date(generatedAt).toISOString(), days: aggregates,
     summary: {
       healthyDays: aggregates.filter((day) => !day.future && day.activeEventCount === 0).length,
       affectedDays: aggregates.filter((day) => !day.future && day.activeEventCount > 0).length,
-      noDataDays: 0,
-      criticalEvents: triggeredInMonth.filter((event) => severity(event.peak_severity) === "critical").length,
-      totalEvents: triggeredInMonth.length,
-      affectedMinutes: aggregates.reduce((total, day) => total + day.affectedMinutes, 0),
-      meanRecoveryMinutes: recoveredDurations.length
-        ? Math.round(recoveredDurations.reduce((total, value) => total + value, 0) / recoveredDurations.length)
-        : null,
+      noDataDays: 0, criticalEvents: statistics.criticalEvents, totalEvents: statistics.totalEvents,
+      affectedMinutes: statistics.affectedMinutes, meanRecoveryMinutes: statistics.meanRecoveryMinutes,
     },
   };
 }
 
-export async function loadPlatformEvents(
-  app: FastifyInstance,
-  query: PlatformMonitorAlertQuery,
-): Promise<{ items: MonitorPlatformEventItem[]; total: number }> {
+export async function loadPlatformEvents(app: FastifyInstance, query: PlatformMonitorAlertQuery): Promise<{ items: MonitorPlatformEventItem[]; total: number }> {
+  const generatedAt = Date.now();
   const [rows, total] = await Promise.all([
-    loadPlatformAlertRows(app, query),
-    countPlatformAlertRows(app, query),
+    loadPlatformAlertRows(app, query, generatedAt), countPlatformAlertRows(app, query, generatedAt),
   ]);
   return { items: rows.map(mapPlatformEvent), total };
 }
