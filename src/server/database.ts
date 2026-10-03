@@ -27,6 +27,9 @@ export async function openDatabase(config: AppConfig): Promise<EnvmanDatabase> {
       connectionLimit: config.databasePoolSize ?? 10,
     });
     await db.exec(MYSQL_SCHEMA);
+    // CREATE TABLE IF NOT EXISTS does not upgrade ledgers created without an event sequence.
+    // Keep the legacy id primary key; AUTO_INCREMENT only requires a unique index.
+    await addMysqlColumnIfMissing(db, "access_governance_events", "event_order", "BIGINT NOT NULL AUTO_INCREMENT UNIQUE");
     await addMysqlColumnIfMissing(db, "api_keys", "mcp_approval_mode", "VARCHAR(16) NOT NULL DEFAULT 'always'");
     await addMysqlColumnIfMissing(db, "audit_events", "source", "VARCHAR(16) NOT NULL DEFAULT 'unknown'");
     await db.prepare("UPDATE audit_events SET source = 'mcp' WHERE source = 'unknown' AND action LIKE 'mcp.%'").run();
@@ -105,6 +108,7 @@ export async function openDatabase(config: AppConfig): Promise<EnvmanDatabase> {
   raw.pragma("busy_timeout = 5000");
   const db = new SqliteDatabaseClient(raw);
   raw.exec(SQLITE_SCHEMA);
+  rebuildAccessGovernanceEventTable(raw);
   rebuildMonitorAlertRuleTables(raw);
   rebuildMonitorAlertTlsTables(raw);
   rebuildKnowledgeBaseTables(raw);
@@ -260,6 +264,44 @@ export async function ensureAdmin(db: EnvmanDatabase, config: AppConfig): Promis
 function addColumnIfMissing(db: Database.Database, table: string, column: string, definition: string): void {
   const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
   if (!columns.some((item) => item.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
+function rebuildAccessGovernanceEventTable(db: Database.Database): void {
+  const columns = db.prepare("PRAGMA table_info(access_governance_events)").all() as Array<{ name: string }>;
+  if (columns.some((column) => column.name === "event_order")) return;
+  // SQLite cannot add an autoincrement primary key with ALTER TABLE. Rebuild atomically,
+  // preserving every snapshot and the insertion order of events with equal timestamps.
+  db.transaction(() => {
+    db.exec(`
+      CREATE TABLE access_governance_events_ordered (
+        event_order INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        request_id TEXT,
+        grant_id TEXT,
+        action TEXT NOT NULL,
+        source TEXT NOT NULL,
+        actor_id TEXT,
+        actor_name TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        before_json TEXT,
+        after_json TEXT,
+        details_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      INSERT INTO access_governance_events_ordered
+        (id, organization_id, request_id, grant_id, action, source, actor_id, actor_name,
+         reason, before_json, after_json, details_json, created_at)
+      SELECT id, organization_id, request_id, grant_id, action, source, actor_id, actor_name,
+        reason, before_json, after_json, details_json, created_at
+      FROM access_governance_events ORDER BY created_at, rowid;
+      DROP TABLE access_governance_events;
+      ALTER TABLE access_governance_events_ordered RENAME TO access_governance_events;
+      CREATE INDEX access_events_org_idx ON access_governance_events(organization_id, created_at, id);
+      CREATE INDEX access_events_request_idx ON access_governance_events(request_id, created_at);
+      CREATE INDEX access_events_grant_idx ON access_governance_events(grant_id, action);
+    `);
+  })();
 }
 
 async function addMysqlColumnIfMissing(db: EnvmanDatabase, table: string, column: string, definition: string): Promise<void> {
