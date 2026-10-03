@@ -57,10 +57,11 @@ interface EnvironmentSection {
 interface ConnectionSection { path: string; items: CatalogConnection[] }
 
 const {
-  currentOrganizationId, editingGrant, grantDialog, grantingResource, resources, saveGrant, selectedGrantTarget,
+  currentOrganizationId, editingGrant, grantDialog, grantRequestMode, grantingResource, resources, saveGrant, selectedGrantTarget, session,
 } = useOrganizationContext();
 
 const step = ref<Step>("pick");
+const reason = ref("");
 const kind = ref<Kind>("environment");
 const groupId = ref("");
 const wholeGroup = ref(false);
@@ -110,7 +111,9 @@ const visibleCapabilities = computed<Capability[]>(() => (
     ? [connectionCapability(kind.value as "ssh_connection" | "database_connection" | "redis_connection")]
     : [...CAPABILITIES]
 ));
-const subject = computed(() => editingGrant.value
+const subject = computed(() => grantRequestMode.value
+  ? { name: session.user?.username ?? "", project: false }
+  : editingGrant.value
   ? { name: editingGrant.value.granteeName, project: editingGrant.value.granteeType === "project" }
   : selectedGrantTarget.value
     ? { name: selectedGrantTarget.value.name, project: selectedGrantTarget.value.type === "project" }
@@ -305,6 +308,7 @@ function toLocalInput(iso: string) {
 function applyGrant() {
   hydrating.value = true;
   const grant = editingGrant.value;
+  reason.value = "";
   blankChecks();
   catalog.value = {};
   keyword.value = "";
@@ -389,7 +393,10 @@ async function loadPicker() {
   const requestId = ++pickerRequest;
   pickerLoading.value = true;
   try {
-    const [groups, environments, connections] = await Promise.all([
+    const [groups, environments, connections] = grantRequestMode.value
+      ? await api<{ groups: CatalogGroup[]; environments: CatalogEnvironment[]; connections: CatalogConnection[] }>(`/api/v1/organizations/${currentOrganizationId.value}/access-request-catalog`)
+        .then((catalog) => [{ items: catalog.groups }, { items: catalog.environments }, { items: catalog.connections }] as const)
+      : await Promise.all([
       api<{ items?: Array<{ id?: string; name?: string; description?: string; color?: string }> }>("/api/v1/environment-groups"),
       api<{ items?: Array<Partial<CatalogEnvironment> & { id?: string; name?: string }> }>("/api/v1/environments"),
       api<{ items?: Array<Partial<CatalogConnection> & { id?: string; name?: string; type?: string }> }>("/api/v1/connections"),
@@ -426,7 +433,7 @@ async function loadCatalog() {
   }
   catalogLoading.value = true;
   try {
-    const next = await api<Record<string, CatalogItem[]>>(`/api/v1/organizations/${currentOrganizationId.value}/grant-catalog?environmentIds=${encodeURIComponent(targetIds.value.join(","))}`);
+    const next = await api<Record<string, CatalogItem[]>>(`/api/v1/organizations/${currentOrganizationId.value}/${grantRequestMode.value ? "access-request-catalog" : "grant-catalog"}?environmentIds=${encodeURIComponent(targetIds.value.join(","))}`);
     if (requestId !== catalogRequest) return;
     catalog.value = next && typeof next === "object" ? next : {};
   } catch {
@@ -697,7 +704,7 @@ const canSave = computed(() => {
   const itemsOk = visibleCapabilities.value.every((capability) => (
     !(checked[capability] ?? []).length || !showItems.value || itemMode[capability] !== "some" || (pickedItems[capability] ?? []).length > 0
   ));
-  return selected && targetsOk.value && itemsOk && expiryValue() !== "";
+  return selected && targetsOk.value && itemsOk && expiryValue() !== "" && Boolean(reason.value.trim());
 });
 
 function continueToPermissions() {
@@ -723,12 +730,13 @@ function submit() {
     permissions,
     items,
     expiresAt: expiryValue(),
+    reason: reason.value.trim(),
   });
 }
 </script>
 
 <template>
-  <el-dialog append-to-body v-model="grantDialog" align-center class="envman-dialog grant-auth-dialog" :title="editingGrant ? $t('修改授权') : $t('授权资源')" width="min(1280px, calc(100vw - 32px))" @closed="editingGrant = null">
+  <el-dialog append-to-body v-model="grantDialog" align-center class="envman-dialog grant-auth-dialog" :title="grantRequestMode ? $t('申请授权') : editingGrant ? $t('修改授权') : $t('授权资源')" width="min(1280px, calc(100vw - 32px))" @closed="editingGrant = null">
     <div v-if="subject" class="dialog-subject">
       <span class="dialog-subject__icon"><ShieldCheck :size="18" /></span>
       <div>
@@ -958,6 +966,10 @@ function submit() {
           </div>
         </div>
 
+        <el-form-item :label="grantRequestMode ? $t('申请理由') : $t('操作原因')" required>
+          <el-input v-model="reason" type="textarea" :rows="2" maxlength="2000" show-word-limit :placeholder="$t('说明业务用途，记录将保留在授权台账中')" :aria-label="grantRequestMode ? $t('申请理由') : $t('操作原因')" />
+        </el-form-item>
+        <p v-if="grantRequestMode" class="grant-scope-note">{{ $t('审批全部通过后生效；审批期间有效期仍会计时。') }}</p>
         <el-form-item :label="$t('有效期')">
           <div class="grant-duration" role="radiogroup" :aria-label="$t('授权时长')">
             <button v-for="item in durations" :key="item.id" type="button" :class="{ 'is-active': duration === item.id }" @click="duration = item.id">{{ $t(item.label) }}</button>
@@ -972,7 +984,7 @@ function submit() {
         <span class="grant-footer-spacer"></span>
         <el-button :disabled="grantingResource" @click="grantDialog = false">{{ $t('取消') }}</el-button>
         <el-button v-if="step === 'pick'" type="primary" :disabled="!targetsOk" @click="continueToPermissions">{{ $t('下一步') }}</el-button>
-        <el-button v-else type="primary" :loading="grantingResource" :disabled="!canSave" @click="submit"><ShieldCheck v-if="!grantingResource" :size="15" />{{ editingGrant ? $t('保存修改') : $t('确认授权') }}</el-button>
+        <el-button v-else type="primary" :loading="grantingResource" :disabled="!canSave" @click="submit"><ShieldCheck v-if="!grantingResource" :size="15" />{{ grantRequestMode ? $t('提交申请') : editingGrant ? $t('保存修改') : $t('确认授权') }}</el-button>
       </div>
     </template>
   </el-dialog>

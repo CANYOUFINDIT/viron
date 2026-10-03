@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { canManageWorkspace } from "../access-control.js";
+import { readGrantSnapshot, recordAccessEvent } from "../access-governance-events.js";
 import { writeAudit } from "../audit.js";
 import { addConnectionEnvironment } from "../connection-environments.js";
 import { ensureConnectionGroup } from "../connection-groups.js";
@@ -451,8 +452,10 @@ async function executeCopy(
     let grantCount = 0;
     for (const grantee of grantees) {
       for (const target of grantTargets) {
+        const grantId = randomUUID();
         const inserted = await app.db.prepare(`INSERT OR IGNORE INTO resource_grants (id, organization_id, grantee_type, grantee_id, resource_type, resource_id, created_by_user_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-          .run(randomUUID(), organizationId, grantee.type, grantee.id, target.type, target.id, request.admin!.id, now);
+          .run(grantId, organizationId, grantee.type, grantee.id, target.type, target.id, request.admin!.id, now);
+        if (inserted.changes) await recordAccessEvent(app.db, organizationId, { action: "granted", grantId, reason: "复制资源到组织时主动授权", after: await readGrantSnapshot(app.db, organizationId, grantId), request });
         grantCount += inserted.changes;
       }
     }

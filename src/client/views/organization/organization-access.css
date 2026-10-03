@@ -1,0 +1,79 @@
+.access-panel { padding: 24px; color: var(--color-ink); }
+.access-heading, .access-heading__actions, .access-toolbar, .access-switch, .access-pagination, .access-detail-heading, .access-section-title, .workflow-stage header { display: flex; align-items: center; gap: 10px; }
+.access-heading { justify-content: space-between; padding-bottom: 22px; }
+.access-eyebrow { color: var(--color-accent-strong); font-size: 11px; letter-spacing: .12em; }
+.access-heading h3, .access-detail-heading h3 { margin: 6px 0; font-size: 22px; font-weight: 650; }
+.access-heading p, .access-detail-heading p { margin: 0; color: var(--color-muted); font-size: 12px; }
+.access-heading__actions { flex-wrap: wrap; }
+.access-notice { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; margin-bottom: 20px; border-left: 2px solid var(--color-accent); background: var(--color-accent-soft); color: var(--color-ink-soft); font-size: 12px; line-height: 1.6; }
+.access-notice svg { flex: 0 0 auto; margin-top: 1px; }
+.access-toolbar { flex-wrap: wrap; margin-bottom: 20px; }
+.access-toolbar :deep(.el-select) { width: 150px; }
+.access-switch { margin-right: auto; gap: 4px; }
+.access-switch button { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 0 12px; border: 0; border-radius: 6px; background: transparent; color: var(--color-muted); font: inherit; font-size: 12px; cursor: pointer; }
+.access-switch button.is-active { background: var(--color-accent-soft); color: var(--color-accent-strong); font-weight: 650; }
+.access-filter { display: flex; align-items: center; gap: 6px; padding: 7px 10px; border: 1px solid var(--color-rule); border-radius: 6px; background: var(--color-paper); color: var(--color-ink-soft); cursor: pointer; }
+.access-ledger { border-top: 1px solid var(--color-rule-strong); overflow-x: auto; }
+.access-ledger__head, .access-ledger__row { display: grid; grid-template-columns: minmax(230px, 1.5fr) minmax(90px, .6fr) minmax(130px, .8fr) 85px minmax(150px, .9fr); align-items: center; gap: 16px; min-width: 740px; }
+.access-ledger__head { min-height: 36px; padding: 0 12px; color: var(--color-muted); font-size: 11px; }
+.access-ledger__row { width: 100%; min-height: 70px; padding: 14px 12px; border: 0; border-top: 1px solid var(--color-rule); background: transparent; color: var(--color-ink-soft); text-align: left; font: inherit; font-size: 12px; cursor: pointer; }
+.access-ledger__row:hover { background: color-mix(in srgb, var(--color-ink) 3%, transparent); }
+.access-ledger__row > span { min-width: 0; }
+.access-identity, .access-progress { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
+.access-identity strong { color: var(--color-ink); font-size: 13px; font-weight: 600; }
+.access-identity small, .access-progress small { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-muted); font-size: 11px; }
+.access-progress strong { font-size: 12px; font-weight: 500; }
+.access-status { display: inline-flex; padding: 4px 7px; border-radius: 4px; background: color-mix(in srgb, var(--color-ink) 7%, transparent); color: var(--color-muted); font-size: 11px; font-style: normal; white-space: nowrap; }
+.access-status.is-pending { background: color-mix(in srgb, #c79436 12%, transparent); color: #ba8a32; }
+.access-status.is-approved { background: var(--color-accent-soft); color: var(--color-accent-strong); }
+.access-status.is-rejected { background: color-mix(in srgb, #c66356 12%, transparent); color: #c66356; }
+.access-self { display: inline-flex; margin-left: 6px; padding: 2px 5px; border: 1px solid var(--color-rule-strong); border-radius: 3px; color: var(--color-muted); font-size: 10px; font-style: normal; font-weight: 400; }
+.access-ledger time, .access-event-list time { color: var(--color-muted); font-family: var(--font-mono); font-size: 11px; }
+.is-history .access-ledger__head, .is-history .access-ledger__row { grid-template-columns: minmax(240px, 1.4fr) 100px minmax(190px, 1fr) minmax(155px, .8fr); }
+.access-reason { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.access-empty { min-height: 230px; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 12px; color: var(--color-muted); font-size: 12px; }
+.access-empty strong { color: var(--color-ink-soft); font-size: 14px; font-weight: 500; }
+.access-pagination { padding-top: 18px; justify-content: flex-end; }
+.access-pagination small { margin-right: auto; color: var(--color-muted); }
+.access-detail-heading { justify-content: space-between; padding-bottom: 20px; }
+.access-facts { margin: 0 0 24px; border-top: 1px solid var(--color-rule); }
+.access-facts > div { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 18px; padding: 11px 0; border-bottom: 1px solid var(--color-rule); font-size: 12px; line-height: 1.7; }
+.access-facts dt { color: var(--color-muted); }
+.access-facts dd { margin: 0; color: var(--color-ink-soft); overflow-wrap: anywhere; white-space: pre-wrap; }
+.access-reference { font-family: var(--font-mono); }
+.access-section-title { margin: 22px 0 14px; font-size: 13px; color: var(--color-ink); font-weight: 600; }
+.approval-flow, .access-event-list { list-style: none; padding: 0; margin: 0; }
+.approval-flow li { display: flex; align-items: center; gap: 12px; min-height: 64px; padding: 10px 12px; border-bottom: 1px solid var(--color-rule); color: var(--color-muted); }
+.approval-flow li.is-current { background: var(--color-accent-soft); color: var(--color-ink); }
+.approval-flow__number { display: grid; place-items: center; width: 25px; height: 25px; border: 1px solid var(--color-rule-strong); border-radius: 50%; font-family: var(--font-mono); font-size: 11px; flex: 0 0 auto; }
+.approval-flow li.is-complete .approval-flow__number { border-color: var(--color-accent); color: var(--color-accent-strong); }
+.approval-flow li > div { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.approval-flow strong { font-size: 12px; font-weight: 600; }
+.approval-flow small { color: var(--color-muted); font-size: 11px; line-height: 1.5; }
+.approval-flow em { font-size: 11px; font-style: normal; }
+.access-event-list li { display: flex; gap: 14px; padding: 12px 2px; }
+.access-event-dot { width: 6px; height: 6px; margin-top: 5px; border-radius: 50%; background: var(--color-accent); flex: 0 0 auto; }
+.access-event-list strong { display: block; color: var(--color-ink); font-size: 12px; font-weight: 600; }
+.access-event-list small { display: block; margin-top: 5px; color: var(--color-muted); font-size: 11px; }
+.access-event-list p { margin: 6px 0; white-space: pre-wrap; color: var(--color-ink-soft); font-size: 12px; }
+.access-decision { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--color-rule-strong); }
+.access-decision > p { color: var(--color-muted); font-size: 12px; }
+.access-decision > div:last-child { display: flex; gap: 8px; margin-top: 12px; }
+.access-decision > div:last-child > span { flex: 1; }
+.workflow-stage { padding: 16px; margin: 14px 0; border: 1px solid var(--color-rule); border-radius: 8px; background: var(--color-paper); }
+.workflow-stage header { margin-bottom: 14px; }
+.workflow-stage header strong { font-size: 12px; color: var(--color-accent-strong); }
+.workflow-stage header > span { flex: 1; }
+.workflow-stage header button { display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 4px; background: transparent; color: var(--color-muted); cursor: pointer; }
+.workflow-stage header button:disabled { opacity: .3; cursor: default; }
+.workflow-stage header button:hover:not(:disabled) { background: var(--color-accent-soft); color: var(--color-accent-strong); }
+.workflow-stage :deep(.el-select) { width: 100%; }
+.workflow-stage :deep(.el-form-item:last-child) { margin-bottom: 0; }
+.access-snapshots { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.access-snapshots section { padding: 16px; border: 1px solid var(--color-rule); background: var(--color-paper); border-radius: 6px; }
+.access-snapshots h4 { margin: 0 0 12px; color: var(--color-muted); font-size: 11px; font-weight: 500; }
+.access-snapshots strong { color: var(--color-ink); font-size: 13px; }
+.access-snapshots p, .access-snapshots li { margin: 8px 0; color: var(--color-ink-soft); font-size: 12px; line-height: 1.7; }
+.access-snapshots small, .access-snapshots time { display: block; margin-top: 8px; color: var(--color-muted); font-size: 11px; }
+button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+@media (max-width: 760px) { .access-panel { padding: 16px; } .access-heading { align-items: flex-start; flex-direction: column; gap: 16px; } .access-switch { flex-basis: 100%; } .access-facts > div { grid-template-columns: 75px minmax(0, 1fr); gap: 10px; } }

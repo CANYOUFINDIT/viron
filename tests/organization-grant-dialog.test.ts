@@ -28,6 +28,8 @@ function mountDialog(resources: Array<{ id: string; type: "environment_group" | 
     currentOrganizationId: ref("org-1"),
     editingGrant: ref(null),
     grantDialog: ref(true),
+    grantRequestMode: ref(false),
+    session: { user: { id: "user-1", username: "成员甲" } },
     grantingResource: ref(false),
     resources: ref(resources),
     saveGrant,
@@ -79,6 +81,10 @@ describe("organization grant dialog", () => {
       ?.querySelectorAll("input:checked");
     expect(checked).toHaveLength(3);
 
+    const reason = document.body.querySelector('textarea[aria-label="操作原因"]') as HTMLTextAreaElement;
+    reason.value = "生产排障";
+    reason.dispatchEvent(new Event("input", { bubbles: true }));
+    await flushPromises();
     const save = [...document.body.querySelectorAll("button")].find((button) => button.textContent?.includes("确认授权")) as HTMLButtonElement;
     const forever = [...document.body.querySelectorAll("button")].find((button) => button.textContent === "永久") as HTMLButtonElement;
     forever.click();
@@ -116,6 +122,10 @@ describe("organization grant dialog", () => {
     input.dispatchEvent(new Event("change"));
     const forever = [...document.body.querySelectorAll("button")].find((button) => button.textContent === "永久") as HTMLButtonElement;
     forever.click();
+    await flushPromises();
+    const reason = document.body.querySelector('textarea[aria-label="操作原因"]') as HTMLTextAreaElement;
+    reason.value = "生产排障";
+    reason.dispatchEvent(new Event("input", { bubbles: true }));
     await flushPromises();
     const save = [...document.body.querySelectorAll("button")].find((button) => button.textContent?.includes("确认授权")) as HTMLButtonElement;
     save.click();
@@ -155,6 +165,10 @@ describe("organization grant dialog", () => {
     input.dispatchEvent(new Event("change"));
     const forever = [...document.body.querySelectorAll("button")].find((button) => button.textContent === "永久") as HTMLButtonElement;
     forever.click();
+    await flushPromises();
+    const reason = document.body.querySelector('textarea[aria-label="操作原因"]') as HTMLTextAreaElement;
+    reason.value = "生产排障";
+    reason.dispatchEvent(new Event("input", { bubbles: true }));
     await flushPromises();
     const save = [...document.body.querySelectorAll("button")].find((button) => button.textContent?.includes("确认授权")) as HTMLButtonElement;
     save.click();
@@ -241,6 +255,10 @@ describe("organization grant dialog", () => {
 
     const forever = [...document.body.querySelectorAll("button")].find((button) => button.textContent === "永久") as HTMLButtonElement;
     forever.click();
+    await flushPromises();
+    const reason = document.body.querySelector('textarea[aria-label="操作原因"]') as HTMLTextAreaElement;
+    reason.value = "生产排障";
+    reason.dispatchEvent(new Event("input", { bubbles: true }));
     await flushPromises();
     const save = [...document.body.querySelectorAll("button")].find((button) => button.textContent?.includes("确认授权")) as HTMLButtonElement;
     save.click();

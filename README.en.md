@@ -65,7 +65,7 @@ The workbench itself is shared. Switching between Web and App does not create a 
 - **Redis.** The Standalone workbench covers the usual cases: key browsing, the six core types, TTL, and guarded commands.
 - **Monitoring.** Install `viron-monitor` over the existing SSH path, collect host metrics, and raise alerts when something is wrong.
 - **Agent.** The built-in assistant can read the current environment and, after confirmation, operate on it. Viron also exposes MCP so other agents can use the same capabilities.
-- **Organizations and audit.** Personal spaces, organizations, project groups, and grants enforce internal data access. Operations, terminal recordings, and SQL history are attributable per member.
+- **Organizations and audit**: administrators can grant access directly, and members can request access through configurable sequential approval stages. Each stage supports any approver or all approvers; assigned self approval is allowed and marked. A separate ledger retains requests, decisions, grants, changes, revocations and expiry with permission snapshots. Operation events, terminal recordings and SQL history are also traceable by member.
 
 ## Screenshots
 

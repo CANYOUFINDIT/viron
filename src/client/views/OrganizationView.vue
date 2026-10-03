@@ -3,6 +3,7 @@ import { ArrowRight, Ban, Building2, Check, Clock3, Copy, KeyRound, Link2, Netwo
 import PageHeader from "../components/PageHeader.vue";
 import TipIcon from "../components/TipIcon.vue";
 import { provideOrganizationContext } from "./organization/context";
+import OrganizationAccessPanel from "./organization/OrganizationAccessPanel.vue";
 import OrganizationGrantDialog from "./organization/OrganizationGrantDialog.vue";
 import OrganizationInvitationPanel from "./organization/OrganizationInvitationPanel.vue";
 import OrganizationPlatformPanel from "./organization/OrganizationPlatformPanel.vue";
@@ -67,10 +68,12 @@ function selectOrganization(organizationId: string) {
           </header>
           <nav class="console-tabs" :aria-label="$t('组织管理模块')">
             <button type="button" :class="{ 'is-active': activePanel === 'structure' }" @click="activePanel = 'structure'"><Network :size="16" />{{ $t('组织架构') }}</button>
+            <button type="button" :class="{ 'is-active': activePanel === 'access' }" @click="activePanel = 'access'"><ShieldCheck :size="16" />{{ $t('授权中心') }}</button>
             <button v-if="canManageOrganization" type="button" :class="{ 'is-active': activePanel === 'invitations' }" @click="activePanel = 'invitations'"><Link2 :size="16" />{{ $t('邀请') }}</button>
             <button v-if="session.user?.isPlatformAdmin" type="button" :class="{ 'is-active': activePanel === 'platform' }" @click="activePanel = 'platform'"><KeyRound :size="16" />{{ $t('平台账号') }}</button>
           </nav>
           <OrganizationStructurePanel v-if="activePanel === 'structure'" />
+          <OrganizationAccessPanel v-else-if="activePanel === 'access'" />
           <OrganizationInvitationPanel v-else-if="activePanel === 'invitations' && canManageOrganization" />
           <OrganizationPlatformPanel v-else-if="activePanel === 'platform' && session.user?.isPlatformAdmin" />
         </template>

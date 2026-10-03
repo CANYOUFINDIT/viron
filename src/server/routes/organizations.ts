@@ -4,6 +4,8 @@ import { z } from "zod";
 import { resourceBelongsToWorkspace } from "../access-control.js";
 import { AccessAuthorizationError, createAccessAuthorization, deleteAccessAuthorization, deleteAccessForGrantee, listOrganizationGrants, grantCatalog, updateAccessAuthorization } from "../access-authorizations.js";
 import { disconnectGrantees } from "../access-expiry.js";
+import { readGrantSnapshot, recordAccessEvent, recordGranteeRevocations } from "../access-governance-events.js";
+import { authorizationBodySchema } from "./access-governance.js";
 import { writeAudit } from "../audit.js";
 import { isUniqueConstraintError } from "../database-errors.js";
 import { revokeUserRuntime } from "../user-runtime.js";
@@ -30,6 +32,7 @@ const grantSchema = z.object({
   granteeType: z.enum(["user", "project"]),
   granteeId: z.string().uuid(),
   resourceType: z.enum(["environment_group", "environment", "ssh_connection", "database_connection", "redis_connection"]),
+  reason: z.string().trim().min(1).max(2000).optional(),
   resourceId: z.string().uuid().optional(),
   resourceIds: z.array(z.string().uuid()).min(1).max(500)
     .refine((ids) => new Set(ids).size === ids.length, "资源不能重复")
@@ -39,17 +42,7 @@ const grantSchema = z.object({
     context.addIssue({ code: "custom", message: "resourceId 和 resourceIds 必须且只能提供一个" });
   }
 });
-const fineGrantSchema = z.object({
-  granteeType: z.enum(["user", "project"]),
-  granteeId: z.string().uuid(),
-  scopeKind: z.enum(["environment_group", "environment", "ssh_connection", "database_connection", "redis_connection"]),
-  wholeGroup: z.boolean().optional().default(false),
-  groupId: z.string().uuid().nullable().optional().default(null),
-  targetIds: z.array(z.string().uuid()).max(500).optional().default([]),
-  permissions: z.record(z.string(), z.array(z.string())).optional().default({}),
-  items: z.record(z.string(), z.array(z.string())).optional().default({}),
-  expiresAt: z.string().nullable().optional().default(null),
-});
+const fineGrantSchema = authorizationBodySchema;
 
 function invitationTokenHash(token: string): string {
   return createHash("sha256").update(token).digest("hex");
@@ -626,6 +619,7 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
       return reply.code(400).send({ error: "LAST_ORGANIZATION_ADMIN", message: "组织必须保留至少一名有效管理员" });
     }
     await app.db.transaction(async () => {
+      await recordGranteeRevocations(app.db, request.params.id, "user", [request.params.userId], "成员被移出组织，撤销关联授权", request);
       await app.db.prepare("DELETE FROM project_members WHERE user_id = ? AND project_id IN (SELECT id FROM projects WHERE organization_id = ?)").run(request.params.userId, request.params.id);
       await app.db.prepare("DELETE FROM resource_grants WHERE organization_id = ? AND grantee_type = 'user' AND grantee_id = ?").run(request.params.id, request.params.userId);
       await deleteAccessForGrantee(app.db, request.params.id, "user", [request.params.userId]);
@@ -693,6 +687,7 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
     const placeholders = projectIds.map(() => "?").join(",");
     const affectedUsers = (await app.db.prepare(`SELECT DISTINCT user_id FROM project_members WHERE project_id IN (${placeholders})`).all(...projectIds) as Array<{ user_id: string }>).map((item) => item.user_id);
     await app.db.transaction(async () => {
+      await recordGranteeRevocations(app.db, request.params.id, "project", projectIds, "项目组被删除，撤销关联授权", request);
       await app.db.prepare(`UPDATE organization_invitation_policies SET project_id = NULL WHERE project_id IN (${placeholders})`).run(...projectIds);
       await app.db.prepare(`DELETE FROM resource_grants WHERE organization_id = ? AND grantee_type = 'project' AND grantee_id IN (${placeholders})`).run(request.params.id, ...projectIds);
       await deleteAccessForGrantee(app.db, request.params.id, "project", projectIds);
@@ -760,7 +755,7 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
       const body = parseBody(fineGrantSchema, request.body, reply);
       if (!body) return;
       try {
-        const id = await createAccessAuthorization(app.db, request.params.id, request.admin!, body, request);
+        const id = await createAccessAuthorization(app.db, request.params.id, request.admin!, body, request, { reason: body.reason });
         return reply.code(201).send({ id, ids: [id] });
       } catch (error) {
         if (error instanceof AccessAuthorizationError) return reply.code(error.statusCode).send({ error: error.code, message: error.message });
@@ -791,12 +786,13 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
             INSERT INTO resource_grants (id, organization_id, grantee_type, grantee_id, resource_type, resource_id, created_by_user_id, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
           `).run(grantId, request.params.id, body.granteeType, body.granteeId, body.resourceType, resourceId, request.admin!.id, createdAt);
+          await recordAccessEvent(app.db, request.params.id, { action: "granted", grantId, reason: body.reason ?? "管理员主动授权", after: await readGrantSnapshot(app.db, request.params.id, grantId), request });
           await writeAudit(app.db, {
             action: "resource.granted",
             resourceType: body.resourceType,
             resourceId,
             summary: "分配组织资源",
-            details: { grantId, granteeType: body.granteeType, granteeId: body.granteeId },
+            details: { grantId, granteeType: body.granteeType, granteeId: body.granteeId, reason: body.reason },
             request,
           });
         }
@@ -817,7 +813,7 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
     const body = parseBody(fineGrantSchema, request.body, reply);
     if (!body) return;
     try {
-      const saved = await updateAccessAuthorization(app.db, request.params.id, request.params.grantId, request.admin!, body, request);
+      const saved = await updateAccessAuthorization(app.db, request.params.id, request.params.grantId, request.admin!, body, request, body.reason);
       const affectedUsers = saved.granteeType === "user" ? [saved.granteeId] : await projectSubtreeUserIds(app, request.params.id, saved.granteeId);
       await disconnectGrantees(app, request.params.id, affectedUsers);
     } catch (error) {
@@ -829,13 +825,24 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
 
   app.delete<{ Params: { id: string; grantId: string } }>("/api/v1/organizations/:id/grants/:grantId", async (request, reply) => {
     if (!await requireOrganizationAdmin(app, request, reply, request.params.id)) return;
-    const grant = await deleteAccessAuthorization(app.db, request.params.id, request.params.grantId);
+    const body = parseBody(z.object({ reason: z.string().trim().min(1).max(2000).optional() }), request.body ?? {}, reply);
+    if (!body) return;
+    const grant = await app.db.transaction(async () => {
+      const before = await readGrantSnapshot(app.db, request.params.id, request.params.grantId);
+      const deleted = await deleteAccessAuthorization(app.db, request.params.id, request.params.grantId);
+      if (deleted) {
+        await recordAccessEvent(app.db, request.params.id, { action: "revoked", grantId: request.params.grantId,
+          reason: body.reason ?? "管理员撤销授权", before, request });
+        await writeAudit(app.db, { action: "resource.revoked", resourceType: deleted.resourceType, resourceId: deleted.resourceId,
+          summary: "撤销组织资源授权", details: { grantId: request.params.grantId, before, reason: body.reason }, request });
+      }
+      return deleted;
+    })();
     if (!grant) return reply.code(404).send({ error: "NOT_FOUND", message: "授权不存在" });
     const affectedUsers = grant.granteeType === "user"
       ? [grant.granteeId]
       : await projectSubtreeUserIds(app, request.params.id, grant.granteeId);
     await disconnectGrantees(app, request.params.id, affectedUsers);
-    await writeAudit(app.db, { action: "resource.revoked", resourceType: grant.resourceType, resourceId: grant.resourceId, summary: "撤销组织资源授权", details: { grantId: request.params.grantId, granteeType: grant.granteeType, granteeId: grant.granteeId }, request });
     return reply.code(204).send();
   });
 }

@@ -3,7 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { writeAudit } from "../audit.js";
 import { canAccessConnection, canManageWorkspace, getWorkspaceAccess, requireConnectionConfig, type AuthenticatedUser, workspaceParams, workspaceWhere } from "../access-control.js";
-import { deleteAccessTargets } from "../access-authorizations.js";
+import { removeResourceAuthorizations } from "../access-authorizations.js";
 import {
   connectionEnvironmentMap,
   environmentsExist,
@@ -835,10 +835,11 @@ export async function registerConnectionRoutes(app: FastifyInstance): Promise<vo
     const row = await app.db.prepare(`SELECT name FROM ssh_connections WHERE id = ? AND ${workspaceWhere()}`).get(request.params.id, ...workspaceParams(request)) as { name: string } | undefined;
     if (!row) return reply.code(404).send({ error: "NOT_FOUND", message: "SSH 连接不存在" });
     if (!await requireConnectionConfig(app.db, request.admin!, reply, "ssh", request.params.id, [])) return;
-    await app.db.prepare("DELETE FROM ssh_connections WHERE id = ?").run(request.params.id);
-    await app.db.prepare("DELETE FROM connection_inspection_results WHERE connection_type = 'ssh' AND connection_id = ?").run(request.params.id);
-    await app.db.prepare("DELETE FROM resource_grants WHERE resource_type = 'ssh_connection' AND resource_id = ?").run(request.params.id);
-    await deleteAccessTargets(app.db, request.params.id);
+    await app.db.transaction(async () => {
+      await removeResourceAuthorizations(app.db, "ssh_connection", request.params.id, request);
+      await app.db.prepare("DELETE FROM ssh_connections WHERE id = ?").run(request.params.id);
+      await app.db.prepare("DELETE FROM connection_inspection_results WHERE connection_type = 'ssh' AND connection_id = ?").run(request.params.id);
+    })();
     await Promise.all([closeSshConnectionPool(app, request.params.id), closeDatabaseConnectionPool(app), closeRedisConnectionPool(app)]);
     await revokeWorkspaceRuntime(app, request.admin!.workspace);
     await refreshPendingExistingConnections(app.db);
@@ -1199,11 +1200,12 @@ export async function registerConnectionRoutes(app: FastifyInstance): Promise<vo
     const row = await app.db.prepare(`SELECT name FROM database_connections WHERE id = ? AND ${workspaceWhere()}`).get(request.params.id, ...workspaceParams(request)) as { name: string } | undefined;
     if (!row) return reply.code(404).send({ error: "NOT_FOUND", message: "数据库连接不存在" });
     if (!await requireConnectionConfig(app.db, request.admin!, reply, "database", request.params.id, [])) return;
-    await app.db.prepare("DELETE FROM database_connections WHERE profile_parent_id = ?").run(request.params.id);
-    await app.db.prepare("DELETE FROM database_connections WHERE id = ?").run(request.params.id);
-    await app.db.prepare("DELETE FROM connection_inspection_results WHERE connection_type = 'database' AND connection_id = ?").run(request.params.id);
-    await app.db.prepare("DELETE FROM resource_grants WHERE resource_type = 'database_connection' AND resource_id = ?").run(request.params.id);
-    await deleteAccessTargets(app.db, request.params.id);
+    await app.db.transaction(async () => {
+      await removeResourceAuthorizations(app.db, "database_connection", request.params.id, request);
+      await app.db.prepare("DELETE FROM database_connections WHERE profile_parent_id = ?").run(request.params.id);
+      await app.db.prepare("DELETE FROM database_connections WHERE id = ?").run(request.params.id);
+      await app.db.prepare("DELETE FROM connection_inspection_results WHERE connection_type = 'database' AND connection_id = ?").run(request.params.id);
+    })();
     await closeDatabaseConnectionPool(app, request.params.id);
     await revokeWorkspaceRuntime(app, request.admin!.workspace);
     await refreshPendingExistingConnections(app.db);

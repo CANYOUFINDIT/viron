@@ -4,7 +4,7 @@ import { z } from "zod";
 import { writeAudit } from "../audit.js";
 import { isUniqueConstraintError } from "../database-errors.js";
 import { canAccessEnvironment, canManageWorkspace, getWorkspaceAccess, workspaceParams, workspaceWhere } from "../access-control.js";
-import { deleteAccessForGroup, deleteAccessTargets } from "../access-authorizations.js";
+import { removeResourceAuthorizations } from "../access-authorizations.js";
 import type { PermissionMap } from "../../shared/access-permissions.js";
 import { parseBody } from "../validation.js";
 import { requireAdmin } from "./auth.js";
@@ -240,9 +240,10 @@ export async function registerEnvironmentRoutes(app: FastifyInstance): Promise<v
       | { name: string }
       | undefined;
     if (!group) return reply.code(404).send({ error: "NOT_FOUND", message: "环境组不存在" });
-    await app.db.prepare(`DELETE FROM environment_groups WHERE id = ? AND ${workspaceWhere()}`).run(request.params.id, ...workspaceParams(request));
-    await app.db.prepare("DELETE FROM resource_grants WHERE resource_type = 'environment_group' AND resource_id = ?").run(request.params.id);
-    await deleteAccessForGroup(app.db, request.params.id);
+    await app.db.transaction(async () => {
+      await removeResourceAuthorizations(app.db, "environment_group", request.params.id, request);
+      await app.db.prepare(`DELETE FROM environment_groups WHERE id = ? AND ${workspaceWhere()}`).run(request.params.id, ...workspaceParams(request));
+    })();
     await revokeWorkspaceRuntime(app, request.admin!.workspace);
     await writeAudit(app.db, {
       action: "environment_group.deleted",
@@ -507,6 +508,7 @@ export async function registerEnvironmentRoutes(app: FastifyInstance): Promise<v
     `).all(request.params.id) as Array<{ id: string }>;
     await Promise.all(credentials.map((credential) => app.webAccountViews.purgeCredential(credential.id)));
     await app.db.transaction(async () => {
+      await removeResourceAuthorizations(app.db, "environment", request.params.id, request);
       await app.db.prepare("DELETE FROM environments WHERE id = ?").run(request.params.id);
       await app.db.prepare(`
         UPDATE ssh_connections SET environment_id = (
@@ -523,8 +525,6 @@ export async function registerEnvironmentRoutes(app: FastifyInstance): Promise<v
           SELECT environment_id FROM redis_connection_environments ce WHERE ce.connection_id = redis_connections.id ORDER BY environment_id LIMIT 1
         ) WHERE environment_id IS NULL AND ${workspaceWhere()};
       `).run(...workspaceParams(request));
-      await app.db.prepare("DELETE FROM resource_grants WHERE resource_type = 'environment' AND resource_id = ?").run(request.params.id);
-      await deleteAccessTargets(app.db, request.params.id);
     })();
     await revokeWorkspaceRuntime(app, request.admin!.workspace);
     await writeAudit(app.db, {

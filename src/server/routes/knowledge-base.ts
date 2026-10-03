@@ -5,6 +5,7 @@ import yauzl from "yauzl";
 import yazl from "yazl";
 import { z } from "zod";
 import { canAccessEnvironment, canManageWorkspace, getWorkspaceAccess, type AuthenticatedUser } from "../access-control.js";
+import { readGrantSnapshot, recordAccessEvent } from "../access-governance-events.js";
 import { writeAudit } from "../audit.js";
 import { isUniqueConstraintError } from "../database-errors.js";
 import { parseBody } from "../validation.js";
@@ -39,6 +40,7 @@ const saveContentSchema = z.object({
   revision: z.number().int().positive(),
 });
 const grantSchema = z.object({
+  reason: z.string().trim().min(1).max(2000).optional(),
   granteeType: z.enum(["user", "project"]),
   granteeId: z.string().uuid(),
 });
@@ -914,7 +916,14 @@ export async function registerKnowledgeBaseRoutes(app: FastifyInstance): Promise
     const deletedIds = descendantIds(editable.rows, editable.node.id);
     const documentCount = editable.rows.filter((row) => deletedIds.has(row.id) && row.type === "document").length;
     const folderCount = editable.rows.filter((row) => deletedIds.has(row.id) && row.type === "folder").length;
-    await app.db.prepare("DELETE FROM knowledge_nodes WHERE id = ?").run(editable.node.id);
+    await app.db.transaction(async () => {
+      const ids = [...deletedIds];
+      const grants = await app.db.prepare(`SELECT id, organization_id FROM knowledge_node_grants WHERE node_id IN (${ids.map(() => "?").join(",")})`)
+        .all<{ id: string; organization_id: string }>(...ids);
+      for (const grant of grants) await recordAccessEvent(app.db, grant.organization_id, { action: "revoked", grantId: grant.id,
+        reason: "授权资源被删除", before: await readGrantSnapshot(app.db, grant.organization_id, grant.id), request });
+      await app.db.prepare("DELETE FROM knowledge_nodes WHERE id = ?").run(editable.node.id);
+    })();
     await writeAudit(app.db, {
       action: "knowledge.node_deleted",
       resourceType: `knowledge_${editable.node.type}`,
@@ -1007,15 +1016,18 @@ export async function registerKnowledgeBaseRoutes(app: FastifyInstance): Promise
     if (!validGrantee) return reply.code(400).send({ error: "INVALID_GRANTEE", message: "授权对象不属于当前组织" });
     const id = randomUUID();
     try {
-      await app.db.prepare(`
+      await app.db.transaction(async () => {
+        await app.db.prepare(`
         INSERT INTO knowledge_node_grants (id, organization_id, node_id, grantee_type, grantee_id, created_by_user_id, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `).run(id, environment.workspace_id, node.id, body.granteeType, body.granteeId, request.admin!.id, new Date().toISOString());
+        await recordAccessEvent(app.db, environment.workspace_id, { action: "granted", grantId: id, reason: body.reason ?? "管理员分配知识库编辑权限", after: await readGrantSnapshot(app.db, environment.workspace_id, id), request });
+        await writeAudit(app.db, { action: "knowledge.edit_granted", resourceType: `knowledge_${node.type}`, resourceId: node.id, summary: `分配知识库编辑权限 ${node.name}`, details: body, request });
+      })();
     } catch (error) {
       if (isUniqueConstraintError(error)) return reply.code(409).send({ error: "GRANT_EXISTS", message: "该编辑授权已存在" });
       throw error;
     }
-    await writeAudit(app.db, { action: "knowledge.edit_granted", resourceType: `knowledge_${node.type}`, resourceId: node.id, summary: `分配知识库编辑权限 ${node.name}`, details: body, request });
     return reply.code(201).send({ id });
   });
 
@@ -1027,8 +1039,12 @@ export async function registerKnowledgeBaseRoutes(app: FastifyInstance): Promise
     if (!grant) return reply.code(404).send({ error: "NOT_FOUND", message: "授权不存在" });
     const node = await nodeById(app, grant.node_id);
     if (!node || !await requireKnowledgeManager(app, request, reply, node)) return;
-    await app.db.prepare("DELETE FROM knowledge_node_grants WHERE id = ?").run(request.params.id);
-    await writeAudit(app.db, { action: "knowledge.edit_revoked", resourceType: `knowledge_${grant.type}`, resourceId: grant.node_id, summary: `撤销知识库编辑权限 ${grant.name}`, request });
+    await app.db.transaction(async () => {
+      const before = await readGrantSnapshot(app.db, String(grant.organization_id), request.params.id);
+      await app.db.prepare("DELETE FROM knowledge_node_grants WHERE id = ?").run(request.params.id);
+      await recordAccessEvent(app.db, String(grant.organization_id), { action: "revoked", grantId: request.params.id, reason: "管理员撤销知识库编辑权限", before, request });
+      await writeAudit(app.db, { action: "knowledge.edit_revoked", resourceType: `knowledge_${grant.type}`, resourceId: grant.node_id, summary: `撤销知识库编辑权限 ${grant.name}`, details: { before }, request });
+    })();
     return reply.code(204).send();
   });
 

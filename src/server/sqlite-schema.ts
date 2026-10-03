@@ -198,6 +198,62 @@ CREATE TABLE IF NOT EXISTS access_authorization_targets (
 CREATE INDEX IF NOT EXISTS access_authorization_targets_resource_idx
   ON access_authorization_targets(resource_id);
 
+CREATE TABLE IF NOT EXISTS organization_approval_workflows (
+  organization_id TEXT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+  workflow_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS access_requests (
+  id TEXT PRIMARY KEY,
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  requester_id TEXT NOT NULL,
+  requester_name TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('pending','approved','rejected','withdrawn')),
+  authorization_json TEXT NOT NULL,
+  snapshot_json TEXT NOT NULL,
+  workflow_json TEXT NOT NULL,
+  approver_names_json TEXT NOT NULL,
+  stage_index INTEGER NOT NULL DEFAULT 0,
+  stage_approvals_json TEXT NOT NULL DEFAULT '[]',
+  version INTEGER NOT NULL DEFAULT 0,
+  pending_key TEXT UNIQUE,
+  grant_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS access_requests_org_idx ON access_requests(organization_id, status, created_at);
+
+CREATE TABLE IF NOT EXISTS access_request_approvers (
+  request_id TEXT NOT NULL REFERENCES access_requests(id) ON DELETE CASCADE,
+  stage_index INTEGER NOT NULL,
+  approver_id TEXT NOT NULL,
+  decided_at TEXT,
+  PRIMARY KEY(request_id, stage_index, approver_id)
+);
+CREATE INDEX IF NOT EXISTS access_request_approvers_user_idx ON access_request_approvers(approver_id, request_id, stage_index);
+
+CREATE TABLE IF NOT EXISTS access_governance_events (
+  event_order INTEGER PRIMARY KEY AUTOINCREMENT,
+  id TEXT NOT NULL UNIQUE,
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  request_id TEXT,
+  grant_id TEXT,
+  action TEXT NOT NULL,
+  source TEXT NOT NULL,
+  actor_id TEXT,
+  actor_name TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  before_json TEXT,
+  after_json TEXT,
+  details_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS access_events_org_idx ON access_governance_events(organization_id, created_at, id);
+CREATE INDEX IF NOT EXISTS access_events_request_idx ON access_governance_events(request_id, created_at);
+CREATE INDEX IF NOT EXISTS access_events_grant_idx ON access_governance_events(grant_id, action);
+
 CREATE TABLE IF NOT EXISTS environment_groups (
   id TEXT PRIMARY KEY,
   workspace_type TEXT NOT NULL DEFAULT 'personal' CHECK(workspace_type IN ('personal','organization')),

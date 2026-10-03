@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { canManageWorkspace, getWorkspaceAccess, requireConnectionConfig, workspaceParams, workspaceWhere } from "../access-control.js";
-import { deleteAccessTargets } from "../access-authorizations.js";
+import { removeResourceAuthorizations } from "../access-authorizations.js";
 import { writeAudit } from "../audit.js";
 import { connectionEnvironmentMap, environmentsExist, normalizeEnvironmentIds, replaceConnectionEnvironments } from "../connection-environments.js";
 import { connectionGroupExists, resolveConnectionGroupId } from "../connection-groups.js";
@@ -238,10 +238,11 @@ export async function registerRedisConnectionRoutes(app: FastifyInstance): Promi
     const row = await app.db.prepare(`SELECT name FROM redis_connections WHERE id = ? AND ${workspaceWhere()}`).get(request.params.id, ...workspaceParams(request)) as { name: string } | undefined;
     if (!row) return reply.code(404).send({ error: "NOT_FOUND", message: "Redis 连接不存在" });
     if (!await requireConnectionConfig(app.db, request.admin!, reply, "redis", request.params.id, [])) return;
-    await app.db.prepare("DELETE FROM redis_connections WHERE id = ?").run(request.params.id);
-    await app.db.prepare("DELETE FROM connection_inspection_results WHERE connection_type = 'redis' AND connection_id = ?").run(request.params.id);
-    await app.db.prepare("DELETE FROM resource_grants WHERE resource_type = 'redis_connection' AND resource_id = ?").run(request.params.id);
-    await deleteAccessTargets(app.db, request.params.id);
+    await app.db.transaction(async () => {
+      await removeResourceAuthorizations(app.db, "redis_connection", request.params.id, request);
+      await app.db.prepare("DELETE FROM redis_connections WHERE id = ?").run(request.params.id);
+      await app.db.prepare("DELETE FROM connection_inspection_results WHERE connection_type = 'redis' AND connection_id = ?").run(request.params.id);
+    })();
     await closeRedisConnectionPool(app, request.params.id);
     await revokeWorkspaceRuntime(app, request.admin!.workspace);
     await writeAudit(app.db, { action: "connection.redis_deleted", resourceType: "redis_connection", resourceId: request.params.id, summary: `删除 Redis 连接 ${row.name}`, request });

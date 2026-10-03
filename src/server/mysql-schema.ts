@@ -203,6 +203,66 @@ CREATE TABLE IF NOT EXISTS access_authorization_targets (
   CONSTRAINT access_authorization_targets_fk FOREIGN KEY (authorization_id) REFERENCES access_authorizations(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS organization_approval_workflows (
+  organization_id VARCHAR(64) PRIMARY KEY,
+  workflow_json LONGTEXT NOT NULL,
+  updated_at VARCHAR(40) NOT NULL,
+  CONSTRAINT approval_workflows_org_fk FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS access_requests (
+  id VARCHAR(64) PRIMARY KEY,
+  organization_id VARCHAR(64) NOT NULL,
+  requester_id VARCHAR(64) NOT NULL,
+  requester_name VARCHAR(255) NOT NULL,
+  reason TEXT NOT NULL,
+  status VARCHAR(16) NOT NULL,
+  authorization_json LONGTEXT NOT NULL,
+  snapshot_json LONGTEXT NOT NULL,
+  workflow_json LONGTEXT NOT NULL,
+  approver_names_json LONGTEXT NOT NULL,
+  stage_index INT NOT NULL DEFAULT 0,
+  stage_approvals_json LONGTEXT NOT NULL,
+  version INT NOT NULL DEFAULT 0,
+  pending_key VARCHAR(64) NULL UNIQUE,
+  grant_id VARCHAR(64) NULL,
+  created_at VARCHAR(40) NOT NULL,
+  updated_at VARCHAR(40) NOT NULL,
+  KEY access_requests_org_idx (organization_id, status, created_at),
+  CONSTRAINT access_requests_org_fk FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS access_request_approvers (
+  request_id VARCHAR(64) NOT NULL,
+  stage_index INT NOT NULL,
+  approver_id VARCHAR(64) NOT NULL,
+  decided_at VARCHAR(40) NULL,
+  PRIMARY KEY(request_id, stage_index, approver_id),
+  KEY access_request_approvers_user_idx (approver_id, request_id, stage_index),
+  CONSTRAINT access_request_approvers_req_fk FOREIGN KEY (request_id) REFERENCES access_requests(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS access_governance_events (
+  event_order BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  id VARCHAR(64) NOT NULL UNIQUE,
+  organization_id VARCHAR(64) NOT NULL,
+  request_id VARCHAR(64) NULL,
+  grant_id VARCHAR(64) NULL,
+  action VARCHAR(32) NOT NULL,
+  source VARCHAR(16) NOT NULL,
+  actor_id VARCHAR(64) NULL,
+  actor_name VARCHAR(255) NOT NULL,
+  reason TEXT NOT NULL,
+  before_json LONGTEXT NULL,
+  after_json LONGTEXT NULL,
+  details_json LONGTEXT NOT NULL,
+  created_at VARCHAR(40) NOT NULL,
+  KEY access_events_org_idx (organization_id, created_at, id),
+  KEY access_events_request_idx (request_id, created_at),
+  KEY access_events_grant_idx (grant_id, action),
+  CONSTRAINT access_events_org_fk FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS environment_groups (
   id VARCHAR(64) PRIMARY KEY,
   workspace_type VARCHAR(20) NOT NULL DEFAULT 'personal',

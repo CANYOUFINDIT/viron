@@ -221,7 +221,7 @@
 .grant-ledger__row > span:nth-child(4) { overflow: hidden; }
 .grant-ledger__row em { display: inline-block; max-width: 100%; padding: 4px 7px; border-radius: 999px; background: var(--color-accent-soft); color: var(--color-accent-strong); font-size: var(--text-2xs); font-style: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 .grant-ledger__row em.is-inherited { background: var(--color-paper); color: var(--color-muted); }
-.grant-ledger__actions { display: flex; justify-content: flex-end; gap: 6px; }
+.grant-ledger__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .grant-ledger__actions button { height: 28px; flex: 0 0 auto; padding: 0 var(--space-xs); border: 1px solid color-mix(in srgb, var(--color-danger) 28%, var(--color-rule)); border-radius: 7px; background: transparent; color: var(--color-danger); cursor: pointer; font-size: var(--text-2xs); white-space: nowrap; }
 .grant-ledger__actions button.is-edit { border-color: var(--color-rule-strong); color: var(--color-accent-strong); }
 .grant-ledger__actions button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }

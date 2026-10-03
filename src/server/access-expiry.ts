@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { getWorkspaceAccess, type AuthenticatedUser, type WorkspaceAccess } from "./access-control.js";
 import { expireServiceOperation } from "./service-operations.js";
+import { recordExpiredAccess } from "./access-governance-events.js";
 
 const REASON = "授权已到期";
 
@@ -26,6 +27,7 @@ export async function disconnectGrantees(app: FastifyInstance, organizationId: s
 }
 
 export async function sweepExpiredAccess(app: FastifyInstance): Promise<void> {
+  await recordExpiredAccess(app.db);
   const owners = new Map<string, { organizationId: string; userId: string }>();
   for (const entry of app.activeConnections.inspect()) {
     if (entry.workspaceType !== "organization") continue;

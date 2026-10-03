@@ -41,6 +41,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: "edit", grant: any): void;
   (e: "revoke", grant: any): void;
+  (e: "history", grant: any): void;
 }>();
 
 const timelineNow = ref(Date.now());
@@ -344,6 +345,9 @@ function formatFullDateTime(time: number | string | null): string {
 
           <!-- Actions Column -->
           <div class="chrono-col-actions">
+            <button type="button" class="chrono-action-btn" @click="emit('history', item.row.grant)">
+              {{ $t("记录") }}
+            </button>
             <template v-if="!item.row.inherited || props.selectedNodeType === 'organization'">
               <button
                 type="button"
@@ -986,12 +990,14 @@ function formatFullDateTime(time: number | string | null): string {
 .chrono-col-actions {
   min-width: 0;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
 }
 
 .chrono-action-btn {
+  color: var(--color-ink-soft);
   height: 26px;
   flex: 0 0 auto;
   padding: 0 8px;

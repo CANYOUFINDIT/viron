@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { FastifyRequest } from "fastify";
 import type { EnvmanDatabase } from "./database.js";
 import { writeAudit } from "./audit.js";
+import { authorizationSnapshot, readGrantSnapshot, recordAccessEvent } from "./access-governance-events.js";
 import type { AuthenticatedUser } from "./access-control.js";
 import {
   CAPABILITIES,
@@ -167,21 +168,27 @@ export async function createAccessAuthorization(
   actor: AuthenticatedUser,
   input: AuthorizationInput,
   request: FastifyRequest,
+  governance: { reason?: string; requestId?: string; withinTransaction?: boolean } = {},
 ): Promise<string> {
-  const normalized = await normalizeAuthorization(db, organizationId, input);
   const id = randomUUID();
   const now = new Date().toISOString();
-  await db.transaction(async () => {
+  const create = async () => {
+    const normalized = await normalizeAuthorization(db, organizationId, input);
     await insertAuthorization(db, id, organizationId, normalized, actor.id, now, now);
+    const snapshot = await authorizationSnapshot(db, normalized);
+    await recordAccessEvent(db, organizationId, { action: "granted", grantId: id, requestId: governance.requestId,
+      source: governance.requestId ? "request" : "direct", reason: governance.reason ?? "管理员主动授权", after: snapshot, request });
     await writeAudit(db, {
       action: "resource.granted",
       resourceType: normalized.scopeKind,
       resourceId: normalized.wholeGroup ? normalized.groupId ?? id : normalized.targetIds[0] ?? id,
       summary: "分配组织资源",
-      details: { grantId: id, granteeType: normalized.granteeType, granteeId: normalized.granteeId, permissions: normalized.permissions, expiresAt: normalized.expiresAt },
+      details: { grantId: id, ...snapshot, reason: governance.reason, requestId: governance.requestId },
       request,
     });
-  })();
+  };
+  if (governance.withinTransaction) await create();
+  else await db.transaction(create)();
   return id;
 }
 
@@ -192,25 +199,29 @@ export async function updateAccessAuthorization(
   actor: AuthenticatedUser,
   input: AuthorizationInput,
   request: FastifyRequest,
+  reason = "管理员修改授权",
 ): Promise<{ granteeType: "user" | "project"; granteeId: string }> {
-  const existing = await authorizationGrantee(db, organizationId, grantId);
-  if (!existing) throw new AccessAuthorizationError("NOT_FOUND", 404, "授权不存在");
-  const normalized = await normalizeAuthorization(db, organizationId, { ...input, granteeType: existing.granteeType, granteeId: existing.granteeId });
-  const now = new Date().toISOString();
-  await db.transaction(async () => {
+  return db.transaction(async () => {
+    const existing = await authorizationGrantee(db, organizationId, grantId);
+    if (!existing) throw new AccessAuthorizationError("NOT_FOUND", 404, "授权不存在");
+    const normalized = await normalizeAuthorization(db, organizationId, { ...input, granteeType: existing.granteeType, granteeId: existing.granteeId });
+    const now = new Date().toISOString();
+    const before = await readGrantSnapshot(db, organizationId, grantId);
     await db.prepare("DELETE FROM resource_grants WHERE id = ? AND organization_id = ?").run(grantId, organizationId);
     await db.prepare("DELETE FROM access_authorizations WHERE id = ? AND organization_id = ?").run(grantId, organizationId);
     await insertAuthorization(db, grantId, organizationId, normalized, actor.id, existing.createdAt, now);
+    const after = await authorizationSnapshot(db, normalized);
+    await recordAccessEvent(db, organizationId, { action: "updated", grantId, reason, before, after, request });
     await writeAudit(db, {
-      action: "resource.granted",
+      action: "resource.updated",
       resourceType: normalized.scopeKind,
       resourceId: normalized.wholeGroup ? normalized.groupId ?? grantId : normalized.targetIds[0] ?? grantId,
       summary: "修改组织资源授权",
-      details: { grantId, granteeType: normalized.granteeType, granteeId: normalized.granteeId, permissions: normalized.permissions, expiresAt: normalized.expiresAt },
+      details: { grantId, before, after, reason },
       request,
     });
+    return { granteeType: existing.granteeType, granteeId: existing.granteeId };
   })();
-  return { granteeType: existing.granteeType, granteeId: existing.granteeId };
 }
 
 export async function deleteAccessAuthorization(db: EnvmanDatabase, organizationId: string, grantId: string): Promise<{ granteeType: "user" | "project"; granteeId: string; resourceType: string; resourceId: string } | undefined> {
@@ -565,7 +576,7 @@ function granteeFilter(projectIds: string[]): string {
   return `(${userClause} OR (grantee_type = 'project' AND grantee_id IN (${projectIds.map(() => "?").join(",")})))`;
 }
 
-async function normalizeAuthorization(db: EnvmanDatabase, organizationId: string, input: AuthorizationInput): Promise<AuthorizationInput> {
+export async function normalizeAuthorization(db: EnvmanDatabase, organizationId: string, input: AuthorizationInput): Promise<AuthorizationInput> {
   if (!SCOPE_KINDS.includes(input.scopeKind)) throw new AccessAuthorizationError("INVALID_SCOPE", 400, "授权范围无效");
   const permissions = expandPermissions(sanitizePermissions(input.scopeKind, input.permissions));
   if (!Object.keys(permissions).length) throw new AccessAuthorizationError("INVALID_PERMISSIONS", 400, "至少选择一项操作");
@@ -589,7 +600,7 @@ async function normalizeAuthorization(db: EnvmanDatabase, organizationId: string
     await assertItems(db, targetIds, permissions, items);
   }
   const grantee = input.granteeType === "user"
-    ? await db.prepare("SELECT 1 FROM organization_members WHERE organization_id = ? AND user_id = ?").get(organizationId, input.granteeId)
+    ? await db.prepare("SELECT 1 FROM organization_members m JOIN admin_users u ON u.id = m.user_id WHERE m.organization_id = ? AND m.user_id = ? AND u.status = 'active'").get(organizationId, input.granteeId)
     : await db.prepare("SELECT 1 FROM projects WHERE organization_id = ? AND id = ?").get(organizationId, input.granteeId);
   if (!grantee) throw new AccessAuthorizationError("INVALID_GRANTEE", 400, "授权对象不属于当前组织");
   return {
@@ -789,4 +800,24 @@ function grantLabel(grant: Omit<StoredAuthorization, "label">, names: Record<Sco
   if (grant.wholeGroup) return `${names.environment_group.get(grant.groupId ?? "") ?? grant.groupId ?? "环境组"}（整个组）`;
   const labels = grant.targetIds.map((id) => names[grant.scopeKind].get(id) ?? id);
   return labels.join("、") || "未命名资源";
+}
+
+// Called in the resource deletion transaction while resource names are still available.
+export async function removeResourceAuthorizations(db: EnvmanDatabase, scopeKind: ScopeKind, resourceId: string, request: FastifyRequest): Promise<void> {
+  const grants = await db.prepare(`SELECT a.id, a.organization_id FROM access_authorizations a WHERE
+    ${scopeKind === "environment_group" ? "a.whole_group = 1 AND a.group_id = ?" : "EXISTS (SELECT 1 FROM access_authorization_targets t WHERE t.authorization_id = a.id AND t.resource_id = ?)"}`)
+    .all<{ id: string; organization_id: string }>(resourceId);
+  const before = new Map(await Promise.all(grants.map(async (grant) => [grant.id, await readGrantSnapshot(db, grant.organization_id, grant.id)] as const)));
+  const legacy = await db.prepare("SELECT id, organization_id FROM resource_grants WHERE resource_type = ? AND resource_id = ?").all<{ id: string; organization_id: string }>(scopeKind, resourceId);
+  for (const grant of legacy) {
+    await recordAccessEvent(db, grant.organization_id, { action: "revoked", grantId: grant.id, reason: "授权资源被删除", before: await readGrantSnapshot(db, grant.organization_id, grant.id), request });
+  }
+  await db.prepare("DELETE FROM resource_grants WHERE resource_type = ? AND resource_id = ?").run(scopeKind, resourceId);
+  if (scopeKind === "environment_group") await deleteAccessForGroup(db, resourceId);
+  else await deleteAccessTargets(db, resourceId);
+  for (const grant of grants) {
+    const after = await readGrantSnapshot(db, grant.organization_id, grant.id);
+    await recordAccessEvent(db, grant.organization_id, { action: after ? "updated" : "revoked", grantId: grant.id,
+      reason: "授权资源被删除", before: before.get(grant.id), after, request });
+  }
 }

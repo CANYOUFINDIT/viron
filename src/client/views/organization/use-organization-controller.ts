@@ -47,6 +47,7 @@ interface GrantDraft {
   permissions: Record<string, string[]>;
   items: Record<string, string[]>;
   expiresAt: string | null;
+  reason: string;
 }
 interface OrganizationDetail { organization: Organization; members: Member[]; projects: Project[]; grants: Grant[] }
 interface PlatformUser { id: string; username: string; status: "active" | "disabled"; isPlatformAdmin: boolean; organizationCount: number }
@@ -81,7 +82,7 @@ interface StructureNode {
   meta: string;
   children?: StructureNode[];
 }
-type Panel = "structure" | "invitations" | "platform";
+type Panel = "structure" | "invitations" | "platform" | "access";
 type InvitationDuration = 1 | 24 | 168 | 720;
 type InvitationLimitPreset = 1 | 3 | 5 | 10 | "unlimited" | "custom";
 
@@ -107,6 +108,8 @@ export function useOrganizationController() {
   const projectDialogMode = ref<"create" | "edit">("create");
   const projectMemberDialog = ref(false);
   const grantDialog = ref(false);
+  const grantRequestMode = ref(false);
+  const historyGrantId = ref("");
   const grantingResource = ref(false);
   const editingGrant = ref<Grant | null>(null);
   const invitationDialog = ref(false);
@@ -271,12 +274,25 @@ export function useOrganizationController() {
   }
 
   function openGrantDialog() {
+    grantRequestMode.value = false;
     editingGrant.value = null;
     grantDialog.value = true;
   }
 
   function openEditGrant(grant: Grant) {
+    grantRequestMode.value = false;
     editingGrant.value = grant;
+    grantDialog.value = true;
+  }
+
+  function openGrantHistory(grant: Grant) {
+    historyGrantId.value = grant.id;
+    activePanel.value = "access";
+  }
+
+  function openAccessRequest() {
+    grantRequestMode.value = true;
+    editingGrant.value = null;
     grantDialog.value = true;
   }
 
@@ -303,10 +319,17 @@ export function useOrganizationController() {
     invitations.value = [];
     selectedNode.value = { type: "organization", id: organizationId };
     editingGrant.value = null;
+    historyGrantId.value = "";
   }
 
   async function loadResources() {
-    if (!canManageOrganization.value) { resources.value = []; return; }
+    if (!canManageOrganization.value) {
+      const catalog = await api<{ groups: ResourceOption[]; environments: ResourceOption[]; connections: Array<{ id: string; name: string; type: "ssh" | "database" | "redis" }> }>(`/api/v1/organizations/${currentOrganizationId.value}/access-request-catalog`);
+      resources.value = [...catalog.groups.map((item) => ({ ...item, type: "environment_group" as const })),
+        ...catalog.environments.map((item) => ({ ...item, type: "environment" as const })),
+        ...catalog.connections.map((item) => ({ ...item, type: `${item.type}_connection` as ResourceType }))];
+      return;
+    }
     const [groups, environments, connections] = await Promise.all([
       api<{ items: Array<{ id: string; name: string }> }>("/api/v1/environment-groups"),
       api<{ items: Array<{ id: string; name: string; groupId: string | null }> }>("/api/v1/environments"),
@@ -568,13 +591,16 @@ export function useOrganizationController() {
   }
 
   async function saveGrant(draft: GrantDraft) {
-    const granteeType = editingGrant.value?.granteeType ?? selectedGrantTarget.value?.type;
-    const granteeId = editingGrant.value?.granteeId ?? selectedGrantTarget.value?.id;
+    const granteeType = grantRequestMode.value ? "user" : editingGrant.value?.granteeType ?? selectedGrantTarget.value?.type;
+    const granteeId = grantRequestMode.value ? session.user?.id : editingGrant.value?.granteeId ?? selectedGrantTarget.value?.id;
     if (!granteeType || !granteeId) return ElMessage.warning(tr("请选择资源和操作"));
     grantingResource.value = true;
     try {
       const body = JSON.stringify({ granteeType, granteeId, ...draft });
-      if (editingGrant.value) {
+      if (grantRequestMode.value) {
+        await api(`/api/v1/organizations/${currentOrganizationId.value}/access-requests`, { method: "POST", body });
+        ElMessage.success(tr("申请已提交，审批全部通过后授权生效"));
+      } else if (editingGrant.value) {
         await api(`/api/v1/organizations/${currentOrganizationId.value}/grants/${editingGrant.value.id}`, { method: "PUT", body });
       } else {
         await api(`/api/v1/organizations/${currentOrganizationId.value}/grants`, { method: "POST", body });
@@ -587,9 +613,10 @@ export function useOrganizationController() {
   }
   async function revokeGrant(grant: Grant) {
     try {
-      await api(`/api/v1/organizations/${currentOrganizationId.value}/grants/${grant.id}`, { method: "DELETE" });
+      const { value } = await ElMessageBox.prompt(tr("请填写撤销授权的原因"), tr("撤销授权"), { inputType: "textarea", inputValidator: (value) => Boolean(value?.trim()) || tr("请填写操作原因") });
+      await api(`/api/v1/organizations/${currentOrganizationId.value}/grants/${grant.id}`, { method: "DELETE", body: JSON.stringify({ reason: value.trim() }) });
       await load();
-    } catch (error) { ElMessage.error(error instanceof Error ? error.message : tr("撤销授权失败")); }
+    } catch (error) { if (error === "cancel" || error === "close") return; ElMessage.error(error instanceof Error ? error.message : tr("撤销授权失败")); }
   }
 
   async function createUser() {
@@ -631,7 +658,7 @@ export function useOrganizationController() {
     copiedInvitationKey, copyInvitationLink, createInvitation, createOrganization, createOrganizationDialog,
     createUser, creatingInvitation, creatingOrganization, currentOrganizationId, customInvitationLimit, customInvitationLimitInput, deleteInvitationRecord,
     deleteProject, deletingInvitationId, detail, editingGrant, editingProject, generatedInvitation, grantDialog,
-    grantingResource, invitationDialog, invitationDuration, invitationDurations, invitationJoinResult,
+    grantRequestMode, historyGrantId, openGrantHistory, openAccessRequest, grantingResource, invitationDialog, invitationDuration, invitationDurations, invitationJoinResult,
     invitationLimitDescription, invitationLimitPreset, invitationLimits, invitationLink, invitationLinkInput, invitationProjectId,
     invitationStatusLabel, invitationTimeRemaining, invitationUsersDialog, invitations, joinOrganizationDialog, load,
     loadError, loading, openCreateProject, openEditGrant, openEditProject, openGrantDialog, openInvitationDialog,
