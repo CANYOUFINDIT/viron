@@ -7,7 +7,7 @@ const HOUR = 3_600_000;
 const iso = (offset: number) => new Date(now + offset).toISOString();
 
 describe("grant timeline", () => {
-  it("sorts bars by remaining time and assigns a color band", () => {
+  it("prioritizes expiring active grants and puts expired grants after permanent grants", () => {
     const model = buildGrantTimeline([
       { id: "forever", label: "默认", createdAt: iso(-10 * DAY), expiresAt: null },
       { id: "later", label: "月度环境", createdAt: iso(-20 * DAY), expiresAt: iso(30 * DAY) },
@@ -17,18 +17,28 @@ describe("grant timeline", () => {
       { id: "local", label: "本地K8s", createdAt: iso(-60 * DAY), expiresAt: null },
     ], now, "all");
 
-    expect(model.bars.map((bar) => bar.id)).toEqual(["expired", "soon", "week", "later", "local", "forever"]);
-    expect(model.bars.map((bar) => bar.tone)).toEqual(["expired", "soon", "week", "later", "forever", "forever"]);
+    expect(model.bars.map((bar) => bar.id)).toEqual(["soon", "week", "later", "local", "forever", "expired"]);
+    expect(model.bars.map((bar) => bar.tone)).toEqual(["soon", "week", "later", "forever", "forever", "expired"]);
 
-    const expired = model.bars[0];
-    const later = model.bars[3];
-    const forever = model.bars[5];
+    const expired = model.bars[5];
+    const later = model.bars[2];
+    const forever = model.bars[4];
     expect(expired.left + expired.width).toBeLessThan(model.nowLeft);
     expect(forever.left).toBeLessThan(model.nowLeft);
     expect(forever.left + forever.width).toBeGreaterThan(model.nowLeft);
     expect(later.left + later.width).toBeLessThan(forever.left + forever.width);
     expect(forever.end).toBeNull();
     expect(forever.remainingMs).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it("orders expired grants by most recent expiry, including an expired permanent grant", () => {
+    const model = buildGrantTimeline([
+      { id: "old", label: "较早过期", createdAt: iso(-30 * DAY), expiresAt: iso(-20 * DAY) },
+      { id: "flagged", label: "已失效永久授权", createdAt: iso(-10 * DAY), expiresAt: null, expired: true },
+      { id: "recent", label: "最近过期", createdAt: iso(-30 * DAY), expiresAt: iso(-DAY) },
+      { id: "active", label: "有效授权", createdAt: iso(-30 * DAY), expiresAt: null },
+    ], now);
+    expect(model.bars.map((bar) => bar.id)).toEqual(["active", "recent", "flagged", "old"]);
   });
 
   it("leaves room after now when every grant is permanent", () => {

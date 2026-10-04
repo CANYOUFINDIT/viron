@@ -5871,6 +5871,10 @@ const enOverrides: Record<string, string> = {
   "应用范围": "Apply range",
   "← 早于当前范围": "← Before this range",
   "晚于当前范围 →": "After this range →",
+  "起始时间": "Start time",
+  "截止时间": "End time",
+  "权限范围": "Permission scope",
+  "悬停查看起止时间": "Hover to see start and end times",
 };
 
 export const enMessages: Readonly<Record<string, string>> = { ...generatedEnMessages, ...enOverrides };

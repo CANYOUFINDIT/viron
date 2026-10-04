@@ -8,7 +8,6 @@ import {
   buildGrantTimeline,
   grantRemainingCopy,
   grantTimelineWindow,
-  type GrantTimelineBar,
   type GrantTimelineRange,
   type GrantTimelineSpan,
   type GrantTimelineTone,
@@ -58,6 +57,8 @@ const timelineRange = computed(() => {
 });
 const rulerScale = ref<HTMLElement | null>(null);
 const scaleWidth = ref(720);
+const hoveredGrantId = ref<string | null>(null);
+const focusedGrantId = ref<string | null>(null);
 let timelineClock: ReturnType<typeof setInterval> | undefined;
 let scaleObserver: ResizeObserver | undefined;
 
@@ -104,6 +105,30 @@ const grantTimelineRows = computed(() => {
 
   if (activeFilter.value === "all") return items;
   return items.filter((item) => item.bar.tone === activeFilter.value);
+});
+
+const highlightedGrant = computed(() => grantTimelineRows.value.find(
+  (item) => item.bar.id === (hoveredGrantId.value ?? focusedGrantId.value),
+));
+
+const rulerBoundaries = computed(() => {
+  const bar = highlightedGrant.value?.bar;
+  if (!bar) return [];
+  const model = grantTimeline.value;
+  const labelWidth = Math.min(156, Math.max(scaleWidth.value, 1));
+  const maxLabelLeft = Math.max(0, 100 - labelWidth / Math.max(scaleWidth.value, 1) * 100);
+  return [
+    { kind: "start", time: bar.start, left: bar.startLeft, label: "起始时间" },
+    { kind: "end", time: bar.end, left: bar.endLeft, label: "截止时间" },
+  ].flatMap((boundary) => {
+    if (boundary.time === null || boundary.left === null || boundary.time < model.axisStart || boundary.time > model.axisEnd) return [];
+    return [{
+      ...boundary,
+      time: boundary.time,
+      left: boundary.left,
+      labelLeft: Math.max(0, Math.min(maxLabelLeft, boundary.left - labelWidth / Math.max(scaleWidth.value, 1) * 50)),
+    }];
+  });
 });
 
 const rulerTicks = computed(() => {
@@ -170,9 +195,17 @@ function formatFullDateTime(time: number | string | null): string {
   });
 }
 
-function barScale(bar: GrantTimelineBar): number {
-  const span = Math.max(bar.width, 0.001);
-  return Math.max(0, Math.min(1, (grantTimeline.value.nowLeft - bar.left) / span));
+function formatBoundaryDateTime(time: number): string {
+  const date = new Date(time);
+  const sameYear = new Date(grantTimeline.value.axisStart).getFullYear() === new Date(grantTimeline.value.axisEnd).getFullYear();
+  const day = `${sameYear ? "" : `${date.getFullYear()}/`}${date.getMonth() + 1}/${date.getDate()}`;
+  return `${day} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+function leaveRowFocus(event: FocusEvent): void {
+  if (!(event.relatedTarget instanceof Node) || !(event.currentTarget as HTMLElement).contains(event.relatedTarget)) {
+    focusedGrantId.value = null;
+  }
 }
 
 function canManage(row: GrantRowItem): boolean {
@@ -240,7 +273,10 @@ function canManage(row: GrantRowItem): boolean {
       </div>
 
       <div class="trace-ruler trace-cols">
-        <div></div>
+        <div class="trace-ruler-label">
+          <strong>{{ highlightedGrant ? (highlightedGrant.row.grant.label || highlightedGrant.row.grant.resourceId) : $t('资源') }}</strong>
+          <small>{{ $t('悬停查看起止时间') }}</small>
+        </div>
         <div ref="rulerScale" class="trace-scale">
           <span
             v-for="tick in rulerTicks"
@@ -250,6 +286,15 @@ function canManage(row: GrantRowItem): boolean {
             :class="tick.edge ? `is-${tick.edge}` : ''"
             :style="{ left: `${tick.left}%` }"
           >{{ tick.label }}</span>
+          <template v-for="boundary in rulerBoundaries" :key="boundary.kind">
+            <span class="trace-boundary-mark" :class="`is-${boundary.kind}`" :style="{ left: `${boundary.left}%` }"></span>
+            <span
+              class="trace-boundary-label"
+              :class="`is-${boundary.kind}`"
+              :style="{ left: `${boundary.labelLeft}%` }"
+              :title="`${$t(boundary.label)} · ${formatFullDateTime(boundary.time)}`"
+            ><small>{{ $t(boundary.label) }}</small><time :datetime="new Date(boundary.time).toISOString()">{{ formatBoundaryDateTime(boundary.time) }}</time></span>
+          </template>
         </div>
         <div class="trace-col-meta"></div>
         <div></div>
@@ -266,6 +311,13 @@ function canManage(row: GrantRowItem): boolean {
               class="trace-guide"
               :style="{ left: `${tick.left}%` }"
             ></span>
+            <span
+              v-for="boundary in rulerBoundaries"
+              :key="boundary.kind"
+              class="trace-boundary-guide"
+              :class="`is-${boundary.kind}`"
+              :style="{ left: `${boundary.left}%` }"
+            ></span>
           </div>
           <div class="trace-col-meta"></div>
           <div></div>
@@ -275,7 +327,12 @@ function canManage(row: GrantRowItem): boolean {
           v-for="item in grantTimelineRows"
           :key="item.bar.id"
           class="trace-row trace-cols"
-          :class="`is-${item.bar.tone}`"
+          :class="[`is-${item.bar.tone}`, { 'is-highlighted': highlightedGrant?.bar.id === item.bar.id }]"
+          tabindex="0"
+          @mouseenter="hoveredGrantId = item.bar.id"
+          @mouseleave="hoveredGrantId = null"
+          @focusin="focusedGrantId = item.bar.id"
+          @focusout="leaveRowFocus"
         >
           <div class="trace-label">
             <Server :size="14" />
@@ -283,9 +340,8 @@ function canManage(row: GrantRowItem): boolean {
               <strong :title="item.row.grant.label || item.row.grant.resourceId">
                 {{ item.row.grant.label || item.row.grant.resourceId }}
               </strong>
-              <small :title="`${grantSource(item.row)}${item.row.grant.permissionText ? ` · ${item.row.grant.permissionText}` : ''}`">
-                {{ grantSource(item.row) }}<template v-if="item.row.grant.permissionText"> · {{ item.row.grant.permissionText }}</template>
-              </small>
+              <small class="trace-source">{{ grantSource(item.row) }}</small>
+              <small v-if="item.row.grant.permissionText" class="trace-scope">{{ item.row.grant.permissionText }}</small>
             </span>
           </div>
 
@@ -297,11 +353,11 @@ function canManage(row: GrantRowItem): boolean {
                     <Server :size="14" class="chrono-hud-accent" />
                     <strong>{{ item.row.grant.label || item.row.grant.resourceId }}</strong>
                     <span class="chrono-hud-tag" :class="`is-${item.bar.tone}`">
-                      {{ item.bar.openEnded ? $t('永久有效') : $t(item.remain.key, item.remain.values) }}
+                      {{ item.bar.openEnded && item.bar.tone !== 'expired' ? $t('永久有效') : $t(item.remain.key, item.remain.values) }}
                     </span>
                   </header>
                   <div class="chrono-hud-card__grid">
-                    <div class="chrono-hud-metric">
+                    <div class="chrono-hud-metric chrono-hud-metric--scope">
                       <small>{{ $t('权限范围') }}</small>
                       <span>{{ item.row.grant.permissionText || '—' }}</span>
                     </div>
@@ -334,8 +390,7 @@ function canManage(row: GrantRowItem): boolean {
                   class="trace-bar"
                   :style="{ left: `${item.bar.left}%`, width: `${item.bar.width}%` }"
                 >
-                  <span class="trace-bar-track"></span>
-                  <span class="trace-bar-fill" :style="{ transform: `scaleX(${barScale(item.bar)})` }"></span>
+                  <span class="trace-bar-fill"></span>
                 </div>
               </div>
             </el-tooltip>
@@ -343,7 +398,7 @@ function canManage(row: GrantRowItem): boolean {
 
           <div class="trace-meta trace-col-meta">
             <span class="trace-meta-status">
-              {{ item.bar.openEnded ? $t('永久有效') : $t(item.remain.key, item.remain.values) }}
+              {{ item.bar.openEnded && item.bar.tone !== 'expired' ? $t('永久有效') : $t(item.remain.key, item.remain.values) }}
             </span>
             <span class="trace-meta-days">{{ item.bar.activeDays }}{{ $t('天') }}</span>
           </div>
@@ -534,16 +589,35 @@ function canManage(row: GrantRowItem): boolean {
 
 .trace-cols {
   display: grid;
-  grid-template-columns: minmax(108px, 200px) minmax(72px, 1fr) minmax(4.25rem, 6.75rem) 8.25rem;
+  grid-template-columns: minmax(140px, 260px) minmax(72px, 1fr) minmax(4.25rem, 6.75rem) 8.25rem;
   column-gap: 10px;
   align-items: center;
   padding-inline: 12px;
 }
 
 .trace-ruler {
-  height: 28px;
+  height: 76px;
   border-bottom: 1px solid var(--color-rule);
 }
+
+.trace-ruler-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  color: var(--color-muted);
+  font-size: 10px;
+}
+
+.trace-ruler-label strong {
+  overflow: hidden;
+  color: var(--color-ink-soft);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trace-ruler-label small { font-size: inherit; }
 
 .trace-scale {
   position: relative;
@@ -567,6 +641,38 @@ function canManage(row: GrantRowItem): boolean {
 
 .trace-tick.is-start { transform: none; }
 .trace-tick.is-end { transform: translateX(-100%); }
+
+.trace-boundary-mark {
+  position: absolute;
+  top: 27px;
+  bottom: 0;
+  border-left: 1px dashed var(--color-accent);
+  opacity: 0.55;
+}
+
+.trace-boundary-mark.is-end { top: 50px; }
+
+.trace-boundary-label {
+  position: absolute;
+  z-index: 1;
+  top: 26px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 2px 6px;
+  width: 156px;
+  max-width: 100%;
+  padding: 3px 0;
+  background: var(--color-paper-raised);
+  color: var(--color-accent);
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.trace-boundary-label.is-end { top: 49px; }
+.trace-boundary-label small { font-size: inherit; }
+.trace-boundary-label time { font-family: var(--font-mono); white-space: nowrap; }
 
 .trace-body {
   position: relative;
@@ -600,6 +706,14 @@ function canManage(row: GrantRowItem): boolean {
   transform: translateX(-50%);
 }
 
+.trace-boundary-guide {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 1px dashed var(--color-accent);
+  opacity: 0.4;
+}
+
 .trace-now {
   position: absolute;
   top: -1px;
@@ -631,12 +745,19 @@ function canManage(row: GrantRowItem): boolean {
 .trace-row {
   position: relative;
   z-index: 2;
-  min-height: 44px;
+  min-height: 60px;
+  padding-block: 8px;
   border-radius: 8px;
 }
 
-.trace-row:hover {
+.trace-row:hover,
+.trace-row.is-highlighted {
   background: color-mix(in srgb, var(--color-ink) 4%, transparent);
+}
+
+.trace-row:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
 }
 
 .trace-row.is-soon {
@@ -677,13 +798,15 @@ function canManage(row: GrantRowItem): boolean {
 }
 
 .trace-label-copy small {
-  overflow: hidden;
   color: var(--color-muted);
   font-size: 11px;
-  line-height: 1.25;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
+
+.trace-label-copy .trace-scope { color: var(--color-ink-soft); }
+.trace-label svg { flex: 0 0 auto; }
 
 .trace-row.is-forever .trace-label svg { color: var(--color-accent); }
 .trace-row.is-later .trace-label svg { color: var(--color-info); }
@@ -729,18 +852,12 @@ function canManage(row: GrantRowItem): boolean {
   left: auto;
 }
 
-.trace-bar-track,
 .trace-bar-fill {
   position: absolute;
   inset: 0;
 }
 
-.trace-bar-track {
-  background: color-mix(in srgb, var(--color-ink) 10%, transparent);
-}
-
 .trace-bar-fill {
-  transform-origin: left center;
   background: var(--color-ink);
 }
 
@@ -859,7 +976,7 @@ function canManage(row: GrantRowItem): boolean {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  width: 290px;
+  width: min(360px, calc(100vw - 64px));
   color: var(--color-sidebar-ink, #d9e1df);
 }
 
@@ -911,12 +1028,14 @@ function canManage(row: GrantRowItem): boolean {
 
 .chrono-hud-metric small { color: var(--color-sidebar-muted, #94a3b8); font-size: 10px; }
 
+.chrono-hud-metric--scope { grid-column: 1 / -1; }
+
 .chrono-hud-metric span {
-  overflow: hidden;
   color: #f1f5f9;
   font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .chrono-hud-card__foot {

@@ -163,6 +163,13 @@ export function buildGrantTimeline(
       outsideRange,
     };
   }).sort((left, right) => {
+    const leftExpired = left.tone === "expired";
+    const rightExpired = right.tone === "expired";
+    if (leftExpired !== rightExpired) return leftExpired ? 1 : -1;
+    if (leftExpired && rightExpired) {
+      const ended = (right.end ?? right.start) - (left.end ?? left.start);
+      if (ended) return ended;
+    }
     if (left.remainingMs !== right.remainingMs) return left.remainingMs < right.remainingMs ? -1 : 1;
     return left.label.localeCompare(right.label, "zh-CN");
   });
