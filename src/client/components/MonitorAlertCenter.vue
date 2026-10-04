@@ -10,7 +10,7 @@ import {
   showDesktopMonitorAlertNotification,
 } from "../desktop";
 import { translate as tr } from "../i18n";
-import { monitorAlertBody, monitorAlertRuleLabel, monitorAlertTitle } from "../monitor-alert-copy";
+import { monitorAlertBody, monitorAlertRuleLabel, monitorAlertTargetLabel, monitorAlertTitle } from "../monitor-alert-copy";
 import { session, switchWorkspace } from "../session";
 import { MONITOR_ALERT_TOAST_DURATION_MS } from "../monitor-alert-toasts";
 import {
@@ -283,7 +283,7 @@ onBeforeUnmount(() => {
         <button v-for="alert in alerts" :key="alert.id" type="button" :class="[`is-${alert.status}`, { 'is-unread': !alert.read }]" @click="openAlert(alert)">
           <span class="monitor-alert-list__icon"><CircleX v-if="alert.status === 'active'" :size="17" /><CirclePlus v-else-if="alert.status === 'event'" :size="17" /><CircleCheck v-else :size="17" /></span>
           <span class="monitor-alert-list__copy">
-            <strong>{{ monitorAlertRuleLabel(alert) }} · {{ alert.targetName || alert.connectionName }}</strong>
+            <strong>{{ monitorAlertRuleLabel(alert) }} · {{ monitorAlertTargetLabel(alert) }}</strong>
             <small class="monitor-alert-list__location">{{ $t(alert.workspaceName) }} / {{ alert.environmentName }}</small>
             <small>{{ monitorAlertBody(alert, alert.status === 'recovered' ? 'recovered' : 'active') }}</small>
             <time>{{ new Date(alert.status === 'recovered' ? alert.recoveredAt || alert.triggeredAt : alert.triggeredAt).toLocaleString($locale()) }}</time>
@@ -383,7 +383,7 @@ onBeforeUnmount(() => {
 .monitor-alert-list__icon { width: 28px; height: 28px; border-radius: 7px; display: grid; place-items: center; }
 .monitor-alert-list__copy { min-width: 0; }
 .monitor-alert-list__copy strong, .monitor-alert-list__copy small, .monitor-alert-list__copy time { display: block; }
-.monitor-alert-list__copy strong { color: var(--ink-800); font-size: 13px; }
+.monitor-alert-list__copy strong { overflow-wrap: anywhere; color: var(--ink-800); font-size: 13px; }
 .monitor-alert-list__copy .monitor-alert-list__location { color: var(--teal-700); font-weight: 700; }
 .monitor-alert-list__copy small { margin-top: 4px; overflow-wrap: anywhere; color: var(--ink-500); font-size: 12px; line-height: 1.55; }
 .monitor-alert-list__copy time { margin-top: 6px; color: var(--ink-400); font-family: var(--font-mono); font-size: 10px; }

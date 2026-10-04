@@ -3,7 +3,7 @@ import type { MonitorAlertItem, MonitorAlertNotificationPhase } from "../shared/
 
 type MonitorAlertBodySource = Pick<
   MonitorAlertItem,
-  "connectionName" | "details" | "ruleKey" | "ruleType" | "serviceName" | "targetName"
+  "connectionName" | "details" | "ruleKey" | "ruleType" | "serviceName" | "targetName" | "targetType"
 >;
 
 function number(details: Record<string, unknown>, key: string): number | null {
@@ -26,6 +26,14 @@ function diskLabel(alert: Pick<MonitorAlertBodySource, "details" | "ruleKey">): 
   return path || device || alert.ruleKey;
 }
 
+export function monitorAlertTargetLabel(alert: Pick<MonitorAlertItem, "connectionName" | "targetName" | "targetType">): string {
+  const connectionName = alert.connectionName.trim();
+  const targetName = alert.targetName.trim();
+  if (alert.targetType !== "host") return targetName || connectionName;
+  if (connectionName && targetName && connectionName !== targetName) return `${connectionName}（${targetName}）`;
+  return connectionName || targetName;
+}
+
 export function monitorAlertTitle(alert: MonitorAlertItem, phase: MonitorAlertNotificationPhase): string {
   const location = `${tr(alert.workspaceName)} / ${alert.environmentName}`;
   if (alert.ruleType === "disk_added") return tr("监控事件 · {0}", [location]);
@@ -40,7 +48,7 @@ export function monitorAlertRecoveryLabel(alert: Pick<MonitorAlertItem, "details
 }
 
 export function monitorAlertBody(alert: MonitorAlertBodySource, phase: MonitorAlertNotificationPhase): string {
-  const target = alert.targetName || alert.connectionName;
+  const target = monitorAlertTargetLabel(alert);
   const recovered = phase === "recovered";
   if (alert.ruleType === "host_offline") {
     if (alert.details.ignored === true && alert.details.reason === "monitor_missing") {
