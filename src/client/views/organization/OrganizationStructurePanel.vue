@@ -8,7 +8,7 @@ import { useOrganizationContext } from "./context";
 import GrantTimelineView from "./GrantTimelineView.vue";
 import { STRUCTURE_TREE_MAX, STRUCTURE_TREE_MIN, STRUCTURE_TREE_TEXT_MIN, STRUCTURE_TREE_WIDTH_KEY, clampStructureTreeWidth, preferredStructureTreeWidth, settleStructureTreeWidth } from "./structure-tree-width";
 
-const { activateWorkspace, canManageOrganization, changeRole, createOrganizationDialog, deleteProject, detail, openCreateProject, openEditGrant, openEditProject, openGrantDialog, openGrantHistory, openProjectMembersById, organizations, removeMember, revokeGrant, selectStructureNode, selectedGrantRows, selectedGrantTarget, selectedMember, selectedMemberProjects, selectedNode, selectedProject, selectedProjectChildren, selectedProjectPath, structureTree } = useOrganizationContext();
+const { activateWorkspace, canManageOrganization, changeRole, createOrganizationDialog, currentOrganizationId, deleteProject, detail, openCreateProject, openEditGrant, openEditProject, openGrantDialog, openGrantHistory, openProjectMembersById, organizations, removeMember, resources, revokeGrant, selectStructureNode, selectedGrantRows, selectedGrantTarget, selectedMember, selectedMemberProjects, selectedNode, selectedProject, selectedProjectChildren, selectedProjectPath, structureTree } = useOrganizationContext();
 
 const grantView = ref<"list" | "timeline">("list");
 const workbenchElement = ref<HTMLElement | null>(null);
@@ -245,6 +245,8 @@ function grantExpiry(grant: { expired: boolean; pending?: boolean; startsAt?: st
                     v-else-if="selectedGrantRows.length"
                     :rows="selectedGrantRows"
                     :selected-node-type="selectedNode.type"
+                    :organization-id="currentOrganizationId"
+                    :resources="resources"
                     @edit="openEditGrant"
                     @revoke="revokeGrant"
                     @history="openGrantHistory"

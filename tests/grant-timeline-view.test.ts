@@ -23,7 +23,7 @@ function renderTimeline(rows: GrantRowItem[] = defaultRows) {
     global: {
       plugins: [i18nPlugin],
       stubs: {
-        "el-tooltip": { template: '<div><slot /><div class="tooltip-content"><slot name="content" /></div></div>' },
+        "el-popover": { template: '<div><slot name="reference" /><div class="popover-content"><slot /></div></div>' },
         "el-date-picker": { props: ["modelValue"], emits: ["update:modelValue"], template: '<div class="date-picker" />' },
       },
     },
@@ -98,7 +98,7 @@ describe("grant timeline range controls", () => {
 });
 
 describe("grant timeline details", () => {
-  it("shows exact in-range start and end times in the ruler for the hovered grant", async () => {
+  it("shows exact start and end times at opposite ruler edges for the hovered grant", async () => {
     const wrapper = renderTimeline();
     const soon = wrapper.get(".trace-row.is-soon");
     expect(wrapper.findAll(".trace-boundary-label")).toHaveLength(0);
@@ -106,6 +106,8 @@ describe("grant timeline details", () => {
     expect(wrapper.get(".trace-ruler-label strong").text()).toBe("当日授权");
     const boundaries = wrapper.findAll(".trace-boundary-label");
     expect(boundaries).toHaveLength(2);
+    expect(boundaries[0].classes()).toContain("is-start");
+    expect(boundaries[1].classes()).toContain("is-end");
     expect(boundaries[0].get("time").attributes("datetime")).toBe(iso(-DAY));
     expect(boundaries[1].get("time").attributes("datetime")).toBe(iso(8 * 3_600_000));
     for (const boundary of boundaries) expect(boundary.text()).toMatch(/\d+\/\d+ \d{2}:\d{2}/);
@@ -114,20 +116,44 @@ describe("grant timeline details", () => {
     wrapper.unmount();
   });
 
-  it("omits clipped endpoints and permanent end dates, and updates when the span changes", async () => {
+  it("keeps clipped start times and the permanent infinity symbol visible when the span changes", async () => {
     const wrapper = renderTimeline();
     await wrapper.get(".trace-row.is-forever").trigger("mouseenter");
-    expect(wrapper.findAll(".trace-boundary-label")).toHaveLength(0);
+    expect(wrapper.findAll(".trace-boundary-label")).toHaveLength(2);
+    expect(wrapper.get(".trace-boundary-label.is-start time").attributes("datetime")).toBe(iso(-60 * DAY));
+    expect(wrapper.get(".trace-boundary-label.is-end").text()).toContain("♾️");
+    expect(wrapper.get(".trace-boundary-infinity").attributes("aria-label")).toBe("永久有效");
+    expect(wrapper.findAll(".trace-boundary-mark")).toHaveLength(0);
     await wrapper.get("select").setValue("all");
-    expect(wrapper.findAll(".trace-boundary-label")).toHaveLength(1);
-    expect(wrapper.get(".trace-boundary-label").classes()).toContain("is-start");
-    expect(wrapper.get(".trace-boundary-label time").attributes("datetime")).toBe(iso(-60 * DAY));
+    expect(wrapper.findAll(".trace-boundary-label")).toHaveLength(2);
+    expect(wrapper.get(".trace-boundary-mark").classes()).toContain("is-start");
+    expect(wrapper.get(".trace-boundary-label.is-start time").attributes("datetime")).toBe(iso(-60 * DAY));
+    expect(wrapper.get(".trace-boundary-label.is-end").text()).toContain("♾️");
     await wrapper.get(".trace-row.is-soon").trigger("mouseenter");
     await wrapper.get("select").setValue("custom");
     wrapper.getComponent(".date-picker").vm.$emit("update:modelValue", [new Date(now), new Date(now + DAY)]);
     await wrapper.get(".trace-range-apply").trigger("click");
-    expect(wrapper.findAll(".trace-boundary-label")).toHaveLength(1);
-    expect(wrapper.get(".trace-boundary-label").classes()).toContain("is-end");
+    expect(wrapper.findAll(".trace-boundary-label")).toHaveLength(2);
+    expect(wrapper.get(".trace-boundary-label.is-start time").attributes("datetime")).toBe(iso(-DAY));
+    expect(wrapper.get(".trace-boundary-label.is-end time").attributes("datetime")).toBe(iso(8 * 3_600_000));
+    expect(wrapper.get(".trace-boundary-mark").classes()).toContain("is-end");
+    wrapper.unmount();
+  });
+
+  it("shows actual dates for both clipped endpoints, including a start in another year", async () => {
+    const start = "2025-10-02T12:00:00.000Z";
+    const end = iso(365 * DAY);
+    const wrapper = renderTimeline([{
+      grant: { id: "clipped", resourceId: "跨年授权", createdAt: iso(-DAY), startsAt: start, expiresAt: end, expired: false },
+      source: "示例项目", inherited: false,
+    }]);
+    await wrapper.get(".trace-row").trigger("mouseenter");
+    expect(wrapper.get(".trace-boundary-label.is-start time").attributes("datetime")).toBe(start);
+    expect(wrapper.get(".trace-boundary-label.is-start time").text()).toContain("2025/");
+    expect(wrapper.get(".trace-boundary-label.is-end time").attributes("datetime")).toBe(end);
+    expect(wrapper.get(".trace-boundary-label.is-end time").text()).toContain("2027/");
+    expect(wrapper.findAll(".trace-boundary-mark")).toHaveLength(0);
+    expect(wrapper.findAll(".trace-boundary-guide")).toHaveLength(0);
     wrapper.unmount();
   });
 
@@ -147,15 +173,17 @@ describe("grant timeline details", () => {
     wrapper.unmount();
   });
 
-  it("displays the full permission scope separately from its inherited source", () => {
+  it("keeps the row compact and displays permissions as resource/action/scope rows in the popover", () => {
     const permissionText = "Web 入口：查看并打开、使用；服务器：查看、终端连接、文件管理；数据库：查询、执行 SQL、结构管理";
     const wrapper = renderTimeline([{
-      grant: { id: "scope", resourceId: "测试资源", createdAt: iso(-DAY), expiresAt: null, expired: false, permissionText },
+      grant: { id: "scope", resourceId: "测试资源", createdAt: iso(-DAY), expiresAt: null, expired: false, permissionText, permissions: { web: ["view"], ssh: ["manage"] } },
       source: "上级项目", inherited: true,
     }]);
-    expect(wrapper.get(".trace-scope").text()).toBe(permissionText);
-    expect(wrapper.get(".trace-source").text()).toBe("继承自 上级项目");
-    expect(wrapper.get(".chrono-hud-metric--scope span").text()).toBe(permissionText);
+    expect(wrapper.get(".trace-scope").text()).toBe("授权范围");
+    expect(wrapper.get(".trace-source").text()).toContain("继承自 上级项目");
+    expect(wrapper.get(".trace-row").text()).not.toContain(permissionText);
+    expect(wrapper.findAll(".grant-details__matrix tbody tr")).toHaveLength(2);
+    expect(wrapper.get('.grant-details__matrix [data-capability="web"]').text()).toContain("查看并打开");
     wrapper.unmount();
   });
 });

@@ -2,6 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { CalendarRange, Server } from "@lucide/vue";
 import { currentLocale, translate } from "../../i18n";
+import GrantDetailsPopover from "./GrantDetailsPopover.vue";
+import type { GrantDetailSource, GrantScopeResource } from "./grant-permission-details";
 import {
   GRANT_TIMELINE_LEGEND,
   GRANT_TIMELINE_SPANS,
@@ -14,7 +16,7 @@ import {
 } from "./grant-timeline";
 
 export interface GrantRowItem {
-  grant: {
+  grant: GrantDetailSource & {
     id: string;
     label?: string;
     resourceId: string;
@@ -31,6 +33,8 @@ export interface GrantRowItem {
 const props = defineProps<{
   rows: GrantRowItem[];
   selectedNodeType: "organization" | "project" | "member";
+  organizationId?: string;
+  resources?: GrantScopeResource[];
 }>();
 
 const emit = defineEmits<{
@@ -115,21 +119,15 @@ const rulerBoundaries = computed(() => {
   const bar = highlightedGrant.value?.bar;
   if (!bar) return [];
   const model = grantTimeline.value;
-  const labelWidth = Math.min(156, Math.max(scaleWidth.value, 1));
-  const maxLabelLeft = Math.max(0, 100 - labelWidth / Math.max(scaleWidth.value, 1) * 100);
   return [
     { kind: "start", time: bar.start, left: bar.startLeft, label: "起始时间" },
     { kind: "end", time: bar.end, left: bar.endLeft, label: "截止时间" },
-  ].flatMap((boundary) => {
-    if (boundary.time === null || boundary.left === null || boundary.time < model.axisStart || boundary.time > model.axisEnd) return [];
-    return [{
-      ...boundary,
-      time: boundary.time,
-      left: boundary.left,
-      labelLeft: Math.max(0, Math.min(maxLabelLeft, boundary.left - labelWidth / Math.max(scaleWidth.value, 1) * 50)),
-    }];
-  });
+  ].map((boundary) => ({
+    ...boundary,
+    inRange: boundary.time !== null && boundary.time >= model.axisStart && boundary.time <= model.axisEnd,
+  }));
 });
+const rulerBoundaryMarkers = computed(() => rulerBoundaries.value.filter((boundary) => boundary.inRange));
 
 const rulerTicks = computed(() => {
   const nowLeft = grantTimeline.value.nowLeft;
@@ -197,7 +195,8 @@ function formatFullDateTime(time: number | string | null): string {
 
 function formatBoundaryDateTime(time: number): string {
   const date = new Date(time);
-  const sameYear = new Date(grantTimeline.value.axisStart).getFullYear() === new Date(grantTimeline.value.axisEnd).getFullYear();
+  const sameYear = new Date(grantTimeline.value.axisStart).getFullYear() === date.getFullYear()
+    && new Date(grantTimeline.value.axisEnd).getFullYear() === date.getFullYear();
   const day = `${sameYear ? "" : `${date.getFullYear()}/`}${date.getMonth() + 1}/${date.getDate()}`;
   return `${day} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
@@ -287,13 +286,16 @@ function canManage(row: GrantRowItem): boolean {
             :style="{ left: `${tick.left}%` }"
           >{{ tick.label }}</span>
           <template v-for="boundary in rulerBoundaries" :key="boundary.kind">
-            <span class="trace-boundary-mark" :class="`is-${boundary.kind}`" :style="{ left: `${boundary.left}%` }"></span>
+            <span v-if="boundary.inRange" class="trace-boundary-mark" :class="`is-${boundary.kind}`" :style="{ left: `${boundary.left}%` }"></span>
             <span
               class="trace-boundary-label"
               :class="`is-${boundary.kind}`"
-              :style="{ left: `${boundary.labelLeft}%` }"
               :title="`${$t(boundary.label)} · ${formatFullDateTime(boundary.time)}`"
-            ><small>{{ $t(boundary.label) }}</small><time :datetime="new Date(boundary.time).toISOString()">{{ formatBoundaryDateTime(boundary.time) }}</time></span>
+            >
+              <small>{{ $t(boundary.label) }}</small>
+              <span v-if="boundary.time === null" class="trace-boundary-infinity" :aria-label="$t('永久有效')">♾️</span>
+              <time v-else :datetime="new Date(boundary.time).toISOString()">{{ formatBoundaryDateTime(boundary.time) }}</time>
+            </span>
           </template>
         </div>
         <div class="trace-col-meta"></div>
@@ -312,7 +314,7 @@ function canManage(row: GrantRowItem): boolean {
               :style="{ left: `${tick.left}%` }"
             ></span>
             <span
-              v-for="boundary in rulerBoundaries"
+              v-for="boundary in rulerBoundaryMarkers"
               :key="boundary.kind"
               class="trace-boundary-guide"
               :class="`is-${boundary.kind}`"
@@ -323,64 +325,38 @@ function canManage(row: GrantRowItem): boolean {
           <div></div>
         </div>
 
-        <article
+        <GrantDetailsPopover
           v-for="item in grantTimelineRows"
           :key="item.bar.id"
-          class="trace-row trace-cols"
-          :class="[`is-${item.bar.tone}`, { 'is-highlighted': highlightedGrant?.bar.id === item.bar.id }]"
-          tabindex="0"
-          @mouseenter="hoveredGrantId = item.bar.id"
-          @mouseleave="hoveredGrantId = null"
-          @focusin="focusedGrantId = item.bar.id"
-          @focusout="leaveRowFocus"
+          :grant="item.row.grant"
+          :source="grantSource(item.row)"
+          :status="item.bar.openEnded && item.bar.tone !== 'expired' ? $t('永久有效') : $t(item.remain.key, item.remain.values)"
+          :tone="item.bar.tone"
+          :start="item.bar.start"
+          :end="item.bar.end"
+          :organization-id="organizationId"
+          :resources="resources"
         >
-          <div class="trace-label">
-            <Server :size="14" />
-            <span class="trace-label-copy">
-              <strong :title="item.row.grant.label || item.row.grant.resourceId">
-                {{ item.row.grant.label || item.row.grant.resourceId }}
-              </strong>
-              <small class="trace-source">{{ grantSource(item.row) }}</small>
-              <small v-if="item.row.grant.permissionText" class="trace-scope">{{ item.row.grant.permissionText }}</small>
-            </span>
-          </div>
+          <article
+            class="trace-row trace-cols"
+            :class="[`is-${item.bar.tone}`, { 'is-highlighted': highlightedGrant?.bar.id === item.bar.id }]"
+            tabindex="0"
+            @mouseenter="hoveredGrantId = item.bar.id"
+            @mouseleave="hoveredGrantId = null"
+            @focusin="focusedGrantId = item.bar.id"
+            @focusout="leaveRowFocus"
+          >
+            <div class="trace-label">
+              <Server :size="14" />
+              <span class="trace-label-copy">
+                <strong :title="item.row.grant.label || item.row.grant.resourceId">
+                  {{ item.row.grant.label || item.row.grant.resourceId }}
+                </strong>
+                <small class="trace-source"><span class="trace-source-name">{{ grantSource(item.row) }}</span><span>·</span><span class="trace-scope">{{ $t('授权范围') }}</span></small>
+              </span>
+            </div>
 
-          <div class="trace-scale">
-            <el-tooltip placement="top" :show-after="80" popper-class="chrono-hud-popper" effect="dark">
-              <template #content>
-                <div class="chrono-hud-card">
-                  <header class="chrono-hud-card__head">
-                    <Server :size="14" class="chrono-hud-accent" />
-                    <strong>{{ item.row.grant.label || item.row.grant.resourceId }}</strong>
-                    <span class="chrono-hud-tag" :class="`is-${item.bar.tone}`">
-                      {{ item.bar.openEnded && item.bar.tone !== 'expired' ? $t('永久有效') : $t(item.remain.key, item.remain.values) }}
-                    </span>
-                  </header>
-                  <div class="chrono-hud-card__grid">
-                    <div class="chrono-hud-metric chrono-hud-metric--scope">
-                      <small>{{ $t('权限范围') }}</small>
-                      <span>{{ item.row.grant.permissionText || '—' }}</span>
-                    </div>
-                    <div class="chrono-hud-metric">
-                      <small>{{ $t('授权来源') }}</small>
-                      <span>{{ grantSource(item.row) }}</span>
-                    </div>
-                    <div class="chrono-hud-metric">
-                      <small>{{ $t('起始时间') }}</small>
-                      <span class="chrono-mono">{{ formatFullDateTime(item.bar.start) }}</span>
-                    </div>
-                    <div class="chrono-hud-metric">
-                      <small>{{ $t('截止时间') }}</small>
-                      <span class="chrono-mono">{{ item.bar.openEnded ? $t('永久有效') : formatFullDateTime(item.bar.end) }}</span>
-                    </div>
-                  </div>
-                  <footer class="chrono-hud-card__foot">
-                    <span class="chrono-hud-stat">
-                      {{ $t('已生效运行') }} <b class="chrono-mono">{{ item.bar.activeDays }}</b> {{ $t('天') }}
-                    </span>
-                  </footer>
-                </div>
-              </template>
+            <div class="trace-scale">
               <div class="trace-hit">
                 <span v-if="item.bar.outsideRange" class="trace-outside" :class="`is-${item.bar.outsideRange}`">
                   {{ item.bar.outsideRange === 'before' ? $t('← 早于当前范围') : $t('晚于当前范围 →') }}
@@ -393,31 +369,31 @@ function canManage(row: GrantRowItem): boolean {
                   <span class="trace-bar-fill"></span>
                 </div>
               </div>
-            </el-tooltip>
-          </div>
+            </div>
 
-          <div class="trace-meta trace-col-meta">
-            <span class="trace-meta-status">
-              {{ item.bar.openEnded && item.bar.tone !== 'expired' ? $t('永久有效') : $t(item.remain.key, item.remain.values) }}
-            </span>
-            <span class="trace-meta-days">{{ item.bar.activeDays }}{{ $t('天') }}</span>
-          </div>
+            <div class="trace-meta trace-col-meta">
+              <span class="trace-meta-status">
+                {{ item.bar.openEnded && item.bar.tone !== 'expired' ? $t('永久有效') : $t(item.remain.key, item.remain.values) }}
+              </span>
+              <span class="trace-meta-days">{{ item.bar.activeDays }}{{ $t('天') }}</span>
+            </div>
 
-          <div class="trace-actions">
-            <button type="button" :title="$t('查看流转记录')" @click.stop="emit('history', item.row.grant)">
-              {{ $t('记录') }}
-            </button>
-            <template v-if="canManage(item.row)">
-              <button type="button" :title="$t('修改授权')" @click.stop="emit('edit', item.row.grant)">
-                {{ $t('修改') }}
+            <div class="trace-actions">
+              <button type="button" :title="$t('查看流转记录')" @click.stop="emit('history', item.row.grant)">
+                {{ $t('记录') }}
               </button>
-              <button type="button" class="is-revoke" :title="$t('撤销授权')" @click.stop="emit('revoke', item.row.grant)">
-                {{ $t('撤销') }}
-              </button>
-            </template>
-            <small v-else :title="$t('在来源节点管理')">{{ $t('继承授权') }}</small>
-          </div>
-        </article>
+              <template v-if="canManage(item.row)">
+                <button type="button" :title="$t('修改授权')" @click.stop="emit('edit', item.row.grant)">
+                  {{ $t('修改') }}
+                </button>
+                <button type="button" class="is-revoke" :title="$t('撤销授权')" @click.stop="emit('revoke', item.row.grant)">
+                  {{ $t('撤销') }}
+                </button>
+              </template>
+              <small v-else :title="$t('在来源节点管理')">{{ $t('继承授权') }}</small>
+            </div>
+          </article>
+        </GrantDetailsPopover>
 
         <div v-if="grantTimeline.nowVisible" class="trace-now-layer trace-cols" aria-hidden="true">
           <div></div>
@@ -589,7 +565,7 @@ function canManage(row: GrantRowItem): boolean {
 
 .trace-cols {
   display: grid;
-  grid-template-columns: minmax(140px, 260px) minmax(72px, 1fr) minmax(4.25rem, 6.75rem) 8.25rem;
+  grid-template-columns: minmax(108px, 200px) minmax(72px, 1fr) minmax(4.25rem, 6.75rem) 8.25rem;
   column-gap: 10px;
   align-items: center;
   padding-inline: 12px;
@@ -650,19 +626,15 @@ function canManage(row: GrantRowItem): boolean {
   opacity: 0.55;
 }
 
-.trace-boundary-mark.is-end { top: 50px; }
-
 .trace-boundary-label {
   position: absolute;
   z-index: 1;
   top: 26px;
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: 2px 6px;
-  width: 156px;
-  max-width: 100%;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: calc(50% - 4px);
   padding: 3px 0;
   background: var(--color-paper-raised);
   color: var(--color-accent);
@@ -670,9 +642,11 @@ function canManage(row: GrantRowItem): boolean {
   line-height: 1.2;
 }
 
-.trace-boundary-label.is-end { top: 49px; }
-.trace-boundary-label small { font-size: inherit; }
-.trace-boundary-label time { font-family: var(--font-mono); white-space: nowrap; }
+.trace-boundary-label.is-start { left: 0; }
+.trace-boundary-label.is-end { right: 0; align-items: flex-end; text-align: right; }
+.trace-boundary-label small { color: var(--color-muted); font-size: inherit; }
+.trace-boundary-label time { max-width: 100%; font-family: var(--font-mono); overflow-wrap: anywhere; }
+.trace-boundary-infinity { font-size: 14px; line-height: 1; }
 
 .trace-body {
   position: relative;
@@ -745,8 +719,8 @@ function canManage(row: GrantRowItem): boolean {
 .trace-row {
   position: relative;
   z-index: 2;
-  min-height: 60px;
-  padding-block: 8px;
+  min-height: 48px;
+  padding-block: 6px;
   border-radius: 8px;
 }
 
@@ -778,6 +752,7 @@ function canManage(row: GrantRowItem): boolean {
 
 .trace-label-copy {
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: 1px;
   min-width: 0;
@@ -798,14 +773,18 @@ function canManage(row: GrantRowItem): boolean {
 }
 
 .trace-label-copy small {
+  overflow: hidden;
   color: var(--color-muted);
   font-size: 11px;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-  white-space: normal;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.trace-label-copy .trace-scope { color: var(--color-ink-soft); }
+.trace-label-copy .trace-scope { color: var(--color-accent); text-decoration: underline dotted; text-underline-offset: 3px; }
+.trace-label-copy .trace-source { display: flex; gap: 4px; }
+.trace-source-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.trace-scope { flex-shrink: 0; }
 .trace-label svg { flex: 0 0 auto; }
 
 .trace-row.is-forever .trace-label svg { color: var(--color-accent); }
@@ -942,11 +921,6 @@ function canManage(row: GrantRowItem): boolean {
   white-space: nowrap;
 }
 
-.trace-row :deep(.el-tooltip__trigger) {
-  display: block;
-  height: 100%;
-}
-
 @container (max-width: 560px) {
   .trace-cols {
     grid-template-columns: minmax(72px, 1fr) minmax(48px, 1.3fr) 8.25rem;
@@ -956,95 +930,4 @@ function canManage(row: GrantRowItem): boolean {
     display: none;
   }
 }
-</style>
-
-<style>
-.el-popper.chrono-hud-popper {
-  padding: 12px 14px !important;
-  border: 1px solid color-mix(in srgb, var(--color-accent) 30%, var(--color-sidebar-rule, #26383b)) !important;
-  border-radius: var(--radius-card, 8px) !important;
-  background: var(--color-sidebar-raised, #162427) !important;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35) !important;
-}
-
-.el-popper.chrono-hud-popper .el-popper__arrow::before {
-  border-color: color-mix(in srgb, var(--color-accent) 30%, var(--color-sidebar-rule, #26383b)) !important;
-  background: var(--color-sidebar-raised, #162427) !important;
-}
-
-.chrono-hud-card {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  width: min(360px, calc(100vw - 64px));
-  color: var(--color-sidebar-ink, #d9e1df);
-}
-
-.chrono-hud-card__head {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding-bottom: 7px;
-  border-bottom: 1px solid color-mix(in srgb, #ffffff 10%, transparent);
-}
-
-.chrono-hud-accent { color: var(--color-accent-on-dark, #4ade80); }
-
-.chrono-hud-card__head strong {
-  flex: 1;
-  overflow: hidden;
-  color: #ffffff;
-  font-size: 13px;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.chrono-hud-tag {
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-family: var(--font-mono);
-  font-size: 10px;
-}
-
-.chrono-hud-tag.is-forever { background: rgba(33, 151, 128, 0.25); color: #5eead4; }
-.chrono-hud-tag.is-later { background: rgba(56, 189, 248, 0.25); color: #7dd3fc; }
-.chrono-hud-tag.is-week { background: rgba(251, 146, 60, 0.25); color: #fdba74; }
-.chrono-hud-tag.is-soon { background: rgba(244, 63, 94, 0.25); color: #fda4af; }
-.chrono-hud-tag.is-expired { background: rgba(148, 163, 184, 0.25); color: #cbd5e1; }
-
-.chrono-hud-card__grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-.chrono-hud-metric {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.chrono-hud-metric small { color: var(--color-sidebar-muted, #94a3b8); font-size: 10px; }
-
-.chrono-hud-metric--scope { grid-column: 1 / -1; }
-
-.chrono-hud-metric span {
-  color: #f1f5f9;
-  font-size: 11px;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-  white-space: normal;
-}
-
-.chrono-hud-card__foot {
-  padding-top: 6px;
-  border-top: 1px solid color-mix(in srgb, #ffffff 8%, transparent);
-  color: var(--color-sidebar-muted, #94a3b8);
-  font-size: 10px;
-}
-
-.chrono-hud-stat b { color: var(--color-accent-on-dark, #4ade80); }
-.chrono-mono { font-family: var(--font-mono); }
 </style>

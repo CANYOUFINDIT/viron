@@ -5875,6 +5875,14 @@ const enOverrides: Record<string, string> = {
   "截止时间": "End time",
   "权限范围": "Permission scope",
   "悬停查看起止时间": "Hover to see start and end times",
+  "资源信息不可用": "Resource details unavailable",
+  "范围明细加载失败": "Unable to load scope details",
+  "暂无权限明细": "No permission details",
+  "授权详情": "Authorization details",
+  "授权范围": "Authorization scope",
+  "指定资源": "Selected resources",
+  "已授权": "Granted",
+  "未授权": "Not granted",
 };
 
 export const enMessages: Readonly<Record<string, string>> = { ...generatedEnMessages, ...enOverrides };
