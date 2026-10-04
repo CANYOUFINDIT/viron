@@ -62,6 +62,7 @@ const timelineRange = computed(() => {
 const rulerScale = ref<HTMLElement | null>(null);
 const scaleWidth = ref(720);
 const hoveredGrantId = ref<string | null>(null);
+const hoveredTimelineId = ref<string | null>(null);
 const focusedGrantId = ref<string | null>(null);
 let timelineClock: ReturnType<typeof setInterval> | undefined;
 let scaleObserver: ResizeObserver | undefined;
@@ -328,6 +329,7 @@ function canManage(row: GrantRowItem): boolean {
         <GrantDetailsPopover
           v-for="item in grantTimelineRows"
           :key="item.bar.id"
+          :disabled="hoveredTimelineId === item.bar.id"
           :grant="item.row.grant"
           :source="grantSource(item.row)"
           :status="item.bar.openEnded && item.bar.tone !== 'expired' ? $t('永久有效') : $t(item.remain.key, item.remain.values)"
@@ -357,7 +359,7 @@ function canManage(row: GrantRowItem): boolean {
             </div>
 
             <div class="trace-scale">
-              <div class="trace-hit">
+              <div class="trace-hit" @mouseenter="hoveredTimelineId = item.bar.id" @mouseleave="hoveredTimelineId = null">
                 <span v-if="item.bar.outsideRange" class="trace-outside" :class="`is-${item.bar.outsideRange}`">
                   {{ item.bar.outsideRange === 'before' ? $t('← 早于当前范围') : $t('晚于当前范围 →') }}
                 </span>
@@ -921,7 +923,13 @@ function canManage(row: GrantRowItem): boolean {
   white-space: nowrap;
 }
 
+@container (max-width: 760px) {
+  .trace-ruler { height: 96px; }
+}
+
 @container (max-width: 560px) {
+  .trace-ruler { height: 112px; }
+
   .trace-cols {
     grid-template-columns: minmax(72px, 1fr) minmax(48px, 1.3fr) 8.25rem;
   }
