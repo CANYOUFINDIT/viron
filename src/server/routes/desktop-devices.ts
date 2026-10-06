@@ -1,3 +1,4 @@
+import { parseWebLoginConfig } from "../../shared/protected-web-login.js";
 import {
   createCipheriv,
   createHash,
@@ -141,6 +142,7 @@ function credentialPayload(app: FastifyInstance, row: {
   id: string;
   web_entry_id: string;
   entry_url: string;
+  login_config_json?: string | null;
   username: string;
   password_ciphertext: string;
   custom_fields_json: string;
@@ -150,6 +152,7 @@ function credentialPayload(app: FastifyInstance, row: {
     credentialId: row.id,
     entryId: row.web_entry_id,
     entryUrl: row.entry_url,
+    loginConfig: parseWebLoginConfig(JSON.parse(row.login_config_json || "{}")),
     username: row.username,
     password: app.secrets.decrypt(row.password_ciphertext),
     customFields: JSON.parse(row.custom_fields_json || "{}") as Record<string, string>,
@@ -473,7 +476,7 @@ export async function registerDesktopDeviceRoutes(app: FastifyInstance): Promise
       }
       const credential = await app.db.prepare(`
         SELECT c.id, c.web_entry_id, c.username, c.password_ciphertext, c.custom_fields_json, c.updated_at,
-          w.url AS entry_url
+          w.url AS entry_url, w.login_config_json
         FROM web_credentials c
         JOIN web_entries w ON w.id = c.web_entry_id
         WHERE c.id = ?
@@ -485,6 +488,7 @@ export async function registerDesktopDeviceRoutes(app: FastifyInstance): Promise
         custom_fields_json: string;
         updated_at: string;
         entry_url: string;
+        login_config_json: string | null;
       } | undefined;
       if (!credential) return reply.code(404).send({ error: "NOT_FOUND", message: "登录账号不存在" });
       let targetOrigin: string;

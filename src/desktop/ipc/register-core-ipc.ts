@@ -1,3 +1,4 @@
+import type { ProtectedLoginInput } from "../../shared/protected-web-login.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import {
@@ -567,7 +568,7 @@ export function registerDesktopCoreIpc(desktopUpdater: DesktopUpdater): void {
       trustedMainWindowSender(event);
       const view = localWebView(id);
       view.bounds = webViewBounds(bounds);
-      activeDesktopWebPage(view).view.setBounds(view.bounds);
+      if (!view.login) activeDesktopWebPage(view).view.setBounds(view.bounds);
       event.returnValue = null;
     } catch (error) {
       event.returnValue = { error: error instanceof Error ? error.message : tr("本机页面区域无效") };
@@ -602,10 +603,10 @@ export function registerDesktopCoreIpc(desktopUpdater: DesktopUpdater): void {
     noteDesktopWebZoomTarget(id);
   });
 
-  ipcMain.handle("viron:web-view:action", async (event, id: string, action: { type?: string; url?: string; pageId?: string; orderedPageIds?: string[] }) => {
+  ipcMain.handle("viron:web-view:action", async (event, id: string, action: { type?: string; url?: string; pageId?: string; orderedPageIds?: string[]; loginInput?: ProtectedLoginInput }) => {
     trustedSender(event);
     if (!action || typeof action.type !== "string") throw new Error(tr("本机页面操作无效"));
-    return await handleDesktopWebViewAction(id, { type: action.type, url: action.url, pageId: action.pageId, orderedPageIds: action.orderedPageIds });
+    return await handleDesktopWebViewAction(id, { type: action.type, url: action.url, pageId: action.pageId, orderedPageIds: action.orderedPageIds, loginInput: action.loginInput });
   });
 
   ipcMain.handle("viron:web-view:close", async (event, id: string) => {
@@ -617,12 +618,14 @@ export function registerDesktopCoreIpc(desktopUpdater: DesktopUpdater): void {
   ipcMain.handle("viron:web-extension:list", (event, id: string) => {
     trustedMainWindowSender(event);
     const view = localWebView(id);
+    if (view.login) throw new Error("后台登录期间不能使用扩展");
     return listDesktopWebExtensions(view.partition, view.lastUrlKey);
   });
 
   ipcMain.handle("viron:web-extension:install", async (event, id: string) => {
     trustedMainWindowSender(event);
     const view = localWebView(id);
+    if (view.login) throw new Error("后台登录期间不能使用扩展");
     return await installDesktopWebExtension(view.partition, view.lastUrlKey);
   });
 
@@ -630,6 +633,7 @@ export function registerDesktopCoreIpc(desktopUpdater: DesktopUpdater): void {
     trustedMainWindowSender(event);
     if (typeof installId !== "string") throw new Error(tr("本机扩展标识无效"));
     const view = localWebView(id);
+    if (view.login) throw new Error("后台登录期间不能使用扩展");
     return await removeDesktopWebExtension(view.partition, view.lastUrlKey, installId);
   });
 
@@ -638,6 +642,7 @@ export function registerDesktopCoreIpc(desktopUpdater: DesktopUpdater): void {
     if (!change || typeof change !== "object" || Object.keys(change).some((key) => !["pinned", "enabled"].includes(key))
       || Object.values(change).some((value) => typeof value !== "boolean")) throw new Error(tr("本机扩展设置无效"));
     const view = localWebView(id);
+    if (view.login) throw new Error("后台登录期间不能使用扩展");
     return await updateDesktopWebExtension(view.partition, view.lastUrlKey, installId, change);
   });
 
@@ -645,6 +650,7 @@ export function registerDesktopCoreIpc(desktopUpdater: DesktopUpdater): void {
     trustedMainWindowSender(event);
     if (!anchor || !Number.isFinite(anchor.right) || !Number.isFinite(anchor.bottom)) throw new Error(tr("扩展弹窗位置无效"));
     const view = localWebView(id);
+    if (view.login) throw new Error("后台登录期间不能使用扩展");
     await openDesktopWebExtensionPopup(view.partition, view.lastUrlKey, installId, anchor, view.pages.get(view.activePageId)?.view.webContents.id);
   });
 
@@ -663,12 +669,15 @@ export function registerDesktopCoreIpc(desktopUpdater: DesktopUpdater): void {
     trustedMainWindowSender(event);
     if (typeof token !== "string") throw new Error(tr("Chrome 扩展选择无效"));
     const view = localWebView(id);
+    if (view.login) throw new Error("后台登录期间不能使用扩展");
     return await importDesktopChromeExtension(view.partition, view.lastUrlKey, token);
   });
 
   ipcMain.handle("viron:web-extension:open-store", async (event, id: string) => {
     trustedMainWindowSender(event);
-    await enableDesktopChromeWebStore(localWebView(id));
+    const view = localWebView(id);
+    if (view.login) throw new Error("后台登录期间不能使用扩展");
+    await enableDesktopChromeWebStore(view);
     await handleDesktopWebViewAction(id, { type: "new-page" });
     return await handleDesktopWebViewAction(id, { type: "navigate", url: "https://chromewebstore.google.com/" });
   });

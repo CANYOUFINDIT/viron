@@ -1,0 +1,218 @@
+import { selectWebCredentialAutofillFields, type WebCredentialAutofillField } from "./web-credential-autofill.js";
+import type { WebLoginConfig } from "./protected-web-login.js";
+
+// This function runs only in an isolated world of a main-process-owned hidden window.
+// Its results contain geometry/status, never input values or credential node handles.
+function installLoginGuard(config: WebLoginConfig, username: string, password: string, selectFields: typeof selectWebCredentialAutofillFields) {
+  const root = globalThis as typeof globalThis & { __vironLogin?: ReturnType<typeof createGuard> };
+  function createGuard() {
+    let revision = 0;
+    const documentId = crypto.randomUUID();
+    const credentials = new Set<Element>();
+    let filled = false;
+    let submitted = false;
+    let interactionDone = false;
+    let interactionSelector = "";
+    let passwordReleased = false;
+    new MutationObserver(() => revision++).observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+    document.addEventListener("input", () => revision++, true);
+    const visible = (element: Element | null): element is HTMLElement => {
+      if (!(element instanceof HTMLElement)) return false;
+      const rect = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return rect.width > 2 && rect.height > 2 && style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity || 1) > 0;
+    };
+    const one = (selector: string) => {
+      if (!selector) return null;
+      const nodes = [...document.querySelectorAll(selector)].filter(visible);
+      if (nodes.length > 1) throw new Error("ambiguous-selector");
+      return nodes[0] ?? null;
+    };
+    const setValue = (element: Element, value: string, credential = false) => {
+      if (!(element instanceof HTMLInputElement) || element.disabled || element.readOnly) throw new Error("invalid-input");
+      if (credential || element.type === "password") credentials.add(element);
+      if (value === password && password) passwordReleased = true;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(element, value);
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+      element.dispatchEvent(new Event("change", { bubbles: true }));
+      revision++;
+    };
+    const inputs = () => [...document.querySelectorAll<HTMLInputElement>("input")].filter(visible);
+    const buttons = (target: Element | null) => [...(target?.closest("form") ?? document.body).querySelectorAll<HTMLElement>('button,input[type="submit"]')].filter(visible);
+    const text = (node: HTMLElement) => node.innerText || node.getAttribute("value") || node.getAttribute("aria-label") || "";
+    function detect() {
+      const nodes = inputs();
+      const fields: WebCredentialAutofillField[] = nodes.map((node, index) => ({
+        index, type: node.type, autocomplete: node.autocomplete, name: node.name, id: node.id,
+        placeholder: node.placeholder, ariaLabel: node.getAttribute("aria-label") || "",
+        label: [...(node.labels ?? [])].map((label) => label.textContent ?? "").join(" "),
+        formKey: node.form ? "form:" + [...document.forms].indexOf(node.form) : "none",
+        formAction: node.form?.action ?? "", formIdentity: node.form ? [node.form.id, node.form.name, node.form.className].join(" ") : "",
+        submitText: buttons(node).map(text).join(" "), valueState: node.value ? "filled" : "empty",
+      }));
+      const selection = selectFields(fields);
+      return { username: selection.usernameIndex == null ? null : nodes[selection.usernameIndex], password: selection.passwordIndex == null ? null : nodes[selection.passwordIndex] };
+    }
+    function region() {
+      const element = one(interactionSelector);
+      if (!element) return null;
+      const bounds = element.getBoundingClientRect();
+      const rect = { x: Math.floor(bounds.x), y: Math.floor(bounds.y), width: Math.ceil(bounds.right) - Math.floor(bounds.x), height: Math.ceil(bounds.bottom) - Math.floor(bounds.y) };
+      if (rect.x < 0 || rect.y < 0 || rect.width < 3 || rect.height < 3 || rect.x + rect.width > innerWidth || rect.y + rect.height > innerHeight) throw new Error("unsafe-region");
+      const overlaps = (node: Element) => {
+        const box = node.getBoundingClientRect();
+        return box.width > 0 && box.height > 0 && box.left < rect.x + rect.width && box.right > rect.x && box.top < rect.y + rect.height && box.bottom > rect.y;
+      };
+      const sensitive = new Set([...credentials, ...document.querySelectorAll('input[type="password"],input[autocomplete*="password"],input[autocomplete*="username"]')]);
+      for (const node of document.querySelectorAll<HTMLInputElement>("input")) if (password && node.value.includes(password)) sensitive.add(node);
+      if ([...sensitive].some((node) => node === element || element.contains(node) || overlaps(node))) throw new Error("unsafe-region");
+      if ([...document.querySelectorAll("iframe,frame,object,embed")].some((node) => element.contains(node) || overlaps(node))) throw new Error("unsafe-frame");
+      if ([element, ...element.querySelectorAll("*")].some((node) => node.shadowRoot)) throw new Error("unsafe-shadow");
+      if (password && (element.textContent ?? "").includes(password)) throw new Error("unsafe-region");
+      // Overlays may sit outside the configured subtree while painting into it.
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        if (password && node.textContent?.includes(password) && node.parentElement && overlaps(node.parentElement)) throw new Error("unsafe-region");
+      }
+      return { ...rect, revision: `${documentId}:${revision}` };
+    }
+    function submit(target: Element | null) {
+      const button = config.submitSelector ? one(config.submitSelector) : buttons(target).find((node) => /login|log in|sign in|next|登录|登入|下一步/i.test(text(node))) ?? buttons(target).find((node) => node.getAttribute("type") === "submit");
+      const form = target?.closest("form");
+      if (button) button.click();
+      else if (form) form.requestSubmit();
+      else throw new Error("missing-submit");
+      submitted = true;
+    }
+    function tick(stepIndex: number, previouslySubmitted: boolean, submittedUrl: string, passwordSubmitted = false, submittedDocument = "") {
+      if (!document.body) return { status: "waiting" };
+      if (config.steps.length) {
+        const step = config.steps[stepIndex];
+        if (!step) throw new Error("invalid-step");
+        if (step.origin && step.origin !== location.origin) return { status: "waiting" };
+        const target = one(step.selector);
+        if (!target) return { status: "waiting" };
+        if (step.action === "success") return { status: "success", released: passwordReleased };
+        if (step.action === "interactive") {
+          interactionSelector = step.selector;
+          return { status: "interactive", region: region() };
+        }
+        if (step.action === "type") {
+          const secret = step.value === "{SECRET}";
+          setValue(target, secret ? password : step.value === "{USERNAME}" ? username : step.value ?? "", secret || step.value === "{USERNAME}");
+        } else target.click();
+        return { status: "next", released: passwordReleased };
+      }
+      const detected = detect();
+      const user = config.usernameSelector ? one(config.usernameSelector) : detected.username;
+      const pass = config.passwordSelector ? one(config.passwordSelector) : detected.password;
+      const visiblePasswords = inputs().filter((node) => node.type === "password" || credentials.has(node));
+      const pendingVerification = inputs().some((node) => node.autocomplete === "one-time-code" || /otp|captcha|verification|验证码|动态口令/i.test([node.id, node.name, node.placeholder].join(" ")));
+      if (previouslySubmitted && !visiblePasswords.length && (config.successSelector ? Boolean(one(config.successSelector)) : (location.href !== submittedUrl || String(performance.timeOrigin) !== submittedDocument) && !pendingVerification && !(config.interactionSelector && one(config.interactionSelector)))) return { status: "success" };
+      if (passwordSubmitted && !filled && visiblePasswords.length) return { status: "rejected" };
+      if (!filled && (pass || user)) {
+        if (user) setValue(user, username, true);
+        if (pass) setValue(pass, password, true);
+        filled = true;
+      }
+      if (config.interactionSelector && one(config.interactionSelector) && !interactionDone) {
+        interactionSelector = config.interactionSelector;
+        return { status: "interactive", region: region(), released: passwordReleased };
+      }
+      if (filled && !submitted) {
+        submit(pass ?? user);
+        return { status: "submitted", released: passwordReleased };
+      }
+      if (submitted || previouslySubmitted) return { status: "waiting", released: passwordReleased };
+      // An anonymous entry can be opened without releasing credentials. A configured
+      // success marker still takes precedence over this convenience path.
+      if (!inputs().some((node) => node.type === "password") && !document.querySelector("iframe,frame") && !config.usernameSelector && !config.passwordSelector && !config.successSelector) return { status: "anonymous" };
+      if (config.successSelector && one(config.successSelector) && !visiblePasswords.length) return { status: "success" };
+      return { status: "waiting" };
+    }
+    function authorize(revisionValue: string, x?: number, y?: number, keyboard = false) {
+      const rect = region();
+      if (!rect || rect.revision !== revisionValue) return null;
+      const element = one(interactionSelector)!;
+      if (keyboard) {
+        const focused = document.activeElement;
+        if (!focused || !element.contains(focused) || credentials.has(focused) || !(focused instanceof HTMLInputElement) || !["text", "tel", "number", "email", "search"].includes(focused.type)) return null;
+      } else if (typeof x === "number" && typeof y === "number") {
+        if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x >= rect.width || y >= rect.height) return null;
+        const target = document.elementFromPoint(rect.x + x, rect.y + y);
+        if (!target || !(target === element || element.contains(target)) || credentials.has(target)) return null;
+      }
+      return rect;
+    }
+    function continueInteraction(revisionValue: string) {
+      if (!authorize(revisionValue)) return false;
+      interactionDone = true;
+      // A challenge may have appeared after the first submit.
+      submitted = false;
+      return true;
+    }
+    async function finish() {
+      // sessionStorage belongs to this document; other storage stays in the isolated
+      // Session. Refuse to hand over a document that persists the password itself.
+      for (const storage of [localStorage, sessionStorage]) for (let i = 0; i < storage.length; i++) {
+        const value = storage.getItem(storage.key(i)!);
+        if (password && value?.includes(password)) throw new Error("secret-in-storage");
+      }
+      const containsSecret = (value: unknown): boolean => {
+        if (!password) return false;
+        if (typeof value === "string") return value.includes(password);
+        if (!value || typeof value !== "object") return false;
+        if (ArrayBuffer.isView(value)) return new TextDecoder().decode(value as Uint8Array).includes(password);
+        if (value instanceof ArrayBuffer) return new TextDecoder().decode(value).includes(password);
+        if (value instanceof Map) return [...value].some(([key, item]) => containsSecret(key) || containsSecret(item));
+        if (value instanceof Set) return [...value].some(containsSecret);
+        const seen = new WeakSet<object>();
+        const visit = (item: unknown): boolean => {
+          if (typeof item === "string") return item.includes(password);
+          if (!item || typeof item !== "object" || seen.has(item)) return false;
+          seen.add(item);
+          return Object.values(item).some(visit);
+        };
+        return visit(value);
+      };
+      for (const info of await indexedDB.databases()) {
+        if (!info.name) continue;
+        const database = await new Promise<IDBDatabase>((resolve, reject) => {
+          const request = indexedDB.open(info.name!);
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(new Error("storage-read-failed"));
+        });
+        try {
+          for (const storeName of database.objectStoreNames) {
+            const records = await new Promise<Array<{ key: IDBValidKey; value: unknown }>>((resolve, reject) => {
+              const transaction = database.transaction(storeName, "readonly");
+              const request = transaction.objectStore(storeName).openCursor();
+              const values: Array<{ key: IDBValidKey; value: unknown }> = [];
+              transaction.onerror = () => reject(new Error("storage-read-failed"));
+              request.onerror = () => reject(new Error("storage-read-failed"));
+              request.onsuccess = () => {
+                const cursor = request.result;
+                if (!cursor) return resolve(values);
+                if (values.length > 10000) return reject(new Error("storage-too-large"));
+                values.push({ key: cursor.key, value: cursor.value });
+                cursor.continue();
+              };
+            });
+            for (const record of records) {
+              const value = record.value instanceof Blob ? await record.value.text() : record.value;
+              if (containsSecret(record.key) || containsSecret(value)) throw new Error("secret-in-storage");
+            }
+          }
+        } finally { database.close(); }
+      }
+      return Object.fromEntries(Object.keys(sessionStorage).map((key) => [key, sessionStorage.getItem(key)]));
+    }
+    return { tick, region, authorize, continueInteraction, finish };
+  }
+  root.__vironLogin ??= createGuard();
+}
+
+export function protectedLoginInstallScript(config: WebLoginConfig, username: string, password: string): string {
+  return `(() => { const __name = (fn) => fn; (${installLoginGuard.toString()})(${JSON.stringify(config)}, ${JSON.stringify(username)}, ${JSON.stringify(password)}, ${selectWebCredentialAutofillFields.toString()}); })()`;
+}

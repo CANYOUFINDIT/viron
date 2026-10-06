@@ -29,7 +29,7 @@ describe("desktop web overlay continuity", () => {
 
   it("does not throttle a live browser page when focus moves to app chrome", () => {
     const runtime = source("src/desktop/web-view-runtime.ts");
-    expect(runtime).toContain("const visible = active && view.visible && !page.certificateError;");
+    expect(runtime).toContain("const visible = active && !view.login && view.visible && !page.certificateError;");
     expect(runtime).toContain("page.view.webContents.setBackgroundThrottling(!visible && !view.previewing);");
   });
 });

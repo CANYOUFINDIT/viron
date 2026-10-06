@@ -1,3 +1,4 @@
+import type { ProtectedLoginState, ProtectedLoginInput } from "../shared/protected-web-login";
 import { translate as tr } from "./i18n";
 import { computed, shallowRef } from "vue";
 import { resolveExecutionTargets, type DesktopExecutionMode } from "../shared/execution-mode";
@@ -137,13 +138,15 @@ export interface DesktopWebViewState {
     message: string;
   } | null;
   zoomFactor: number;
+  protectedLogin: ProtectedLoginState | null;
 }
 
 export interface DesktopWebViewAction {
-  type: "back" | "forward" | "reload" | "navigate" | "refill" | "reset" | "continue-certificate" | "new-page" | "activate-page" | "close-page" | "reorder-pages" | "zoom-in" | "zoom-out" | "zoom-reset";
+  type: "login-input" | "back" | "forward" | "reload" | "navigate" | "refill" | "reset" | "continue-certificate" | "new-page" | "activate-page" | "close-page" | "reorder-pages" | "zoom-in" | "zoom-out" | "zoom-reset";
   url?: string;
   pageId?: string;
   orderedPageIds?: string[];
+  loginInput?: ProtectedLoginInput;
 }
 
 export interface DesktopWebExtensionInfo {

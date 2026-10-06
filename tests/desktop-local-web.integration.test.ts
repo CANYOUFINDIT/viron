@@ -209,7 +209,7 @@ describe.skipIf(!enabled)("macOS local Web", () => {
     const line = result.stdout.split("\n").find((item) => item.startsWith("VIRON_DESKTOP_SMOKE "));
     expect(line, result.stdout).toBeTruthy();
     const smoke = JSON.parse(line!.slice("VIRON_DESKTOP_SMOKE ".length));
-    expect(smoke.localWeb, result.stdout).toEqual({ opened: true, blankOpenedWithoutEntry: true, manualRefillOnCurrentPage: true, sessionStatePersisted: true, lastLocationRestored: true, tabsReordered: true, popupPreservesOpener: true, inspectorOpened: true, resetCleared: true, extensionInjected: true, extensionManaged: true, extensionGlobal: true, uploadSelected: true, downloadTriggered: true });
+    expect(smoke.localWeb, result.stdout).toEqual({ opened: true, blankOpenedWithoutEntry: true, manualRefillOnCurrentPage: true, sessionIsolatedPerLaunch: true, lastLocationRestored: true, tabsReordered: true, popupPreservesOpener: true, inspectorOpened: true, resetCleared: true, extensionInjected: true, extensionManaged: true, extensionGlobal: true, uploadSelected: true, downloadTriggered: true });
     const saved = JSON.parse(readFileSync(join(userData, "desktop-state.json"), "utf8"));
     expect(saved.webExtensions).toBeUndefined();
     expect(saved.globalWebExtensions).toHaveLength(1);

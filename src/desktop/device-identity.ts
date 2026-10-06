@@ -1,3 +1,4 @@
+import type { WebLoginConfig } from "../shared/protected-web-login.js";
 import { translate as tr } from "./i18n.js";
 import type { SshAuthType, SshConnectionCredential, SshConnectionOptions } from "../shared/ssh-connect.js";
 import {
@@ -47,6 +48,7 @@ export interface DesktopWebCredential {
   credentialId: string;
   entryId: string;
   entryUrl: string;
+  loginConfig?: WebLoginConfig;
   username: string;
   password: string;
   customFields: Record<string, string>;

@@ -8,13 +8,9 @@ import {
   desktopWebLastUrlKey,
   desktopWebPartitionName,
   restorableDesktopWebUrl,
-  shouldAttemptDesktopWebAutofill,
   supportedDesktopWebUrl,
 } from "./web-page-policy.js";
-import {
-  buildWebCredentialAutofillScript,
-  type WebCredentialAutofillResult,
-} from "../shared/web-credential-autofill.js";
+import { defaultWebLoginConfig } from "../shared/protected-web-login.js";
 import { readState, writeState } from "./app-state.js";
 import type { DesktopWebCredential } from "./device-identity.js";
 import { localWebCredential } from "./execution-router.js";
@@ -157,16 +153,20 @@ export function changeDesktopWebPageZoom(view: ManagedDesktopWebView, page: Mana
 
 export function desktopWebSession(endpoint: string, userId: string, credentialId: string): Session {
   const webPartition = session.fromPartition(desktopWebPartitionName(endpoint, userId, credentialId));
+  enableDesktopWebSessionExtensions(webPartition, desktopWebLastUrlKey(endpoint, userId, credentialId));
+  webPartition.setPermissionCheckHandler(() => false);
+  webPartition.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  return webPartition;
+}
+
+export function enableDesktopWebSessionExtensions(webPartition: Session, scope: string): void {
   if (!extensionCompatSessions.has(webPartition)) {
     const preload = fileURLToPath(new URL("./web-extension-compat-preload.cjs", import.meta.url));
     webPartition.registerPreloadScript({ type: "frame", filePath: preload });
     webPartition.registerPreloadScript({ type: "service-worker", filePath: preload });
-    registerDesktopWebExtensionWorkerMenus(webPartition, desktopWebLastUrlKey(endpoint, userId, credentialId));
+    registerDesktopWebExtensionWorkerMenus(webPartition, scope);
     extensionCompatSessions.add(webPartition);
   }
-  webPartition.setPermissionCheckHandler(() => false);
-  webPartition.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
-  return webPartition;
 }
 
 export function webViewBounds(input: DesktopWebViewBounds): Rectangle {
@@ -178,7 +178,13 @@ export function webViewBounds(input: DesktopWebViewBounds): Rectangle {
 
 export function webViewState(view: ManagedDesktopWebView): DesktopWebViewState {
   const active = view.pages.get(view.activePageId);
-  if (!active) throw new Error(tr("本机账号当前没有可用页面"));
+  if (!active) {
+    if (!view.login) throw new Error(tr("本机账号当前没有可用页面"));
+    return { id: view.id, credentialId: view.credentialId, activePageId: "", pages: [], url: view.entryUrl, title: view.username,
+      faviconDataUrl: "", loading: view.login.state.phase !== "failed", canGoBack: false, canGoForward: false,
+      autofillMessage: "", error: "", certificateError: null, closedReason: view.closedReason, notice: view.notice,
+      zoomFactor: 1, protectedLogin: { ...view.login.state } };
+  }
   const navigation = active.view.webContents.navigationHistory;
   return {
     id: view.id,
@@ -204,6 +210,7 @@ export function webViewState(view: ManagedDesktopWebView): DesktopWebViewState {
     closedReason: view.closedReason,
     notice: view.notice,
     zoomFactor: pageZoomFactor(active.zoomFactor || 1),
+    protectedLogin: view.login ? { ...view.login.state } : null,
   };
 }
 
@@ -227,48 +234,13 @@ export function trackDesktopWebPartition(partition: Session): void {
 }
 
 export function sendWebViewState(view: ManagedDesktopWebView): void {
-  if (!mainWindow || mainWindow.isDestroyed() || view.closing || !desktopWebViews.has(view.id) || !view.pages.has(view.activePageId)) return;
+  if (!mainWindow || mainWindow.isDestroyed() || view.closing || !desktopWebViews.has(view.id) || (!view.login && !view.pages.has(view.activePageId))) return;
   mainWindow.webContents.send("viron:web-view-state", webViewState(view));
 }
 
 export function notifyWebView(view: ManagedDesktopWebView, type: "success" | "info" | "error", message: string): void {
   view.notice = { id: randomUUID(), type, message };
   sendWebViewState(view);
-}
-
-export async function autoFillWebPage(view: ManagedDesktopWebView, page: ManagedDesktopWebPage, force = false): Promise<void> {
-  if (page.view.webContents.isDestroyed()) return;
-  if (!shouldAttemptDesktopWebAutofill(page.allowAutofill, force)) return;
-  try {
-    const currentUrl = page.view.webContents.getURL();
-    if (!currentUrl || new URL(currentUrl).origin !== view.entryOrigin) {
-      page.autofillMessage = force ? tr("当前页面不在入口原始域名，未填充账号密码") : "";
-      sendWebViewState(view);
-      return;
-    }
-    const result = await page.view.webContents.executeJavaScript(
-      buildWebCredentialAutofillScript({
-        username: view.username,
-        password: view.password,
-        previousSignature: force ? "" : page.autofillSignature,
-        autoSubmit: false,
-        messages: {
-          duplicate: tr("登录表单未变化"),
-          ambiguousPasswords: tr("检测到多个密码框，未识别到唯一登录密码框"),
-          noReliableForm: tr("未识别到可靠的登录表单"),
-          filled: tr("已在当前页面填充账号密码"),
-          filledAndSubmitted: tr("已在当前页面填充账号密码"),
-        },
-      }),
-      true,
-    ) as WebCredentialAutofillResult;
-    page.autofillSignature = result.signature;
-    page.autofillMessage = result.status === "duplicate" ? "" : result.message;
-    sendWebViewState(view);
-  } catch (error) {
-    page.error = error instanceof Error ? error.message : tr("自动填充失败");
-    sendWebViewState(view);
-  }
 }
 
 export function activeDesktopWebPage(view: ManagedDesktopWebView): ManagedDesktopWebPage {
@@ -317,5 +289,6 @@ export function applyDesktopWebCredential(view: ManagedDesktopWebView, credentia
   view.entryOrigin = new URL(credential.entryUrl).origin;
   view.username = credential.username;
   view.password = credential.password;
+  view.loginConfig = credential.loginConfig ?? defaultWebLoginConfig();
   view.lastUrl = cacheableDesktopWebUrl(view.entryUrl, view.lastUrl) ?? "";
 }

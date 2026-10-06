@@ -14,13 +14,15 @@ import {
   localWebView,
   openDesktopWebView,
   resetDesktopWebView,
+  webViewState,
   type ManagedDesktopWebView,
 } from "../web-view-runtime.js";
 
 export async function waitForDesktopWebTitle(view: ManagedDesktopWebView, expected: string, timeoutMs = 15_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const title = activeDesktopWebPage(view).view.webContents.getTitle();
+    if (view.login?.state.phase === "failed") throw new Error(view.login.state.message);
+    const title = view.login ? "" : activeDesktopWebPage(view).view.webContents.getTitle();
     if (title === expected) return;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
@@ -49,7 +51,7 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
   opened: boolean;
   blankOpenedWithoutEntry: boolean;
   manualRefillOnCurrentPage: boolean;
-  sessionStatePersisted: boolean;
+  sessionIsolatedPerLaunch: boolean;
   lastLocationRestored: boolean;
   tabsReordered: boolean;
   popupPreservesOpener: boolean;
@@ -96,12 +98,13 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
   await activeDesktopWebPage(blankView).view.webContents.loadURL(`${blankView.entryOrigin}/upload`);
   await waitForDesktopWebTitle(blankView, "Upload fixture");
   await closeDesktopWebView(blankState.id);
-  const managedState = await openDesktopWebView(credentialId, { x: 40, y: 120, width: 900, height: 620 });
-  const managed = localWebView(managedState.id);
-  await enableDesktopChromeWebStore(managed);
+  const openingState = await openDesktopWebView(credentialId, { x: 40, y: 120, width: 900, height: 620 });
+  const managed = localWebView(openingState.id);
   await waitForDesktopWebTitle(managed, "Upload fixture");
+  const managedState = webViewState(managed);
+  await enableDesktopChromeWebStore(managed);
   const lastLocationRestored = activeDesktopWebPage(managed).view.webContents.getURL() === `${managed.entryOrigin}/upload`;
-  const sessionStatePersisted = await activeDesktopWebPage(managed).view.webContents.executeJavaScript(`localStorage.getItem("viron-persist-smoke") === "present"`) as boolean;
+  const sessionIsolatedPerLaunch = await activeDesktopWebPage(managed).view.webContents.executeJavaScript(`localStorage.getItem("viron-persist-smoke") === null`) as boolean;
   const popupDocumentPreserved = await activeDesktopWebPage(managed).view.webContents.executeJavaScript(`(() => {
     const child = window.open("about:blank", "viron-popup-smoke");
     if (!child) return false;
@@ -273,6 +276,7 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
     await downloadPage.loadURL(`${managed.entryOrigin}/upload`);
     await waitForDesktopWebTitle(managed, "Upload fixture");
     const removed = await downloadPage.executeJavaScript('document.documentElement.dataset.vironInstalled === undefined') as boolean;
+    await enableDesktopChromeWebStore(managed);
     const storeFixture = join(app.getPath("userData"), "web-store-downloads", managed.lastUrlKey, "store-smoke", "1.0.0_0");
     await mkdir(storeFixture, { recursive: true });
     await writeFile(join(storeFixture, "manifest.json"), JSON.stringify({ manifest_version: 3, name: "Store smoke extension", version: "1.0.0" }));
@@ -294,5 +298,5 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
     const error = await activeDesktopWebPage(managed).view.webContents.executeJavaScript('document.documentElement.dataset.vironExtensionError') as string | undefined;
     console.log("VIRON_EXTENSION_MARKER", JSON.stringify({ extensionLoaded, extensionOnFirstPage, extensionAfterReopen, extensionAfterReset, error }));
   }
-  return { opened: true, blankOpenedWithoutEntry: blankOpenedWithoutEntry && shorthandAddressLoaded && defaultAddressPreserved, manualRefillOnCurrentPage, sessionStatePersisted, lastLocationRestored, tabsReordered, popupPreservesOpener, inspectorOpened: true, resetCleared, extensionInjected: extensionLoaded && extensionOnFirstPage && extensionAfterReopen && extensionAfterReset, extensionManaged, extensionGlobal, uploadSelected, downloadTriggered: true };
+  return { opened: true, blankOpenedWithoutEntry: blankOpenedWithoutEntry && shorthandAddressLoaded && defaultAddressPreserved, manualRefillOnCurrentPage, sessionIsolatedPerLaunch, lastLocationRestored, tabsReordered, popupPreservesOpener, inspectorOpened: true, resetCleared, extensionInjected: extensionLoaded && extensionOnFirstPage && extensionAfterReopen && extensionAfterReset, extensionManaged, extensionGlobal, uploadSelected, downloadTriggered: true };
 }

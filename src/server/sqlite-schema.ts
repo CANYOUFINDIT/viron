@@ -360,6 +360,7 @@ CREATE TABLE IF NOT EXISTS web_entries (
   url TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   tags_json TEXT NOT NULL DEFAULT '[]',
+  login_config_json TEXT NOT NULL DEFAULT '{}',
   sort_order INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL

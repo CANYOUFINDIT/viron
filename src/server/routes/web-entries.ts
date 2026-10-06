@@ -1,3 +1,4 @@
+import { parseWebLoginConfig } from "../../shared/protected-web-login.js";
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -16,6 +17,10 @@ const entrySchema = z.object({
   url: z.string().url().max(2048),
   description: z.string().trim().max(1000).default(""),
   tags: z.array(z.string().trim().min(1).max(40)).max(20).default([]),
+  loginConfig: z.unknown().optional().transform((value, ctx) => {
+    try { return value === undefined ? undefined : parseWebLoginConfig(value); }
+    catch (error) { ctx.addIssue({ code: "custom", message: error instanceof Error ? error.message : "登录配置无效" }); return z.NEVER; }
+  }),
 });
 
 const credentialSchema = z.object({
@@ -68,6 +73,7 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
             description: row.description,
             tags: JSON.parse(String(row.tags_json ?? "[]")),
             credentialCount: Number(row.credential_count),
+            loginConfig: parseWebLoginConfig(JSON.parse(String(row.login_config_json ?? "{}"))),
             tls: tlsWebEntryBadge(linked, alertSettings.tlsWarnDays),
             createdAt: row.created_at,
             updatedAt: row.updated_at,
@@ -92,8 +98,8 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
       `).get(request.params.environmentId) as { next_sort_order: number | string };
       await app.db.prepare(`
         INSERT INTO web_entries (
-          id, environment_id, name, url, description, tags_json, sort_order, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          id, environment_id, name, url, description, tags_json, login_config_json, sort_order, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         id,
         request.params.environmentId,
@@ -101,6 +107,7 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
         body.url,
         body.description,
         JSON.stringify(body.tags),
+        JSON.stringify(body.loginConfig ?? parseWebLoginConfig(undefined)),
         Number(nextOrder.next_sort_order),
         now,
         now,
@@ -156,8 +163,10 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
       const environmentId = await entryEnvironmentId(app, request.params.id);
       if (!environmentId || !await requireEnvironmentAction(app.db, request.admin!, reply, environmentId, "web", "manage", request.params.id, { error: "NOT_FOUND", message: "Web 入口不存在" })) return;
       const credentials = await app.db.prepare("SELECT id FROM web_credentials WHERE web_entry_id = ?").all(request.params.id) as Array<{ id: string }>;
-      const result = await app.db.prepare("UPDATE web_entries SET name = ?, url = ?, description = ?, tags_json = ?, updated_at = ? WHERE id = ?")
-        .run(body.name, body.url, body.description, JSON.stringify(body.tags), new Date().toISOString(), request.params.id);
+      const previous = await app.db.prepare("SELECT login_config_json FROM web_entries WHERE id = ?").get(request.params.id) as { login_config_json: string | null };
+      const loginConfigJson = body.loginConfig === undefined ? (previous.login_config_json || "{}") : JSON.stringify(body.loginConfig);
+      const result = await app.db.prepare("UPDATE web_entries SET name = ?, url = ?, description = ?, tags_json = ?, login_config_json = ?, updated_at = ? WHERE id = ?")
+        .run(body.name, body.url, body.description, JSON.stringify(body.tags), loginConfigJson, new Date().toISOString(), request.params.id);
       if (!result.changes) return reply.code(404).send({ error: "NOT_FOUND", message: "Web 入口不存在" });
       await Promise.all(credentials.map((credential) => app.webAccountViews.sleepCredential(credential.id)));
       const tlsEndpointId = await syncWebEntryTlsEndpoint(app, environmentId, request.params.id, body.url);

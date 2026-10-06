@@ -50,6 +50,7 @@ export async function openDatabase(config: AppConfig): Promise<EnvmanDatabase> {
     await addMysqlColumnIfMissing(db, "environments", "sort_order", "INT NOT NULL DEFAULT 0");
     await addMysqlColumnIfMissing(db, "environment_preferences", "is_favorite", "TINYINT NOT NULL DEFAULT 0");
     await addMysqlColumnIfMissing(db, "web_entries", "sort_order", "INT NOT NULL DEFAULT 0");
+    await addMysqlColumnIfMissing(db, "web_entries", "login_config_json", "LONGTEXT NULL");
     await addMysqlColumnIfMissing(db, "web_credentials", "sort_order", "INT NOT NULL DEFAULT 0");
     await addMysqlColumnIfMissing(db, "services", "sort_order", "INT NOT NULL DEFAULT 0");
     await addMysqlColumnIfMissing(db, "ssh_connections", "sort_order", "INT NOT NULL DEFAULT 0");
@@ -136,6 +137,7 @@ export async function openDatabase(config: AppConfig): Promise<EnvmanDatabase> {
   addColumnIfMissing(raw, "environments", "sort_order", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(raw, "environment_preferences", "is_favorite", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(raw, "web_entries", "sort_order", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(raw, "web_entries", "login_config_json", "TEXT NOT NULL DEFAULT '{}'");
   addColumnIfMissing(raw, "web_credentials", "sort_order", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(raw, "services", "sort_order", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(raw, "ssh_connections", "sort_order", "INTEGER NOT NULL DEFAULT 0");

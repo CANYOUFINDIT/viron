@@ -377,6 +377,7 @@ CREATE TABLE IF NOT EXISTS web_entries (
   url TEXT NOT NULL,
   description TEXT NOT NULL,
   tags_json LONGTEXT NOT NULL,
+  login_config_json LONGTEXT NULL,
   sort_order INT NOT NULL DEFAULT 0,
   created_at VARCHAR(32) NOT NULL,
   updated_at VARCHAR(32) NOT NULL,

@@ -26,6 +26,8 @@ import { api, prefetchApi } from "../api";
 import DesktopExecutionNotice from "../components/DesktopExecutionNotice.vue";
 import EnvironmentImmersiveNavigation from "../components/EnvironmentImmersiveNavigation.vue";
 import DesktopWebAccountBrowser from "../components/DesktopWebAccountBrowser.vue";
+import WebLoginSettings from "../components/WebLoginSettings.vue";
+import { defaultWebLoginConfig, parseWebLoginConfig, type WebLoginConfig } from "../../shared/protected-web-login";
 import SslBindDialog from "../components/credentials/SslBindDialog.vue";
 import WebAccountBrowser from "../components/WebAccountBrowser.vue";
 import { copyTextToClipboard } from "../clipboard";
@@ -82,6 +84,7 @@ interface WebEntry {
   description: string;
   tags: string[];
   credentialCount: number;
+  loginConfig?: WebLoginConfig;
   tls?: import("../../shared/tls-certificates").TlsWebEntryBadge | null;
 }
 
@@ -167,7 +170,7 @@ let backgroundPreloadGeneration = 0;
 const webPreloadEnabled = ref(false);
 const webPreloadCredentialId = ref("");
 
-const entryForm = reactive({ name: "", url: "", description: "", tags: "" });
+const entryForm = reactive({ name: "", url: "", description: "", tags: "", loginConfig: defaultWebLoginConfig(), stepsText: "", originsText: "" });
 const credentialForm = reactive({ username: "", password: "", note: "" });
 const environmentForm = reactive({ name: "", groupId: null as string | null, description: "", tags: "" });
 const selectedEntry = computed(() => webEntries.value.find((item) => item.id === selectedEntryId.value) ?? null);
@@ -748,13 +751,16 @@ function exitEnvironmentImmersive() {
 
 function openEntryCreate() {
   editingEntryId.value = "";
-  Object.assign(entryForm, { name: "", url: "", description: "", tags: "" });
+  Object.assign(entryForm, { name: "", url: "", description: "", tags: "", loginConfig: defaultWebLoginConfig(), stepsText: "", originsText: "" });
   entryDialog.value = true;
 }
 
 function openEntryEdit(entry: WebEntry) {
   editingEntryId.value = entry.id;
   Object.assign(entryForm, { name: entry.name, url: entry.url, description: entry.description, tags: entry.tags.join(", ") });
+  entryForm.loginConfig = parseWebLoginConfig(entry.loginConfig);
+  entryForm.stepsText = entryForm.loginConfig.steps.length ? JSON.stringify(entryForm.loginConfig.steps, null, 2) : "";
+  entryForm.originsText = entryForm.loginConfig.allowedOrigins.join("\n");
   entryDialog.value = true;
 }
 
@@ -779,10 +785,14 @@ async function saveEntry() {
         url: entryForm.url,
         description: entryForm.description,
         tags: entryForm.tags.split(/[,，]/).map((item) => item.trim()).filter(Boolean),
+        loginConfig: parseWebLoginConfig({ ...entryForm.loginConfig,
+          allowedOrigins: entryForm.originsText.split(/\n/).map((item) => item.trim()).filter(Boolean),
+          steps: entryForm.stepsText.trim() ? JSON.parse(entryForm.stepsText) : [],
+        }),
       }),
     });
     entryDialog.value = false;
-    Object.assign(entryForm, { name: "", url: "", description: "", tags: "" });
+    Object.assign(entryForm, { name: "", url: "", description: "", tags: "", loginConfig: defaultWebLoginConfig(), stepsText: "", originsText: "" });
     ElMessage.success(editingEntryId.value ? tr("Web 入口已更新") : tr("Web 入口已添加"));
     await loadEnvironment();
     if (result.tlsEndpointId && result.tlsProbeReady) {
@@ -1222,6 +1232,7 @@ onBeforeUnmount(() => {
         <el-form-item :label="$t('页面地址')" required><el-input v-model="entryForm.url" placeholder="https://console.example.com" /></el-form-item>
         <el-form-item :label="$t('说明')"><el-input v-model="entryForm.description" type="textarea" :rows="3" /></el-form-item>
         <el-form-item :label="$t('标签')"><el-input v-model="entryForm.tags" :placeholder="$t('多个标签用逗号分隔')" /></el-form-item>
+        <WebLoginSettings v-model="entryForm.loginConfig" v-model:steps-text="entryForm.stepsText" v-model:origins-text="entryForm.originsText" />
       </el-form>
       <template #footer><el-button @click="entryDialog = false">{{ $t('取消') }}</el-button><el-button type="primary" :loading="saving" @click="saveEntry">{{ $t('保存入口') }}</el-button></template>
     </el-dialog>

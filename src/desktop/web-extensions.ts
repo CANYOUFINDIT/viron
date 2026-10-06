@@ -175,6 +175,18 @@ export function loadDesktopWebExtensions(partition: Session, scopeKey: string): 
   });
 }
 
+export function releaseDesktopWebSessionExtensions(partition: Session): Promise<void> {
+  return extensionOperation(async () => {
+    const scope = extensionSessions.get(partition);
+    extensionSessions.delete(partition);
+    storeViews.delete(partition);
+    for (const extension of partition.extensions.getAllExtensions()) {
+      if (scope) clearDesktopWebExtensionContextMenus(partition, extension.id);
+      partition.extensions.removeExtension(extension.id);
+    }
+  });
+}
+
 export function listDesktopWebExtensions(partition: Session, scopeKey: string): DesktopWebExtensionInfo[] {
   return installedExtensions().map((item) => {
     const manifest = extensionManifest(item, partition);

@@ -1,4 +1,6 @@
-<script setup lang="ts">import { translate as tr } from "../i18n";
+<script setup lang="ts">import ProtectedWebLogin from "./ProtectedWebLogin.vue";
+import type { ProtectedLoginInput } from "../../shared/protected-web-login";
+import { translate as tr } from "../i18n";
 
 import { ArrowLeft, ArrowRight, EllipsisVertical, FileArchive, Globe2, KeyRound, Laptop, LoaderCircle, Maximize2, Minimize2, Minus, MoreVertical, Pin, PinOff, Plus, Puzzle, RefreshCw, RotateCcw, ShieldAlert } from "@lucide/vue";
 import { ElMessage, ElMessageBox } from "element-plus";
@@ -247,6 +249,11 @@ async function runAction(type: DesktopWebViewAction["type"], url?: string, pageI
   } catch (error) {
     startError.value = error instanceof Error ? error.message : tr("本机页面操作失败");
   }
+}
+
+async function sendLoginInput(input: ProtectedLoginInput) {
+  if (!state.value) return;
+  applyState(await desktopWebViewAction(state.value.id, { type: "login-input", loginInput: input }));
 }
 
 function navigate() {
@@ -671,7 +678,7 @@ watch(() => state.value?.id, (id) => {
   releaseBrowserSurface?.();
   releaseBrowserSurface = id ? registerBrowserSurface(id, () => surface.value,
     () => componentActive && props.active && !props.preview && !preloading.value
-      && Boolean(state.value && !state.value.closedReason && !state.value.certificateError)) : null;
+      && Boolean(state.value && !state.value.closedReason && !state.value.certificateError && !state.value.protectedLogin)) : null;
 }, { flush: "post" });
 
 watch(
@@ -815,7 +822,7 @@ onBeforeUnmount(() => {
               <span class="web-page-menu__rule" aria-hidden="true"></span>
               <button type="button" class="web-page-menu__immersive" :aria-label="focused ? $t('退出沉浸模式') : $t('进入沉浸模式')" :title="focused ? $t('退出沉浸模式') : $t('进入沉浸模式')" @click="toggleImmersiveFromMenu"><Minimize2 v-if="focused" :size="15" /><Maximize2 v-else :size="15" /></button>
             </div>
-            <button type="button" class="web-page-menu__item" :disabled="!state" @click="refillFromMenu"><KeyRound :size="15" />{{ $t('重新填充账号密码') }}</button>
+            <button type="button" class="web-page-menu__item" :disabled="!state" @click="refillFromMenu"><KeyRound :size="15" />{{ $t('后台登录') }}</button>
             <button type="button" class="web-page-menu__item" :disabled="!state || resetting" @click="reloginFromMenu"><RotateCcw :size="15" />{{ $t('重新登录') }}</button>
             <p class="web-page-menu__status">
               <ShieldAlert v-if="state?.certificateError" :size="14" />
@@ -841,6 +848,7 @@ onBeforeUnmount(() => {
         <span>{{ startError || $t('请先确认 Viron 的安全存储说明；操作系统可能继续请求安全存储授权') }}</span>
         <button v-if="startError" type="button" @click="startError = ''; start()">{{ $t('重新连接') }}</button>
       </div>
+      <ProtectedWebLogin v-else-if="state.protectedLogin" :state="state.protectedLogin" :send="sendLoginInput" @retry="runAction('refill')" />
       <div v-else-if="state.certificateError" class="web-browser-loading is-certificate-error">
         <div class="web-browser-certificate-icon"><ShieldAlert :size="28" /></div>
         <strong>{{ $t('您的连接不是私密连接') }}</strong>

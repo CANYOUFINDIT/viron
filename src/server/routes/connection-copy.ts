@@ -33,7 +33,7 @@ type ResourceKind = "environment_group" | "environment" | "ssh_connection" | "da
 
 interface EnvironmentGroupRow { id: string; name: string; description: string; color: string; sort_order: number }
 interface EnvironmentRow { id: string; group_id: string | null; name: string; short_name: string; description: string; status: string; owner: string; tags_json: string }
-interface WebEntryRow { id: string; environment_id: string; name: string; url: string; description: string; tags_json: string; sort_order: number }
+interface WebEntryRow { id: string; environment_id: string; name: string; url: string; description: string; tags_json: string; login_config_json: string | null; sort_order: number }
 interface WebCredentialRow { id: string; web_entry_id: string; username: string; password_ciphertext: string; note: string; custom_fields_json: string; sort_order: number }
 interface SshRow {
   id: string; environment_id: string | null; connection_group_id: string | null; name: string; host: string; port: number; username: string;
@@ -103,7 +103,7 @@ async function loadSource(app: FastifyInstance, userId: string): Promise<CopySou
   const [groups, environments, webEntries, webCredentials, sshConnections, sshKeys, databaseConnections, logs, connectionGroups, sshLinks, databaseLinks] = await Promise.all([
     app.db.prepare("SELECT id, name, description, color, sort_order FROM environment_groups WHERE workspace_type = ? AND workspace_id = ? ORDER BY sort_order, name").all<EnvironmentGroupRow>(...workspace),
     app.db.prepare("SELECT id, group_id, name, short_name, description, status, owner, tags_json FROM environments WHERE workspace_type = ? AND workspace_id = ? ORDER BY name").all<EnvironmentRow>(...workspace),
-    app.db.prepare(`SELECT w.id, w.environment_id, w.name, w.url, w.description, w.tags_json, w.sort_order FROM web_entries w JOIN environments e ON e.id = w.environment_id WHERE e.workspace_type = ? AND e.workspace_id = ? ORDER BY w.sort_order, w.name`).all<WebEntryRow>(...workspace),
+    app.db.prepare(`SELECT w.id, w.environment_id, w.name, w.url, w.description, w.tags_json, w.login_config_json, w.sort_order FROM web_entries w JOIN environments e ON e.id = w.environment_id WHERE e.workspace_type = ? AND e.workspace_id = ? ORDER BY w.sort_order, w.name`).all<WebEntryRow>(...workspace),
     app.db.prepare(`SELECT c.id, c.web_entry_id, c.username, c.password_ciphertext, c.note, c.custom_fields_json, c.sort_order FROM web_credentials c JOIN web_entries w ON w.id = c.web_entry_id JOIN environments e ON e.id = w.environment_id WHERE e.workspace_type = ? AND e.workspace_id = ? ORDER BY c.sort_order, c.username`).all<WebCredentialRow>(...workspace),
     app.db.prepare("SELECT id, environment_id, connection_group_id, name, host, port, username, auth_type, ssh_key_id, credential_ciphertext, jump_connection_id, options_json, tags_json, sort_order FROM ssh_connections WHERE workspace_type = ? AND workspace_id = ? ORDER BY name").all<SshRow>(...workspace),
     app.db.prepare("SELECT id, name, algorithm, public_key, fingerprint, private_key_ciphertext FROM ssh_keys WHERE workspace_type = ? AND workspace_id = ? ORDER BY name").all<SshKeyRow>(...workspace),
@@ -394,8 +394,8 @@ async function executeCopy(
         if (target?.environment_id !== environmentId) throw new Error(`Web 入口 ${row.name} 的复用目标不在对应环境中`);
         continue;
       }
-      await app.db.prepare(`INSERT INTO web_entries (id, environment_id, name, url, description, tags_json, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(targetId, environmentId, row.name, row.url, row.description, row.tags_json, row.sort_order, now, now);
+      await app.db.prepare(`INSERT INTO web_entries (id, environment_id, name, url, description, tags_json, login_config_json, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(targetId, environmentId, row.name, row.url, row.description, row.tags_json, row.login_config_json || "{}", row.sort_order, now, now);
     }
 
     for (const sourceId of plan.selection.webCredentialIds) {

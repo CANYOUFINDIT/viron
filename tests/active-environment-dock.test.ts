@@ -359,7 +359,7 @@ describe("active environment picture-in-picture", () => {
     expect(desktopWebRuntime).toContain("captureDesktopRendererPreview");
     expect(desktopCoreIpc).toContain('ipcMain.handle("viron:renderer-preview:capture"');
     expect(desktopStaticOverlaySmoke).toContain("webContents.capturePage()");
-    expect(desktopWebRuntime).toContain("if (!view.visible) return");
+    expect(desktopWebRuntime).toContain("if (!view.visible || view.login) return");
     expect(desktopWebRuntime).toContain(".toJPEG(72)");
     expect(desktopWebRuntime).not.toContain("x: -16_384");
     expect(desktopWebRuntime).toContain("layoutDesktopWebViewPages");
