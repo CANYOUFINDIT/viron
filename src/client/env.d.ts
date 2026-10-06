@@ -115,6 +115,8 @@ interface Window {
     revealDatabaseQuery(input: { id: string; name: string; sql: string }): Promise<{ revealed: true; filePath: string }>;
     revealDatabaseBackup(input: { id: string; path: string; filename: string }): Promise<{ revealed: true; filePath: string }>;
     openWebView(input: { credentialId: string; bounds: import("./desktop").DesktopWebViewBounds; initialPage?: import("./desktop").DesktopWebInitialPage; originEnvironmentId?: string }): Promise<import("./desktop").DesktopWebViewState>;
+    attachBrowserGuest(token: string, contentsId: number): Promise<void>;
+    onBrowserHostMessage(listener: (message: import("../shared/browser-host").BrowserHostMessage) => void): () => void;
     updateWebViewBounds(id: string, bounds: import("./desktop").DesktopWebViewBounds): Promise<import("./desktop").DesktopWebViewState>;
     syncWebViewBounds(id: string, bounds: import("./desktop").DesktopWebViewBounds): void;
     setWebViewVisible(id: string, visible: boolean): Promise<import("./desktop").DesktopWebViewState>;

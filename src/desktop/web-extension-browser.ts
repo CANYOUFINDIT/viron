@@ -8,10 +8,10 @@ interface TabHost {
   windowId: number;
   bounds?: () => { width: number; height: number };
   select: () => void;
-  remove: () => void;
+  remove: () => void | Promise<void>;
 }
 interface BrowserHost {
-  create: (url: string, active: boolean) => WebContents;
+  create: (url: string, active: boolean) => WebContents | Promise<WebContents>;
 }
 const browsers = new WeakMap<Session, BrowserHost>();
 const tabs = new WeakMap<Session, Map<number, { contents: WebContents; host: TabHost }>>();
@@ -141,7 +141,7 @@ async function browserOperation(partition: Session, origin: string, operation: s
   if (operation === "tabs.create") {
     const browser = browsers.get(partition);
     if (!browser) throw new Error("No browser is open in this environment");
-    const tab = browser.create(allowedUrl(id, input.url), input.active !== false);
+    const tab = await browser.create(allowedUrl(id, input.url), input.active !== false);
     return tabDetails(partition, tab.id);
   }
   if (operation === "tabs.update") {
@@ -159,7 +159,7 @@ async function browserOperation(partition: Session, origin: string, operation: s
     for (const tabId of ids) {
       const tab = entries.get(Number(tabId));
       if (!tab) throw new Error("Tab is not in this environment");
-      tab.host.remove();
+      await tab.host.remove();
     }
     return;
   }

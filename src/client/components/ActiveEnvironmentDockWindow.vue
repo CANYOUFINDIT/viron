@@ -5,13 +5,10 @@ import { useRoute, useRouter } from "vue-router";
 import {
   activeEnvironmentDockCardSize,
   activeEnvironmentDockEnvironments,
-  activeEnvironmentDockLayoutSnapshot,
   activeEnvironmentDockPanelSize,
-  activeEnvironmentDockStateSnapshot,
   activeEnvironmentDockVisibleEnvironments,
   clampActiveEnvironmentDockPosition,
   snapActiveEnvironmentDockPosition,
-  type ActiveEnvironmentDockAction,
   type ActiveEnvironmentDockPosition,
   type ActiveEnvironmentDockState,
 } from "../../shared/active-environment-dock";
@@ -20,9 +17,6 @@ import { rememberedActiveConnectionOrigin } from "../active-connection-origin";
 import { activeConnections, closeActiveConnections, loadActiveConnections } from "../active-connections";
 import {
   isDesktopApp,
-  onDesktopActiveEnvironmentDockAction,
-  updateDesktopActiveEnvironmentDock,
-  updateDesktopActiveEnvironmentDockLayout,
 } from "../desktop";
 import {
   environmentWorkspaceConnectionVisible,
@@ -56,8 +50,6 @@ const closingEnvironmentIds = ref<string[]>([]);
 const viewport = ref({ width: window.innerWidth, height: window.innerHeight });
 const position = ref<ActiveEnvironmentDockPosition>({ x: 16, y: 16 });
 let dragState: DragState | null = null;
-let removeDesktopActionListener: (() => void) | undefined;
-let pendingFullPublish = false;
 
 const rememberedEnvironmentIds = computed(() => Object.fromEntries(
   activeConnections.items.flatMap((item) => {
@@ -134,34 +126,6 @@ function storedPosition(): ActiveEnvironmentDockPosition {
 
 function persistPosition(): void {
   localStorage.setItem(positionStorageKey, JSON.stringify(position.value));
-}
-
-async function publish(): Promise<void> {
-  if (!desktop) return;
-  if (dragging.value) {
-    pendingFullPublish = true;
-    return;
-  }
-  pendingFullPublish = false;
-  try {
-    await updateDesktopActiveEnvironmentDock(activeEnvironmentDockStateSnapshot(state.value));
-  } catch (error) {
-    console.error("[Viron] Failed to publish active environment picture-in-picture state", error);
-  }
-}
-
-async function publishLayout(): Promise<void> {
-  if (!desktop || !state.value) return;
-  try {
-    await updateDesktopActiveEnvironmentDockLayout(activeEnvironmentDockLayoutSnapshot(state.value));
-  } catch (error) {
-    console.error("[Viron] Failed to publish active environment picture-in-picture layout", error);
-  }
-}
-
-function resumePendingPublish(): void {
-  if (!pendingFullPublish) return;
-  window.requestAnimationFrame(() => { void publish(); });
 }
 
 function setExpanded(value: boolean): void {
@@ -289,35 +253,6 @@ function webPointerCancel(event: PointerEvent): void {
   if (finishDrag()) suppressClickAfterDrag();
 }
 
-function desktopAction(action: ActiveEnvironmentDockAction): void {
-  if (action.type === "expand") return setExpanded(true);
-  if (action.type === "collapse") return setExpanded(false);
-  if (action.type === "toggle") return setExpanded(!expanded.value);
-  if (action.type === "open-environment") return void openEnvironment(action.environmentId, action.origin);
-  if (action.type === "close-environment") return void closeEnvironment(action.environmentId);
-  if (action.type === "position") {
-    dragState = null;
-    position.value = snapActiveEnvironmentDockPosition({ x: action.x, y: action.y }, viewport.value, expanded.value, environments.value);
-    dragging.value = false;
-    persistPosition();
-    resumePendingPublish();
-    return;
-  }
-  if (action.type === "drag-start" || action.type === "drag-move" || action.type === "drag-end") {
-    const cursor = { x: action.screenX, y: action.screenY };
-    if (action.type === "drag-start") {
-      beginDrag(cursor);
-      pendingFullPublish = true;
-      dragging.value = true;
-    }
-    else if (action.type === "drag-move") moveDrag(cursor);
-    else {
-      finishDrag();
-      resumePendingPublish();
-    }
-  }
-}
-
 function resize(): void {
   viewport.value = { width: window.innerWidth, height: window.innerHeight };
   position.value = clampActiveEnvironmentDockPosition(position.value, viewport.value, expanded.value, environments.value);
@@ -325,45 +260,29 @@ function resize(): void {
 }
 
 function outsidePointerDown(event: PointerEvent): void {
-  if (desktop || !expanded.value || event.target instanceof Element && event.target.closest("[data-active-environment-dock]")) return;
+  if (!expanded.value || event.target instanceof Element && event.target.closest("[data-active-environment-dock]")) return;
   setExpanded(false);
 }
 
-watch([visible, environments, () => theme.value, () => language.value], () => { void publish(); }, { deep: true });
-watch([
-  () => state.value?.bounds.x,
-  () => state.value?.bounds.y,
-  () => state.value?.bounds.width,
-  () => state.value?.bounds.height,
-  () => state.value?.card.width,
-  () => state.value?.card.height,
-  () => state.value?.expanded,
-  () => state.value?.growUp,
-  () => state.value?.dragging,
-], () => { void publishLayout(); });
 watch(visible, (value) => { if (!value) expanded.value = false; });
 
 onMounted(() => {
   position.value = clampActiveEnvironmentDockPosition(storedPosition(), viewport.value, false, environments.value);
   growUp.value = position.value.y > viewport.value.height / 2;
-  removeDesktopActionListener = onDesktopActiveEnvironmentDockAction(desktopAction);
   window.addEventListener("resize", resize);
   document.addEventListener("pointerdown", outsidePointerDown, true);
   void loadActiveConnections().catch(() => undefined);
-  void publish();
 });
 
 onBeforeUnmount(() => {
-  removeDesktopActionListener?.();
   window.removeEventListener("resize", resize);
   document.removeEventListener("pointerdown", outsidePointerDown, true);
-  if (desktop) void updateDesktopActiveEnvironmentDock(null);
 });
 </script>
 
 <template>
   <ActiveEnvironmentDockCard
-    v-if="!desktop && state"
+    v-if="state"
     class="active-environment-pip-web"
     :style="{ left: `${state.bounds.x}px`, top: `${state.bounds.y}px` }"
     :state="state"
@@ -380,5 +299,5 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.active-environment-pip-web { position: fixed; z-index: 2580; }
+.active-environment-pip-web { position: fixed; z-index: 125; }
 </style>

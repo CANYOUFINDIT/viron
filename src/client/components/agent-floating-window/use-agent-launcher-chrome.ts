@@ -182,7 +182,7 @@ export function useAgentLauncherChrome(ctx: AgentFloatingContext) {
   }
 
   function syncDesktopLauncherOverlay() {
-      if (!desktop)
+      if (!desktop || !overlayRuntime)
           return;
       if (!floatingVisible.value) {
           void updateDesktopAgentLauncher(null);
@@ -246,6 +246,7 @@ export function useAgentLauncherChrome(ctx: AgentFloatingContext) {
           return;
       $chat.quickComposerVisible.value = false;
       $chat.collapseQuickHistoryStack();
+      open.value = false;
   }
 
   function handlePointerOutside() {
@@ -292,7 +293,7 @@ export function useAgentLauncherChrome(ctx: AgentFloatingContext) {
     watch([floatingVisible, open, $chat.running, dragging, edgeCollapsed, snappedEdge, buttonPosition, viewport], syncDesktopLauncherOverlay, { immediate: true });
 
     watch(chromeVisible, (value) => {
-        if (!desktop)
+        if (!desktop || !overlayRuntime)
             return;
         if (!value)
             syncIgnoreMouse(true);
@@ -354,4 +355,3 @@ export function useAgentLauncherChrome(ctx: AgentFloatingContext) {
     startAgentLauncherChromeWatchers,
   };
 }
-

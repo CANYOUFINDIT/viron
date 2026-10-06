@@ -142,6 +142,12 @@ contextBridge.exposeInMainWorld("vironDesktop", {
   revealDatabaseQuery: (input: unknown) => ipcRenderer.invoke("viron:database-artifact:reveal-query", input),
   revealDatabaseBackup: (input: unknown) => ipcRenderer.invoke("viron:database-artifact:reveal-backup", input),
   openWebView: (input: unknown) => ipcRenderer.invoke("viron:web-view:open", input),
+  attachBrowserGuest: (token: string, contentsId: number) => ipcRenderer.invoke("viron:browser-host:attached", token, contentsId),
+  onBrowserHostMessage: (listener: (message: unknown) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, message: unknown) => listener(message);
+    ipcRenderer.on("viron:browser-host", handler);
+    return () => ipcRenderer.removeListener("viron:browser-host", handler);
+  },
   updateWebViewBounds: (id: string, bounds: unknown) => ipcRenderer.invoke("viron:web-view:bounds", id, bounds),
   syncWebViewBounds: (id: string, bounds: unknown) => {
     const result = ipcRenderer.sendSync("viron:web-view:bounds-sync", id, bounds) as { error: string } | null;

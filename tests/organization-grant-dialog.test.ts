@@ -6,7 +6,7 @@ vi.mock("../src/client/api", () => ({
 }));
 import { flushPromises, mount } from "@vue/test-utils";
 import ElementPlus from "element-plus";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ref } from "vue";
 import { api } from "../src/client/api";
 import OrganizationGrantDialog from "../src/client/views/organization/OrganizationGrantDialog.vue";
@@ -45,7 +45,12 @@ function mountDialog(resources: Array<{ id: string; type: "environment_group" | 
 }
 
 describe("organization grant dialog", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-04T00:00:00Z"));
+  });
   afterEach(() => {
+    vi.useRealTimers();
     document.body.innerHTML = "";
     vi.mocked(api).mockImplementation(async () => ({}));
   });

@@ -70,6 +70,7 @@ import {
   registerDomOverlayWindow,
 } from "./overlays/dom-overlay-windows.js";
 import { createDomOverlayView } from "./overlays/sidebar-overlay-view.js";
+import { configureBrowserGuestHost } from "./browser-guest-host.js";
 import { raiseNativeOverlayWindows } from "./overlays/native-window-stack.js";
 import {
   sendToAgentChat,
@@ -352,12 +353,14 @@ async function createWindow(): Promise<void> {
     }),
     webPreferences: {
       preload,
+      webviewTag: true,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
     },
   }));
+  configureBrowserGuestHost(createdMainWindow.webContents);
   createdMainWindow.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   createdMainWindow.webContents.setWindowOpenHandler(({ url, frameName }) => {
     if (!isDomOverlayRequest(url, frameName)) return { action: "deny" };
@@ -529,7 +532,7 @@ async function createWindow(): Promise<void> {
       process.stdout.write(`VIRON_DESKTOP_SMOKE ${JSON.stringify(smokeResult)}\n`);
       desktopSmokeStage("complete");
       const endpointPassed = endpointValidated === null || (endpointValidated && apiStatus === 200);
-      const localWebPassed = localWeb === null || (localWeb.opened && localWeb.resetCleared && localWeb.uploadSelected !== false && localWeb.downloadTriggered);
+      const localWebPassed = localWeb === null || (localWeb.opened && localWeb.blankOpenedWithoutEntry && localWeb.popupPreservesOpener && localWeb.resetCleared && localWeb.uploadSelected !== false && localWeb.downloadTriggered);
       const localSshPassed = localSsh === null || (localSsh.opened && localSsh.textInputEchoed && localSsh.binaryInputEchoed && localSsh.resized && localSsh.agentContextRead && localSsh.recordingCompleted);
       const localLogsPassed = localLogs === null || (localLogs.opened && localLogs.outputReceived && localLogs.stopped);
       const localDatabasePassed = localDatabase === null || (localDatabase.tested && localDatabase.queried && localDatabase.cancelled);
@@ -563,7 +566,7 @@ async function createWindow(): Promise<void> {
         && activeEnvironmentDock.dragPositionDelivered && activeEnvironmentDock.closeActionDelivered && activeEnvironmentDock.closeStateRemoved
         && activeEnvironmentDock.webViewStayedVisible && activeEnvironmentDock.nativeAboveWebView
         && activeEnvironmentDock.actionDelivered && activeEnvironmentDock.hidden;
-      app.exit(result.loginVisible && result.endpointVisible && endpointPassed && localWebPassed && localSshPassed && localLogsPassed && localDatabasePassed && localInspectionPassed && immersiveNavigationPassed && agentLauncherPassed && connectionQualityPassed && activeEnvironmentDockPassed && domOverlay.nodeAdopted && domOverlay.childAboveWeb && domOverlay.mainWindowStayedFocused && domOverlay.pointerDelivered && domOverlay.webStayedLive && domOverlay.cleanup && domOverlayManager.sidebarPortaled && domOverlayManager.sidebarFullWidth && domOverlayManager.sidebarAnimationStable && domOverlayManager.sidebarPinRestored && domOverlayManager.sidebarPassiveInteraction && domOverlayManager.sidebarNativeAutoCollapse && domOverlayManager.popoverPortaled && domOverlayManager.elementPopoverPortaled && domOverlayManager.elementPopoverArrowAligned && domOverlayManager.popoverSameWindow && domOverlayManager.popoverFocusStable && domOverlayManager.outsideDismissed && domOverlayManager.vueEventsPreserved && domOverlayManager.webStayedLive && domOverlayManager.restored ? 0 : 1);
+      app.exit(result.loginVisible && result.endpointVisible && endpointPassed && localWebPassed && localSshPassed && localLogsPassed && localDatabasePassed && localInspectionPassed && immersiveNavigationPassed && agentLauncherPassed && connectionQualityPassed && activeEnvironmentDockPassed && domOverlay.nodeAdopted && domOverlay.childAboveWeb && domOverlay.mainWindowStayedFocused && domOverlay.pointerDelivered && domOverlay.webStayedLive && domOverlay.cleanup && Object.values(domOverlayManager).every(Boolean) ? 0 : 1);
     } catch (error) {
       process.stderr.write(`VIRON_DESKTOP_SMOKE_FAILED ${error instanceof Error ? error.message : String(error)}\n`);
       app.exit(1);

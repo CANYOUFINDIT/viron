@@ -7,6 +7,10 @@ import { router } from "./router";
 import "./styles/base.css";
 import "../../tokens.css";
 import "./theme";
+import { installBrowserPointerBridge } from "./native-dom-overlays";
+import { installBrowserGuestHost } from "./browser-guest-host";
 
+installBrowserGuestHost();
+installBrowserPointerBridge();
 void syncDesktopLanguage().catch((error) => console.error("[Viron] Failed to synchronize desktop language", error));
 createApp(App).use(router).use(ElementPlus).use(i18nPlugin).mount("#app");

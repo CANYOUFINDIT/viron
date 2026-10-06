@@ -184,13 +184,13 @@ export function webViewState(view: ManagedDesktopWebView): DesktopWebViewState {
     id: view.id,
     credentialId: view.credentialId,
     activePageId: active.id,
-    pages: [...view.pages.values()].map((page) => ({
+    pages: [...view.pages.values()].filter((page) => page.view.kind === "guest").map((page) => ({
       id: page.id,
-      url: page.pendingUrl || page.view.webContents.getURL() || (page.allowAutofill ? view.entryUrl : "about:blank"),
+      url: page.pendingUrl || page.loadingUrl || page.view.webContents.getURL() || (page.allowAutofill ? view.entryUrl : "about:blank"),
       title: page.view.webContents.getTitle() || (page.allowAutofill ? view.username : tr("新页面")),
       loading: page.view.webContents.isLoading(),
     })),
-    url: active.pendingUrl || active.view.webContents.getURL() || (active.allowAutofill ? view.entryUrl : "about:blank"),
+    url: active.pendingUrl || active.loadingUrl || active.view.webContents.getURL() || (active.allowAutofill ? view.entryUrl : "about:blank"),
     title: active.view.webContents.getTitle() || (active.allowAutofill ? view.username : tr("新页面")),
     faviconDataUrl: active.faviconDataUrl,
     loading: active.view.webContents.isLoading(),

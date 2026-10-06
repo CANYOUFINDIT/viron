@@ -52,6 +52,7 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
   sessionStatePersisted: boolean;
   lastLocationRestored: boolean;
   tabsReordered: boolean;
+  popupPreservesOpener: boolean;
   inspectorOpened: boolean;
   resetCleared: boolean;
   extensionInjected: boolean;
@@ -70,7 +71,7 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
     && blankState.activePageId === blankState.pages[1]?.id
     && blankState.url === "about:blank"
     && deferredEntryPage?.pendingUrl === blankView.entryUrl
-    && deferredEntryPage.view.webContents.getURL() === "";
+    && deferredEntryPage.view.webContents.getURL() === "about:blank";
   const blankTarget = new URL(blankView.entryUrl);
   await handleDesktopWebViewAction(blankState.id, { type: "navigate", url: `${blankTarget.host}/upload` });
   await waitForDesktopWebTitle(blankView, "Upload fixture");
@@ -101,6 +102,22 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
   await waitForDesktopWebTitle(managed, "Upload fixture");
   const lastLocationRestored = activeDesktopWebPage(managed).view.webContents.getURL() === `${managed.entryOrigin}/upload`;
   const sessionStatePersisted = await activeDesktopWebPage(managed).view.webContents.executeJavaScript(`localStorage.getItem("viron-persist-smoke") === "present"`) as boolean;
+  const popupDocumentPreserved = await activeDesktopWebPage(managed).view.webContents.executeJavaScript(`(() => {
+    const child = window.open("about:blank", "viron-popup-smoke");
+    if (!child) return false;
+    child.document.write("<title>Popup fixture</title><p id='result'>Original popup document</p>");
+    child.document.close();
+    const preserved = child.opener === window && child.document.getElementById("result").textContent === "Original popup document";
+    window.__vironSmokePopup = child;
+    return preserved;
+  })()`, true) as boolean;
+  const popupPage = [...managed.pages.values()].find((page) => page.view.kind === "window");
+  const reorderedWithPopup = await handleDesktopWebViewAction(managed.id, {
+    type: "reorder-pages", orderedPageIds: managedState.pages.map((page) => page.id),
+  });
+  const popupPreservesOpener = popupDocumentPreserved && popupPage?.view.webContents.session === managed.partition
+    && reorderedWithPopup.pages.length === managedState.pages.length;
+  await activeDesktopWebPage(managed).view.webContents.executeJavaScript("window.__vironSmokePopup?.close();delete window.__vironSmokePopup");
   const extensionAfterReopen = await extensionMarkerLoaded(managed);
   const initialPage = activeDesktopWebPage(managed).view.webContents;
   const devToolsOpened = initialPage.isDevToolsOpened()
@@ -277,5 +294,5 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
     const error = await activeDesktopWebPage(managed).view.webContents.executeJavaScript('document.documentElement.dataset.vironExtensionError') as string | undefined;
     console.log("VIRON_EXTENSION_MARKER", JSON.stringify({ extensionLoaded, extensionOnFirstPage, extensionAfterReopen, extensionAfterReset, error }));
   }
-  return { opened: true, blankOpenedWithoutEntry: blankOpenedWithoutEntry && shorthandAddressLoaded && defaultAddressPreserved, manualRefillOnCurrentPage, sessionStatePersisted, lastLocationRestored, tabsReordered, inspectorOpened: true, resetCleared, extensionInjected: extensionLoaded && extensionOnFirstPage && extensionAfterReopen && extensionAfterReset, extensionManaged, extensionGlobal, uploadSelected, downloadTriggered: true };
+  return { opened: true, blankOpenedWithoutEntry: blankOpenedWithoutEntry && shorthandAddressLoaded && defaultAddressPreserved, manualRefillOnCurrentPage, sessionStatePersisted, lastLocationRestored, tabsReordered, popupPreservesOpener, inspectorOpened: true, resetCleared, extensionInjected: extensionLoaded && extensionOnFirstPage && extensionAfterReopen && extensionAfterReset, extensionManaged, extensionGlobal, uploadSelected, downloadTriggered: true };
 }

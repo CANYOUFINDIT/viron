@@ -985,7 +985,7 @@ onBeforeUnmount(() => {
   <div v-loading="loading" class="environment-workspace" :class="{ 'is-focused-web-workspace': focusedWebView, 'is-immersive-workspace': environmentImmersive, 'is-preview-workspace': preview }">
     <EnvironmentImmersiveNavigation
       v-if="environment && environmentImmersive"
-      :native="desktop"
+      :native="false"
       :environment-name="environment.name"
       :active-tab="activeTab"
       :selected-entry-id="selectedEntryId"

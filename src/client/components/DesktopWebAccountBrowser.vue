@@ -31,8 +31,7 @@ import {
   type DesktopWebExtensionInfo,
   type DesktopChromeExtensionInfo,
 } from "../desktop";
-import { releaseAgentNativeOverlay, retainAgentNativeOverlay } from "../agent-host";
-import { registerNativeWebSurface, scheduleNativeDomOverlays } from "../native-dom-overlays";
+import { registerBrowserSurface, updateBrowserGuestLayout } from "../browser-guest-host";
 import { pageZoomIndex, pageZoomLabel, pageZoomWheelShouldHandle, PAGE_ZOOM_FACTORS, reducePageZoomWheel } from "../../shared/page-zoom";
 import { normalizeWebAddress } from "../../shared/web-address";
 import { historyNavigationFromMouseButton } from "../../shared/history-navigation-gesture";
@@ -96,7 +95,7 @@ const pageMenuStatus = computed(() => {
   return state.value?.autofillMessage || tr("页面由当前电脑本机直接访问");
 });
 let resizeObserver: ResizeObserver | null = null;
-let releaseNativeWebSurface: (() => void) | null = null;
+let releaseBrowserSurface: (() => void) | null = null;
 let stopStateListener: (() => void) | null = null;
 let stopExtensionListener: (() => void) | null = null;
 let boundsFrame: number | undefined;
@@ -106,7 +105,6 @@ let closed = false;
 let lastNoticeId = "";
 let lastPageError = "";
 let lastFaviconDataUrl = "";
-let nativeOverlayHeld = false;
 let pendingNewPage = false;
 let previewTimer: number | undefined;
 let previewSyncSequence = 0;
@@ -147,7 +145,7 @@ function syncScrollBounds() {
   if (props.preview || !props.active || !componentActive || !state.value || state.value.closedReason) return;
   const bounds = surfaceBounds();
   if (bounds) updateNativeBounds(state.value.id, bounds, true);
-  scheduleNativeDomOverlays();
+  updateBrowserGuestLayout();
 }
 
 function applyState(next: DesktopWebViewState) {
@@ -167,6 +165,9 @@ function applyState(next: DesktopWebViewState) {
     lastFaviconDataUrl = next.faviconDataUrl;
     emit("faviconChange", next.faviconDataUrl);
   }
+  // A certificate warning can clear without changing the page or its bounds.
+  // Re-evaluate guest visibility after Vue updates the host surface.
+  void nextTick(updateBrowserGuestLayout);
 }
 
 function scheduleBounds() {
@@ -176,36 +177,26 @@ function scheduleBounds() {
     boundsFrame = undefined;
     const bounds = surfaceBounds();
     if (state.value && bounds) updateNativeBounds(state.value.id, bounds);
-    scheduleNativeDomOverlays();
+    updateBrowserGuestLayout();
   });
-}
-
-function syncNativeOverlay(needed: boolean) {
-  if (needed === nativeOverlayHeld) return;
-  nativeOverlayHeld = needed;
-  if (needed) retainAgentNativeOverlay();
-  else releaseAgentNativeOverlay();
 }
 
 function syncVisibility() {
   if (!state.value || state.value.closedReason) {
-    syncNativeOverlay(false);
-    scheduleNativeDomOverlays();
+    updateBrowserGuestLayout();
     return;
   }
   if (props.preview) {
     window.clearTimeout(previewTimer);
-    syncNativeOverlay(false);
     void setDesktopWebViewVisible(state.value.id, false).then(applyState).catch(() => undefined);
-    scheduleNativeDomOverlays();
+    updateBrowserGuestLayout();
     return;
   }
   const bounds = surfaceBounds();
   const canShow = componentActive && props.active && !preloading.value && Boolean(bounds);
   const visible = canShow;
-  syncNativeOverlay(visible);
   if (visible && bounds) updateNativeBounds(state.value.id, bounds);
-  scheduleNativeDomOverlays();
+  updateBrowserGuestLayout();
   void setDesktopWebViewVisible(state.value.id, visible).then((next) => {
     applyState(next);
     if (visible) schedulePreviewCapture(120);
@@ -652,8 +643,6 @@ onMounted(() => {
   });
   resizeObserver = new ResizeObserver(scheduleBounds);
   if (surface.value) resizeObserver.observe(surface.value);
-  releaseNativeWebSurface = registerNativeWebSurface(() => surface.value,
-    () => componentActive && props.active && !props.preview && !preloading.value && Boolean(state.value && !state.value.closedReason));
   window.addEventListener("resize", syncVisibility);
   window.addEventListener("scroll", syncScrollBounds, true);
   document.addEventListener("visibilitychange", syncPreviewMode);
@@ -668,8 +657,7 @@ onActivated(() => {
 onDeactivated(() => {
   componentActive = false;
   extensionsOpen.value = false;
-  scheduleNativeDomOverlays();
-  syncNativeOverlay(false);
+  updateBrowserGuestLayout();
   if (boundsFrame) {
     window.cancelAnimationFrame(boundsFrame);
     boundsFrame = undefined;
@@ -678,6 +666,13 @@ onDeactivated(() => {
     void setDesktopWebViewVisible(state.value.id, false).then(applyState).catch(() => undefined);
   }
 });
+
+watch(() => state.value?.id, (id) => {
+  releaseBrowserSurface?.();
+  releaseBrowserSurface = id ? registerBrowserSurface(id, () => surface.value,
+    () => componentActive && props.active && !props.preview && !preloading.value
+      && Boolean(state.value && !state.value.closedReason && !state.value.certificateError)) : null;
+}, { flush: "post" });
 
 watch(
   () => props.entryUrl,
@@ -705,11 +700,10 @@ onBeforeUnmount(() => {
   closed = true;
   extensionsOpen.value = false;
   pageMenuOpen.value = false;
-  syncNativeOverlay(false);
   if (boundsFrame) window.cancelAnimationFrame(boundsFrame);
   window.clearTimeout(previewTimer);
   resizeObserver?.disconnect();
-  releaseNativeWebSurface?.();
+  releaseBrowserSurface?.();
   stopStateListener?.();
   stopExtensionListener?.();
   removeNativeViewPointerDownListener?.();

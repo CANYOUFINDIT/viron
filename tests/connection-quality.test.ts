@@ -79,7 +79,7 @@ describe("connection quality monitor", () => {
     });
   });
 
-  it("renders through native visual and interaction windows above embedded Web views", () => {
+  it("renders the card in the host document above browser guests", () => {
     const overlay = readFileSync(new URL("../src/client/components/ConnectionQualityOverlay.vue", import.meta.url), "utf8");
     const controller = readFileSync(new URL("../src/client/components/ConnectionQualityWindow.vue", import.meta.url), "utf8");
     const card = readFileSync(new URL("../src/client/components/ConnectionQualityCard.vue", import.meta.url), "utf8");
@@ -87,7 +87,8 @@ describe("connection quality monitor", () => {
     const desktopSmoke = readFileSync(new URL("../src/desktop/smoke/static-overlay-smoke.ts", import.meta.url), "utf8");
     // contract unchanged; implementation moved from src/desktop/main.ts
     const desktopOverlay = readFileSync(new URL("../src/desktop/overlays/connection-quality-window.ts", import.meta.url), "utf8");
-    expect(controller).toContain("updateDesktopConnectionQuality");
+    expect(controller).not.toContain("updateDesktopConnectionQuality");
+    expect(controller).toContain('v-if="overlayState"');
     expect(overlay).toContain("state.interactionLayer");
     expect(overlay).toContain("opacity: 0;");
     expect(desktopOverlay).toContain("connectionQualityVisualWindow");

@@ -42,6 +42,7 @@ import { useAgentSessions } from "./agent-floating-window/use-agent-sessions";
 import { useAgentSuggestions } from "./agent-floating-window/use-agent-suggestions";
 import { useAgentChat } from "./agent-floating-window/use-agent-chat";
 import { useAgentLauncherChrome } from "./agent-floating-window/use-agent-launcher-chrome";
+import AgentLauncherControl from "./AgentLauncherControl.vue";
 
 const agentFloatingContext = createAgentFloatingContext();
 const agentSessions = useAgentSessions(agentFloatingContext);
@@ -228,7 +229,7 @@ onMounted(() => {
   removeHostStateListener = onDesktopAgentHostState((state) => applyAgentHostState(state));
   removePointerOutsideListener = onDesktopAgentChatPointerOutside(handlePointerOutside);
   document.addEventListener("pointerdown", handleDocumentPointerDown);
-  window.addEventListener("mousemove", handleOverlayMouseMove);
+  if (overlayRuntime) window.addEventListener("mousemove", handleOverlayMouseMove);
   window.addEventListener("resize", handleViewportResize);
   handleViewportResize();
   void getDesktopAgentHost().then((state) => {
@@ -268,6 +269,11 @@ onBeforeUnmount(() => {
       ]"
       :style="rootStyle"
     >
+      <AgentLauncherControl
+        v-if="!overlayRuntime"
+        :state="{ open, running, dragging, edgeCollapsed, snappedEdge: edgeCollapsed ? snappedEdge : null, label: floatingButtonLabel }"
+        @action="handleDesktopLauncherAction"
+      />
       <Transition name="agent-window">
       <section
         v-if="open"

@@ -15,8 +15,6 @@ import { sampleConnectionQualityTraffic } from "../connection-quality-traffic";
 import {
   desktopAppState,
   isDesktopApp,
-  onDesktopConnectionQualityAction,
-  updateDesktopConnectionQuality,
 } from "../desktop";
 import { session } from "../session";
 import { translate as tr } from "../i18n";
@@ -24,7 +22,6 @@ import {
   appendConnectionQualitySample,
   connectionQualityHealth,
   type ConnectionQualityLink,
-  type ConnectionQualityOverlayAction,
   type ConnectionQualityOverlayState,
   type ConnectionQualityProbeSample,
   type ConnectionQualitySpeedTestResult,
@@ -55,7 +52,6 @@ const targetSamples = new Map<string, ConnectionQualityProbeSample[]>();
 const viewport = ref<ConnectionQualityViewport>({ width: window.innerWidth, height: window.innerHeight });
 const position = ref<ConnectionQualityPosition>(storedPosition(viewport.value));
 const overlayState = ref<ConnectionQualityOverlayState | null>(null);
-let removeDesktopActionListener: (() => void) | undefined;
 let refreshTimer: number | undefined;
 let dragState: DragState | null = null;
 let refreshRunning = false;
@@ -147,12 +143,10 @@ function buildOverlayState(): ConnectionQualityOverlayState {
 async function publish(): Promise<void> {
   if (!visible.value) {
     overlayState.value = null;
-    if (desktop) await updateDesktopConnectionQuality(null).catch(() => undefined);
     return;
   }
   const state = buildOverlayState();
   overlayState.value = state;
-  if (desktop) await updateDesktopConnectionQuality(state).catch(() => undefined);
 }
 
 async function refreshMeasurements(): Promise<void> {
@@ -295,17 +289,6 @@ function webPointerCancel(event: PointerEvent): void {
   if (completed?.moved) suppressClickAfterDrag();
 }
 
-function desktopAction(action: ConnectionQualityOverlayAction): void {
-  if (action.type === "toggle-details") return toggleDetails();
-  if (action.type === "run-test") return void runTest();
-  if (action.type === "select-target") return selectTarget(action.targetId);
-  if (!("screenX" in action)) return;
-  const cursor = { x: action.screenX, y: action.screenY };
-  if (action.type === "drag-start") beginDrag(cursor);
-  else if (action.type === "drag-move") moveDrag(cursor);
-  else finishDrag();
-}
-
 function resize(): void {
   viewport.value = currentViewport();
   position.value = clampConnectionQualityPosition(position.value, viewport.value, expanded.value);
@@ -324,24 +307,21 @@ watch(visible, (value) => {
 watch(() => activeConnections.items, () => { if (visible.value && !refreshRunning) void publish(); }, { deep: true });
 
 onMounted(() => {
-  removeDesktopActionListener = onDesktopConnectionQualityAction(desktopAction);
   window.addEventListener("resize", resize);
   window.addEventListener("blur", finishDrag);
   void publish();
 });
 
 onBeforeUnmount(() => {
-  removeDesktopActionListener?.();
   window.removeEventListener("resize", resize);
   window.removeEventListener("blur", finishDrag);
   window.clearInterval(refreshTimer);
-  if (desktop) void updateDesktopConnectionQuality(null);
 });
 </script>
 
 <template>
   <ConnectionQualityCard
-    v-if="!desktop && overlayState"
+    v-if="overlayState"
     class="connection-quality-web-overlay"
     :style="{ left: `${position.x}px`, top: `${position.y}px` }"
     :state="overlayState"
@@ -356,7 +336,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.connection-quality-web-overlay { position: fixed; z-index: 2600; }
+.connection-quality-web-overlay { position: fixed; z-index: 126; }
 @media (max-width: 720px) {
   .connection-quality-web-overlay { transform: scale(.88); transform-origin: top right; }
 }

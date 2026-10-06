@@ -162,6 +162,8 @@ button { color: inherit; }
   transition: padding-left var(--sidebar-motion-duration) var(--sidebar-motion-easing);
 }
 .app-frame.is-desktop {
+  /* Browser guests and app chrome share the document's stacking context. */
+  isolation: auto;
   --desktop-window-header-height: 36px;
   --desktop-usable-viewport-height: calc(100dvh - var(--desktop-window-header-height));
 }

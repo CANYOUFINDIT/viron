@@ -6,7 +6,7 @@ function source(path: string): string {
 }
 
 describe("desktop web overlay continuity", () => {
-  it("keeps the live WebContentsView mounted behind toolbar menus", () => {
+  it("keeps the live browser guest mounted behind toolbar menus", () => {
     const component = source("src/client/components/DesktopWebAccountBrowser.vue");
     const pageMenu = component.slice(component.indexOf("function togglePageMenu"), component.indexOf("function refillFromMenu"));
     const extensionMenu = component.slice(component.indexOf("async function toggleExtensions"), component.indexOf("async function changeExtension"));
@@ -20,12 +20,11 @@ describe("desktop web overlay continuity", () => {
     expect(component).not.toContain("target instanceof HTMLElement");
   });
 
-  it("ports both toolbar popovers above the native web surface", () => {
+  it("keeps app overlays in the host document instead of adopting their DOM", () => {
     const overlays = source("src/client/native-dom-overlays.ts");
-    const candidates = overlays.slice(overlays.indexOf("function overlayCandidates"), overlays.indexOf("function copyDocumentStyle"));
-
-    expect(candidates).toContain(".el-popper");
-    expect(candidates).not.toContain("desktop-web-extension-list-popper");
+    expect(overlays).not.toContain("appendChild");
+    expect(overlays).not.toContain("window.open");
+    expect(source("src/client/components/DesktopWebAccountBrowser.vue")).not.toContain("retainAgentNativeOverlay");
   });
 
   it("does not throttle a live browser page when focus moves to app chrome", () => {
