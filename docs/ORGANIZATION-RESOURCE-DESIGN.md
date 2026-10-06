@@ -4,7 +4,7 @@
 
 日期：2026-10-07。
 
-参考原型：[`prototypes/organization-resources.html`](prototypes/organization-resources.html)。
+参考原型：[`prototypes/organization-resources.html`](../prototypes/organization-resources.html)。
 
 本文件记录本次讨论最终确认的约定，作为后续实施、迁移和验收依据。原型中的账号、地址、人员和业务名称均为虚构示例，不能作为正式产品的限制或默认配置。原型行为与本文件不一致时，应按本文件核对修正，不应把演示数据或未实现的入口理解为产品规则。
 
