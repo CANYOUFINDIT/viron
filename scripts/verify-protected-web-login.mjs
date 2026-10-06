@@ -1,4 +1,5 @@
 // Run after build:desktop: node_modules/.bin/electron scripts/verify-protected-web-login.mjs
+// Pass --loopback to also check the secure-context loopback case.
 // Fixtures contain invented credentials; all windows remain hidden.
 import { app, BrowserWindow, session } from "electron";
 import { createServer } from "node:http";
@@ -10,6 +11,9 @@ import { defaultWebLoginConfig } from "../dist/shared/protected-web-login.js";
 process.on("unhandledRejection", (error) => { console.error(error); app.exit(1); });
 process.on("uncaughtException", (error) => { console.error(error); app.exit(1); });
 app.on("window-all-closed", () => {});
+const fixtureHost = process.argv.includes("--loopback") ? "127.0.0.1" : "login.example.test";
+app.commandLine.appendSwitch("host-resolver-rules", "MAP login.example.test 127.0.0.1");
+app.commandLine.appendSwitch("proxy-server", "direct://");
 const windows = [];
 const logins = [];
 let posts = 0;
@@ -48,21 +52,32 @@ function waitUntil(predicate, description, timeout = 15000) {
 async function run() {
 await app.whenReady();
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-const origin = `http://127.0.0.1:${server.address().port}`;
+const origin = `http://${fixtureHost}:${server.address().port}`;
 try {
-  for (const path of ["/plain", "/verify", "/unsafe", "/denied", "/redirect", "/script"]) {
+  const contextProbe = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true, session: session.fromPartition(`verify-context-${randomUUID()}`) } });
+  windows.push(contextProbe);
+  await contextProbe.loadURL(origin + "/plain");
+  const capabilities = await contextProbe.webContents.executeJavaScript("({ secure: isSecureContext, uuidAvailable: typeof crypto.randomUUID === 'function' })");
+  assert.equal(capabilities.secure, fixtureHost === "127.0.0.1");
+  assert.equal(capabilities.uuidAvailable, fixtureHost === "127.0.0.1");
+  console.log(`Fixture context: ${fixtureHost === "127.0.0.1" ? "loopback" : "ordinary HTTP"}, browser UUID ${capabilities.uuidAvailable ? "available" : "unavailable"}`);
+  contextProbe.destroy();
+  for (const path of ["/plain", "/verify", "/unsafe", "/denied", "/redirect", "/script", "/bad-selector"]) {
     console.log(`Checking ${path}`);
     const partition = session.fromPartition(`verify-protected-${randomUUID()}`);
     let completed;
     const snapshots = [];
     const login = new ProtectedWebLogin({ session: partition, url: origin + path, username: "fixture-user", password: "fixture-secret",
-      config: { ...defaultWebLoginConfig(), successSelector: "#success", interactionSelector: path === "/unsafe" ? "form" : path === "/verify" ? "#challenge" : "",
+      config: { ...defaultWebLoginConfig(), usernameSelector: path === "/bad-selector" ? "input:fixture-secret()" : "", successSelector: "#success", interactionSelector: path === "/unsafe" ? "form" : path === "/verify" ? "#challenge" : "",
         steps: path === "/script" ? [{ action: "type", selector: "#username", value: "{USERNAME}" }, { action: "type", selector: "#password", value: "{SECRET}" }, { action: "click", selector: "#login" }, { action: "success", selector: "#success" }] : [] },
       bounds: { x: 0, y: 0, width: 900, height: 650 }, changed: () => snapshots.push(JSON.stringify(login.state)), completed: async (result) => { completed = result; },
     });
     logins.push(login);
-    if (["/unsafe", "/denied", "/redirect"].includes(path)) {
+    if (["/unsafe", "/denied", "/redirect", "/bad-selector"].includes(path)) {
       await waitUntil(() => login.state.phase === "failed", "unsafe challenge blocked");
+      if (path === "/unsafe") assert.match(login.state.message, /验证区域包含或覆盖/);
+      if (path === "/bad-selector") assert.match(login.state.message, /无法执行登录表单/);
+      assert.ok(snapshots.every((snapshot) => !snapshot.includes("fixture-secret")));
       assert.equal(login.state.image, "");
       assert.equal(login.window.isDestroyed(), true);
       assert.equal(completed, undefined);

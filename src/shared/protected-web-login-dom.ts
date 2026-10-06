@@ -3,11 +3,10 @@ import type { WebLoginConfig } from "./protected-web-login.js";
 
 // This function runs only in an isolated world of a main-process-owned hidden window.
 // Its results contain geometry/status, never input values or credential node handles.
-function installLoginGuard(config: WebLoginConfig, username: string, password: string, selectFields: typeof selectWebCredentialAutofillFields) {
+function installLoginGuard(config: WebLoginConfig, username: string, password: string, selectFields: typeof selectWebCredentialAutofillFields, documentId: string) {
   const root = globalThis as typeof globalThis & { __vironLogin?: ReturnType<typeof createGuard> };
   function createGuard() {
     let revision = 0;
-    const documentId = crypto.randomUUID();
     const credentials = new Set<Element>();
     let filled = false;
     let submitted = false;
@@ -213,6 +212,8 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
   root.__vironLogin ??= createGuard();
 }
 
-export function protectedLoginInstallScript(config: WebLoginConfig, username: string, password: string): string {
-  return `(() => { const __name = (fn) => fn; (${installLoginGuard.toString()})(${JSON.stringify(config)}, ${JSON.stringify(username)}, ${JSON.stringify(password)}, ${selectWebCredentialAutofillFields.toString()}); })()`;
+export function protectedLoginInstallScript(config: WebLoginConfig, username: string, password: string, documentId: string): string {
+  // Generate the nonce in the trusted main process. Browser crypto.randomUUID()
+  // is unavailable on ordinary HTTP origins, including private network websites.
+  return `(() => { const __name = (fn) => fn; (${installLoginGuard.toString()})(${JSON.stringify(config)}, ${JSON.stringify(username)}, ${JSON.stringify(password)}, ${selectWebCredentialAutofillFields.toString()}, ${JSON.stringify(documentId)}); })()`;
 }

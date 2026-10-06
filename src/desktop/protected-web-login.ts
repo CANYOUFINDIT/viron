@@ -7,6 +7,19 @@ type Region = Rectangle & { revision: string };
 interface Tick { status: string; region?: Region; released?: boolean }
 export interface ProtectedLoginResult { url: string; sessionStorage: Record<string, string> }
 
+const guardMessages: Record<string, string> = {
+  "ambiguous-selector": "登录选择器匹配到多个可见控件，请配置唯一的 CSS 选择器",
+  "invalid-input": "登录输入选择器未指向可编辑的输入框，请检查入口配置",
+  "missing-submit": "未找到可用的登录按钮，请在入口中配置登录按钮选择器",
+  "invalid-step": "登录步骤配置无效，请检查多步登录脚本",
+  "unsafe-region": "验证区域包含或覆盖了账号密码，或超出了页面范围，请调整验证区域选择器",
+  "unsafe-frame": "验证区域包含嵌入页面（iframe），当前无法安全交互",
+  "unsafe-shadow": "验证区域包含 Shadow DOM 控件，当前无法安全交互",
+  "secret-in-storage": "站点将密码写入了会话存储，无法安全打开，请调整站点的登录实现",
+  "storage-read-failed": "无法检查站点的登录存储，已保持页面保护，请重试",
+  "storage-too-large": "站点的登录存储超出检查范围，已保持页面保护",
+};
+
 /** No webview ID, DOM, script, credentials or full-page image crosses the shell IPC. */
 export class ProtectedWebLogin {
   readonly state: ProtectedLoginState = { phase: "loading", message: "正在后台打开登录页", image: "", revision: "", width: 0, height: 0 };
@@ -58,7 +71,16 @@ export class ProtectedWebLogin {
     try { const parsed = new URL(url); return ["http:", "https:"].includes(parsed.protocol) && !parsed.username && !parsed.password && this.origins.has(parsed.origin); } catch { return false; }
   }
   private async evaluate<T>(code: string): Promise<T> {
-    return await this.window.webContents.executeJavaScriptInIsolatedWorld(997, [{ code }], true) as T;
+    // Electron may replace a thrown renderer exception with a generic message.
+    // Return only recognized guard codes from the isolated world, never arbitrary
+    // exception text (which could contain credentials supplied by the target page).
+    const wrapped = `Promise.resolve().then(() => (${code})).then(
+      value => ({ ok: true, value }),
+      error => ({ ok: false, code: ${JSON.stringify(Object.keys(guardMessages))}.includes(error?.message) ? error.message : "runtime-error" })
+    )`;
+    const result = await this.window.webContents.executeJavaScriptInIsolatedWorld(997, [{ code: wrapped }], true) as { ok: boolean; value?: T; code?: string };
+    if (!result?.ok) throw new Error(result?.code || "runtime-error");
+    return result.value as T;
   }
   private clearFrame() {
     this.interactionFrame = null;
@@ -84,6 +106,7 @@ export class ProtectedWebLogin {
   private async tick() {
     if (this.disposed || this.busy || this.inputBusy || this.state.phase === "failed") return this.schedule();
     this.busy = true;
+    let stage: "initialization" | "form" | "verification" | "storage" = "initialization";
     try {
       if (Date.now() - this.startedAt > 300_000) return this.fail("登录等待超时，请检查登录配置后重试");
       const contents = this.window.webContents;
@@ -94,9 +117,10 @@ export class ProtectedWebLogin {
       if (this.options.password && decodeURIComponent(url).includes(this.options.password)) return this.fail("站点将密码写入了页面地址，无法安全打开");
       const documentId = await this.evaluate<string>("String(performance.timeOrigin)");
       if (this.installedDocument !== documentId) {
-        await this.evaluate(protectedLoginInstallScript(this.config, this.options.username, this.options.password));
+        await this.evaluate(protectedLoginInstallScript(this.config, this.options.username, this.options.password, randomUUID()));
         this.installedDocument = documentId;
       }
+      stage = "form";
       const result = await this.evaluate<Tick>(`globalThis.__vironLogin.tick(${this.step}, ${this.submitted}, ${JSON.stringify(this.submittedUrl)}, ${this.passwordSubmitted}, ${JSON.stringify(this.submittedDocument)})`);
       if (result.released) this.submittedUrl ||= url;
       if (result.status === "next") {
@@ -111,6 +135,7 @@ export class ProtectedWebLogin {
       } else if (result.status === "rejected") {
         return this.fail("登录未通过，已停止重复提交。请检查账号密码后重新后台登录");
       } else if (result.status === "interactive" && result.region) {
+        stage = "verification";
         const before = result.region;
         const image = await contents.capturePage(before, { stayHidden: true });
         const after = await this.evaluate<Region | null>("globalThis.__vironLogin.region()");
@@ -125,6 +150,7 @@ export class ProtectedWebLogin {
           this.anonymousSince ||= Date.now();
           if (Date.now() - this.anonymousSince < 3000) return;
         }
+        stage = "storage";
         const storage = await this.evaluate<Record<string, string>>("globalThis.__vironLogin.finish()");
         const cookies = await this.options.session.cookies.get({});
         if (this.options.password && cookies.some((cookie) => cookie.value.includes(this.options.password))) return this.fail("站点将密码写入了会话存储，无法安全打开，请调整站点的登录实现");
@@ -149,7 +175,17 @@ export class ProtectedWebLogin {
           return;
         }
       }
-      if (!this.disposed) this.fail("无法安全完成登录，请检查选择器、成功标记和验证区域。验证区域不能包含账号密码、嵌入页面或被其他元素遮挡");
+      if (!this.disposed) {
+        const reason = error instanceof Error ? error.message : "";
+        // Match only our fixed guard codes; never expose arbitrary page exceptions
+        // or storage/input values through the public login state.
+        const code = Object.keys(guardMessages).find((key) => reason === key || reason === `Error: ${key}`);
+        this.fail(code ? guardMessages[code]! : stage === "initialization"
+          ? "后台登录脚本初始化失败，请更新客户端后重试"
+          : stage === "storage" ? "无法检查站点的登录存储，已保持页面保护，请重试"
+            : stage === "verification" ? "无法安全获取验证画面，已保持页面保护，请重试"
+              : "无法执行登录表单，请检查登录选择器和多步登录步骤");
+      }
     } finally { this.busy = false; this.schedule(); }
   }
   async input(input: ProtectedLoginInput): Promise<void> {

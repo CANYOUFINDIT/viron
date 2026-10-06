@@ -3,19 +3,28 @@ import { Window } from "happy-dom";
 import { defaultWebLoginConfig, parseWebLoginConfig } from "../src/shared/protected-web-login.js";
 import { protectedLoginInstallScript } from "../src/shared/protected-web-login-dom.js";
 
-function fixture(interactionSelector = "#challenge") {
+function fixture(interactionSelector = "#challenge", uuidAvailable = true) {
   const window = new Window({ url: "https://console.example.com/login" });
+  if (!uuidAvailable) Object.defineProperty(window.crypto, "randomUUID", { value: undefined });
   window.document.body.innerHTML = `<form><input id="username" autocomplete="username"><input id="password" type="password"><div id="challenge"><input id="otp" autocomplete="one-time-code"><button type="button">Refresh</button></div><button type="submit">Login</button></form>`;
   for (const element of window.document.querySelectorAll("*")) {
     const y = element.id === "password" ? 70 : element.id === "username" ? 10 : 140;
     element.getBoundingClientRect = () => ({ x: 10, y, top: y, left: 10, bottom: y + 40, right: 210, width: 200, height: 40, toJSON() {} });
   }
   const config = { ...defaultWebLoginConfig(), interactionSelector };
-  window.eval(protectedLoginInstallScript(config, "fixture-user", "fixture-password"));
+  window.eval(protectedLoginInstallScript(config, "fixture-user", "fixture-password", "fixture-document"));
   return { window, guard: window.eval("globalThis.__vironLogin") };
 }
 
 describe("protected Web login", () => {
+  it("initializes without the secure-context-only browser UUID API", () => {
+    const { window, guard } = fixture("#challenge", false);
+    expect(window.crypto.randomUUID).toBeUndefined();
+    const result = guard.tick(0, false, "");
+    expect(result.status).toBe("interactive");
+    expect(result.region.revision).toMatch(/^fixture-document:/);
+    expect(JSON.stringify(result)).not.toContain("fixture-password");
+  });
   it("uses defaults for existing entries and rejects unsafe recipes", () => {
     expect(parseWebLoginConfig(undefined)).toEqual(defaultWebLoginConfig());
     expect(() => parseWebLoginConfig({ allowedOrigins: ["https://login.example.com/path"] })).toThrow();
