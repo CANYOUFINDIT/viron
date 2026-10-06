@@ -129,6 +129,8 @@ cp .env.example .env
 
 API: `http://127.0.0.1:8080`. With the Web client enabled, the dev UI is `http://127.0.0.1:5173`.
 
+`dev-service.sh` runs local source code in the background without checking or building Docker images, waiting for HTTP health checks, or validating a client Endpoint. Returning from the command means the background process was launched; source initialization continues. Use `./scripts/dev-service.sh status` to inspect processes and listening ports, or `./scripts/dev-service.sh logs` to follow initialization and runtime errors.
+
 ```bash
 npm run typecheck
 npm test

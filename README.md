@@ -128,6 +128,8 @@ cp .env.example .env
 
 默认 API 地址为 `http://127.0.0.1:8080`。启用浏览器客户端时，开发界面为 `http://127.0.0.1:5173`。
 
+`dev-service.sh` 直接在后台运行本地源码，不检查或构建 Docker 镜像，也不等待 HTTP 健康检查或校验客户端 Endpoint。命令返回表示后台进程已启动，源码初始化仍会继续；使用 `./scripts/dev-service.sh status` 查看进程和监听端口，使用 `./scripts/dev-service.sh logs` 查看初始化进度与运行错误。
+
 ```bash
 npm run typecheck
 npm test

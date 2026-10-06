@@ -15,8 +15,8 @@ usage() {
 Usage: scripts/dev-service.sh <command>
 
 Commands:
-  start     Start the local Viron development service
-  restart   Restart the local Viron development service
+  start     Launch the local source development service in the background
+  restart   Relaunch the local source development service
   stop      Stop the local Viron development service
   status    Show service status and listening ports
   logs      Tail the local service log
@@ -74,43 +74,8 @@ web_client_enabled() {
   [[ "$(env_value "WEB_CLIENT_ENABLED" "true" | tr '[:upper:]' '[:lower:]')" == "true" ]]
 }
 
-health_timeout_seconds() {
-  local value
-  value="${DEV_SERVICE_HEALTH_TIMEOUT_SECONDS:-$(env_value "DEV_SERVICE_HEALTH_TIMEOUT_SECONDS" "60")}"
-  if [[ ! "$value" =~ ^[1-9][0-9]*$ ]]; then
-    echo "DEV_SERVICE_HEALTH_TIMEOUT_SECONDS must be a positive integer." >&2
-    exit 1
-  fi
-  printf '%s\n' "$value"
-}
-
-script_runner_image() {
-  local product_version
-  product_version="$(node -e 'process.stdout.write(require(process.argv[1]).version)' "$ROOT_DIR/package.json")"
-  env_value "SCRIPT_RUNNER_IMAGE" "viron-script-runner:$product_version"
-}
-
-ensure_script_runner() {
-  if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
-    echo "Script runner unavailable: Docker is not running; script synchronization will remain disabled."
-    return
-  fi
-  if docker image inspect "$(script_runner_image)" >/dev/null 2>&1; then
-    return
-  fi
-  echo "Building isolated Viron script runner image..."
-  docker compose -f "$ROOT_DIR/docker-compose.full.yml" build script-runner
-}
-
 ensure_runtime_dirs() {
   mkdir -p "$TMP_DIR"
-}
-
-ensure_dependencies() {
-  if [[ ! -d "$ROOT_DIR/node_modules" ]]; then
-    echo "node_modules is missing. Run npm ci first."
-    exit 1
-  fi
 }
 
 is_macos() {
@@ -233,36 +198,8 @@ stop_service() {
   fi
 }
 
-wait_for_health() {
-  local port
-  port="$(api_port)"
-  local attempts
-  attempts="$(( $(health_timeout_seconds) * 5 ))"
-
-  for (( attempt = 0; attempt < attempts; attempt += 1 )); do
-    if curl -fsS "http://127.0.0.1:$port/healthz" >/dev/null 2>&1; then
-      return 0
-    fi
-
-    local pid
-    pid="$(service_pid)"
-    if [[ -n "$pid" ]] && ! pid_running "$pid"; then
-      return 1
-    fi
-    if is_macos && ! launchd_job_exists; then
-      return 1
-    fi
-
-    sleep 0.2
-  done
-
-  return 1
-}
-
 start_service() {
   ensure_runtime_dirs
-  ensure_dependencies
-  ensure_script_runner
 
   local existing_pid
   existing_pid="$(service_pid)"
@@ -274,12 +211,6 @@ start_service() {
 
   if is_macos && launchd_job_exists; then
     launchctl bootout "$(launchd_target)" >/dev/null 2>&1 || true
-  fi
-
-  if [[ -n "$(port_pids "$(api_port)")" ]] || { web_client_enabled && [[ -n "$(port_pids "$(web_port)")" ]]; }; then
-    echo "A required Viron port is already in use. Run restart or stop first."
-    status_service
-    exit 1
   fi
 
   : > "$LOG_FILE"
@@ -310,28 +241,15 @@ start_service() {
   fi
   printf '%s\n' "$pid" > "$PID_FILE"
 
-  if wait_for_health; then
-    sleep 0.5
-    if ! pid_running "$pid"; then
-      echo "Viron dev service exited after becoming healthy."
-      echo "Last log lines:"
-      tail -n 40 "$LOG_FILE" || true
-      exit 1
-    fi
-    echo "Viron dev service started with PID $pid."
-    if web_client_enabled; then
-      echo "Frontend: http://$(bind_host):$(web_port)/"
-    else
-      echo "Frontend: disabled"
-    fi
-    echo "API: http://$(bind_host):$(api_port)"
-    echo "Log: $LOG_FILE"
+  echo "Viron dev service launched with PID $pid."
+  if web_client_enabled; then
+    echo "Frontend: http://$(bind_host):$(web_port)/"
   else
-    echo "Viron dev service did not become healthy."
-    echo "Last log lines:"
-    tail -n 40 "$LOG_FILE" || true
-    exit 1
+    echo "Frontend: disabled"
   fi
+  echo "API: http://$(bind_host):$(api_port)"
+  echo "Log: $LOG_FILE"
+  echo "Source initialization continues in the background. Use status or logs to inspect it."
 }
 
 restart_service() {
@@ -349,12 +267,6 @@ status_service() {
   echo "Project: $ROOT_DIR"
   echo "PID file: $PID_FILE"
   echo "Log file: $LOG_FILE"
-  if command -v docker >/dev/null 2>&1 && docker image inspect "$(script_runner_image)" >/dev/null 2>&1; then
-    echo "Script runner image: $(script_runner_image) (ready)"
-  else
-    echo "Script runner image: $(script_runner_image) (not ready)"
-  fi
-
   if is_macos; then
     if launchd_job_exists; then
       echo "Launchd service: $LAUNCHD_LABEL (loaded)"
