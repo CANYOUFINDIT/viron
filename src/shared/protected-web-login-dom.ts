@@ -39,13 +39,22 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
     let interactionDone = false;
     let interactionSelector = "";
     let passwordReleased = false;
+    let assisted = false;
+    const locks = new Map<HTMLElement, HTMLElement>();
     let lastRegion = "";
     let nodeSequence = 0;
     const identities = new WeakMap<Element, number>();
     const identity = (node: Element) => { if (!identities.has(node)) identities.set(node, ++nodeSequence); return identities.get(node); };
     const masks = new Map<HTMLElement, [string, string]>();
     const restoreMasks = () => { for (const [node, [value, priority]] of masks) { if (value) node.style.setProperty("visibility", value, priority); else node.style.removeProperty("visibility"); } masks.clear(); };
-    const maskCredentials = () => { for (const node of new Set([...credentials, ...document.querySelectorAll('input[type="password"],input[autocomplete*="password"],input[autocomplete*="username"]')])) if (node instanceof HTMLElement) { if (!masks.has(node)) masks.set(node, [node.style.getPropertyValue("visibility"), node.style.getPropertyPriority("visibility")]); node.style.setProperty("visibility", "hidden", "important"); } };
+    const maskCredentials = () => {
+      const echoed = password ? [...document.querySelectorAll<HTMLInputElement>("input")].filter((node) => node.value.includes(password)) : [];
+      const sensitive = new Set([...credentials, ...echoed, ...(assisted ? [] : document.querySelectorAll('input[type="password"],input[autocomplete*="password"],input[autocomplete*="username"]'))]);
+      for (const node of sensitive) if (node instanceof HTMLElement) {
+        if (!masks.has(node)) masks.set(node, [node.style.getPropertyValue("visibility"), node.style.getPropertyPriority("visibility")]);
+        if (node.style.getPropertyValue("visibility") !== "hidden" || node.style.getPropertyPriority("visibility") !== "important") node.style.setProperty("visibility", "hidden", "important");
+      }
+    };
     let agreementInteraction = false;
     let modalInteraction = false;
     const visible = (element: Element | null): element is HTMLElement => {
@@ -112,6 +121,70 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
         [...element.querySelectorAll("input,button,a,img,canvas,select,textarea")].map((node) => [identity(node), node.tagName, node.getAttribute("src"), node.getAttribute("href"), node.getAttribute("type")])]);
       if (signature !== lastRegion) { lastRegion = signature; revision++; }
       return { ...rect, revision: `${documentId}:${revision}` };
+    }
+    function maskSecretText() {
+      if (!password || !document.body) return;
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        if (node.parentElement?.closest("script,style")) continue;
+        if (node.nodeValue?.includes(password)) node.nodeValue = node.nodeValue.replaceAll(password, "••••••");
+      }
+    }
+    function freezeCredentials() {
+      for (const [node, lock] of locks) if (!node.isConnected || !visible(node)) { lock.remove(); locks.delete(node); }
+      for (const node of credentials) {
+        if (!(node instanceof HTMLInputElement) || !visible(node)) continue;
+        node.readOnly = true; node.tabIndex = -1;
+        if (document.activeElement === node) node.blur();
+        const box = node.getBoundingClientRect();
+        let lock = locks.get(node);
+        if (!lock) { lock = document.createElement("div"); lock.setAttribute("data-viron-credential-lock", ""); locks.set(node, lock); document.body.append(lock); }
+        lock.textContent = node.type === "password" ? "密码已填入 · 已保护" : "用户名已填入 · 已保护";
+        lock.style.cssText = `position:fixed;left:${box.x}px;top:${box.y}px;width:${box.width}px;height:${box.height}px;box-sizing:border-box;display:flex;align-items:center;padding:0 12px;z-index:2147483647;background:#f4f8f6;color:#49665e;border:1px solid #cbdad4;border-radius:4px;font:13px sans-serif;`;
+      }
+      maskCredentials(); maskSecretText();
+    }
+    function pageRegion() {
+      maskCredentials(); maskSecretText();
+      const signature = JSON.stringify(["page", scrollX, scrollY, innerWidth, innerHeight,
+        [...document.querySelectorAll("input,button,a,select,textarea,iframe")].map((node) => { const box = node.getBoundingClientRect(); return [identity(node), box.x, box.y, box.width, box.height]; })]);
+      if (signature !== lastRegion) { lastRegion = signature; revision++; }
+      return { x: 0, y: 0, width: innerWidth, height: innerHeight, revision: `${documentId}:${revision}` };
+    }
+    function assist() {
+      assisted = true;
+      restoreMasks();
+      // Ignore broken recipes in the recovery flow. Conservative field detection
+      // can fill ordinary forms; the user can choose an exact field otherwise.
+      if (!filled) {
+        const detected = detect();
+        if (detected.username) setValue(detected.username, username, true);
+        if (detected.password) setValue(detected.password, password, true);
+        filled = Boolean(detected.username || detected.password);
+      }
+      const status = pageStatus();
+      // Manual recovery only proves the page is safe to open. Do not report an
+      // authentication success based on the user's navigation alone.
+      const pendingFields = inputs().some((node) => ["text", "email", "tel", "password"].includes(node.type) && !node.disabled && !node.readOnly);
+      if (status === "ready" && !pendingFields) return { status: "anonymous", released: passwordReleased };
+      freezeCredentials();
+      return { status: "interactive", kind: "page", region: pageRegion(), released: passwordReleased };
+    }
+    function fillAt(revisionValue: string, x: number, y: number, action: string) {
+      if (!assisted || !Number.isFinite(x) || !Number.isFinite(y)) return false;
+      const rect = pageRegion();
+      if (rect.revision !== revisionValue || x < 0 || y < 0 || x >= rect.width || y >= rect.height) return false;
+      const hit = document.elementFromPoint(x, y);
+      const node = [...locks].find(([, lock]) => lock === hit || Boolean(hit && lock.contains(hit)))?.[0] ?? hit;
+      if (!(node instanceof HTMLInputElement) || node.disabled || (node.readOnly && !credentials.has(node)) || !["text", "email", "tel", "password", "search"].includes(node.type)) return false;
+      if (action !== "fill-username" && action !== "fill-password") return false;
+      node.readOnly = false;
+      if (action === "fill-password") node.type = "password";
+      setValue(node, action === "fill-password" ? password : username, true);
+      filled = true;
+      restoreMasks(); freezeCredentials();
+      return true;
     }
     function submit(target: Element | null) {
       const form = target?.closest("form");
@@ -219,12 +292,14 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
       return { status: "waiting" };
     }
     function authorize(revisionValue: string, x?: number, y?: number, keyboard = false) {
-      const rect = region();
+      const rect = assisted ? pageRegion() : region();
       if (!rect || rect.revision !== revisionValue) return null;
-      const element = one(interactionSelector)!;
+      const element = assisted ? document.documentElement : one(interactionSelector)!;
       if (keyboard) {
         const focused = document.activeElement;
-        if (!focused || !element.contains(focused) || credentials.has(focused) || !(focused instanceof HTMLInputElement) || !["text", "tel", "number", "email", "search"].includes(focused.type)) return null;
+        if (!focused || !element.contains(focused) || credentials.has(focused)) return null;
+        if (!(focused instanceof HTMLInputElement && ["text", "tel", "number", "email", "search"].includes(focused.type))
+          && !(assisted && (focused instanceof HTMLTextAreaElement || focused instanceof HTMLIFrameElement || focused instanceof HTMLElement && focused.isContentEditable || focused === document.body))) return null;
       } else if (typeof x === "number" && typeof y === "number") {
         if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x >= rect.width || y >= rect.height) return null;
         const target = document.elementFromPoint(rect.x + x, rect.y + y);
@@ -281,13 +356,15 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
     // Native events are checked again at delivery, after asynchronous host calls.
     // A modal moving between authorization and dispatch must not reach a password.
     const protectPointer = (event: Event) => {
-      if (!interactionSelector || !event.isTrusted) return;
-      const element = one(interactionSelector);
+      if ((!interactionSelector && !assisted) || !event.isTrusted) return;
+      const element = assisted ? document.documentElement : one(interactionSelector);
       const target = event.target;
       if (!element || !(target instanceof Element) || !(target === element || element.contains(target)) || [...credentials].some((node) => node === target || node.contains(target))) { event.preventDefault(); event.stopImmediatePropagation(); }
     };
     for (const type of ["pointerdown", "pointerup", "mousedown", "mouseup", "click", "touchstart", "touchend"]) window.addEventListener(type, protectPointer, true);
-    return { tick, region, authorize, continueInteraction, finish, secretReleased: () => passwordReleased };
+    for (const type of ["copy", "cut", "dragstart"]) window.addEventListener(type, (event) => { if (assisted) { event.preventDefault(); event.stopImmediatePropagation(); } }, true);
+    new MutationObserver(() => { if (assisted) { maskCredentials(); maskSecretText(); } }).observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["style", "type"] });
+    return { tick, region, pageRegion, assist, fillAt, authorize, continueInteraction, finish, secretReleased: () => passwordReleased };
   }
   root.__vironLogin ??= createGuard();
 }

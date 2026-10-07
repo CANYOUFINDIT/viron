@@ -42,6 +42,7 @@ import type { TlsWebEntryBadge } from "../../shared/tls-certificates";
 import TlsPopover from "./credentials/TlsPopover.vue";
 import WebPageTabStrip from "./WebPageTabStrip.vue";
 import WebPageLoadProgress from "./WebPageLoadProgress.vue";
+import WebLoginNotice from "./WebLoginNotice.vue";
 
 const props = withDefaults(defineProps<{
   environmentId: string;
@@ -837,6 +838,7 @@ onBeforeUnmount(() => {
         </el-popover>
       </div>
     </header>
+    <WebLoginNotice v-if="!state?.protectedLogin" :message="state?.loginNotice" @retry="runAction('refill')" />
     <div ref="surface" class="web-browser-surface desktop-web-browser-surface" :class="{ 'is-preview': preview }">
       <img v-if="preview && previewFrame" :src="previewFrame" :alt="$t('{0} 的页面画面', [username])" draggable="false" />
       <div v-else-if="!started || preloading" class="web-browser-loading web-browser-idle" :title="$t('双击空白处访问页面')" @pointerdown.stop @mousedown.stop @dblclick="visitPage">
@@ -851,7 +853,7 @@ onBeforeUnmount(() => {
         <span>{{ startError || $t('请先确认 Viron 的安全存储说明；操作系统可能继续请求安全存储授权') }}</span>
         <button v-if="startError" type="button" @click="startError = ''; start()">{{ $t('重新连接') }}</button>
       </div>
-      <ProtectedWebLogin v-else-if="state.protectedLogin" :state="state.protectedLogin" :send="sendLoginInput" @retry="runAction('refill')" />
+      <ProtectedWebLogin v-else-if="state.protectedLogin" :state="state.protectedLogin" :send="sendLoginInput" @retry="runAction('refill')" @browse="runAction('browse')" />
       <div v-else-if="state.certificateError" class="web-browser-loading is-certificate-error">
         <div class="web-browser-certificate-icon"><ShieldAlert :size="28" /></div>
         <strong>{{ $t('您的连接不是私密连接') }}</strong>

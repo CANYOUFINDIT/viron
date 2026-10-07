@@ -15,6 +15,7 @@ export interface ProtectedLoginBrowser {
   mouse(type: "mouseDown" | "mouseUp" | "mouseMove", x: number, y: number): Promise<void>;
   text(value: string): Promise<void>;
   key(value: string): Promise<void>;
+  wheel?(x: number, y: number, deltaY: number): Promise<void>;
   cookies(): Promise<Array<{ name?: string; value: string }>>;
   clear(origins: string[]): Promise<void>;
   destroy(): void | Promise<void>;
@@ -35,7 +36,7 @@ const guardMessages: Record<string, string> = {
   "storage-too-large": "站点的登录存储超出检查范围，已保持页面保护",
 };
 
-/** No webview ID, DOM, script, credentials or full-page image crosses the shell IPC. */
+/** No auth webview ID, DOM, script or credentials crosses the shell IPC. */
 export class ProtectedLoginController {
   readonly state: ProtectedLoginState = { phase: "loading", pageLoading: true, message: "正在加载登录网页", image: "", revision: "", width: 0, height: 0 };
   private browser: ProtectedLoginBrowser;
@@ -54,6 +55,7 @@ export class ProtectedLoginController {
   private readySince = 0;
   private readyDocument = "";
   private installedDocument = "";
+  private navigationVersion = 0;
   private inputBusy = false;
   private inputQueue = Promise.resolve();
   private pressed = false;
@@ -62,8 +64,10 @@ export class ProtectedLoginController {
   private nonce = randomUUID();
   private cleanup = Promise.resolve();
   private destruction = Promise.resolve();
+  private documentDestroyed = false;
   private credentialReleased = false;
   private storageVerified = false;
+  private assisted = false;
   constructor(private options: {
     browser: ProtectedLoginBrowser; url: string; username: string; password: string; config?: WebLoginConfig;
     prepare?: () => Promise<void>; changed: () => void; completed: (result: ProtectedLoginResult) => Promise<void>;
@@ -119,6 +123,7 @@ export class ProtectedLoginController {
   }
   navigationStarted(inPlace = false): void {
     if (this.disposed || this.state.phase === "failed") return;
+    this.navigationVersion++;
     if (!inPlace) this.installedDocument = "";
     this.readyDocument = ""; this.readySince = 0;
     this.clearFrame();
@@ -148,17 +153,42 @@ export class ProtectedLoginController {
     }
     this.options.changed();
   }
+  private assist(message: string) {
+    this.assisted = true;
+    this.progressAt = Date.now();
+    this.readyDocument = ""; this.readySince = 0;
+    this.clearFrame();
+    Object.assign(this.state, { phase: "authenticating", pageLoading: false, message });
+    this.options.changed();
+  }
+  private async complete(url: string, authenticated: boolean) {
+    if (this.disposed) return;
+    const navigationVersion = this.navigationVersion;
+    const password = this.options.password, username = this.options.username;
+    if (!this.allowed(url) || (password && decodeURIComponent(url).includes(password))) throw new Error("unsafe-url");
+    const storage = await this.evaluate<Record<string, string>>("globalThis.__vironLogin.finish()");
+    const cookies = await this.browser.cookies();
+    if (this.disposed) return;
+    if (this.browser.loading() || navigationVersion !== this.navigationVersion || this.browser.url() !== url) throw new Error("navigation-changed");
+    if (cookies.some((cookie) => containsPersistedWebLoginSecret(cookie.value, password, username, cookie.name))) throw new Error("secret-in-storage");
+    this.storageVerified = true;
+    Object.assign(this.state, { phase: "authenticating", pageLoading: true, message: "正在安全打开业务页面" });
+    this.dispose(); this.options.changed();
+    await this.destruction;
+    await this.options.completed({ url, sessionStorage: storage, authenticated });
+  }
   private async tick() {
     if (this.disposed || this.busy || this.inputBusy || this.state.phase === "failed") return this.schedule();
     this.busy = true;
+    const navigationVersion = this.navigationVersion;
     let stage: "initialization" | "form" | "verification" | "storage" = "initialization";
     try {
-      if (Date.now() - this.startedAt > 300_000) return this.fail("登录等待超时，请检查登录配置后重试");
+      if (!this.assisted && Date.now() - this.startedAt > 300_000) this.assist("自动登录等待超时，请在受保护页面中继续登录");
       const contents = this.browser;
       if (contents.destroyed()) return;
       if (contents.loading()) { this.pageLoadingChanged(true); return; }
       if (this.state.pageLoading) this.pageLoadingChanged(false);
-      if (this.state.phase !== "interactive" && Date.now() - this.progressAt > 30_000) return this.fail("登录流程等待超时，请检查登录步骤、成功标记或网络后重试");
+      if (!this.assisted && this.state.phase !== "interactive" && Date.now() - this.progressAt > 30_000) this.assist("自动登录等待超时，请在受保护页面中继续登录");
       const url = contents.url();
       if (!this.allowed(url)) return this.fail("登录页面不在允许的域名中");
       if (this.options.password && decodeURIComponent(url).includes(this.options.password)) return this.fail("站点将密码写入了页面地址，无法安全打开");
@@ -172,7 +202,7 @@ export class ProtectedLoginController {
       // Treat an interrupted renderer call conservatively: it can fill the form
       // before its reply reaches main. Never resume extensions on unchecked storage.
       this.credentialReleased ||= Boolean(this.options.password);
-      const result = await this.evaluate<Tick>(`globalThis.__vironLogin.tick(${this.step}, ${this.submitted}, ${JSON.stringify(this.submittedUrl)}, ${this.passwordSubmitted}, ${JSON.stringify(this.submittedDocument)})`);
+      const result = await this.evaluate<Tick>(this.assisted ? "globalThis.__vironLogin.assist()" : `globalThis.__vironLogin.tick(${this.step}, ${this.submitted}, ${JSON.stringify(this.submittedUrl)}, ${this.passwordSubmitted}, ${JSON.stringify(this.submittedDocument)})`);
       if (!alreadyReleased && !result.released && !await this.evaluate<boolean>("globalThis.__vironLogin.secretReleased()")) this.credentialReleased = false;
       if (result.released) this.submittedUrl ||= url;
       if (result.status !== "waiting") this.progressAt = Date.now();
@@ -189,17 +219,17 @@ export class ProtectedLoginController {
         this.submittedUrl = url;
         this.submittedDocument = documentId;
       } else if (result.status === "rejected") {
-        return this.fail("登录未通过，已停止重复提交。请检查账号密码后重新后台登录");
+        this.assist("登录未通过，请检查页面提示后继续操作；系统已停止自动提交"); return;
       } else if (result.status === "interactive" && result.region) {
         stage = "verification";
         const before = result.region;
         const image = await contents.capture(before);
-        const after = await this.evaluate<Region | null>("globalThis.__vironLogin.region()");
+        const after = await this.evaluate<Region | null>(this.assisted ? "globalThis.__vironLogin.pageRegion()" : "globalThis.__vironLogin.region()");
         if (this.disposed || contents.destroyed()) return;
         if (!after || JSON.stringify(before) !== JSON.stringify(after) || !image) { this.clearFrame(); return; }
         if (this.interactionFrame?.revision !== after.revision) this.cancelPointer();
         this.interactionFrame = after;
-        Object.assign(this.state, { phase: "interactive", message: result.kind === "agreement" ? "请确认页面的协议选项后继续登录" : "请完成验证，然后继续登录", image, kind: result.kind === "agreement" ? "agreement" : "challenge", revision: `${this.nonce}:${after.revision}`, width: after.width, height: after.height });
+        Object.assign(this.state, { phase: "interactive", message: result.kind === "page" ? "自动登录未完成。请继续操作页面；可右键输入框填充用户名或密码。" : result.kind === "agreement" ? "请确认页面的协议选项后继续登录" : "请完成验证，然后继续登录", image, kind: result.kind === "page" ? "page" : result.kind === "agreement" ? "agreement" : "challenge", revision: `${this.nonce}:${after.revision}`, width: after.width, height: after.height });
         this.options.changed();
         return;
       } else if (result.status === "success" || result.status === "anonymous") {
@@ -209,15 +239,7 @@ export class ProtectedLoginController {
         const marker = this.config.successSelector || this.config.steps.find((step) => step.action === "success")?.selector;
         if (Date.now() - this.readySince < (marker ? 300 : 1500)) return;
         stage = "storage";
-        const storage = await this.evaluate<Record<string, string>>("globalThis.__vironLogin.finish()");
-        const cookies = await this.browser.cookies();
-        if (cookies.some((cookie) => containsPersistedWebLoginSecret(cookie.value, this.options.password, this.options.username, cookie.name))) return this.fail("站点将密码写入了会话存储，无法安全打开，请调整站点的登录实现");
-        this.storageVerified = true;
-        Object.assign(this.state, { phase: "authenticating", pageLoading: true, message: "认证通过，正在加载业务页面" });
-        this.dispose();
-        this.options.changed();
-        await this.destruction;
-        await this.options.completed({ url, sessionStorage: storage, authenticated: result.status === "success" });
+        await this.complete(url, result.status === "success");
         return;
       }
       this.readySince = 0;
@@ -228,7 +250,7 @@ export class ProtectedLoginController {
       this.options.changed();
     } catch (error) {
       if (!this.disposed && !this.browser.destroyed()) {
-        const navigating = this.browser.loading() || /context.*destroyed|frame.*disposed|frame.*removed/i.test(error instanceof Error ? error.message : "");
+        const navigating = this.browser.loading() || navigationVersion !== this.navigationVersion || /context.*destroyed|frame.*disposed|frame.*removed/i.test(error instanceof Error ? error.message : "");
         if (navigating) {
           this.clearFrame();
           this.installedDocument = "";
@@ -242,6 +264,10 @@ export class ProtectedLoginController {
         // Match only our fixed guard codes; never expose arbitrary page exceptions
         // or storage/input values through the public login state.
         const code = Object.keys(guardMessages).find((key) => reason === key || reason === `Error: ${key}`);
+        if (!this.assisted && (stage === "form" && (!code || ["ambiguous-selector", "invalid-input", "missing-submit", "invalid-step", "unsafe-region", "unsafe-frame", "unsafe-shadow"].includes(code))
+          || stage === "verification" && ["unsafe-region", "unsafe-frame", "unsafe-shadow"].includes(code ?? ""))) {
+          this.assist("自动登录未完成，请在受保护页面中继续登录"); return;
+        }
         this.fail(code ? guardMessages[code]! : stage === "initialization"
           ? "后台登录脚本初始化失败，请更新客户端后重试"
           : stage === "storage" ? "无法检查站点的登录存储，已保持页面保护，请重试"
@@ -264,6 +290,17 @@ export class ProtectedLoginController {
     if (this.disposed || !this.interactionFrame || input.revision !== this.state.revision) { this.cancelPointer(); return; }
     this.inputBusy = true;
     try {
+      if (this.assisted && (input.type === "fill-username" || input.type === "fill-password")) {
+        if (!Number.isFinite(input.x) || !Number.isFinite(input.y)) throw new Error("请选择页面中的输入框");
+        const accepted = await this.evaluate<boolean>(`globalThis.__vironLogin.fillAt(${JSON.stringify(this.interactionFrame.revision)}, ${input.x}, ${input.y}, ${JSON.stringify(input.type)})`);
+        if (!accepted) throw new Error("请选择可编辑的用户名或密码输入框");
+        return;
+      }
+      if (this.assisted && input.type === "continue") {
+        try { await this.complete(this.browser.url(), false); }
+        catch { this.fail("无法安全移交登录页面，请重试；托管密码仍受保护"); }
+        return;
+      }
       const keyboard = input.type === "text" || input.type === "key";
       const rect = await this.evaluate<Region | null>(`globalThis.__vironLogin.authorize(${JSON.stringify(this.interactionFrame.revision)}, ${JSON.stringify(input.x ?? null)}, ${JSON.stringify(input.y ?? null)}, ${keyboard})`);
       if (!rect) { this.cancelPointer(); return; }
@@ -279,11 +316,14 @@ export class ProtectedLoginController {
         if (typeof input.text !== "string" || input.text.length > 256) throw new Error("验证输入无效");
         await this.browser.text(input.text);
       } else if (input.type === "key") {
-        if (!["Backspace", "Delete", "Left", "Right", "Home", "End"].includes(input.key ?? "")) throw new Error("验证按键无效");
+        if (!["Backspace", "Delete", "Left", "Right", "Home", "End", ...(this.assisted ? ["Enter", "Tab", "Escape", "Up", "Down"] : [])].includes(input.key ?? "")) throw new Error("验证按键无效");
         await this.browser.key(input.key!);
+      } else if (input.type === "scroll" && this.assisted) {
+        if (!Number.isFinite(input.x) || !Number.isFinite(input.y) || !Number.isFinite(input.deltaY) || Math.abs(input.deltaY!) > 1000) throw new Error("滚动参数无效");
+        await this.browser.wheel?.(rect.x + input.x!, rect.y + input.y!, input.deltaY!);
       } else if (["mouseDown", "mouseUp", "mouseMove", "click"].includes(input.type)) {
-        if (typeof input.x !== "number" || typeof input.y !== "number") throw new Error("验证坐标无效");
-        const x = Math.floor(rect.x + input.x), y = Math.floor(rect.y + input.y);
+        if (!Number.isFinite(input.x) || !Number.isFinite(input.y)) throw new Error("验证坐标无效");
+        const x = Math.floor(rect.x + input.x!), y = Math.floor(rect.y + input.y!);
         if (input.type === "click") {
           await this.browser.mouse("mouseDown", x, y);
           this.pressed = true;
@@ -307,6 +347,8 @@ export class ProtectedLoginController {
     }
   }
   private destroyWindow() {
+    if (this.documentDestroyed) return;
+    this.documentDestroyed = true;
     this.options.username = "";
     this.options.password = "";
     this.destruction = Promise.resolve(this.browser.destroy());

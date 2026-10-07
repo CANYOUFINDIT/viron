@@ -12,6 +12,7 @@ export async function createServerProtectedLogin(options: {
   const cdp = await options.context.newCDPSession(page);
   let closed = false;
   let closing = Promise.resolve();
+  let loading = false;
   const evaluate = async <T>(expression: string): Promise<T> => {
     const tree = await cdp.send("Page.getFrameTree");
     const world = await cdp.send("Page.createIsolatedWorld", { frameId: tree.frameTree.frame.id, worldName: "viron-protected-login" });
@@ -23,12 +24,13 @@ export async function createServerProtectedLogin(options: {
   const preparation = new Promise<void>((resolve) => { prepared = resolve; });
   let pressed = false;
   const login = new ProtectedLoginController({ ...options, prepare: () => preparation, browser: {
-    load: async (url) => { await page.goto(url, { waitUntil: "load", timeout: 30_000 }); },
-    url: () => page.url(), loading: () => false, destroyed: () => closed || page.isClosed(), evaluate,
+    load: async (url) => { loading = true; try { await page.goto(url, { waitUntil: "load", timeout: 30_000 }); } finally { loading = false; } },
+    url: () => page.url(), loading: () => loading, destroyed: () => closed || page.isClosed(), evaluate,
     capture: async ({ x, y, width, height }) => `data:image/png;base64,${(await page.screenshot({ clip: { x, y, width, height }, timeout: 3000 })).toString("base64")}`,
     mouse: async (type, x, y) => { if (type === "mouseDown") pressed = true; if (type === "mouseUp") pressed = false; await cdp.send("Input.dispatchMouseEvent", { type: type === "mouseDown" ? "mousePressed" : type === "mouseUp" ? "mouseReleased" : "mouseMoved", x, y, button: "left", buttons: pressed ? 1 : 0, clickCount: type === "mouseMove" ? 0 : 1 }); },
     text: async (value) => { await page.keyboard.insertText(value); },
     key: async (value) => { await page.keyboard.press(["Left", "Right"].includes(value) ? `Arrow${value}` : value); },
+    wheel: async (x, y, deltaY) => { await cdp.send("Input.dispatchMouseEvent", { type: "mouseWheel", x, y, deltaX: 0, deltaY }); },
     cookies: () => options.context.cookies(),
     clear: async (origins) => {
       await closing;
@@ -51,9 +53,11 @@ export async function createServerProtectedLogin(options: {
   });
   await cdp.send("Page.enable");
   const mainFrameId = (await cdp.send("Page.getFrameTree")).frameTree.frame.id;
+  cdp.on("Page.frameStartedLoading", ({ frameId }) => { if (frameId === mainFrameId) { loading = true; login.pageLoadingChanged(true); } });
+  cdp.on("Page.frameStoppedLoading", ({ frameId }) => { if (frameId === mainFrameId) { loading = false; login.pageLoadingChanged(false); } });
   cdp.on("Page.frameNavigated", ({ frame }) => { if (!frame.parentId) login.navigationStarted(); });
   cdp.on("Page.navigatedWithinDocument", ({ frameId }) => { if (frameId === mainFrameId) login.navigationStarted(true); });
-  page.on("load", () => login.pageLoadingChanged(false));
+  page.on("load", () => { loading = false; login.pageLoadingChanged(false); });
   page.on("popup", (popup) => { void popup.close(); login.fail("登录需要新窗口，请调整入口的登录流程后重试"); });
   page.on("dialog", (dialog) => { void dialog.dismiss(); login.fail("登录页面使用浏览器原生对话框，请调整入口的登录流程后重试"); });
   page.on("crash", () => login.fail("后台登录页面已退出，请重试"));

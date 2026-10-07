@@ -19,7 +19,7 @@ export interface ProtectedLoginState {
   /** Actual document loading, distinct from credential submission/verification. */
   pageLoading?: boolean;
   message: string;
-  kind?: "agreement" | "challenge";
+  kind?: "agreement" | "challenge" | "page";
   image: string;
   revision: string;
   width: number;
@@ -27,11 +27,12 @@ export interface ProtectedLoginState {
 }
 export interface ProtectedLoginInput {
   revision: string;
-  type: "mouseDown" | "mouseUp" | "mouseMove" | "click" | "text" | "key" | "continue";
+  type: "mouseDown" | "mouseUp" | "mouseMove" | "click" | "text" | "key" | "continue" | "fill-username" | "fill-password" | "scroll";
   x?: number;
   y?: number;
   text?: string;
   key?: string;
+  deltaY?: number;
 }
 export function defaultWebLoginConfig(): WebLoginConfig {
   return { usernameSelector: "", passwordSelector: "", submitSelector: "", successSelector: "", interactionSelector: "", allowedOrigins: [], steps: [] };

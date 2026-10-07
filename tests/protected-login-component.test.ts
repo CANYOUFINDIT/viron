@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import ProtectedWebLogin from "../src/client/components/ProtectedWebLogin.vue";
 import type { ProtectedLoginInput, ProtectedLoginState } from "../src/shared/protected-web-login";
 
-function surface(kind: "agreement" | "challenge" = "agreement") {
+function surface(kind: "agreement" | "challenge" | "page" = "agreement") {
   const inputs: ProtectedLoginInput[] = [];
   const state: ProtectedLoginState = { phase: "interactive", message: "Read the terms", image: "data:image/png;base64,AA==", revision: "checkbox-frame", width: 500, height: 80, kind };
   const wrapper = mount(ProtectedWebLogin, { props: { state, send: vi.fn(async (input: ProtectedLoginInput) => { inputs.push(input); }) }, global: { stubs: { "el-button": { template: "<button><slot /></button>" } } } });
@@ -17,6 +17,17 @@ function surface(kind: "agreement" | "challenge" = "agreement") {
 const settle = async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); };
 
 describe("protected login interaction", () => {
+  it("offers coordinate-based credential fill actions without a password or live website DOM in the shell", async () => {
+    const { wrapper, inputs } = surface("page");
+    await wrapper.get("img").trigger("contextmenu", { clientX: 100, clientY: 20 });
+    const menu = document.querySelector(".protected-login__menu")!;
+    expect(menu.textContent).toContain("填充用户名"); expect(menu.textContent).toContain("填充密码");
+    (menu.querySelectorAll("button")[1] as HTMLButtonElement).click();
+    await settle();
+    expect(inputs).toEqual([{ type: "fill-password", x: 100, y: 20, revision: "checkbox-frame" }]);
+    expect(wrapper.find("input[type=password]").exists()).toBe(false);
+    wrapper.unmount();
+  });
   it("sends a checkbox click once and keeps the coordinates bound to the displayed frame", async () => {
     const { wrapper, inputs, pointer } = surface();
     pointer("pointerdown", 20);
@@ -24,7 +35,16 @@ describe("protected login interaction", () => {
     await settle();
     expect(inputs).toEqual([{ type: "click", x: 20, y: 20, revision: "checkbox-frame" }]);
     expect(wrapper.text()).not.toContain("验证码输入框");
-    expect(wrapper.find("button").exists()).toBe(false);
+    expect(wrapper.find("button").text()).toBe("打开网页");
+    wrapper.unmount();
+  });
+  it.each(["loading", "authenticating", "interactive", "failed"] as const)("can exit %s without returning to another mandatory login attempt", async (phase) => {
+    const { wrapper } = surface();
+    await wrapper.setProps({ state: { ...wrapper.props("state"), phase } });
+    const browse = wrapper.findAll("button").find((button) => button.text() === "打开网页")!;
+    await browse.trigger("click");
+    expect(wrapper.emitted("browse")).toHaveLength(1);
+    expect(wrapper.emitted("retry")).toBeUndefined();
     wrapper.unmount();
   });
   it("does not rebind a queued click to a modal that replaced the checkbox", async () => {

@@ -18,6 +18,50 @@ function fixture(interactionSelector = "#challenge", uuidAvailable = true) {
 }
 
 describe("protected Web login", () => {
+  it("freezes and covers credentials in a fully interactive fallback page", () => {
+    const { window, guard } = fixture("");
+    const result = guard.assist();
+    expect(result).toMatchObject({ status: "interactive", kind: "page" });
+    const password = window.document.querySelector<HTMLInputElement>("#password")!;
+    expect(password.value).toBe("fixture-password"); expect(password.readOnly).toBe(true);
+    expect(window.getComputedStyle(password).visibility).toBe("hidden");
+    expect(window.document.querySelectorAll("[data-viron-credential-lock]")).toHaveLength(2);
+    expect(window.document.body.textContent).not.toContain("fixture-password");
+    expect(JSON.stringify(result)).not.toContain("fixture-password");
+    password.focus(); expect(guard.authorize(result.region.revision, null, null, true)).toBeNull();
+    window.document.querySelector<HTMLElement>("#otp")!.focus(); expect(guard.authorize(result.region.revision, null, null, true)).not.toBeNull();
+  });
+  it("fills an explicitly chosen unrecognized field and rejects stale coordinates and non-input targets", () => {
+    const { window, guard } = fixture("");
+    window.document.querySelector("form")!.innerHTML = '<input id="unknown" type="text"><button type="button">Continue</button>';
+    const input = window.document.querySelector<HTMLInputElement>("#unknown")!;
+    input.getBoundingClientRect = () => ({ x: 20, y: 20, top: 20, left: 20, bottom: 60, right: 220, width: 200, height: 40, toJSON() {} });
+    window.document.elementFromPoint = () => input;
+    const frame = guard.assist().region;
+    expect(guard.fillAt("stale", 30, 30, "fill-password")).toBe(false);
+    expect(guard.fillAt(frame.revision, 30, 30, "fill-password")).toBe(true);
+    expect(input.value).toBe("fixture-password"); expect(input.type).toBe("password"); expect(input.readOnly).toBe(true);
+    expect(window.getComputedStyle(input).visibility).toBe("hidden");
+    window.document.elementFromPoint = () => window.document.querySelector("button")!;
+    expect(guard.fillAt(guard.pageRegion().revision, 30, 30, "fill-username")).toBe(false);
+  });
+  it("keeps unknown fields available even when the page title and URL do not identify a login", () => {
+    const { window, guard } = fixture("");
+    window.location.href = "https://console.example.com/";
+    window.document.title = "Console";
+    window.document.querySelector("form")!.innerHTML = '<input id="alpha"><input id="beta"><button type="button">Continue</button>';
+    for (const node of window.document.querySelectorAll("input")) node.getBoundingClientRect = () => ({ x: 20, y: 20, top: 20, left: 20, bottom: 60, right: 220, width: 200, height: 40, toJSON() {} });
+    expect(guard.assist()).toMatchObject({ status: "interactive", kind: "page" });
+    expect(window.document.querySelectorAll("[data-viron-credential-lock]")).toHaveLength(0);
+  });
+  it("masks a password copied into another text input by the target page", () => {
+    const { window, guard } = fixture("");
+    guard.assist();
+    const echo = window.document.createElement("input");
+    echo.value = "fixture-password"; window.document.body.append(echo);
+    guard.pageRegion();
+    expect(window.getComputedStyle(echo).visibility).toBe("hidden");
+  });
   it("clicks a component form's unique Submit button instead of bypassing its login handler", () => {
     const { window, guard } = fixture("");
     const form = window.document.querySelector("form")!;

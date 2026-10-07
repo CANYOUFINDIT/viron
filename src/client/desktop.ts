@@ -139,10 +139,11 @@ export interface DesktopWebViewState {
   } | null;
   zoomFactor: number;
   protectedLogin: ProtectedLoginState | null;
+  loginNotice: string;
 }
 
 export interface DesktopWebViewAction {
-  type: "login-input" | "back" | "forward" | "reload" | "navigate" | "refill" | "reset" | "continue-certificate" | "new-page" | "activate-page" | "close-page" | "reorder-pages" | "zoom-in" | "zoom-out" | "zoom-reset";
+  type: "login-input" | "browse" | "back" | "forward" | "reload" | "navigate" | "refill" | "reset" | "continue-certificate" | "new-page" | "activate-page" | "close-page" | "reorder-pages" | "zoom-in" | "zoom-out" | "zoom-reset";
   url?: string;
   pageId?: string;
   orderedPageIds?: string[];

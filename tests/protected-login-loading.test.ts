@@ -9,9 +9,11 @@ function pendingPage() {
   const browser: ProtectedLoginBrowser = {
     load: () => load, url: () => "https://console.example.test/#/login", loading: () => false,
     destroyed: () => false, destroy: vi.fn(), cookies: async () => [], clear: async () => {},
-    mouse: async () => {}, text: async () => {}, key: async () => {}, capture: async () => "",
+    mouse: async () => {}, text: async () => {}, key: async () => {}, capture: async () => "data:image/png;base64,AA==",
     evaluate: async <T>(code: string) => ({ ok: true, released: false,
       value: code.includes("globalThis.__vironLogin.tick(") ? { status: "waiting" }
+        : code.includes("globalThis.__vironLogin.assist()") ? { status: "interactive", kind: "page", region: { x: 0, y: 0, width: 900, height: 650, revision: "fallback" } }
+          : code.includes("globalThis.__vironLogin.pageRegion()") ? { x: 0, y: 0, width: 900, height: 650, revision: "fallback" }
         : code.includes('String(performance.timeOrigin)') ? "document"
           : code.includes("globalThis.__vironLogin.secretReleased()") ? false : undefined,
     }) as T,
@@ -21,6 +23,28 @@ function pendingPage() {
 }
 
 describe("protected login page loading", () => {
+  it("recovers from a credential-overlapping verification crop without exposing or destroying the authentication document", async () => {
+    vi.useFakeTimers(); const { login, loaded, browser } = pendingPage();
+    const evaluate = browser.evaluate;
+    browser.evaluate = async <T>(code: string) => code.includes("globalThis.__vironLogin.tick(")
+      ? { ok: false, code: "unsafe-region", released: true } as T : evaluate<T>(code);
+    loaded(); await vi.advanceTimersByTimeAsync(600);
+    expect(login.state).toMatchObject({ phase: "interactive", kind: "page" });
+    expect(browser.destroy).not.toHaveBeenCalled();
+    expect(JSON.stringify(login.state)).not.toContain("fixture-secret");
+    login.dispose();
+  });
+  it("rejects manual handoff if the current address exposes the managed password", async () => {
+    vi.useFakeTimers(); const { login, loaded, browser } = pendingPage();
+    loaded(); await vi.advanceTimersByTimeAsync(31_000);
+    expect(login.state.kind).toBe("page");
+    browser.url = () => "https://console.example.test/?password=fixture-secret";
+    await login.input({ type: "continue", revision: login.state.revision });
+    expect(login.state.phase).toBe("failed");
+    expect(browser.destroy).toHaveBeenCalled();
+    expect(JSON.stringify(login.state)).not.toContain("fixture-secret");
+    login.dispose();
+  });
   it("excludes document loading time from the subsequent authentication wait", async () => {
     vi.useFakeTimers(); const { login, loaded } = pendingPage();
     await vi.advanceTimersByTimeAsync(29_000);
@@ -30,8 +54,8 @@ describe("protected login page loading", () => {
     login.navigationStarted(true);
     expect(login.state.pageLoading).toBe(false);
     await vi.advanceTimersByTimeAsync(29_000);
-    expect(login.state.phase).toBe("failed");
-    expect(login.state.message).toContain("登录流程等待超时");
+    expect(login.state).toMatchObject({ phase: "interactive", kind: "page" });
+    expect(login.state.message).toContain("自动登录未完成");
     login.dispose();
   });
   it("reports an unfinished document load as a page timeout and destroys its window", async () => {

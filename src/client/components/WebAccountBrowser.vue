@@ -28,6 +28,7 @@ import ProtectedWebLogin from "./ProtectedWebLogin.vue";
 import type { ProtectedLoginInput, ProtectedLoginState } from "../../shared/protected-web-login";
 import WebPageTabStrip from "./WebPageTabStrip.vue";
 import WebPageLoadProgress from "./WebPageLoadProgress.vue";
+import WebLoginNotice from "./WebLoginNotice.vue";
 
 interface BrowserPage {
   id: string;
@@ -38,6 +39,7 @@ interface BrowserPage {
 
 interface BrowserView {
   protectedLogin: ProtectedLoginState | null;
+  loginNotice: string;
   loading: boolean;
   credentialId: string;
   entryId: string;
@@ -122,7 +124,7 @@ function viewportSize() {
 }
 
 function send(message: Record<string, unknown>) {
-  if (view.value?.protectedLogin && !["login-input", "refill", "visibility", "resize", "ping"].includes(String(message.type))) return;
+  if (view.value?.protectedLogin && !["login-input", "refill", "browse", "visibility", "resize", "ping"].includes(String(message.type))) return;
   if (socket?.readyState === ServiceSocket.OPEN) socket.send(JSON.stringify(message));
 }
 
@@ -558,6 +560,7 @@ onBeforeUnmount(() => {
         <a v-if="!desktopApp" :href="externalHref" target="_blank" rel="noopener noreferrer" :aria-label="$t('在浏览器新标签页打开')" :title="$t('在浏览器新标签页打开')"><ExternalLink :size="15" /></a>
       </div>
     </header>
+    <WebLoginNotice v-if="!view?.protectedLogin" :message="view?.loginNotice" @retry="send({ type: 'refill' })" />
 
     <div
       ref="surface"
@@ -568,7 +571,7 @@ onBeforeUnmount(() => {
       @contextmenu="handleContextMenu"
       @wheel="handleWheel"
     >
-      <ProtectedWebLogin v-if="view?.protectedLogin" :state="view.protectedLogin" :send="sendLoginInput" @retry="send({ type: 'refill' })" />
+      <ProtectedWebLogin v-if="view?.protectedLogin" :state="view.protectedLogin" :send="sendLoginInput" @retry="send({ type: 'refill' })" @browse="send({ type: 'browse' })" />
       <img v-else-if="frame" :src="frame" :alt="$t('{0} 的页面画面', [username])" draggable="false" />
       <div v-else-if="status === 'idle' || preloading" class="web-browser-loading web-browser-idle" :title="$t('双击空白处访问页面')" @pointerdown.stop @mousedown.stop @dblclick="visitPage">
         <div class="web-browser-idle__icon"><Globe2 :size="24" /></div>

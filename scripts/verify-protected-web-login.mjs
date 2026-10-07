@@ -94,10 +94,16 @@ try {
       bounds: { x: 0, y: 0, width: 900, height: 650 }, changed: () => snapshots.push(JSON.stringify(login.state)), completed: async (result) => { completed = result; },
     });
     logins.push(login);
-    if (["/unsafe", "/denied", "/redirect", "/bad-selector", "/transient"].includes(path)) {
+    if (["/unsafe", "/denied", "/bad-selector", "/transient"].includes(path)) {
+      await waitUntil(() => login.state.phase === "interactive" && login.state.kind === "page", "protected manual recovery");
+      assert.ok(snapshots.every((snapshot) => !snapshot.includes("fixture-secret")));
+      assert.equal(completed, undefined);
+      assert.equal(login.window.isDestroyed(), false);
+      login.dispose(); await login.settled();
+      continue;
+    }
+    if (path === "/redirect") {
       await waitUntil(() => login.state.phase === "failed", "unsafe challenge blocked");
-      if (path === "/unsafe") assert.match(login.state.message, /验证区域包含或覆盖/);
-      if (path === "/bad-selector") assert.match(login.state.message, /无法执行登录表单/);
       assert.ok(snapshots.every((snapshot) => !snapshot.includes("fixture-secret")));
       assert.equal(login.state.image, "");
       assert.equal(login.window.isDestroyed(), true);
@@ -208,7 +214,7 @@ try {
   assert.equal(await audit.webContents.executeJavaScript('localStorage.getItem("unsafe-fixture")'), null);
   audit.destroy();
   assert.equal(posts, 13);
-  console.log("Protected login passed: hidden credentials, CAPTCHA and agreement input, retained session, delayed SPA rendering, transient redirects, handoff returning to login, unsafe crop, rejected login and unauthorized origin blocked.");
+  console.log("Protected login passed: hidden credentials, CAPTCHA and agreement input, retained session, delayed SPA rendering, interactive recovery from unsafe crops and rejected logins, and blocked unauthorized origins.");
 } catch (error) {
   console.error(error);
   app.exit(1);

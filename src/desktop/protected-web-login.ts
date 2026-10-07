@@ -26,6 +26,7 @@ export class ProtectedWebLogin extends ProtectedLoginController {
       },
       text: async (value) => { await contents.insertText(value); },
       key: async (value) => { contents.sendInputEvent({ type: "keyDown", keyCode: value }); contents.sendInputEvent({ type: "keyUp", keyCode: value }); },
+      wheel: async (x, y, deltaY) => { contents.sendInputEvent({ type: "mouseWheel", x: Math.floor(x), y: Math.floor(y), deltaY: -deltaY }); },
       cookies: () => options.session.cookies.get({}), clear: (origins) => options.session.clearData({ origins }),
       destroy: () => { if (!window.isDestroyed()) window.destroy(); },
     } });

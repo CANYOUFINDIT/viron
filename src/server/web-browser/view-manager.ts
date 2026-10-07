@@ -92,6 +92,8 @@ interface ManagedWebView {
   protectedLogin: ProtectedLoginState | null;
   loginConfig: WebLoginConfig;
   loginAttempt: string;
+  loginPreparation: Promise<void>;
+  loginNotice: string;
   messageQueue: Promise<void>;
 }
 
@@ -107,6 +109,7 @@ interface DownloadArtifact {
 
 export interface PublicWebAccountView {
   protectedLogin: ProtectedLoginState | null;
+  loginNotice: string;
   loading: boolean;
   credentialId: string;
   entryId: string;
@@ -631,6 +634,8 @@ export class WebAccountViewManager {
       protectedLogin: { phase: "loading", pageLoading: true, message: "正在加载登录网页", image: "", revision: "", width: 0, height: 0 },
       loginConfig,
       loginAttempt: "",
+      loginPreparation: Promise.resolve(),
+      loginNotice: "",
       messageQueue: Promise.resolve(),
     };
     this.views.set(view.key, view);
@@ -844,6 +849,7 @@ export class WebAccountViewManager {
       return;
     }
     if (message.type === "refill") { await this.startProtectedLogin(view); return; }
+    if (message.type === "browse") { await this.browseWithoutAutofill(view); return; }
     if (message.type === "visibility") { await this.setSocketVisibility(view, socket, message.visible === true); return; }
     if (message.type === "resize") { await this.resize(view, Number(message.width), Number(message.height)); return; }
     if (view.protectedLogin) { this.send(socket, { type: "error", message: "请先完成受保护的后台登录验证" }); return; }
@@ -967,12 +973,19 @@ export class WebAccountViewManager {
     else await dialog.dismiss();
   }
 
-  private async startProtectedLogin(view: ManagedWebView, preferredUrl = "", preservePages = false): Promise<void> {
+  private startProtectedLogin(view: ManagedWebView, preferredUrl = "", preservePages = false): Promise<void> {
+    const preparation = this.prepareProtectedLogin(view, preferredUrl, preservePages);
+    view.loginPreparation = preparation;
+    return preparation;
+  }
+
+  private async prepareProtectedLogin(view: ManagedWebView, preferredUrl: string, preservePages: boolean): Promise<void> {
     const previous = view.login;
     previous?.dispose();
     view.login = null;
     const attempt = randomUUID();
     view.loginAttempt = attempt;
+    view.loginNotice = "";
     view.protectedLogin = { phase: "loading", pageLoading: true, message: "正在加载登录网页", image: "", revision: "", width: 0, height: 0 };
     view.pendingFileChooser = null; view.pendingDialog = null;
     this.broadcastState(view);
@@ -985,11 +998,17 @@ export class WebAccountViewManager {
     if (!preservePages) view.pages.clear();
     view.activePageId = "";
     const credential = await this.app.db.prepare("SELECT username, password_ciphertext FROM web_credentials WHERE id = ?").get(view.credentialId) as { username: string; password_ciphertext: string } | undefined;
+    if (!current()) return;
     if (!credential) throw new Error("登录账号不存在");
     view.username = credential.username;
     const login = await createServerProtectedLogin({
       context: view.context, url: view.entryUrl, username: credential.username, password: this.app.secrets.decrypt(credential.password_ciphertext), config: view.loginConfig,
-      changed: () => { if (current() && view.login) { view.protectedLogin = view.login.state; this.broadcastState(view); } },
+      changed: () => {
+        if (!current() || !view.login) return;
+        view.protectedLogin = view.login.state;
+        this.broadcastState(view);
+        if (view.login.state.phase === "failed") void this.browseWithoutAutofill(view).catch(() => undefined);
+      },
       completed: async ({ url, sessionStorage, authenticated }) => {
         if (!current()) return;
         let page: Page | undefined;
@@ -1007,23 +1026,84 @@ export class WebAccountViewManager {
           if (!current()) { await page.close(); return; }
           if (view.protectedLogin) Object.assign(view.protectedLogin, { pageLoading: false, message: "业务网页已加载，正在确认登录状态" });
           this.broadcastState(view);
-          const selector = view.loginConfig.successSelector || view.loginConfig.steps.find((step) => step.action === "success")?.selector || "";
-          await verifyServerBusinessPage(page, cdp, target === url ? selector : "", current);
           if (storageScript) await cdp.send("Page.removeScriptToEvaluateOnNewDocument", { identifier: storageScript });
           await cdp.detach();
           if (!current()) { await page.close(); return; }
           view.login = null; view.protectedLogin = null;
           await this.registerPage(view, page, true);
-          if (authenticated) this.broadcast(view, { type: "login-complete", message: "后台登录已完成" });
+          // No managed password is filled in this fresh document. Detection of
+          // a business marker is advisory and cannot disable its normal controls.
+          const selector = view.loginConfig.successSelector || view.loginConfig.steps.find((step) => step.action === "success")?.selector || "";
+          let probe: CDPSession | undefined;
+          try {
+            probe = await view.context.newCDPSession(page);
+            await verifyServerBusinessPage(page, probe, target === url ? selector : "", current);
+            if (current() && authenticated) this.broadcast(view, { type: "login-complete", message: "后台登录已完成" });
+          } catch {
+            if (current()) { view.loginNotice = "未能确认登录状态，网页仍可继续使用。可检查登录配置后重试自动登录。"; this.broadcastState(view); }
+          } finally { await probe?.detach().catch(() => undefined); }
         } catch {
           await page?.close().catch(() => undefined);
-          if (current()) { view.protectedLogin = { ...login.state, phase: "failed", pageLoading: false, message: "未能确认业务页面已登录，请检查登录成功标记后重试", image: "", revision: "" }; this.broadcastState(view); }
+          if (current()) {
+            view.login = login;
+            view.protectedLogin = { ...login.state, phase: "failed", pageLoading: false, message: "业务网页加载未完成", image: "", revision: "" };
+            this.broadcastState(view);
+            await this.browseWithoutAutofill(view);
+          }
         }
       },
     });
     if (!current()) { login.dispose(); await login.settled(); return; }
     view.login = login; view.protectedLogin = login.state;
     this.broadcastState(view);
+    if (login.state.phase === "failed") void this.browseWithoutAutofill(view).catch(() => undefined);
+  }
+
+  private browsingTransitions = new WeakMap<ManagedWebView, Promise<void>>();
+
+  private browseWithoutAutofill(view: ManagedWebView): Promise<void> {
+    const pending = this.browsingTransitions.get(view);
+    if (pending) return pending;
+    if (!view.protectedLogin || view.closed) return Promise.resolve();
+    const login = view.login;
+    const preparation = view.loginPreparation;
+    const message = view.protectedLogin.phase === "failed" ? view.protectedLogin.message : "自动登录已停止";
+    const attempt = randomUUID();
+    view.loginAttempt = attempt;
+    const current = () => !view.closed && view.loginAttempt === attempt;
+    login?.dispose();
+    Object.assign(view.protectedLogin, { phase: "authenticating", pageLoading: false, message: "正在安全打开网页" });
+    this.broadcastState(view);
+    const transition = (async () => {
+      try {
+        // Also wait for an in-flight auth-page creation. A cancelled creation
+        // must close its hidden document before normal page registration resumes.
+        await preparation;
+        await login?.settled();
+        if (!current()) return;
+        await Promise.all(view.context.pages().map((page) => page.close().catch(() => undefined)));
+        view.pages.clear(); view.activePageId = "";
+        if (!current()) return;
+        const page = await view.context.newPage();
+        if (!current()) { await page.close(); return; }
+        view.login = null; view.protectedLogin = null;
+        view.loginNotice = `${message}。网页已打开，当前页面未填入托管密码。`;
+        await this.registerPage(view, page, true);
+        // Navigation errors remain ordinary webpage errors; they never restore
+        // the automatic-login overlay or lock the address bar.
+        void page.goto(view.entryUrl, { waitUntil: "load", timeout: 30_000 }).catch(() => {
+          if (current()) this.broadcast(view, { type: "error", message: "网页加载失败，请检查地址或网络后刷新" });
+        });
+      } catch {
+        if (current() && view.protectedLogin) {
+          Object.assign(view.protectedLogin, { phase: "failed", pageLoading: false, message: "无法安全准备网页，请重试；托管密码仍受保护" });
+          this.broadcastState(view);
+        }
+      }
+    })();
+    this.browsingTransitions.set(view, transition);
+    void transition.finally(() => { if (this.browsingTransitions.get(view) === transition) this.browsingTransitions.delete(view); });
+    return transition;
   }
 
   private async requireBusinessPage(view: ManagedWebView): Promise<void> {
@@ -1074,6 +1154,7 @@ export class WebAccountViewManager {
     const active = view.pages.get(view.activePageId);
     return {
       protectedLogin: view.protectedLogin,
+      loginNotice: view.loginNotice,
       loading: view.protectedLogin ? view.protectedLogin.pageLoading === true : active?.loading === true,
       credentialId: view.credentialId,
       entryId: view.entryId,

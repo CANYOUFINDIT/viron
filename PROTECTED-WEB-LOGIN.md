@@ -4,13 +4,13 @@
 
 ## 登录与会话
 
-1. 执行端领取凭据，隐藏认证页面，不向客户端发送其完整截图、DOM、节点句柄或密码。服务端禁止认证期间的普通鼠标、键盘、导航、文件和语义浏览操作；本机暂停扩展及其预加载脚本。
-2. 填写一次账号密码，执行声明式登录步骤。按 Origin 校验跳转；未知域名、选择器不唯一、原生对话框或新窗口等不支持的流程保持保护。
+1. 执行端领取凭据，隐藏认证页面，不向客户端发送其 DOM、节点句柄或密码。服务端禁止认证期间的普通鼠标、键盘、导航、文件和语义浏览操作；本机暂停扩展及其预加载脚本。
+2. 填写一次账号密码，执行声明式登录步骤。按 Origin 校验跳转；未知域名、原生对话框或新窗口等不支持的流程不直接开放含有凭据的原文档。
 3. 需要用户确认时，发送通过检查的局部画面。协议标签打开独立对话框后切换到该对话框；覆盖在背后的凭据输入框会临时隐藏，关闭对话框后恢复。不会替用户同意协议。
 4. 普通点击作为一次操作发送；滑块保留连续按下、移动、抬起。区域身份、控件身份与几何位置决定画面版本，页面其他区域刷新及焦点样式不使画面失效。每次输入重新检查真实目标和焦点；旧坐标被丢弃，不能改用新区域重放。
-5. 登录成功候选持续稳定后，检查 Cookie、localStorage、sessionStorage 和当前源 IndexedDB 中是否保存了密码。销毁认证文档，以保留的 Cookie/存储及当前源 sessionStorage 打开全新业务文档，再确认业务页面才开放完整画面与普通操作。
+5. 自动登录失败、选择器无效或验证区域无法安全裁剪时，进入下述人工回退流程。成功候选持续稳定后，检查 Cookie、localStorage、sessionStorage 和当前源 IndexedDB 中是否保存了密码。销毁认证文档，以保留的 Cookie/存储及当前源 sessionStorage 打开全新业务文档。业务页面载入后即可正常操作，后续成功标记检查只给出提示，不再锁住网页。
 
-有明确成功 selector 时，两次稳定观察各为 300 ms；无标记时分别为 1500 ms。业务文档等待最长 20 秒，自动步骤无进展最长 30 秒，整个认证最长 5 分钟。网络、页面渲染和人工验证仍影响总耗时。不要把提交表单或出现「成功」提示当作完整认证成功。
+有明确成功 selector 时，认证候选稳定观察为 300 ms；无标记时为 1500 ms。业务标记检查最长 20 秒，期间页面已经可用。自动步骤无进展最长 30 秒，自动流程最长 5 分钟，超时转入人工回退，不反复自动提交。人工回退不受自动步骤超时限制，仍遵循平台会话和空闲回收规则。网络、页面渲染和人工验证仍影响总耗时。不要把提交表单或出现「成功」提示当作完整认证成功。
 
 地址栏在认证网页、业务网页及普通网页加载时显示不确定进度条，不显示虚构的百分比。网页加载、认证等待和业务页面确认分别显示状态；文档加载超时为 30 秒，加载时间不计入随后认证步骤的 30 秒无进展期限。组件表单中唯一的「提交」按钮通过点击调用站点自身处理逻辑，不绕过它执行原生表单提交。
 
@@ -18,9 +18,21 @@
 
 关闭账号保留该账号的浏览器 profile；显式清除登录状态才重置站点数据。本机扩展安装状态和设置保留。不同执行端不会自动共享 profile。
 
+## 三级回退与退出
+
+1. **自动登录**：识别常见表单或执行配置的登录步骤，协议、验证码仍由用户确认。
+2. **受保护的填充页面**：自动流程失败后保留隐藏认证浏览器，使用保守的默认识别填充字段。凭据输入框设为只读、退出 Tab 顺序、隐藏，并用不含值的覆盖层标记「已填入 · 已保护」。界面展示遮挡后的页面画面，转发受控的点击、键盘和滚动，用户可以继续操作协议、验证码与登录按钮。认证期间插件、开发者工具及页面 DOM/脚本访问保持禁用；目标页面修改密码字段的可见性或类型时重新遮挡。账号密码的原始 DOM 不交给客户端。
+3. **指定字段填充**：默认识别仍失败时，在画面中的输入框右键选择「填充用户名」或「填充密码」。客户端只发送画面版本和坐标；执行端重新校验可编辑输入框，再填写并冻结。旧坐标或非输入框不接受填充。当前指定填充适用于主文档输入框，iframe 和 Shadow DOM 中的凭据字段仍需适配。
+
+人工登录后可点击「登录完成，打开网页」，系统仍先检查存储并销毁认证文档，再移交新页面。手动继续或普通页面跳转不会生成「自动登录成功」提示。
+
+任一阶段都提供「打开网页」，停止当前登录、等待认证文档销毁及必要的存储清理，然后打开未填入托管密码的新文档。网络错误按普通网页错误处理，不要求先修复登录选择器才能使用页面。存储检查、未授权跳转或浏览器初始化等不能安全保留原文档的错误也采用此退出流程；只给出可关闭的提示与重新登录入口。
+
+只读密码框和禁用插件本身不能阻止 DOM 读取。因此本流程把填写后的文档留在受控执行端，使用画面交互，并在恢复普通浏览前销毁该文档。正常客户端的保护范围不包含执行端管理员调试进程或恶意目标站点。
+
 ## 与 JumpServer 官方源码的比对
 
-本次核对了官方 Luna 的 [WebLite 启动入口](https://github.com/jumpserver/luna/blob/8160a2744e34bfdcbfc42a4dea8cf14f39b03930/applets/weblite/src/main.ts)、[共享验证模块](https://github.com/jumpserver/luna/blob/8160a2744e34bfdcbfc42a4dea8cf14f39b03930/packages/web-proxy/src/interaction.ts) 和 [人工验证说明](https://github.com/jumpserver/luna/blob/8160a2744e34bfdcbfc42a4dea8cf14f39b03930/docs/web-proxy-interactive-verification.md)。WebLite 与客户端共享登录模块；人工验证保持目标页面隐藏，按区域身份管理画面版本，串行处理输入，并取消失效拖拽。Viron 独立实现这些原则，认证后额外销毁原文档并验证新业务文档。
+此前核对了官方 Luna 的 [WebLite 启动入口](https://github.com/jumpserver/luna/blob/8160a2744e34bfdcbfc42a4dea8cf14f39b03930/applets/weblite/src/main.ts)、[共享验证模块](https://github.com/jumpserver/luna/blob/8160a2744e34bfdcbfc42a4dea8cf14f39b03930/packages/web-proxy/src/interaction.ts) 和 [人工验证说明](https://github.com/jumpserver/luna/blob/8160a2744e34bfdcbfc42a4dea8cf14f39b03930/docs/web-proxy-interactive-verification.md)。WebLite 与客户端共享登录模块；人工验证保持目标页面隐藏，按区域身份管理画面版本，串行处理输入，并取消失效拖拽。Viron 独立实现这些原则，认证后额外销毁原文档；本次三级回退是 Viron 的实现，不等同于上述源码的功能承诺。
 
 JumpServer 官方 [Chrome applet 清单](https://github.com/jumpserver/applets/blob/56549337b196afc544800376cb046486edfa94db/chrome_app/manifest.yml) 使用 Panda/VNC；这与其当前 WebLite 实现是不同运行路径，不能混为一种实现，也不能据此宣称支持全部第三方登录。
 
@@ -31,11 +43,14 @@ JumpServer 官方 [Chrome applet 清单](https://github.com/jumpserver/applets/b
 | 普通表单、同一主页面多步登录 | 自动识别或配置步骤 |
 | 协议勾选、可识别的协议对话框 | 局部画面交给用户确认 |
 | 主页面中的短信码、验证码、鼠标滑块 | 配置独立验证区域，人工操作 |
+| 表单识别失败、自动流程超时、登录被拒绝 | 进入完整的受保护交互画面；右键指定主文档输入框 |
+| 成功标记缺失、自动流程无法继续 | 提示并保留页面操作；允许安全退出到未填充新页面 |
 | 跨源跳转 | 显式配置允许 Origin |
 | Cookie、localStorage、sessionStorage 登录态 | 复用 profile，认证文档销毁后交接 |
-| iframe、Shadow DOM、独立弹窗、浏览器原生对话框、硬件认证 | 保持保护，不开放凭据页面；需要独立适配 |
+| iframe、Shadow DOM 验证区域 | 局部裁剪失败后转入受保护页面；具体控件需逐站点验收，不支持向其内部凭据字段指定填充 |
+| 独立弹窗、浏览器原生对话框、硬件认证 | 不直接开放凭据文档；允许退出到未填充新页面，托管登录需要独立适配 |
 
-真实浏览器回归覆盖协议勾选后弹出对话框、动画与持续无关 DOM 更新、旧坐标、验证码输入、滑块、失败登录、延迟 SPA、临时跳转、业务重载返回登录、账号隔离与 profile 重开。
+真实浏览器回归覆盖协议勾选后弹出对话框、动画与持续无关 DOM 更新、旧坐标、验证码输入、滑块、失败登录、延迟 SPA、临时跳转、业务重载返回登录、账号隔离与 profile 重开。新增回退回归覆盖无效/不唯一选择器、真实 30 秒无进展、取消未完成加载、右键指定填充与冻结、密码可见性切换、手动登录交接、未验证存储清理和缺失业务成功标记。
 
 每个准备交付的真实站点仍应验收首次登录、协议拒绝/同意、验证码重试、登录失败、会话过期和密码更新；配置稳定的成功 selector。具体第三方 CAPTCHA 和 SSO 不能由模拟测试证明兼容。正常客户端操作的密码保护不等于抵御执行端管理员调试进程，也不等于防御接收密码的恶意目标站点。
 
@@ -44,8 +59,9 @@ JumpServer 官方 [Chrome applet 清单](https://github.com/jumpserver/applets/b
 ```sh
 npm run typecheck
 npm test
-VIRON_WEB_BROWSER_TEST=1 npx vitest run tests/web-browser.integration.test.ts tests/protected-web-server.integration.test.ts tests/protected-web-component-form.integration.test.ts
+VIRON_WEB_BROWSER_TEST=1 npx vitest run tests/web-browser.integration.test.ts tests/protected-web-server.integration.test.ts tests/protected-web-component-form.integration.test.ts tests/protected-web-fallback.integration.test.ts
 npm run build:desktop
 node_modules/.bin/electron scripts/verify-protected-web-login.mjs
+node_modules/.bin/electron scripts/verify-web-login-browsing.mjs
 VIRON_DESKTOP_WEB_TEST=1 npx vitest run tests/desktop-local-web.integration.test.ts
 ```

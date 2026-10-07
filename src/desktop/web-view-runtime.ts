@@ -139,6 +139,7 @@ export interface DesktopWebViewState {
   } | null;
   zoomFactor: number;
   protectedLogin: ProtectedLoginState | null;
+  loginNotice: string;
 }
 
 export interface ManagedDesktopWebPage {
@@ -176,6 +177,8 @@ export interface ManagedDesktopWebView {
   loginConfig: WebLoginConfig;
   login: ProtectedWebLogin | null;
   loginAttempt: string;
+  loginPreparation: Promise<void>;
+  loginNotice: string;
   pages: Map<string, ManagedDesktopWebPage>;
   pageGeneration: number;
   pendingPages: number;
@@ -681,18 +684,24 @@ function startProtectedDesktopLogin(view: ManagedDesktopWebView): void {
   const attempt = randomUUID();
   view.loginAttempt = attempt;
   view.notice = null;
+  view.loginNotice = "";
   const current = () => !view.closing && desktopWebViews.get(view.id) === view && view.loginAttempt === attempt;
   closeDesktopWebExtensionPopup();
   closeExtensionBrowser(view.partition);
   destroyDesktopWebPages(view);
   const preparation = suspendDesktopWebSessionExtensions(view.partition).then(() => previousLogin?.settled());
+  view.loginPreparation = preparation;
   // Retain the stable account profile. The hidden authentication document is
   // loaded only after extension workers, preloads and old website workers stop.
   view.login = new ProtectedWebLogin({
     session: view.partition, url: view.entryUrl, username: view.username, password: view.password,
     prepare: () => preparation,
     config: view.loginConfig, bounds: view.bounds,
-    changed: () => { if (current()) sendWebViewState(view); },
+    changed: () => {
+      if (!current()) return;
+      sendWebViewState(view);
+      if (view.login?.state.phase === "failed") void browseDesktopWebWithoutAutofill(view).catch(() => undefined);
+    },
     completed: async ({ url, sessionStorage, authenticated }) => {
       if (!current()) return;
       try {
@@ -719,8 +728,6 @@ function startProtectedDesktopLogin(view: ManagedDesktopWebView): void {
         if (!current()) return;
         if (view.login) Object.assign(view.login.state, { pageLoading: false, message: "业务网页已加载，正在确认登录状态" });
         sendWebViewState(view);
-        const successSelector = view.loginConfig.successSelector || view.loginConfig.steps.find((step) => step.action === "success")?.selector || "";
-        await verifyProtectedBusinessPage(contents, target === url ? successSelector : "", current);
         if (storageScriptId) {
           await contents.debugger.sendCommand("Page.removeScriptToEvaluateOnNewDocument", { identifier: storageScriptId });
           contents.debugger.detach();
@@ -728,8 +735,15 @@ function startProtectedDesktopLogin(view: ManagedDesktopWebView): void {
         if (!current()) return;
         view.login = null;
         activateDesktopWebPage(view, page.id);
-        if (authenticated) notifyWebView(view, "success", "后台登录已完成");
-        else sendWebViewState(view);
+        // The fresh business document contains no injected credentials. Its
+        // login marker is diagnostic and must never block ordinary browsing.
+        const successSelector = view.loginConfig.successSelector || view.loginConfig.steps.find((step) => step.action === "success")?.selector || "";
+        try {
+          await verifyProtectedBusinessPage(contents, target === url ? successSelector : "", current);
+          if (current() && authenticated) notifyWebView(view, "success", "后台登录已完成");
+        } catch {
+          if (current()) { view.loginNotice = "未能确认登录状态，网页仍可继续使用。可检查登录配置后重试自动登录。"; sendWebViewState(view); }
+        }
       } catch (error) {
         if (!current()) return;
         destroyDesktopWebPages(view);
@@ -737,11 +751,60 @@ function startProtectedDesktopLogin(view: ManagedDesktopWebView): void {
           ? "业务页面仍在登录页，登录状态未生效。请检查登录配置后重试"
           : "未能确认业务页面已登录，请检查登录成功标记后重试" });
         sendWebViewState(view);
+        await browseDesktopWebWithoutAutofill(view);
       }
     },
   });
   view.password = "";
   sendWebViewState(view);
+}
+
+const desktopBrowseTransitions = new WeakMap<ManagedDesktopWebView, Promise<void>>();
+
+/** Never expose the authentication document, even when its form cannot be identified. */
+export function browseDesktopWebWithoutAutofill(view: ManagedDesktopWebView): Promise<void> {
+  const pending = desktopBrowseTransitions.get(view);
+  if (pending) return pending;
+  const login = view.login;
+  if (!login || view.closing) return Promise.resolve();
+  const message = login.state.phase === "failed" ? login.state.message : "自动登录已停止";
+  const attempt = randomUUID();
+  view.loginAttempt = attempt;
+  const current = () => !view.closing && desktopWebViews.get(view.id) === view && view.loginAttempt === attempt;
+  login.dispose();
+  Object.assign(login.state, { phase: "authenticating", pageLoading: false, message: "正在安全打开网页" });
+  sendWebViewState(view);
+  const transition = (async () => {
+    try {
+      await view.loginPreparation;
+      await login.settled();
+      if (!current()) return;
+      destroyDesktopWebPages(view);
+      await resumeDesktopWebSessionExtensions(view.partition);
+      if (!current()) return;
+      registerBusinessExtensions(view);
+      await loadDesktopWebExtensions(view.partition, view.lastUrlKey);
+      if (!current()) return;
+      const page = await createDesktopWebPage(view, false);
+      if (!current()) { page.view.dispose(); return; }
+      view.password = "";
+      view.login = null;
+      view.loginNotice = `${message}。网页已打开，当前页面未填入托管密码。`;
+      page.loadingUrl = view.entryUrl;
+      activateDesktopWebPage(view, page.id);
+      void page.view.webContents.loadURL(view.entryUrl).catch(() => {
+        if (current()) { page.loadingUrl = ""; page.error = tr("网页加载失败，请检查地址或网络后刷新"); sendWebViewState(view); }
+      });
+    } catch {
+      if (current()) {
+        Object.assign(login.state, { phase: "failed", pageLoading: false, message: "无法安全准备网页，请重试；托管密码仍受保护" });
+        sendWebViewState(view);
+      }
+    }
+  })();
+  desktopBrowseTransitions.set(view, transition);
+  void transition.finally(() => { if (desktopBrowseTransitions.get(view) === transition) desktopBrowseTransitions.delete(view); });
+  return transition;
 }
 
 export async function reopenDesktopWebViews(views: ManagedDesktopWebView[], credential: DesktopWebCredential): Promise<void> {
@@ -825,6 +888,8 @@ export async function openDesktopWebView(
     loginConfig: credential.loginConfig ?? defaultWebLoginConfig(),
     login: null,
     loginAttempt: "",
+    loginPreparation: Promise.resolve(),
+    loginNotice: "",
     pages: new Map(),
     pageGeneration: 0,
     pendingPages: 0,
@@ -1084,6 +1149,10 @@ export async function handleDesktopWebViewAction(id: string, action: { type: str
     return webViewState(managed);
   }
   if (action.type === "reset") return await resetDesktopWebView(managed);
+  if (action.type === "browse") {
+    await browseDesktopWebWithoutAutofill(managed);
+    return webViewState(managed);
+  }
   if (action.type === "refill") {
     await refreshDesktopWebViews([managed], true);
     return webViewState(managed);

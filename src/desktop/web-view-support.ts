@@ -184,7 +184,7 @@ export function webViewState(view: ManagedDesktopWebView): DesktopWebViewState {
     return { id: view.id, credentialId: view.credentialId, activePageId: "", pages: [], url: view.entryUrl, title: view.username,
       faviconDataUrl: "", loading: view.login.state.pageLoading === true, canGoBack: false, canGoForward: false,
       autofillMessage: "", error: "", certificateError: null, closedReason: view.closedReason, notice: view.notice,
-      zoomFactor: 1, protectedLogin: { ...view.login.state } };
+      zoomFactor: 1, protectedLogin: { ...view.login.state }, loginNotice: view.loginNotice };
   }
   const navigation = active.view.webContents.navigationHistory;
   return {
@@ -212,6 +212,7 @@ export function webViewState(view: ManagedDesktopWebView): DesktopWebViewState {
     notice: view.notice,
     zoomFactor: pageZoomFactor(active.zoomFactor || 1),
     protectedLogin: view.login ? { ...view.login.state } : null,
+    loginNotice: view.loginNotice,
   };
 }
 
