@@ -24,6 +24,8 @@ import { historyNavigationFromMouseButton } from "../../shared/history-navigatio
 import { applyHistoryNavigationCommand, applyHistoryNavigationWheel } from "../history-navigation";
 import type { TlsWebEntryBadge } from "../../shared/tls-certificates";
 import TlsPopover from "./credentials/TlsPopover.vue";
+import ProtectedWebLogin from "./ProtectedWebLogin.vue";
+import type { ProtectedLoginInput, ProtectedLoginState } from "../../shared/protected-web-login";
 import WebPageTabStrip from "./WebPageTabStrip.vue";
 
 interface BrowserPage {
@@ -34,6 +36,7 @@ interface BrowserPage {
 }
 
 interface BrowserView {
+  protectedLogin: ProtectedLoginState | null;
   credentialId: string;
   entryId: string;
   entryName: string;
@@ -78,6 +81,21 @@ const errorMessage = ref("");
 const pageTabs = computed<BrowserPage[]>(() => view.value?.pages ?? []);
 const activePageId = computed(() => view.value?.activePageId ?? "");
 let socket: ServiceSocket | null = null;
+let loginRequest = 0;
+const pendingLoginInputs = new Map<number, { resolve: () => void; reject: (error: Error) => void; timer: number }>();
+function rejectLoginInputs() {
+  for (const pending of pendingLoginInputs.values()) { window.clearTimeout(pending.timer); pending.reject(new Error("登录连接已断开")); }
+  pendingLoginInputs.clear();
+}
+function sendLoginInput(input: ProtectedLoginInput): Promise<void> {
+  if (socket?.readyState !== ServiceSocket.OPEN) return Promise.reject(new Error("登录连接未就绪"));
+  const requestId = ++loginRequest;
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => { pendingLoginInputs.delete(requestId); reject(new Error("验证操作超时")); }, 10_000);
+    pendingLoginInputs.set(requestId, { resolve, reject, timer });
+    send({ type: "login-input", input, requestId });
+  });
+}
 let resizeObserver: ResizeObserver | null = null;
 let resizeTimer: number | undefined;
 let moveFrame: number | undefined;
@@ -102,11 +120,13 @@ function viewportSize() {
 }
 
 function send(message: Record<string, unknown>) {
+  if (view.value?.protectedLogin && !["login-input", "refill", "visibility", "resize", "ping"].includes(String(message.type))) return;
   if (socket?.readyState === ServiceSocket.OPEN) socket.send(JSON.stringify(message));
 }
 
 function syncView(next: BrowserView) {
   view.value = next;
+  if (next.protectedLogin) frame.value = "";
   address.value = next.url === "about:blank" ? "" : next.url;
 }
 
@@ -180,8 +200,11 @@ async function connect(initialPage: "entry" | "blank" = "entry", preload = false
       });
       socket.addEventListener("message", handleMessage);
       socket.addEventListener("close", (event) => {
+        rejectLoginInputs();
         if (intentionalClose) return;
         status.value = "disconnected";
+        frame.value = "";
+        if (view.value) view.value.protectedLogin = null;
         if (event.code !== 1000) errorMessage.value = event.reason || tr("账号页面连接已断开");
       });
       socket.addEventListener("error", () => {
@@ -208,6 +231,7 @@ function handleMessage(event: MessageEvent) {
   try {
     const message = JSON.parse(String(event.data)) as {
       type: string;
+      requestId?: number;
       data?: string;
       view?: BrowserView;
       message?: string;
@@ -217,7 +241,14 @@ function handleMessage(event: MessageEvent) {
       dialogType?: string;
       defaultValue?: string;
     };
-    if (message.type === "ready" && message.view) {
+    if (message.type === "login-input-result" && message.requestId !== undefined) {
+      const pending = pendingLoginInputs.get(message.requestId);
+      if (pending) {
+        pendingLoginInputs.delete(message.requestId); window.clearTimeout(pending.timer);
+        if (message.view) syncView(message.view);
+        if (message.message) pending.reject(new Error(message.message)); else pending.resolve();
+      }
+    } else if (message.type === "ready" && message.view) {
       status.value = "connected";
       syncView(message.view);
       resize();
@@ -227,7 +258,7 @@ function handleMessage(event: MessageEvent) {
       }
     } else if (message.type === "state" && message.view) {
       syncView(message.view);
-    } else if (message.type === "frame" && message.data) {
+    } else if (message.type === "frame" && message.data && !view.value?.protectedLogin) {
       frame.value = `data:image/jpeg;base64,${message.data}`;
       status.value = "connected";
     } else if (message.type === "fileChooser") {
@@ -244,8 +275,8 @@ function handleMessage(event: MessageEvent) {
         anchor.click();
         ElMessage.success(tr("开始下载 {0}", [message.filename || tr("文件")]));
       }
-    } else if (message.type === "autofill" && message.message) {
-      ElMessage.info(message.message);
+    } else if (message.type === "login-complete" && message.message) {
+      ElMessage.success(message.message);
     } else if (message.type === "dialog") {
       handleDialog(message);
     } else if (message.type === "error") {
@@ -253,6 +284,9 @@ function handleMessage(event: MessageEvent) {
       ElMessage.error(errorMessage.value);
     } else if (message.type === "closed") {
       status.value = "disconnected";
+      frame.value = "";
+      if (view.value) view.value.protectedLogin = null;
+      rejectLoginInputs();
       errorMessage.value = message.reason || tr("账号页面已休眠");
       void loadActiveConnections().catch(() => undefined);
     }
@@ -478,6 +512,7 @@ onBeforeUnmount(() => {
   window.clearTimeout(resizeTimer);
   if (moveFrame) window.cancelAnimationFrame(moveFrame);
   resizeObserver?.disconnect();
+  rejectLoginInputs();
   socket?.close();
   window.setTimeout(() => void loadActiveConnections().catch(() => undefined), 100);
 });
@@ -495,9 +530,9 @@ onBeforeUnmount(() => {
     />
     <header class="web-browser-toolbar">
       <div class="web-browser-nav">
-        <button type="button" :aria-label="$t('后退')" :title="$t('后退')" :disabled="!view" @click="send({ type: 'back' })"><ArrowLeft :size="15" /></button>
-        <button type="button" :aria-label="$t('前进')" :title="$t('前进')" :disabled="!view" @click="send({ type: 'forward' })"><ArrowRight :size="15" /></button>
-        <button type="button" :aria-label="$t('刷新')" :title="$t('刷新')" :disabled="!view" @click="send({ type: 'reload' })"><RefreshCw :size="15" /></button>
+        <button type="button" :aria-label="$t('后退')" :title="$t('后退')" :disabled="!view || Boolean(view.protectedLogin)" @click="send({ type: 'back' })"><ArrowLeft :size="15" /></button>
+        <button type="button" :aria-label="$t('前进')" :title="$t('前进')" :disabled="!view || Boolean(view.protectedLogin)" @click="send({ type: 'forward' })"><ArrowRight :size="15" /></button>
+        <button type="button" :aria-label="$t('刷新')" :title="$t('刷新')" :disabled="!view || Boolean(view.protectedLogin)" @click="send({ type: 'reload' })"><RefreshCw :size="15" /></button>
       </div>
       <form class="web-browser-address" @submit.prevent="navigate">
         <TlsPopover
@@ -510,11 +545,11 @@ onBeforeUnmount(() => {
           @configure-https="emit('configureEntryHttps')"
           @refreshed="emit('tlsRefreshed')"
         />
-        <input v-model="address" :aria-label="$t('页面地址')" autocomplete="off" spellcheck="false" :readonly="status === 'idle'" />
+        <input v-model="address" :aria-label="$t('页面地址')" autocomplete="off" spellcheck="false" :readonly="status === 'idle' || Boolean(view?.protectedLogin)" />
       </form>
       <div class="web-browser-tools">
         <button type="button" :aria-label="$t('新建空白标签页')" :title="$t('新建空白标签页')" @click="createBlankPage"><Plus :size="15" /></button>
-        <button type="button" :aria-label="$t('重新填充账号密码')" :title="$t('重新填充账号密码')" :disabled="!view" @click="send({ type: 'refill' })"><KeyRound :size="15" /></button>
+        <button type="button" :aria-label="$t('重新后台登录')" :title="$t('重新后台登录')" :disabled="!view" @click="send({ type: 'refill' })"><KeyRound :size="15" /></button>
         <button type="button" :aria-label="$t('重新登录')" :title="$t('清除登录状态并重新登录')" :disabled="!view" @click="resetLogin"><RotateCcw :size="15" /></button>
         <button v-if="focused !== undefined" type="button" :aria-label="focused ? $t('退出沉浸模式') : $t('进入沉浸模式')" :title="focused ? $t('退出沉浸模式') : $t('进入沉浸模式')" @click="emit('focusChange', !focused)"><Minimize2 v-if="focused" :size="15" /><Maximize2 v-else :size="15" /></button>
         <a v-if="!desktopApp" :href="externalHref" target="_blank" rel="noopener noreferrer" :aria-label="$t('在浏览器新标签页打开')" :title="$t('在浏览器新标签页打开')"><ExternalLink :size="15" /></a>
@@ -530,7 +565,8 @@ onBeforeUnmount(() => {
       @contextmenu="handleContextMenu"
       @wheel="handleWheel"
     >
-      <img v-if="frame" :src="frame" :alt="$t('{0} 的页面画面', [username])" draggable="false" />
+      <ProtectedWebLogin v-if="view?.protectedLogin" :state="view.protectedLogin" :send="sendLoginInput" @retry="send({ type: 'refill' })" />
+      <img v-else-if="frame" :src="frame" :alt="$t('{0} 的页面画面', [username])" draggable="false" />
       <div v-else-if="status === 'idle' || preloading" class="web-browser-loading web-browser-idle" :title="$t('双击空白处访问页面')" @pointerdown.stop @mousedown.stop @dblclick="visitPage">
         <div class="web-browser-idle__icon"><Globe2 :size="24" /></div>
         <strong>{{ $t('准备访问此页面') }}</strong>

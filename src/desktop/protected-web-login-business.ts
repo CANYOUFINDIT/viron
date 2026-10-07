@@ -12,7 +12,7 @@ export async function verifyProtectedBusinessPage(contents: WebContents, selecto
         const key = `${contents.getURL()}:${result}`;
         if (candidate !== key) { candidate = key; since = Date.now(); }
         if (result === "login" && Date.now() - since >= 3000) throw new Error("business-login");
-        if (result === "ready" && Date.now() - since >= 1500) return;
+        if (result === "ready" && Date.now() - since >= (selector ? 300 : 1500)) return;
       } catch (error) {
         if (error instanceof Error && error.message === "business-login") throw error;
         // Navigation can invalidate the isolated world between the loading check

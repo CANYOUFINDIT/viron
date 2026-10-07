@@ -69,8 +69,39 @@ describe("protected Web login", () => {
     expect(guard.authorize(result.region.revision, undefined, undefined, true)).toBeNull();
     window.document.querySelector<HTMLElement>("#otp")!.focus();
     expect(guard.authorize(result.region.revision, undefined, undefined, true)).not.toBeNull();
-    window.document.querySelector("#otp")!.dispatchEvent(new window.Event("input", { bubbles: true }));
+    window.document.querySelector("#challenge")!.append(window.document.createElement("button"));
     expect(guard.authorize(result.region.revision, undefined, undefined, true)).toBeNull();
+  });
+  it("keeps the frame valid through unrelated DOM changes and focus styling", () => {
+    const { window, guard } = fixture();
+    const result = guard.tick(0, false, "");
+    window.document.title = "Login clock updated";
+    window.document.querySelector("#otp")!.classList.add("focused");
+    window.document.body.append(window.document.createElement("aside"));
+    expect(guard.region().revision).toBe(result.region.revision);
+  });
+  it("switches from an agreement checkbox to a separate dialog without exposing credentials", () => {
+    const { window, guard } = fixture("");
+    const label = window.document.createElement("label");
+    label.innerHTML = '<input type="checkbox" required> I agree to terms';
+    label.getBoundingClientRect = window.document.querySelector("#challenge")!.getBoundingClientRect;
+    window.document.querySelector("form")!.append(label);
+    const first = guard.tick(0, false, "");
+    const dialog = window.document.createElement("section");
+    dialog.setAttribute("role", "dialog"); dialog.innerHTML = '<p>Privacy terms</p><button>Agree</button>';
+    // It overlaps the old form, as a centered Element Plus dialog does.
+    dialog.getBoundingClientRect = window.document.querySelector("#password")!.getBoundingClientRect;
+    window.document.body.append(dialog);
+    const second = guard.tick(0, false, "");
+    expect(second.status).toBe("interactive");
+    expect(second.kind).toBe("agreement");
+    expect(second.region.revision).not.toBe(first.region.revision);
+    expect(window.getComputedStyle(window.document.querySelector("#password")!).visibility).toBe("hidden");
+    expect(guard.authorize(first.region.revision)).toBeNull();
+    expect(guard.continueInteraction(second.region.revision)).toBe(false);
+    dialog.remove(); label.querySelector<HTMLInputElement>("input")!.checked = true;
+    expect(guard.tick(0, false, "").status).toBe("submitted");
+    expect(window.getComputedStyle(window.document.querySelector("#password")!).visibility).not.toBe("hidden");
   });
   it("refuses to release a session that persisted the plaintext password", async () => {
     const { window, guard } = fixture();

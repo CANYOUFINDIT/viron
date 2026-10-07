@@ -86,10 +86,12 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
   });
   const tabsReordered = reorderedBlankState.pages[0]?.id === blankState.pages[1]?.id
     && reorderedBlankState.pages[1]?.id === blankState.pages[0]?.id;
-  const activatedEntryState = await handleDesktopWebViewAction(blankState.id, { type: "activate-page", pageId: blankState.pages[0]?.id });
-  const defaultAddressPreserved = activatedEntryState.activePageId === blankState.pages[0]?.id
-    && activatedEntryState.url === blankView.entryUrl;
-  await handleDesktopWebViewAction(blankState.id, { type: "activate-page", pageId: blankState.pages[1]?.id });
+  await handleDesktopWebViewAction(blankState.id, { type: "activate-page", pageId: blankState.pages[0]?.id });
+  await waitForDesktopWebTitle(blankView, `Logged ${username}`);
+  const defaultAddressPreserved = webViewState(blankView).url === blankView.entryUrl;
+  // Deferred entries now use protected login too. Simulate an expired website
+  // session before checking the separate manual background-login action.
+  await blankView.partition.cookies.remove(blankView.entryOrigin, "account");
   await handleDesktopWebViewAction(blankState.id, { type: "navigate", url: `${blankTarget.host}/` });
   await waitForDesktopWebTitle(blankView, "Login");
   await handleDesktopWebViewAction(blankState.id, { type: "refill" });

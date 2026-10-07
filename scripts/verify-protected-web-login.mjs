@@ -31,6 +31,7 @@ const server = createServer((request, response) => {
       if (request.url === "/transient") { response.writeHead(302, { Location: "/transient-home" }); response.end(); return; }
       if (request.url === "/one-use") { response.writeHead(302, { Location: "/one-use-home" }); response.end(); return; }
       assert.equal(values.get("password"), "fixture-secret");
+      if (request.url === "/retry" && values.get("otp") !== "654321") { response.writeHead(400); response.end("Invalid code"); return; }
       if (request.url === "/verify" && values.get("otp") !== "654321") { response.end("<title>Denied</title><input type=password>"); return; }
       response.writeHead(302, { Location: "/home", "Set-Cookie": "fixtureSession=authenticated; Path=/; HttpOnly; SameSite=Lax" });
       response.end();
@@ -41,9 +42,12 @@ const server = createServer((request, response) => {
   if (request.url === "/home") { response.end("<title>Business</title><main id=success>Signed in</main>"); return; }
   if (request.url === "/transient-home") { response.end('<title>Business</title><script>setTimeout(() => location.replace("/denied-login"), 1200)</script>'); return; }
   if (request.url === "/one-use-home" && ++oneUsePages === 1) { response.end('<title>Business</title><main id=success>Signed in once</main>'); return; }
-  const challenge = request.url === "/verify" || request.url === "/unsafe";
-  const form = `<form method=post action="${challenge ? "/verify" : request.url === "/transient" ? "/transient" : request.url === "/one-use" ? "/one-use" : request.url?.startsWith("/denied") ? "/denied" : "/plain"}"><input id=username name=username autocomplete=username><input id=password name=password type=password autocomplete=current-password>${challenge ? '<div id=challenge><label>Code<input id=otp name=otp autocomplete=one-time-code></label></div>' : ''}${request.url === "/agreement" ? '<label id=agreement><input id=agree type=checkbox required> I agree to the terms</label>' : ''}<button id=login type=submit>Login</button></form>`;
-  response.end(`<!doctype html><title>Login</title><style>input,button { display:block;margin:12px;width:180px;height:30px } #challenge { margin:20px;width:260px;height:100px;background:#ddd;padding:8px } #agreement { display:block;margin:20px;width:260px;height:80px; }</style>${request.url === "/delayed" ? `<script>setTimeout(() => {document.body.insertAdjacentHTML("beforeend", ${JSON.stringify(form)})}, 4200)</script>` : form}<script>sessionStorage.setItem('fixture-tab', 'kept');localStorage.setItem('fixture-local', 'kept');</script>`);
+  const challenge = ["/verify", "/unsafe", "/slider", "/retry"].includes(request.url);
+  const form = `<form method=post action="${request.url === "/retry" ? "/retry" : challenge ? "/verify" : request.url === "/transient" ? "/transient" : request.url === "/one-use" ? "/one-use" : request.url?.startsWith("/denied") ? "/denied" : "/plain"}"><input id=username name=username autocomplete=username><input id=password name=password type=password autocomplete=current-password>${challenge ? '<div id=challenge><label>Code<input id=otp name=otp autocomplete=one-time-code></label>' + (request.url === '/slider' ? '<div id=slider style="width:240px;height:24px;background:lightblue"><span id=knob style="display:block;width:24px;height:24px;background:navy"></span></div>' : '') + '</div>' : ''}${["/agreement", "/agreement-modal"].includes(request.url) ? '<label id=agreement><input id=agree type=checkbox required> I agree to the terms</label>' : ''}<button id=login type=submit>Login</button></form>`;
+  response.end(`<!doctype html><title>Login</title><style>input,button { display:block;margin:12px;width:180px;height:30px } #challenge { margin:20px;width:260px;height:100px;background:#ddd;padding:8px } #agreement { display:block;margin:20px;width:260px;height:80px; }</style>${request.url === "/delayed" ? `<script>setTimeout(() => {document.body.insertAdjacentHTML("beforeend", ${JSON.stringify(form)})}, 4200)</script>` : form}<script>sessionStorage.setItem('fixture-tab', 'kept');localStorage.setItem('fixture-local', 'kept');</script>${request.url === "/retry" ? `<script>document.querySelector('form').addEventListener('submit',async event=>{event.preventDefault();const response=await fetch('/retry',{method:'POST',body:new URLSearchParams(new FormData(event.target))});if(response.ok)location.href='/home';else{let error=document.querySelector('#code-error');if(!error){error=document.createElement('p');error.id='code-error';error.setAttribute('role','alert');challenge.append(error)}error.textContent='Invalid code, try again'}});</script>` : ''}${request.url === "/slider" ? `<script>let held=false;knob.addEventListener('mousedown',()=>held=true);document.addEventListener('mousemove',event=>{if(held&&event.buttons===1){const box=slider.getBoundingClientRect();const offset=Math.min(216,Math.max(0,event.clientX-box.x));knob.style.transform='translateX('+offset+'px)';if(offset>190)otp.value='654321'}});document.addEventListener('mouseup',()=>held=false);</script>` : ''}${request.url === "/agreement-modal" ? `<script>
+  const clock=document.createElement('aside');document.body.append(clock);setInterval(()=>clock.textContent=String(Date.now()),30);
+  agree.addEventListener('click', event=>{event.preventDefault();const dialog=document.createElement('section');dialog.id='terms';dialog.setAttribute('role','dialog');dialog.style.cssText='position:fixed;left:40px;top:40px;width:450px;height:220px;background:#222;color:white;padding:12px;';dialog.innerHTML='<p>Service agreement and privacy</p><button id="decline" type="button">Disagree</button><button id="confirm" type="button">Agree</button>';document.body.append(dialog);document.querySelector('#confirm').addEventListener('click',()=>{agree.checked=true;dialog.remove()});document.querySelector('#decline').addEventListener('click',()=>dialog.remove());});
+  </script>` : ''}`);
 });
 function waitUntil(predicate, description, timeout = 15000) {
   const deadline = Date.now() + timeout;
@@ -69,13 +73,13 @@ try {
   assert.equal(capabilities.uuidAvailable, fixtureHost === "127.0.0.1");
   console.log(`Fixture context: ${fixtureHost === "127.0.0.1" ? "loopback" : "ordinary HTTP"}, browser UUID ${capabilities.uuidAvailable ? "available" : "unavailable"}`);
   contextProbe.destroy();
-  for (const path of ["/plain", "/verify", "/unsafe", "/denied", "/redirect", "/script", "/bad-selector", "/delayed", "/transient", "/agreement", "/one-use"]) {
+  for (const path of ["/plain", "/verify", "/retry", "/slider", "/unsafe", "/denied", "/redirect", "/script", "/bad-selector", "/delayed", "/transient", "/agreement", "/agreement-modal", "/one-use"]) {
     console.log(`Checking ${path}`);
     const partition = session.fromPartition(`verify-protected-${randomUUID()}`);
     let completed;
     const snapshots = [];
     const login = new ProtectedWebLogin({ session: partition, url: origin + path, username: "fixture-user", password: "fixture-secret",
-      config: { ...defaultWebLoginConfig(), usernameSelector: path === "/bad-selector" ? "input:fixture-secret()" : "", successSelector: ["/delayed", "/transient", "/agreement"].includes(path) ? "" : "#success", interactionSelector: path === "/unsafe" ? "form" : path === "/verify" ? "#challenge" : "",
+      config: { ...defaultWebLoginConfig(), usernameSelector: path === "/bad-selector" ? "input:fixture-secret()" : "", successSelector: ["/delayed", "/transient", "/agreement"].includes(path) ? "" : "#success", interactionSelector: path === "/unsafe" ? "form" : ["/verify", "/slider", "/retry"].includes(path) ? "#challenge" : "",
         steps: path === "/script" ? [{ action: "type", selector: "#username", value: "{USERNAME}" }, { action: "type", selector: "#password", value: "{SECRET}" }, { action: "click", selector: "#login" }, { action: "success", selector: "#success" }] : [] },
       bounds: { x: 0, y: 0, width: 900, height: 650 }, changed: () => snapshots.push(JSON.stringify(login.state)), completed: async (result) => { completed = result; },
     });
@@ -94,14 +98,46 @@ try {
       await new Promise(resolve => setTimeout(resolve, 3500));
       assert.equal(completed, undefined, "A delayed login form must not be accepted as an anonymous page");
     }
-    if (path === "/agreement") {
+    if (["/agreement", "/agreement-modal"].includes(path)) {
       const before = posts;
       await waitUntil(() => login.state.phase === "interactive", "agreement crop");
       assert.equal(posts, before, "The user must confirm the agreement before submission");
       const coordinates = await login.window.webContents.executeJavaScript(`(() => {const a=document.querySelector('#agreement').getBoundingClientRect();const b=document.querySelector('#agree').getBoundingClientRect();return {x:b.x-a.x+20,y:b.y-a.y+12}})()`);
-      await login.input({ type: "mouseDown", ...coordinates, revision: login.state.revision });
-      await login.input({ type: "mouseUp", ...coordinates, revision: login.state.revision });
+      const checkboxRevision = login.state.revision;
+      await new Promise(resolve => setTimeout(resolve, 300));
+      assert.equal(login.state.revision, checkboxRevision, "Unrelated reactive changes must not invalidate a frame");
+      await login.input({ type: "click", ...coordinates, revision: checkboxRevision });
+      if (path === "/agreement-modal") {
+        await waitUntil(() => login.state.phase === "interactive" && login.state.width > 400, "terms modal crop");
+        const point = await login.window.webContents.executeJavaScript(`(() => {const a=terms.getBoundingClientRect();const b=document.querySelector('#confirm').getBoundingClientRect();return {x:b.x-a.x+20,y:b.y-a.y+12}})()`);
+        assert.equal(await login.window.webContents.executeJavaScript("getComputedStyle(document.querySelector('#password')).visibility"), "hidden");
+        await login.input({ type: "click", ...coordinates, revision: checkboxRevision });
+        assert.equal(await login.window.webContents.executeJavaScript("Boolean(document.querySelector('#terms'))"), true, "Stale checkbox coordinates cannot be replayed on the modal");
+        await login.input({ type: "click", ...point, revision: login.state.revision });
+      }
       if (login.state.phase === "interactive") await login.input({ type: "continue", revision: login.state.revision });
+    }
+    if (path === "/slider") {
+      await waitUntil(() => login.state.phase === "interactive", "slider crop");
+      const point = await login.window.webContents.executeJavaScript(`(() => {const a=challenge.getBoundingClientRect(),b=knob.getBoundingClientRect();return {x:b.x-a.x+12,y:b.y-a.y+12}})()`);
+      const revision = login.state.revision;
+      await login.input({ type: "mouseDown", ...point, revision });
+      for (const offset of [40,80,120,160,200,216]) await login.input({ type: "mouseMove", x: point.x + offset, y: point.y, revision });
+      await login.input({ type: "mouseUp", x: point.x + 216, y: point.y, revision });
+      assert.equal(await login.window.webContents.executeJavaScript('otp.value'), '654321');
+      await login.input({ type: "continue", revision: login.state.revision });
+    }
+    if (path === "/retry") {
+      await waitUntil(() => login.state.phase === "interactive", "retry challenge");
+      const point = await login.window.webContents.executeJavaScript(`(() => {const a=challenge.getBoundingClientRect(),b=otp.getBoundingClientRect();return{x:b.x-a.x+20,y:b.y-a.y+12}})()`);
+      await login.input({ type: "click", ...point, revision: login.state.revision });
+      await login.input({ type: "text", text: "000000", revision: login.state.revision });
+      await login.input({ type: "continue", revision: login.state.revision });
+      await waitUntil(() => login.state.phase === "interactive" && login.state.revision, "retry crop after rejection");
+      await new Promise(resolve=>setTimeout(resolve,300));
+      for (let i=0;i<6;i++) await login.input({ type: "key", key: "Backspace", revision: login.state.revision });
+      await login.input({ type: "text", text: "654321", revision: login.state.revision });
+      await login.input({ type: "continue", revision: login.state.revision });
     }
     if (path === "/verify") {
       await waitUntil(() => login.state.phase === "interactive", "verification crop");
@@ -156,7 +192,7 @@ try {
   await audit.loadURL(origin + "/home");
   assert.equal(await audit.webContents.executeJavaScript('localStorage.getItem("unsafe-fixture")'), null);
   audit.destroy();
-  assert.equal(posts, 8);
+  assert.equal(posts, 12);
   console.log("Protected login passed: hidden credentials, CAPTCHA and agreement input, retained session, delayed SPA rendering, transient redirects, handoff returning to login, unsafe crop, rejected login and unauthorized origin blocked.");
 } catch (error) {
   console.error(error);

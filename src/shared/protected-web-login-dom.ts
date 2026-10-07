@@ -38,8 +38,15 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
     let interactionDone = false;
     let interactionSelector = "";
     let passwordReleased = false;
-    new MutationObserver(() => revision++).observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
-    document.addEventListener("input", () => revision++, true);
+    let lastRegion = "";
+    let nodeSequence = 0;
+    const identities = new WeakMap<Element, number>();
+    const identity = (node: Element) => { if (!identities.has(node)) identities.set(node, ++nodeSequence); return identities.get(node); };
+    const masks = new Map<HTMLElement, [string, string]>();
+    const restoreMasks = () => { for (const [node, [value, priority]] of masks) { if (value) node.style.setProperty("visibility", value, priority); else node.style.removeProperty("visibility"); } masks.clear(); };
+    const maskCredentials = () => { for (const node of new Set([...credentials, ...document.querySelectorAll('input[type="password"],input[autocomplete*="password"],input[autocomplete*="username"]')])) if (node instanceof HTMLElement) { if (!masks.has(node)) masks.set(node, [node.style.getPropertyValue("visibility"), node.style.getPropertyPriority("visibility")]); node.style.setProperty("visibility", "hidden", "important"); } };
+    let agreementInteraction = false;
+    let modalInteraction = false;
     const visible = (element: Element | null): element is HTMLElement => {
       if (!(element instanceof HTMLElement)) return false;
       const rect = element.getBoundingClientRect();
@@ -59,7 +66,6 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(element, value);
       element.dispatchEvent(new Event("input", { bubbles: true }));
       element.dispatchEvent(new Event("change", { bubbles: true }));
-      revision++;
     };
     const inputs = () => [...document.querySelectorAll<HTMLInputElement>("input")].filter(visible);
     const buttons = (target: Element | null) => [...(target?.closest("form") ?? document.body).querySelectorAll<HTMLElement>('button,input[type="submit"]')].filter(visible);
@@ -89,7 +95,7 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
       };
       const sensitive = new Set([...credentials, ...document.querySelectorAll('input[type="password"],input[autocomplete*="password"],input[autocomplete*="username"]')]);
       for (const node of document.querySelectorAll<HTMLInputElement>("input")) if (password && node.value.includes(password)) sensitive.add(node);
-      if ([...sensitive].some((node) => node === element || element.contains(node) || overlaps(node))) throw new Error("unsafe-region");
+      if ([...sensitive].some((node) => node === element || element.contains(node) || (visible(node) && overlaps(node)))) throw new Error("unsafe-region");
       if ([...document.querySelectorAll("iframe,frame,object,embed")].some((node) => element.contains(node) || overlaps(node))) throw new Error("unsafe-frame");
       if ([element, ...element.querySelectorAll("*")].some((node) => node.shadowRoot)) throw new Error("unsafe-shadow");
       if (password && (element.textContent ?? "").includes(password)) throw new Error("unsafe-region");
@@ -99,18 +105,44 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
         const node = walker.currentNode;
         if (password && node.textContent?.includes(password) && node.parentElement && overlaps(node.parentElement)) throw new Error("unsafe-region");
       }
+      // Scope the frame identity to this region, its controls and geometry. Page
+      // clocks, hover classes and unrelated reactive updates do not invalidate it.
+      const signature = JSON.stringify([identity(element), rect, element.textContent,
+        [...element.querySelectorAll("input,button,a,img,canvas,select,textarea")].map((node) => [identity(node), node.tagName, node.getAttribute("src"), node.getAttribute("href"), node.getAttribute("type")])]);
+      if (signature !== lastRegion) { lastRegion = signature; revision++; }
       return { ...rect, revision: `${documentId}:${revision}` };
     }
     function submit(target: Element | null) {
       const button = config.submitSelector ? one(config.submitSelector) : buttons(target).find((node) => /login|log in|sign in|next|登录|登入|下一步/i.test(text(node))) ?? buttons(target).find((node) => node.getAttribute("type") === "submit");
       const form = target?.closest("form");
+      if (button instanceof HTMLButtonElement && button.disabled) return false;
       if (button) button.click();
       else if (form) form.requestSubmit();
       else throw new Error("missing-submit");
       submitted = true;
+      // Keep a still-visible challenge available for correction after submission.
+      if (config.interactionSelector) interactionDone = false;
+      return true;
     }
     function tick(stepIndex: number, previouslySubmitted: boolean, submittedUrl: string, passwordSubmitted = false, submittedDocument = "") {
+      restoreMasks();
       if (!document.body) return { status: "waiting" };
+      // A terms checkbox may open a teleported dialog outside its label. Prefer
+      // that safe dialog, rather than continuing to expose an occluded checkbox.
+      const dialog = [...document.querySelectorAll<HTMLElement>('dialog[open],[role="dialog"],[aria-modal="true"],.el-dialog,.el-message-box')].filter(visible).reverse().find((node) =>
+        agreementInteraction || /agree|terms|privacy|同意|协议|隐私|条款/i.test(node.textContent ?? ""));
+      if (dialog) {
+        if ([dialog, ...dialog.querySelectorAll("*")].some((node) => getComputedStyle(node).visibility === "visible" && Number(getComputedStyle(node).opacity || 1) < 1)) return { status: "waiting" };
+        // Native form values remain intact. Hide credential pixels while a modal
+        // overlaps the login form; no full login screenshot ever leaves the host.
+        maskCredentials();
+        const dialogId = `${documentId}-${identity(dialog)}`;
+        dialog.setAttribute("data-viron-dialog", dialogId);
+        interactionSelector = `[data-viron-dialog="${dialogId}"]`;
+        modalInteraction = true;
+        return { status: "interactive", kind: "agreement", region: region(), released: passwordReleased };
+      }
+      modalInteraction = false;
       if (config.steps.length) {
         const success = config.steps.find((step) => step.action === "success")!;
         const credentialForm = config.steps.some((step) => step.action === "type" && ["{USERNAME}", "{SECRET}"].includes(step.value ?? "") && one(step.selector));
@@ -153,13 +185,16 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
         && (node.required || /agree|terms|privacy|同意|协议|隐私|条款/i.test([node.name, node.id, node.getAttribute("aria-label") ?? "", ...(node.labels ?? [])].map((item) => typeof item === "string" ? item : item.textContent).join(" ")))
         && visible(node.closest("label") ?? [...(node.labels ?? [])][0] ?? node));
       if (agreement && filled) {
+        agreementInteraction = true;
         const area = agreement.closest("label") ?? [...(agreement.labels ?? [])][0] ?? agreement;
-        if (area.getAttribute("data-viron-agreement") !== documentId) area.setAttribute("data-viron-agreement", documentId);
-        interactionSelector = `[data-viron-agreement="${documentId}"]`;
+        const areaId = `${documentId}-${identity(area)}`;
+        if (area.getAttribute("data-viron-agreement") !== areaId) area.setAttribute("data-viron-agreement", areaId);
+        interactionSelector = `[data-viron-agreement="${areaId}"]`;
         return { status: "interactive", kind: "agreement", region: region(), released: passwordReleased };
       }
+      if (!config.interactionSelector && (submitted || previouslySubmitted) && [...document.querySelectorAll<HTMLElement>('[role="alert"],.el-form-item__error,.auth-form__error-message')].some((node) => visible(node) && /.+/.test(node.textContent?.trim() ?? ""))) return { status: "rejected" };
       if (filled && !submitted) {
-        submit(pass ?? user);
+        if (!submit(pass ?? user)) return { status: "waiting", released: passwordReleased };
         return { status: "submitted", released: passwordReleased };
       }
       if (submitted || previouslySubmitted) return { status: "waiting", released: passwordReleased };
@@ -184,7 +219,7 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
       return rect;
     }
     function continueInteraction(revisionValue: string) {
-      if (!authorize(revisionValue)) return false;
+      if (modalInteraction || !authorize(revisionValue)) return false;
       interactionDone = true;
       // A challenge may have appeared after the first submit.
       submitted = false;
@@ -246,6 +281,15 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
       }
       return Object.fromEntries(Object.keys(sessionStorage).map((key) => [key, sessionStorage.getItem(key)]));
     }
+    // Native events are checked again at delivery, after asynchronous host calls.
+    // A modal moving between authorization and dispatch must not reach a password.
+    const protectPointer = (event: Event) => {
+      if (!interactionSelector || !event.isTrusted) return;
+      const element = one(interactionSelector);
+      const target = event.target;
+      if (!element || !(target instanceof Element) || !(target === element || element.contains(target)) || [...credentials].some((node) => node === target || node.contains(target))) { event.preventDefault(); event.stopImmediatePropagation(); }
+    };
+    for (const type of ["pointerdown", "pointerup", "mousedown", "mouseup", "click", "touchstart", "touchend"]) window.addEventListener(type, protectPointer, true);
     return { tick, region, authorize, continueInteraction, finish, secretReleased: () => passwordReleased };
   }
   root.__vironLogin ??= createGuard();

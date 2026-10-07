@@ -34,6 +34,7 @@ function listen(server: Server): Promise<number> {
 function waitForLoggedView(socket: WebSocket, username: string): Promise<{ receivedFrame: boolean }> {
   return new Promise((resolve, reject) => {
     let receivedFrame = false;
+    let logged = false;
     const observed: string[] = [];
     const timer = setTimeout(() => {
       socket.off("message", onMessage);
@@ -43,7 +44,8 @@ function waitForLoggedView(socket: WebSocket, username: string): Promise<{ recei
       const message = JSON.parse(String(raw)) as { type: string; view?: { title: string; url: string }; message?: string };
       if (message.type === "frame") receivedFrame = true;
       if (message.type !== "frame") observed.push(`${message.type}:${message.view?.title ?? ""}:${message.view?.url ?? ""}:${message.message ?? ""}`);
-      if (message.view?.title === `Logged ${username}`) {
+      if (message.view?.title === `Logged ${username}`) logged = true;
+      if (logged && receivedFrame) {
         clearTimeout(timer);
         socket.off("message", onMessage);
         resolve({ receivedFrame });
@@ -186,12 +188,13 @@ describe.skipIf(!enabled)("server Web account views", () => {
         const concurrentOpen = await app.inject(request);
         expect(concurrentOpen.statusCode).toBe(200);
         expect(concurrentOpen.json().frame).toBeTypeOf("string");
-        expect(concurrentOpen.json().frame.length).toBeGreaterThan(100);
+        expect(concurrentOpen.json().frame).toBe("");
+        expect(concurrentOpen.json().view.protectedLogin).toBeTruthy();
         const concurrentSocket = new WebSocket(`ws://127.0.0.1:${appPort}/ws/web-account-view?ticket=${concurrentOpen.json().ticket}`);
         const concurrentResult = waitForLoggedView(concurrentSocket, username);
         const opened = await primaryOpen;
         expect(opened.statusCode).toBe(200);
-        expect(opened.json().frame.length).toBeGreaterThan(100);
+        expect(opened.json().view.protectedLogin ? opened.json().frame === "" : opened.json().frame.length > 100).toBe(true);
         const socket = new WebSocket(`ws://127.0.0.1:${appPort}/ws/web-account-view?ticket=${opened.json().ticket}`);
         sockets.push(socket);
         const [primaryResult, secondaryResult] = await Promise.all([waitForLoggedView(socket, username), concurrentResult]);
@@ -202,7 +205,7 @@ describe.skipIf(!enabled)("server Web account views", () => {
       }
       const opened = await primaryOpen;
       expect(opened.statusCode).toBe(200);
-      expect(opened.json().frame.length).toBeGreaterThan(100);
+      expect(opened.json().view.protectedLogin ? opened.json().frame === "" : opened.json().frame.length > 100).toBe(true);
       const socket = new WebSocket(`ws://127.0.0.1:${appPort}/ws/web-account-view?ticket=${opened.json().ticket}`);
       sockets.push(socket);
       const result = await waitForLoggedView(socket, username);
@@ -397,7 +400,7 @@ describe.skipIf(!enabled)("server Web account views", () => {
       ));
       isolatedSocket.send(JSON.stringify({ type: "activatePage", pageId: defaultPage.id }));
       await defaultLoaded;
-      expect(isolatedEntryRequests).toBe(1);
+      expect(isolatedEntryRequests).toBe(2); // Hidden probe is destroyed before the fresh business document.
       const isolatedSession = waitForMessage<{ type: string; view?: { title: string } }>(isolatedSocket, "账号之间隔离 Session", (message) => message.view?.title === "Isolated session");
       isolatedSocket.send(JSON.stringify({ type: "navigate", url: `http://127.0.0.1:${targetPort}/check` }));
       await isolatedSession;

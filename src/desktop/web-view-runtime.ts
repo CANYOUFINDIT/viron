@@ -145,6 +145,7 @@ export interface ManagedDesktopWebPage {
   id: string;
   view: BrowserPageHost;
   allowAutofill: boolean;
+  protectedEntry?: boolean;
   pendingUrl: string;
   loadingUrl: string;
   autofillSignature: string;
@@ -262,6 +263,14 @@ export function layoutDesktopWebViewPages(view: ManagedDesktopWebView, focus = f
 export function activateDesktopWebPage(view: ManagedDesktopWebView, pageId: string): void {
   const page = view.pages.get(pageId);
   if (!page) throw new Error(tr("本机子页面不存在或已经关闭"));
+  if (page.protectedEntry && page.pendingUrl) {
+    view.lastUrl = page.pendingUrl;
+    rememberDesktopWebLastUrl(view, page.pendingUrl);
+    page.protectedEntry = false;
+    page.pendingUrl = "";
+    void refreshDesktopWebViews([view], true).catch(() => notifyWebView(view, "error", "无法准备后台登录，请重试"));
+    return;
+  }
   view.activePageId = pageId;
   selectExtensionTab(page.view.webContents);
   touchDesktopWebView(view);
@@ -705,7 +714,7 @@ function startProtectedDesktopLogin(view: ManagedDesktopWebView): void {
           storageScriptId = result.identifier;
         }
         if (!current()) return;
-        const target = view.lastUrl || url;
+        const target = view.lastUrl && !/\/(?:log-?in|sign-?in|auth)(?:[/?#]|$)/i.test(new URL(view.lastUrl).pathname + new URL(view.lastUrl).hash) ? view.lastUrl : url;
         await contents.loadURL(target);
         const successSelector = view.loginConfig.successSelector || view.loginConfig.steps.find((step) => step.action === "success")?.selector || "";
         await verifyProtectedBusinessPage(contents, target === url ? successSelector : "", current);
@@ -734,6 +743,7 @@ function startProtectedDesktopLogin(view: ManagedDesktopWebView): void {
 
 export async function reopenDesktopWebViews(views: ManagedDesktopWebView[], credential: DesktopWebCredential): Promise<void> {
   for (const view of views) {
+    if (view.closing || desktopWebViews.get(view.id) !== view) continue;
     applyDesktopWebCredential(view, credential);
     startProtectedDesktopLogin(view);
   }
@@ -858,6 +868,7 @@ export async function openDesktopWebView(
       registerBusinessExtensions(managed);
       await loadDesktopWebExtensions(managed.partition, lastUrlKey);
       const entryPage = await createDesktopWebPage(managed, false);
+      entryPage.protectedEntry = true;
       entryPage.pendingUrl = credential.entryUrl;
       const blankPage = await createDesktopWebPage(managed, false);
       activateDesktopWebPage(managed, blankPage.id);

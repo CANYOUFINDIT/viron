@@ -1,33 +1,44 @@
 <script setup lang="ts">
 import { LoaderCircle, ShieldCheck } from "@lucide/vue";
-import { ref } from "vue";
+import { ref, watch } from "vue";
 import type { ProtectedLoginInput, ProtectedLoginState } from "../../shared/protected-web-login";
 const props = defineProps<{ state: ProtectedLoginState; send: (input: ProtectedLoginInput) => Promise<void> }>();
 defineEmits<{ retry: [] }>();
 const inputError = ref("");
 let queue = Promise.resolve();
 let dragging = false;
+let moved = false;
+let start: { x: number; y: number; revision: string } | null = null;
 let lastMove = 0;
-function send(input: Omit<ProtectedLoginInput, "revision">) {
+function send(input: Omit<ProtectedLoginInput, "revision">, revision?: string) {
   queue = queue.then(async () => {
     if (props.state.phase !== "interactive") return;
-    try { await props.send({ ...input, revision: props.state.revision }); inputError.value = ""; }
-    catch { inputError.value = "验证画面或焦点已变化，请在最新画面中重试"; }
+    try { await props.send({ ...input, revision: revision ?? props.state.revision }); inputError.value = ""; }
+    catch { inputError.value = "未能完成验证操作，请重试；如持续失败，请重新后台登录"; }
   });
 }
 function pointer(event: PointerEvent, type: "mouseDown" | "mouseUp" | "mouseMove") {
   if (event.button !== 0 && type !== "mouseMove") return;
   const target = event.currentTarget as HTMLImageElement;
-  if (type === "mouseDown") { dragging = true; target.setPointerCapture(event.pointerId); target.focus(); }
-  if (type === "mouseMove") {
-    if (!dragging || Date.now() - lastMove < 70) return;
-    lastMove = Date.now();
-  }
   const box = target.getBoundingClientRect();
   const x = Math.max(0, Math.min(props.state.width - 1, (event.clientX - box.x) * props.state.width / box.width));
   const y = Math.max(0, Math.min(props.state.height - 1, (event.clientY - box.y) * props.state.height / box.height));
-  send({ type, x, y });
-  if (type === "mouseUp") dragging = false;
+  if (type === "mouseDown") {
+    dragging = true; moved = false; start = { x, y, revision: props.state.revision };
+    target.setPointerCapture(event.pointerId); target.focus(); return;
+  }
+  if (!dragging || !start) return;
+  if (type === "mouseMove") {
+    if (!moved && Math.hypot(x - start.x, y - start.y) < 3) return;
+    if (Date.now() - lastMove < 50) return;
+    lastMove = Date.now();
+    if (!moved) { send({ type: "mouseDown", x: start.x, y: start.y }, start.revision); moved = true; }
+    send({ type, x, y }, start.revision);
+  } else {
+    if (event.type === "pointercancel") { if (moved) send({ type: "mouseUp", x, y }, start.revision); }
+    else send({ type: moved ? "mouseUp" : "click", x, y }, start.revision);
+    dragging = false; start = null;
+  }
 }
 function key(event: KeyboardEvent) {
   event.preventDefault();
@@ -40,6 +51,7 @@ function paste(event: ClipboardEvent) {
   const text = event.clipboardData?.getData("text/plain") ?? "";
   if (text && text.length <= 256) send({ type: "text", text });
 }
+watch(() => props.state.revision, () => { inputError.value = ""; });
 </script>
 
 <template>
@@ -52,9 +64,9 @@ function paste(event: ClipboardEvent) {
       <img class="protected-login__challenge" :src="state.image" :width="state.width" :height="state.height" alt="登录验证区域" tabindex="0" draggable="false"
         @pointerdown.prevent="pointer($event, 'mouseDown')" @pointerup.prevent="pointer($event, 'mouseUp')" @pointermove.prevent="pointer($event, 'mouseMove')"
         @pointercancel="pointer($event, 'mouseUp')" @keydown="key" @compositionend="send({ type: 'text', text: $event.data })" @paste="paste" @contextmenu.prevent />
-      <small>点击画面中的验证码输入框后输入，或操作滑块。完成后点击继续。</small>
+      <small>{{ state.kind === "agreement" ? "请在画面中阅读并选择协议选项，确认后系统会继续登录。" : "点击验证码输入框后输入，或操作滑块。完成后点击继续。" }}</small>
       <small v-if="inputError" class="protected-login__error">{{ inputError }}</small>
-      <el-button type="primary" @click="send({ type: 'continue' })">继续登录</el-button>
+      <el-button v-if="state.kind !== 'agreement'" type="primary" @click="send({ type: 'continue' })">继续登录</el-button>
     </template>
     <el-button v-if="state.phase === 'failed'" type="primary" @click="$emit('retry')">重新后台登录</el-button>
   </div>

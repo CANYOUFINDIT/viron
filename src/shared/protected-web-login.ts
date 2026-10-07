@@ -17,6 +17,7 @@ export interface WebLoginConfig {
 export interface ProtectedLoginState {
   phase: "loading" | "authenticating" | "interactive" | "failed";
   message: string;
+  kind?: "agreement" | "challenge";
   image: string;
   revision: string;
   width: number;
@@ -24,7 +25,7 @@ export interface ProtectedLoginState {
 }
 export interface ProtectedLoginInput {
   revision: string;
-  type: "mouseDown" | "mouseUp" | "mouseMove" | "text" | "key" | "continue";
+  type: "mouseDown" | "mouseUp" | "mouseMove" | "click" | "text" | "key" | "continue";
   x?: number;
   y?: number;
   text?: string;

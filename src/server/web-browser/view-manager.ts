@@ -21,11 +21,9 @@ import {
 import type { RawData, WebSocket } from "ws";
 import { normalizeWebAddress } from "../../shared/web-address.js";
 import { idAfterClose, reorderMap } from "../../shared/tab-order.js";
-import {
-  buildWebCredentialAutofillScript,
-  WEB_CREDENTIAL_AUTOFILL_DELAYS_MS,
-  type WebCredentialAutofillResult,
-} from "../../shared/web-credential-autofill.js";
+import { parseWebLoginConfig, type WebLoginConfig, type ProtectedLoginState, type ProtectedLoginInput } from "../../shared/protected-web-login.js";
+import type { ProtectedLoginController } from "../../shared/protected-web-login-controller.js";
+import { createServerProtectedLogin, verifyServerBusinessPage } from "./protected-login.js";
 import type { AuthenticatedUser } from "../access-control.js";
 
 interface ViewTicket {
@@ -51,6 +49,7 @@ interface StoredCredential {
   entry_name: string;
   entry_url: string;
   last_url: string | null;
+  login_config_json: string | null;
 }
 
 interface ManagedPage {
@@ -88,7 +87,10 @@ interface ManagedWebView {
   screencastPageId: string;
   pendingFileChooser: FileChooser | null;
   pendingDialog: Dialog | null;
-  autoFillSignatures: Map<string, string>;
+  login: ProtectedLoginController | null;
+  protectedLogin: ProtectedLoginState | null;
+  loginConfig: WebLoginConfig;
+  loginAttempt: string;
   messageQueue: Promise<void>;
 }
 
@@ -103,6 +105,7 @@ interface DownloadArtifact {
 }
 
 export interface PublicWebAccountView {
+  protectedLogin: ProtectedLoginState | null;
   credentialId: string;
   entryId: string;
   entryName: string;
@@ -215,7 +218,7 @@ export class WebAccountViewManager {
       height: clamp(height, MIN_HEIGHT, MAX_HEIGHT),
     }, executionScope, initialPage, preload);
     const view = opened.view;
-    if (initialPage === "blank" && !opened.created) await this.createBlankPage(view);
+    if (initialPage === "blank" && !opened.created) { await this.requireBusinessPage(view); await this.createBlankPage(view); }
     view.lastActivityAt = Date.now();
     this.app.activeConnections.touch(view.runtimeId);
     return {
@@ -344,6 +347,7 @@ export class WebAccountViewManager {
       height: clamp(height, MIN_HEIGHT, MAX_HEIGHT),
     }, executionScope, "entry");
     const view = opened.view;
+    await this.requireBusinessPage(view);
     const page = view.pages.get(view.activePageId)?.page;
     if (!page || page.isClosed()) throw new Error("Web 页面不存在或已经关闭");
     await page.waitForLoadState("domcontentloaded", { timeout: 15_000 }).catch(() => undefined);
@@ -386,6 +390,7 @@ export class WebAccountViewManager {
   ): Promise<{ view: PublicWebAccountView; action: WebSemanticActionInput["action"]; element: { index: number; tag: string; name: string }; url: string; title: string }> {
     const opened = await this.getOrCreate(user, credentialId, { width: 1280, height: 720 }, executionScope, "entry");
     const view = opened.view;
+    await this.requireBusinessPage(view);
     const page = view.pages.get(view.activePageId)?.page;
     if (!page || page.isClosed()) throw new Error("Web 页面不存在或已经关闭");
     await page.waitForLoadState("domcontentloaded", { timeout: 15_000 }).catch(() => undefined);
@@ -453,6 +458,7 @@ export class WebAccountViewManager {
   ): Promise<{ view: PublicWebAccountView; action: WebSemanticControlInput["action"]; url: string; title: string }> {
     const opened = await this.getOrCreate(user, credentialId, { width: 1280, height: 720 }, executionScope, "entry");
     const view = opened.view;
+    await this.requireBusinessPage(view);
     const page = view.pages.get(view.activePageId)?.page;
     if (!page || page.isClosed()) throw new Error("Web 页面不存在或已经关闭");
     if (input.action === "navigate") {
@@ -541,7 +547,7 @@ export class WebAccountViewManager {
     await this.enforcePlatformLimit();
     const credential = await this.app.db.prepare(`
       SELECT c.id, c.web_entry_id, c.username, c.password_ciphertext,
-        w.name AS entry_name, w.url AS entry_url, v.last_url
+        w.name AS entry_name, w.url AS entry_url, w.login_config_json, v.last_url
       FROM web_credentials c
       JOIN web_entries w ON w.id = c.web_entry_id
       LEFT JOIN web_account_views v ON v.credential_id = c.id AND v.owner_user_id = ?
@@ -550,6 +556,7 @@ export class WebAccountViewManager {
     if (!credential) throw new Error("登录账号不存在");
     if (!supportedUrl(credential.entry_url)) throw new Error("Web 入口地址只支持 HTTP 或 HTTPS");
 
+    const loginConfig = parseWebLoginConfig(credential.login_config_json ? JSON.parse(credential.login_config_json) : undefined);
     const runtimeId = randomUUID();
     await this.app.activeConnections.reserve({ id: runtimeId, user, type: "web", resourceId: credentialId, executionScope });
     starting.runtimeId = runtimeId;
@@ -575,6 +582,7 @@ export class WebAccountViewManager {
         "--disable-breakpad",
         "--disable-component-update",
         "--disable-default-apps",
+        "--disable-extensions",
         "--disable-features=Translate,MediaRouter",
         "--disable-sync",
         "--metrics-recording-only",
@@ -617,12 +625,15 @@ export class WebAccountViewManager {
       screencastPageId: "",
       pendingFileChooser: null,
       pendingDialog: null,
-      autoFillSignatures: new Map(),
+      login: null,
+      protectedLogin: { phase: "loading", message: "正在后台打开登录页", image: "", revision: "", width: 0, height: 0 },
+      loginConfig,
+      loginAttempt: "",
       messageQueue: Promise.resolve(),
     };
     this.views.set(view.key, view);
     this.app.activeConnections.activate(runtimeId, (reason) => this.closeView(view, reason));
-    context.on("page", (page) => void this.registerPage(view, page, true));
+    context.on("page", (page) => { if (!view.closed && !view.protectedLogin) void this.registerPage(view, page, true); });
     context.on("close", () => {
       view.closed = true;
       if (this.views.get(view.key) === view) this.views.delete(view.key);
@@ -633,28 +644,16 @@ export class WebAccountViewManager {
       throw new Error(starting.reason || "页面预热已取消");
     }
 
-    let page = context.pages()[0];
-    if (!page) page = await context.newPage();
-    await this.registerPage(view, page, true);
     const initialUrl = !executionScope && credential.last_url && supportedUrl(credential.last_url) ? credential.last_url : credential.entry_url;
     if (initialPage === "blank") {
-      const item = view.pages.get(view.pageIds.get(page) ?? "");
-      if (item) {
-        item.pendingUrl = initialUrl;
-        item.url = initialUrl;
-        item.title = view.entryName || view.username;
-      }
+      view.protectedLogin = null;
+      const page = context.pages()[0] ?? await context.newPage();
+      await this.registerPage(view, page, true);
+      const item = view.pages.get(view.pageIds.get(page)!)!;
+      item.pendingUrl = initialUrl; item.url = initialUrl; item.title = view.entryName || view.username;
       await this.createBlankPage(view);
-    } else if (page.url() === "about:blank") {
-      const navigation = page.goto(initialUrl, { waitUntil: "domcontentloaded", timeout: 30_000 }).catch((error) => {
-        if (!view.closed) this.reportError(view, error);
-      });
-      if (!preload) await navigation;
-    }
-    if (initialPage === "entry" && !preload) {
-      await this.syncPage(view, page);
-      this.scheduleAutoFill(view, page);
-    }
+    } else await this.startProtectedLogin(view, initialUrl);
+
     return view;
   }
 
@@ -687,11 +686,9 @@ export class WebAccountViewManager {
     view.pageIds.set(page, id);
     page.on("domcontentloaded", () => {
       void this.syncPage(view, page);
-      this.scheduleAutoFill(view, page);
     });
     page.on("load", () => {
       void this.syncPage(view, page);
-      this.scheduleAutoFill(view, page);
     });
     page.on("request", () => {
       view.lastActivityAt = Date.now();
@@ -721,6 +718,7 @@ export class WebAccountViewManager {
   }
 
   private async captureInitialFrame(view: ManagedWebView): Promise<string> {
+    if (view.protectedLogin) return "";
     const page = view.pages.get(view.activePageId)?.page;
     if (!page || page.isClosed()) return "";
     try {
@@ -734,13 +732,9 @@ export class WebAccountViewManager {
   private async pageClosed(view: ManagedWebView, pageId: string): Promise<void> {
     const nextPageId = idAfterClose([...view.pages.keys()], view.activePageId, pageId);
     view.pages.delete(pageId);
-    view.autoFillSignatures.delete(pageId);
-    if (view.closed) return;
+    if (view.closed || view.protectedLogin) return;
     if (!view.pages.size) {
-      const page = await view.context.newPage().catch(() => null);
-      if (!page || view.closed) return;
-      await this.registerPage(view, page, true);
-      await page.goto(view.entryUrl, { waitUntil: "domcontentloaded", timeout: 30_000 }).catch((error) => this.reportError(view, error));
+      await this.startProtectedLogin(view);
       return;
     }
     if (view.activePageId === pageId) {
@@ -761,24 +755,24 @@ export class WebAccountViewManager {
     const pendingUrl = item.pendingUrl;
     if (pendingUrl) {
       item.pendingUrl = "";
-      await item.page.goto(pendingUrl, { waitUntil: "domcontentloaded", timeout: 30_000 }).catch((error) => this.reportError(view, error));
+      await this.startProtectedLogin(view, pendingUrl, true);
+      return;
     }
     await this.stopScreencast(view);
     if (view.visibleSockets.size) await this.startScreencast(view);
     await this.syncPage(view, item.page);
-    this.scheduleAutoFill(view, item.page);
     this.broadcastState(view);
   }
 
   private async startScreencast(view: ManagedWebView): Promise<void> {
-    if (view.closed || !view.visibleSockets.size || view.screencast) return;
+    if (view.closed || view.protectedLogin || !view.visibleSockets.size || view.screencast) return;
     const item = view.pages.get(view.activePageId);
     if (!item) return;
     const session = await view.context.newCDPSession(item.page);
     view.screencast = session;
     view.screencastPageId = item.id;
     session.on("Page.screencastFrame", (event: { data: string; sessionId: number }) => {
-      if (view.screencast !== session) return;
+      if (view.screencast !== session || view.protectedLogin) return;
       this.app.activeConnections.recordTraffic(view.runtimeId, { receivedBytes: Math.floor(event.data.length * 0.75) });
       this.broadcastVisible(view, { type: "frame", data: event.data, pageId: item.id });
       void session.send("Page.screencastFrameAck", { sessionId: event.sessionId }).catch(() => undefined);
@@ -796,7 +790,7 @@ export class WebAccountViewManager {
       fromSurface: true,
       captureBeyondViewport: false,
     });
-    if (view.screencast === session) {
+    if (view.screencast === session && !view.protectedLogin) {
       this.app.activeConnections.recordTraffic(view.runtimeId, { receivedBytes: Math.floor(initialFrame.data.length * 0.75) });
       this.broadcastVisible(view, { type: "frame", data: initialFrame.data, pageId: item.id });
     }
@@ -832,6 +826,18 @@ export class WebAccountViewManager {
       this.send(socket, { type: "error", message: "页面消息格式不正确" });
       return;
     }
+    if (message.type === "login-input") {
+      try {
+        if (!view.login) throw new Error("当前没有待完成的验证");
+        await view.login.input(message.input as ProtectedLoginInput);
+        this.send(socket, { type: "login-input-result", requestId: message.requestId, view: this.publicView(view) });
+      } catch { this.send(socket, { type: "login-input-result", requestId: message.requestId, message: "未能完成验证操作，请重试" }); }
+      return;
+    }
+    if (message.type === "refill") { await this.startProtectedLogin(view); return; }
+    if (message.type === "visibility") { await this.setSocketVisibility(view, socket, message.visible === true); return; }
+    if (message.type === "resize") { await this.resize(view, Number(message.width), Number(message.height)); return; }
+    if (view.protectedLogin) { this.send(socket, { type: "error", message: "请先完成受保护的后台登录验证" }); return; }
     const page = view.pages.get(view.activePageId)?.page;
     if (!page) return;
     try {
@@ -886,10 +892,6 @@ export class WebAccountViewManager {
           if (!reordered) throw new Error("页面标签排序必须包含当前账号的全部页面");
           view.pages = reordered;
           this.broadcastState(view);
-          break;
-        case "refill":
-          view.autoFillSignatures.delete(view.activePageId);
-          await this.autoFill(view, page, true);
           break;
         case "dialog":
           await this.handleDialog(view, message);
@@ -956,54 +958,66 @@ export class WebAccountViewManager {
     else await dialog.dismiss();
   }
 
-  private scheduleAutoFill(view: ManagedWebView, page: Page): void {
-    for (const delay of WEB_CREDENTIAL_AUTOFILL_DELAYS_MS) {
-      const timer = setTimeout(() => void this.autoFill(view, page, false), delay);
-      timer.unref();
-    }
+  private async startProtectedLogin(view: ManagedWebView, preferredUrl = "", preservePages = false): Promise<void> {
+    const previous = view.login;
+    previous?.dispose();
+    view.login = null;
+    const attempt = randomUUID();
+    view.loginAttempt = attempt;
+    view.protectedLogin = { phase: "loading", message: "正在后台打开登录页", image: "", revision: "", width: 0, height: 0 };
+    view.pendingFileChooser = null; view.pendingDialog = null;
+    this.broadcastState(view);
+    await this.stopScreencast(view);
+    await previous?.settled();
+    const current = () => !view.closed && view.loginAttempt === attempt;
+    if (!current()) return;
+    const oldPages = preservePages ? [view.pages.get(view.activePageId)?.page].filter((page): page is Page => Boolean(page)) : view.context.pages();
+    await Promise.all(oldPages.map((page) => page.close().catch(() => undefined)));
+    if (!preservePages) view.pages.clear();
+    view.activePageId = "";
+    const credential = await this.app.db.prepare("SELECT username, password_ciphertext FROM web_credentials WHERE id = ?").get(view.credentialId) as { username: string; password_ciphertext: string } | undefined;
+    if (!credential) throw new Error("登录账号不存在");
+    view.username = credential.username;
+    const login = await createServerProtectedLogin({
+      context: view.context, url: view.entryUrl, username: credential.username, password: this.app.secrets.decrypt(credential.password_ciphertext), config: view.loginConfig,
+      changed: () => { if (current() && view.login) { view.protectedLogin = view.login.state; this.broadcastState(view); } },
+      completed: async ({ url, sessionStorage, authenticated }) => {
+        if (!current()) return;
+        let page: Page | undefined;
+        try {
+          // Destroyed auth page and verified storage precede this fresh document.
+          page = await view.context.newPage();
+          const cdp = await view.context.newCDPSession(page);
+          let storageScript: string | undefined;
+          if (Object.keys(sessionStorage).length) {
+            const result = await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `if(location.origin===${JSON.stringify(new URL(url).origin)}) for(const [key,value] of Object.entries(${JSON.stringify(sessionStorage)})) sessionStorage.setItem(key,value);` });
+            storageScript = result.identifier;
+          }
+          const target = preferredUrl && !/\/(?:log-?in|sign-?in|auth)(?:[/?#]|$)/i.test(new URL(preferredUrl).pathname + new URL(preferredUrl).hash) ? preferredUrl : url;
+          await page.goto(target, { waitUntil: "load", timeout: 30_000 });
+          const selector = view.loginConfig.successSelector || view.loginConfig.steps.find((step) => step.action === "success")?.selector || "";
+          await verifyServerBusinessPage(page, cdp, target === url ? selector : "", current);
+          if (storageScript) await cdp.send("Page.removeScriptToEvaluateOnNewDocument", { identifier: storageScript });
+          await cdp.detach();
+          if (!current()) { await page.close(); return; }
+          view.login = null; view.protectedLogin = null;
+          await this.registerPage(view, page, true);
+          if (authenticated) this.broadcast(view, { type: "login-complete", message: "后台登录已完成" });
+        } catch {
+          await page?.close().catch(() => undefined);
+          if (current()) { view.protectedLogin = { ...login.state, phase: "failed", message: "未能确认业务页面已登录，请检查登录成功标记后重试", image: "", revision: "" }; this.broadcastState(view); }
+        }
+      },
+    });
+    if (!current()) { login.dispose(); await login.settled(); return; }
+    view.login = login; view.protectedLogin = login.state;
+    this.broadcastState(view);
   }
 
-  private async autoFill(view: ManagedWebView, page: Page, force: boolean): Promise<void> {
-    if (view.closed || page.isClosed()) return;
-    let currentOrigin = "";
-    try { currentOrigin = new URL(page.url()).origin; } catch { return; }
-    if (currentOrigin !== view.entryOrigin) {
-      if (force) this.broadcast(view, { type: "autofill", status: "skipped", message: "当前页面不在入口原始域名，未填充账号密码" });
-      return;
-    }
-    const row = await this.app.db.prepare("SELECT username, password_ciphertext FROM web_credentials WHERE id = ?").get(view.credentialId) as { username: string; password_ciphertext: string } | undefined;
-    if (!row) return;
-    view.username = row.username;
-    const password = this.app.secrets.decrypt(row.password_ciphertext);
-    const pageId = view.pageIds.get(page);
-    if (!pageId) return;
-    const previousSignature = force ? "" : (view.autoFillSignatures.get(pageId) ?? "");
-    let result: WebCredentialAutofillResult;
-    try {
-      result = await page.evaluate(buildWebCredentialAutofillScript({
-        username: row.username,
-        password,
-        previousSignature,
-        autoSubmit: true,
-        messages: {
-          duplicate: "登录表单未变化",
-          ambiguousPasswords: "检测到多个密码框，未识别到唯一登录密码框",
-          noReliableForm: "未识别到可靠的登录表单",
-          filled: "已填写账号密码",
-          filledAndSubmitted: "已填写并提交登录表单",
-        },
-      })) as WebCredentialAutofillResult;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (/execution context was destroyed|navigation|cannot find context/i.test(message)) {
-        result = { status: "filled", signature: "", message: "已提交登录表单" };
-      } else {
-        this.app.log.warn({ errorMessage: message, credentialId: view.credentialId }, "web login form evaluation failed");
-        result = { status: "skipped", signature: "", message: "无法访问当前登录表单" };
-      }
-    }
-    if (result.signature) view.autoFillSignatures.set(pageId, result.signature);
-    if (force || result.status === "filled") this.broadcast(view, { type: "autofill", status: result.status, message: result.message });
+  private async requireBusinessPage(view: ManagedWebView): Promise<void> {
+    const deadline = Date.now() + 20_000;
+    while (view.protectedLogin && ["loading", "authenticating"].includes(view.protectedLogin.phase) && Date.now() < deadline && !view.closed) await new Promise((resolve) => setTimeout(resolve, 100));
+    if (view.protectedLogin || view.closed) throw new Error("请先完成受保护的后台登录验证");
   }
 
   private async syncPage(view: ManagedWebView, page: Page): Promise<void> {
@@ -1016,7 +1030,7 @@ export class WebAccountViewManager {
     item.title = pendingUrl
       ? view.entryName || view.username
       : (await page.title().catch(() => "")) || (item.url === "about:blank" ? "新页面" : view.entryName || "新页面");
-    if (!pendingUrl && !view.executionScope && view.activePageId === pageId && supportedUrl(item.url)) {
+    if (!view.protectedLogin && !pendingUrl && !view.executionScope && view.activePageId === pageId && supportedUrl(item.url)) {
       await this.app.db.prepare(`
         INSERT INTO web_account_views (owner_user_id, credential_id, last_url, last_title, updated_at)
         VALUES (?, ?, ?, ?, ?)
@@ -1047,6 +1061,7 @@ export class WebAccountViewManager {
   private publicView(view: ManagedWebView): PublicWebAccountView {
     const active = view.pages.get(view.activePageId);
     return {
+      protectedLogin: view.protectedLogin,
       credentialId: view.credentialId,
       entryId: view.entryId,
       entryName: view.entryName,
@@ -1103,7 +1118,9 @@ export class WebAccountViewManager {
     for (const socket of view.sockets) socket.close(1000, reason.slice(0, 120));
     view.sockets.clear();
     view.visibleSockets.clear();
+    view.login?.dispose();
     await this.stopScreencast(view);
+    await view.login?.settled().catch(() => undefined);
     await view.context.close().catch(() => undefined);
     if (this.views.get(view.key) === view) this.views.delete(view.key);
   }
