@@ -128,7 +128,7 @@ describe.skipIf(!enabled)("server Web account views", () => {
       }
       if (request.url === "/local-storage-check") {
         response.setHeader("Content-Type", "text/html; charset=utf-8");
-        response.end(`<!doctype html><title>Storage missing</title><script>const account=localStorage.getItem("persisted-account");if(account)document.title="Stored "+account</script>`);
+        response.end(`<!doctype html><title>Storage missing</title><main id="storage-state">Persisted session</main><script>const account=localStorage.getItem("persisted-account");if(account)document.title="Stored "+account</script>`);
         return;
       }
       const account = /(?:^|;\s*)account=([^;]+)/.exec(request.headers.cookie || "")?.[1];
@@ -171,7 +171,7 @@ describe.skipIf(!enabled)("server Web account views", () => {
     const login = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { username: "admin", password: "test-password-123" } });
     const cookies = { envman_session: login.cookies.find((item) => item.name === "envman_session")!.value };
     const environment = await app.inject({ method: "POST", url: "/api/v1/environments", cookies, payload: { name: "Web test", status: "active", tags: [] } });
-    const entry = await app.inject({ method: "POST", url: `/api/v1/environments/${environment.json().id}/web-entries`, cookies, payload: { name: "Login fixture", url: `http://127.0.0.1:${targetPort}/`, tags: [] } });
+    const entry = await app.inject({ method: "POST", url: `/api/v1/environments/${environment.json().id}/web-entries`, cookies, payload: { name: "Login fixture", url: `http://127.0.0.1:${targetPort}/`, tags: [], loginConfig: { successSelector: "[data-account],#storage-state" } } });
     const credentials: Record<string, string> = {};
     const usernames = ["operator", "enduser", "auditor"];
     for (const username of usernames) {
@@ -346,8 +346,8 @@ describe.skipIf(!enabled)("server Web account views", () => {
       const login = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { username: "admin", password: "test-password-123" } });
       const cookies = { envman_session: login.cookies.find((item) => item.name === "envman_session")!.value };
       const environment = await app.inject({ method: "POST", url: "/api/v1/environments", cookies, payload: { name: "Page session test", status: "active", tags: [] } });
-      const primaryEntry = await app.inject({ method: "POST", url: `/api/v1/environments/${environment.json().id}/web-entries`, cookies, payload: { name: "Primary", url: `http://127.0.0.1:${targetPort}/seed`, tags: [] } });
-      const isolatedEntry = await app.inject({ method: "POST", url: `/api/v1/environments/${environment.json().id}/web-entries`, cookies, payload: { name: "Isolated", url: `http://127.0.0.1:${targetPort}/empty`, tags: [] } });
+      const primaryEntry = await app.inject({ method: "POST", url: `/api/v1/environments/${environment.json().id}/web-entries`, cookies, payload: { name: "Primary", url: `http://127.0.0.1:${targetPort}/seed`, tags: [], loginConfig: { successSelector: "h1" } } });
+      const isolatedEntry = await app.inject({ method: "POST", url: `/api/v1/environments/${environment.json().id}/web-entries`, cookies, payload: { name: "Isolated", url: `http://127.0.0.1:${targetPort}/empty`, tags: [], loginConfig: { successSelector: "h1" } } });
       const primaryCredential = await app.inject({ method: "POST", url: `/api/v1/web-entries/${primaryEntry.json().id}/credentials`, cookies, payload: { username: "primary", password: "secret", note: "", customFields: {} } });
       const isolatedCredential = await app.inject({ method: "POST", url: `/api/v1/web-entries/${isolatedEntry.json().id}/credentials`, cookies, payload: { username: "isolated", password: "secret", note: "", customFields: {} } });
 

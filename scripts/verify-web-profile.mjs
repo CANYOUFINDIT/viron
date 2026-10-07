@@ -26,7 +26,7 @@ assert.equal(partition.getPreloadScripts().length, 0);
 await resumeDesktopWebSessionExtensions(partition);
 await loadDesktopWebExtensions(partition, scope);
 console.log("Profile fixture: resumed");
-const window = new BrowserWindow({ show: false, webPreferences: { session: partition, contextIsolation: true, sandbox: true } });
+let window = new BrowserWindow({ show: false, webPreferences: { session: partition, contextIsolation: true, sandbox: true } });
 try {
   await window.loadURL(process.env.VIRON_FIXTURE_URL);
   if (process.argv.includes("--write")) {
@@ -41,6 +41,27 @@ try {
     if (count !== 1) await new Promise(resolve => setTimeout(resolve, 50));
   }
   assert.equal(count, 1, "Extension installation must occur only once across suspends and process restarts");
+  // Exercise authentication after the worker has actually delivered onInstalled,
+  // not only a suspend before the first content script has started.
+  for (let cycle = 0; cycle < 3; cycle++) {
+    window.destroy();
+    await suspendDesktopWebSessionExtensions(partition);
+    assert.equal(partition.extensions.getAllExtensions().length, 0);
+    assert.equal(partition.getPreloadScripts().length, 0);
+    await resumeDesktopWebSessionExtensions(partition);
+    await loadDesktopWebExtensions(partition, scope);
+    window = new BrowserWindow({ show: false, webPreferences: { session: partition, contextIsolation: true, sandbox: true } });
+    await window.loadURL(process.env.VIRON_FIXTURE_URL);
+    for (let attempt = 0; attempt < 100; attempt++) {
+      count = await window.webContents.executeJavaScript('Number(document.documentElement.dataset.installCount || 0)');
+      if (count) break;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    assert.equal(count, 1, "A resumed extension must not receive another installation event");
+    assert.equal(await window.webContents.executeJavaScript('localStorage.getItem("profile-marker")'), "retained");
+    assert.equal((await partition.cookies.get({ name: "profile-cookie" }))[0]?.value, "retained");
+    console.log("Profile fixture: active suspend/resume passed", cycle + 1);
+  }
   window.destroy();
   partition.flushStorageData();
   await partition.cookies.flushStore();

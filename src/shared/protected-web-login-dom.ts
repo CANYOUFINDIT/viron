@@ -18,7 +18,8 @@ function businessPageStatus(successSelector = "") {
   if (successSelector) return [...document.querySelectorAll(successSelector)].some(visible) ? "ready" : "waiting";
   if (/\/(?:log-?in|sign-?in|auth)(?:[/?#]|$)/i.test(location.pathname + location.hash)
     || /^(?:登录|登入|登陆|log ?in|sign ?in)(?:\s|$)/i.test(document.title.trim())) return "login";
-  if (!document.body.innerText?.trim() && !document.title.trim()) return "waiting";
+  // A document title is available before an SPA has rendered anything.
+  if (!document.body.innerText?.trim()) return "waiting";
   if (document.querySelector("iframe,frame")) return "waiting";
   return "ready";
 }
@@ -40,6 +41,9 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
     let interactionSelector = "";
     let passwordReleased = false;
     let assisted = false;
+    const autofilledRoles = new Set<string>();
+    const targetNodes = new Map<string, HTMLInputElement>();
+    const credentialRoles = new Map<Element, string>();
     const locks = new Map<HTMLElement, HTMLElement>();
     let lastRegion = "";
     let nodeSequence = 0;
@@ -72,6 +76,10 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
     const setValue = (element: Element, value: string, credential = false) => {
       if (!(element instanceof HTMLInputElement) || element.disabled || element.readOnly) throw new Error("invalid-input");
       if (credential || element.type === "password") credentials.add(element);
+      if (credential) {
+        const role = value === password && password ? "password" : "username";
+        credentialRoles.set(element, role); autofilledRoles.add(role);
+      }
       if (value === password && password) passwordReleased = true;
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(element, value);
       element.dispatchEvent(new Event("input", { bubbles: true }));
@@ -140,50 +148,75 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
         const box = node.getBoundingClientRect();
         let lock = locks.get(node);
         if (!lock) { lock = document.createElement("div"); lock.setAttribute("data-viron-credential-lock", ""); locks.set(node, lock); document.body.append(lock); }
-        lock.textContent = node.type === "password" ? "密码已填入 · 已保护" : "用户名已填入 · 已保护";
+        lock.textContent = credentialRoles.get(node) === "password" ? "密码已填入 · 已保护" : "用户名已填入 · 已保护";
         lock.style.cssText = `position:fixed;left:${box.x}px;top:${box.y}px;width:${box.width}px;height:${box.height}px;box-sizing:border-box;display:flex;align-items:center;padding:0 12px;z-index:2147483647;background:#f4f8f6;color:#49665e;border:1px solid #cbdad4;border-radius:4px;font:13px sans-serif;`;
       }
       maskCredentials(); maskSecretText();
     }
     function pageRegion() {
       maskCredentials(); maskSecretText();
-      const signature = JSON.stringify(["page", scrollX, scrollY, innerWidth, innerHeight,
-        [...document.querySelectorAll("input,button,a,select,textarea,iframe")].map((node) => { const box = node.getBoundingClientRect(); return [identity(node), box.x, box.y, box.width, box.height]; })]);
+      // Full-page pixels need only a document/viewport identity. Individual
+      // credential targets retain their own node identity through layout updates.
+      const signature = JSON.stringify(["page", scrollX, scrollY, innerWidth, innerHeight]);
       if (signature !== lastRegion) { lastRegion = signature; revision++; }
-      return { x: 0, y: 0, width: innerWidth, height: innerHeight, revision: `${documentId}:${revision}` };
+      const targets = [];
+      for (const node of document.querySelectorAll<HTMLInputElement>("input")) {
+        if (node.disabled || !["text", "email", "tel", "password", "search"].includes(node.type)) continue;
+        const display = locks.get(node) ?? node;
+        if (!visible(display)) continue;
+        const box = display.getBoundingClientRect();
+        const x = Math.max(0, box.x), y = Math.max(0, box.y);
+        const width = Math.min(innerWidth, box.right) - x, height = Math.min(innerHeight, box.bottom) - y;
+        if (width < 3 || height < 3) continue;
+        const token = `${documentId}:field-${identity(node)}`;
+        targetNodes.set(token, node);
+        targets.push({ token, x, y, width, height });
+      }
+      for (const [token, node] of targetNodes) if (!node.isConnected) targetNodes.delete(token);
+      return { x: 0, y: 0, width: innerWidth, height: innerHeight, revision: `${documentId}:${revision}`, targets };
     }
-    function assist() {
+    function assist(allowAutofill = true) {
       assisted = true;
       restoreMasks();
       // Ignore broken recipes in the recovery flow. Conservative field detection
       // can fill ordinary forms; the user can choose an exact field otherwise.
-      if (!filled) {
+      if (allowAutofill) {
         const detected = detect();
-        if (detected.username) setValue(detected.username, username, true);
-        if (detected.password) setValue(detected.password, password, true);
-        filled = Boolean(detected.username || detected.password);
+        for (const [role, node, value] of [["username", detected.username, username], ["password", detected.password, password]] as const) {
+          if (autofilledRoles.has(role) || !(node instanceof HTMLInputElement) || credentials.has(node) || node.disabled || node.readOnly) continue;
+          try { setValue(node, value, true); autofilledRoles.add(role); }
+          catch (error) { if (!(error instanceof Error) || error.message !== "invalid-input") throw error; }
+        }
+        filled ||= credentials.size > 0;
       }
       const status = pageStatus();
       // Manual recovery only proves the page is safe to open. Do not report an
       // authentication success based on the user's navigation alone.
       const pendingFields = inputs().some((node) => ["text", "email", "tel", "password"].includes(node.type) && !node.disabled && !node.readOnly);
-      if (status === "ready" && !pendingFields) return { status: "anonymous", released: passwordReleased };
+      if (status === "ready" && !pendingFields) return { status: "anonymous", region: pageRegion(), kind: "page", released: passwordReleased };
       freezeCredentials();
       return { status: "interactive", kind: "page", region: pageRegion(), released: passwordReleased };
     }
-    function fillAt(revisionValue: string, x: number, y: number, action: string) {
-      if (!assisted || !Number.isFinite(x) || !Number.isFinite(y)) return false;
-      const rect = pageRegion();
-      if (rect.revision !== revisionValue || x < 0 || y < 0 || x >= rect.width || y >= rect.height) return false;
-      const hit = document.elementFromPoint(x, y);
-      const node = [...locks].find(([, lock]) => lock === hit || Boolean(hit && lock.contains(hit)))?.[0] ?? hit;
-      if (!(node instanceof HTMLInputElement) || node.disabled || (node.readOnly && !credentials.has(node)) || !["text", "email", "tel", "password", "search"].includes(node.type)) return false;
+    function fillTarget(token: string, action: string) {
+      const node = targetNodes.get(token);
+      if (!assisted || !node?.isConnected || node.disabled || !["text", "email", "tel", "password", "search"].includes(node.type)) return false;
+      const display = locks.get(node) ?? node;
+      if (!visible(display)) return false;
+      const box = display.getBoundingClientRect();
+      if (box.right <= 0 || box.bottom <= 0 || box.x >= innerWidth || box.y >= innerHeight) return false;
+      const hit = document.elementFromPoint(Math.max(0, Math.min(innerWidth - 1, box.x + box.width / 2)), Math.max(0, Math.min(innerHeight - 1, box.y + box.height / 2)));
+      if (hit !== display && !(hit && display.contains(hit))) return false;
       if (action !== "fill-username" && action !== "fill-password") return false;
+      // Some login fields unlock themselves on focus. Do not force a site's
+      // permanently readonly field to become editable.
+      if (node.readOnly && !credentials.has(node)) node.focus();
+      if (!node.isConnected || node.disabled || (node.readOnly && !credentials.has(node))) return false;
       node.readOnly = false;
       if (action === "fill-password") node.type = "password";
       setValue(node, action === "fill-password" ? password : username, true);
-      filled = true;
-      restoreMasks(); freezeCredentials();
+      credentialRoles.set(node, action === "fill-password" ? "password" : "username");
+      autofilledRoles.add(action === "fill-password" ? "password" : "username");
+      filled = true; restoreMasks(); freezeCredentials();
       return true;
     }
     function submit(target: Element | null) {
@@ -285,8 +318,8 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
         return { status: "submitted", released: passwordReleased };
       }
       if (submitted || previouslySubmitted) return { status: "waiting", released: passwordReleased };
-      // An anonymous entry can be opened without releasing credentials. A configured
-      // success marker still takes precedence over this convenience path.
+      // A rendered but unrecognized page still needs protected assistance; the
+      // controller must not infer a cached session from a missing login form.
       if (pageStatus() === "ready" && !config.usernameSelector && !config.passwordSelector && !config.successSelector) return { status: "anonymous" };
       if (config.successSelector && pageStatus(config.successSelector) === "ready" && !visiblePasswords.length) return { status: "success" };
       return { status: "waiting" };
@@ -364,7 +397,7 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
     for (const type of ["pointerdown", "pointerup", "mousedown", "mouseup", "click", "touchstart", "touchend"]) window.addEventListener(type, protectPointer, true);
     for (const type of ["copy", "cut", "dragstart"]) window.addEventListener(type, (event) => { if (assisted) { event.preventDefault(); event.stopImmediatePropagation(); } }, true);
     new MutationObserver(() => { if (assisted) { maskCredentials(); maskSecretText(); } }).observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["style", "type"] });
-    return { tick, region, pageRegion, assist, fillAt, authorize, continueInteraction, finish, secretReleased: () => passwordReleased };
+    return { tick, region, pageRegion, assist, fillTarget, authorize, continueInteraction, finish, secretReleased: () => passwordReleased };
   }
   root.__vironLogin ??= createGuard();
 }

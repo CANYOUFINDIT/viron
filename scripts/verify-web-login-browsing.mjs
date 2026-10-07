@@ -83,8 +83,9 @@ async function run() {
         assert.equal(auth.isDestroyed(), false);
         assert.equal(view.pages.size, 0, "No native page or inspector can access the auth DOM");
         if (path === "/manual") {
-          await login.input({ type: "fill-username", x: 40, y: 80, revision: login.state.revision });
-          await login.input({ type: "fill-password", x: 40, y: 140, revision: login.state.revision });
+          const token = y => login.state.targets.find(item => y >= item.y && y < item.y + item.height).token;
+          await login.input({ type: "fill-username", targetToken: token(80), revision: login.state.revision });
+          await login.input({ type: "fill-password", targetToken: token(140), revision: login.state.revision });
           const frozen = await auth.webContents.executeJavaScript('({value:beta.value,readonly:beta.readOnly,visibility:getComputedStyle(beta).visibility})');
           assert.deepEqual(frozen, { value: "fixture-password", readonly: true, visibility: "hidden" });
           await auth.webContents.executeJavaScript('beta.type="text";beta.style.visibility="visible"');

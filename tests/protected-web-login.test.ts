@@ -31,19 +31,57 @@ describe("protected Web login", () => {
     password.focus(); expect(guard.authorize(result.region.revision, null, null, true)).toBeNull();
     window.document.querySelector<HTMLElement>("#otp")!.focus(); expect(guard.authorize(result.region.revision, null, null, true)).not.toBeNull();
   });
-  it("fills an explicitly chosen unrecognized field and rejects stale coordinates and non-input targets", () => {
+  it("fills an explicitly chosen unrecognized field and rejects invalid or replaced identities", () => {
     const { window, guard } = fixture("");
     window.document.querySelector("form")!.innerHTML = '<input id="unknown" type="text"><button type="button">Continue</button>';
     const input = window.document.querySelector<HTMLInputElement>("#unknown")!;
     input.getBoundingClientRect = () => ({ x: 20, y: 20, top: 20, left: 20, bottom: 60, right: 220, width: 200, height: 40, toJSON() {} });
     window.document.elementFromPoint = () => input;
-    const frame = guard.assist().region;
-    expect(guard.fillAt("stale", 30, 30, "fill-password")).toBe(false);
-    expect(guard.fillAt(frame.revision, 30, 30, "fill-password")).toBe(true);
+    const frame = guard.assist(false).region;
+    expect(guard.fillTarget("stale", "fill-password")).toBe(false);
+    expect(guard.fillTarget(frame.targets[0].token, "fill-password")).toBe(true);
     expect(input.value).toBe("fixture-password"); expect(input.type).toBe("password"); expect(input.readOnly).toBe(true);
     expect(window.getComputedStyle(input).visibility).toBe("hidden");
     window.document.elementFromPoint = () => window.document.querySelector("button")!;
-    expect(guard.fillAt(guard.pageRegion().revision, 30, 30, "fill-username")).toBe(false);
+    expect(guard.fillTarget(frame.targets[0].token, "fill-username")).toBe(false);
+    input.replaceWith(window.document.createElement("input"));
+    expect(guard.fillTarget(frame.targets[0].token, "fill-password")).toBe(false);
+  });
+  it("leaves foreign readonly fields usable for manual recovery and fills after focus unlock", () => {
+    const { window, guard } = fixture("");
+    const password = window.document.querySelector<HTMLInputElement>("#password")!;
+    password.readOnly = true;
+    const frame = guard.assist().region;
+    expect(password.value).toBe(""); expect(guard.assist().status).toBe("interactive");
+    const target = frame.targets.find((item: { y: number }) => item.y === 70);
+    window.document.elementFromPoint = () => password;
+    expect(guard.fillTarget(target.token, "fill-password")).toBe(false);
+    password.addEventListener("focus", () => { password.readOnly = false; }); password.blur();
+    expect(guard.fillTarget(target.token, "fill-password")).toBe(true);
+    expect(password.value).toBe("fixture-password"); expect(password.readOnly).toBe(true);
+  });
+  it("retains a full-page revision and selected node across unrelated layout changes", () => {
+    const { window, guard } = fixture("");
+    window.document.body.innerHTML = '<input id="unknown"><button>Continue</button>';
+    const input = window.document.querySelector<HTMLInputElement>("input")!;
+    let x = 20;
+    input.getBoundingClientRect = () => ({ x, y: 20, top: 20, left: x, bottom: 60, right: x + 200, width: 200, height: 40, toJSON() {} });
+    window.document.elementFromPoint = () => input;
+    const frame = guard.assist(false).region; x = 80;
+    window.document.querySelector("button")!.style.marginLeft = "1px";
+    expect(guard.pageRegion().revision).toBe(frame.revision);
+    expect(guard.fillTarget(frame.targets[0].token, "fill-password")).toBe(true);
+    expect(input.value).toBe("fixture-password");
+  });
+  it("does not refill replaced fields or fill a new document when assisted autofill is disallowed", () => {
+    const { window, guard } = fixture(""); guard.assist();
+    window.document.body.innerHTML = '<input name="username"><input name="password" type="password">';
+    for (const node of window.document.querySelectorAll("input")) node.getBoundingClientRect = () => ({ x: 10, y: 20, top: 20, left: 10, bottom: 60, right: 210, width: 200, height: 40, toJSON() {} });
+    guard.assist(); expect(window.document.querySelector<HTMLInputElement>('input[type=password]')!.value).toBe("");
+    window.eval("delete globalThis.__vironLogin");
+    window.eval(protectedLoginInstallScript(defaultWebLoginConfig(), "fixture-user", "fixture-password", "next-document"));
+    window.eval("globalThis.__vironLogin.assist(false)");
+    expect(window.document.querySelector<HTMLInputElement>('input[type=password]')!.value).toBe("");
   });
   it("keeps unknown fields available even when the page title and URL do not identify a login", () => {
     const { window, guard } = fixture("");
@@ -182,6 +220,7 @@ describe("protected Web login", () => {
     window.document.body.replaceChildren();
     expect(guard.tick(0, false, "").status).toBe("waiting");
     window.location.href = "https://console.example.com/home";
+    window.document.title = "Nacos";
     expect(guard.tick(0, true, "https://console.example.com/login", true, "old-document").status).toBe("waiting");
     expect(window.eval(protectedLoginBusinessPageScript())).toBe("waiting");
   });

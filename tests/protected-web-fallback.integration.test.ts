@@ -21,7 +21,7 @@ async function until(predicate: () => boolean, timeout = 12_000) {
 
 async function fixture(mode: string, check: (value: {
   socket: WebSocket; wire: Message[]; context: BrowserContext; auth: Page;
-  origin: string; posts: () => number;
+  origin: string; posts: () => number; loads: () => number;
 }) => Promise<void>) {
   let posts = 0, homeLoads = 0, entryLoads = 0;
   const pending = new Set<NodeJS.Timeout>();
@@ -33,13 +33,21 @@ async function fixture(mode: string, check: (value: {
       response.writeHead(302, { Location: "/home", "Set-Cookie": "session=fixture-authenticated; Path=/; HttpOnly; SameSite=Lax" }); response.end(); return;
     }
     if (request.url === "/clicked") { response.end('<title>Clicked</title><main>Page controls work</main>'); return; }
-    if (request.url === "/home" || (["business", "manual"].includes(mode) && /session=fixture-authenticated/.test(request.headers.cookie ?? ""))) {
+    if (request.url === "/settings/security") { response.end('<title>Security settings</title><main>Settings</main><input type="password" name="password">'); return; }
+    if (request.url === "/home" || /session=fixture-authenticated/.test(request.headers.cookie ?? "")) {
       homeLoads++;
       response.end(`<title>Business</title><main ${homeLoads === 1 ? 'id="success"' : ''}>Authenticated business</main><button onclick="location.href='/clicked'" style="position:fixed;left:20px;top:20px;width:200px;height:50px">Continue</button>`); return;
     }
     entryLoads++;
-    if (mode === "manual") {
-      response.end('<!doctype html><title>Login fixture</title><input id="alpha" autocomplete="off" style="position:fixed;left:20px;top:60px;width:220px;height:40px"><input id="beta" autocomplete="off" style="position:fixed;left:20px;top:120px;width:220px;height:40px"><button style="position:fixed;left:20px;top:190px;width:200px;height:50px" onclick="fetch(\'/login\',{method:\'POST\',body:new URLSearchParams({username:alpha.value,password:beta.value})}).then(()=>location.href=\'/home\')">Continue</button>'); return;
+    if (mode.startsWith("slow")) {
+      const form = '<form method="post"><input name="username" autocomplete="username"><input name="password" type="password"><button type="submit">Login</button></form>';
+      response.end(`<title>Nacos</title>${mode === "slow-splash" ? '<main>Loading console...</main>' : ''}<script>setTimeout(()=>document.body.innerHTML=${JSON.stringify(form)},3500)</script>`); return;
+    }
+    if (mode === "readonly" || mode === "permanent-readonly") {
+      response.end(`<title>Login fixture</title><form method="post"><input id="alpha" name="username" readonly autocomplete="username" style="position:fixed;left:20px;top:60px;width:220px;height:40px" onfocus="${mode === "readonly" ? 'this.readOnly=false' : ''}"><input id="beta" type="password" name="password" readonly style="position:fixed;left:20px;top:120px;width:220px;height:40px" onfocus="${mode === "readonly" ? 'this.readOnly=false' : ''}"><button style="position:fixed;left:20px;top:190px;width:200px;height:50px">Login</button></form>`); return;
+    }
+    if (["manual", "moving", "settings"].includes(mode)) {
+      response.end('<!doctype html><title>Login fixture</title><input id="alpha" autocomplete="off" style="position:fixed;left:20px;top:60px;width:220px;height:40px"><input id="beta" autocomplete="off" style="position:fixed;left:20px;top:120px;width:220px;height:40px"><button style="position:fixed;left:20px;top:190px;width:200px;height:50px" onclick="fetch(\'/login\',{method:\'POST\',body:new URLSearchParams({username:alpha.value,password:beta.value})}).then(()=>location.href=\'/home\')">Continue</button>' + (mode === "moving" ? '<script>setInterval(()=>document.querySelector("button").style.left=(20+Math.random())+"px",30)</script>' : '')); return;
     }
     const html = `<!doctype html><title>Login fixture</title><form method="post"><input name="username" autocomplete="username"><input name="password" type="password"><button type="submit">Login</button>${mode === "ambiguous" ? '<button type="submit">Sign in</button>' : ''}</form><a href="/clicked" style="position:fixed;left:20px;top:250px;width:200px;height:50px;display:block">Continue browsing</a><script>
       document.querySelector('input[type=password]').addEventListener('input',event=>{localStorage.setItem('unverified-password',event.target.value);sessionStorage.setItem('unverified-password',event.target.value);document.cookie='unverified-password='+event.target.value+'; Path=/'});
@@ -64,7 +72,7 @@ async function fixture(mode: string, check: (value: {
     const signedIn = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { username: config.adminUsername, password: config.adminPassword } });
     const cookies = { envman_session: signedIn.cookies.find((item) => item.name === "envman_session")!.value };
     const environment = await app.inject({ method: "POST", url: "/api/v1/environments", cookies, payload: { name: "Browsing fallback" } });
-    const entry = await app.inject({ method: "POST", url: `/api/v1/environments/${environment.json().id}/web-entries`, cookies, payload: { name: "Fixture", url: origin + "/", loginConfig: ["invalid", "manual"].includes(mode) ? { usernameSelector: "[broken(" } : mode === "timeout" ? { usernameSelector: "#missing-user", passwordSelector: "#missing-password" } : mode === "business" ? { successSelector: "#success" } : {} } });
+    const entry = await app.inject({ method: "POST", url: `/api/v1/environments/${environment.json().id}/web-entries`, cookies, payload: { name: "Fixture", url: origin + (mode.startsWith("slow") ? "/nacos/" : "/"), loginConfig: ["invalid", "manual", "moving", "settings"].includes(mode) ? { usernameSelector: "[broken(" } : mode === "timeout" ? { usernameSelector: "#missing-user", passwordSelector: "#missing-password" } : mode === "business" ? { successSelector: "#success" } : {} } });
     expect(entry.statusCode).toBe(201);
     const credential = await app.inject({ method: "POST", url: `/api/v1/web-entries/${entry.json().id}/credentials`, cookies, payload: { username: "fixture-user", password: "fixture-password" } });
     const opened = await app.inject({ method: "POST", url: `/api/v1/web-credentials/${credential.json().id}/view`, cookies, payload: { width: 900, height: 650 } });
@@ -74,7 +82,7 @@ async function fixture(mode: string, check: (value: {
     socket = new WebSocket(`ws://127.0.0.1:${(app.server.address() as { port: number }).port}/ws/web-account-view?ticket=${opened.json().ticket}`);
     const wire: Message[] = [];
     socket.on("message", (raw) => wire.push(JSON.parse(String(raw))));
-    try { await check({ socket, wire, context: managed.context, auth, origin, posts: () => posts }); }
+    try { await check({ socket, wire, context: managed.context, auth, origin, posts: () => posts, loads: () => entryLoads }); }
     catch (error) {
       console.error("Fallback fixture:", mode, { posts, homeLoads, entryLoads }, wire.filter((message) => message.view).slice(-6).map((message) => ({ phase: message.view!.protectedLogin?.phase, message: message.view!.protectedLogin?.message, title: message.view!.title, notice: message.view!.loginNotice })));
       throw error;
@@ -121,8 +129,8 @@ describe.skipIf(process.env.VIRON_WEB_BROWSER_TEST !== "1")("web browsing surviv
   }, 20_000);
 
   it("can stop an unfinished initial page load without waiting for its timeout", async () => {
-    await fixture("cancel", async ({ socket, wire, auth, posts }) => {
-      await until(() => socket.readyState === WebSocket.OPEN);
+    await fixture("cancel", async ({ socket, wire, auth, posts, loads }) => {
+      await until(() => socket.readyState === WebSocket.OPEN && loads() === 1);
       const started = Date.now();
       socket.send(JSON.stringify({ type: "browse" })); socket.send(JSON.stringify({ type: "browse" }));
       await until(() => wire.some((message) => message.view?.protectedLogin === null && message.view.title === "Login fixture"));
@@ -153,19 +161,20 @@ describe.skipIf(process.env.VIRON_WEB_BROWSER_TEST !== "1")("web browsing surviv
     });
   }, 45_000);
 
-  it("fills unrecognized fields by coordinates, freezes the secret, and completes a real login through the fallback", async () => {
+  it("fills unrecognized fields by identity, freezes the secret, and completes a real login through the fallback", async () => {
     await fixture("manual", async ({ socket, wire, auth, posts }) => {
       await until(() => wire.some((message) => message.view?.protectedLogin?.kind === "page"));
       const revision = () => wire.filter((message) => message.view?.protectedLogin?.kind === "page").at(-1)!.view!.protectedLogin!.revision;
+      const token = (y: number) => wire.filter((message) => message.view?.protectedLogin?.kind === "page").at(-1)!.view!.protectedLogin!.targets!.find((item) => y >= item.y && y < item.y + item.height)!.token;
       expect(await auth.evaluate("typeof globalThis.__vironLogin")).toBe("undefined");
       const stale = revision() + "-stale";
-      socket.send(JSON.stringify({ type: "login-input", input: { type: "fill-password", x: 40, y: 140, revision: stale } }));
+      socket.send(JSON.stringify({ type: "login-input", input: { type: "fill-password", targetToken: "invalid-target", revision: stale } }));
       await new Promise((resolve) => setTimeout(resolve, 200));
       expect(await auth.locator("#beta").inputValue()).toBe("");
-      socket.send(JSON.stringify({ type: "login-input", input: { type: "fill-username", x: 40, y: 80, revision: revision() } }));
+      socket.send(JSON.stringify({ type: "login-input", input: { type: "fill-username", targetToken: token(80), revision: revision() } }));
       await until(() => wire.some((message) => message.type === "login-input-result"));
       await expect.poll(() => auth.locator("#alpha").inputValue()).toBe("fixture-user");
-      socket.send(JSON.stringify({ type: "login-input", input: { type: "fill-password", x: 40, y: 140, revision: revision() } }));
+      socket.send(JSON.stringify({ type: "login-input", input: { type: "fill-password", targetToken: token(140), revision: revision() } }));
       await expect.poll(() => auth.locator("#beta").inputValue()).toBe("fixture-password");
       expect(await auth.locator("#beta").getAttribute("readonly")).not.toBeNull();
       await auth.locator("#beta").evaluate((node) => { (node as HTMLInputElement).type = "text"; node.style.visibility = "visible"; });
@@ -174,6 +183,79 @@ describe.skipIf(process.env.VIRON_WEB_BROWSER_TEST !== "1")("web browsing surviv
       await until(() => wire.some((message) => message.view?.protectedLogin === null && message.view.title === "Business"));
       expect(auth.isClosed()).toBe(true); expect(posts()).toBe(1);
       expect(wire.some((message) => message.type === "login-complete")).toBe(false);
+    });
+  }, 20_000);
+
+  it.each(["slow-empty", "slow-splash"])("retains a delayed SPA on /nacos/ without a login title: %s", async (mode) => {
+    await fixture(mode, async ({ socket, wire, auth, posts }) => {
+      await auth.waitForLoadState(); await new Promise((resolve) => setTimeout(resolve, 2200));
+      expect(auth.isClosed()).toBe(false); expect(posts()).toBe(0);
+      expect(wire.some((message) => message.type === "login-complete")).toBe(false);
+      if (mode === "slow-splash") {
+        await expect.poll(() => auth.locator('input[type=password]').inputValue(), { timeout: 6000 }).toBe("fixture-password");
+        expect(await auth.locator('input[type=password]').getAttribute("readonly")).not.toBeNull();
+        const state = () => wire.filter((message) => message.view?.protectedLogin?.kind === "page").at(-1)!.view!.protectedLogin!;
+        await until(() => Boolean(state()?.image));
+        const box = (await auth.locator('button').boundingBox())!;
+        socket.send(JSON.stringify({ type: "login-input", input: { type: "click", revision: state().revision, x: box.x + 5, y: box.y + 5 } }));
+      }
+      await until(() => wire.some((message) => message.view?.protectedLogin === null && message.view.title === "Business"));
+      expect(auth.isClosed()).toBe(true); expect(posts()).toBe(1);
+    });
+  }, 20_000);
+
+  it.each(["readonly", "permanent-readonly"])("retains %s fields without destroying the fallback", async (mode) => {
+    await fixture(mode, async ({ socket, wire, auth, posts }) => {
+      await until(() => wire.some((message) => message.view?.protectedLogin?.kind === "page"));
+      const state = () => wire.filter((message) => message.view?.protectedLogin?.kind === "page").at(-1)!.view!.protectedLogin!;
+      const fill = (type: string, y: number) => socket.send(JSON.stringify({ type: "login-input", requestId: "fill-" + y, input: { type, revision: state().revision, targetToken: state().targets!.find((item) => y >= item.y && y < item.y + item.height)!.token } }));
+      expect(await auth.locator("#beta").inputValue()).toBe(""); fill("fill-password", 140);
+      if (mode === "permanent-readonly") {
+        await until(() => wire.some((message) => message.type === "login-input-result"));
+        expect(await auth.locator("#beta").inputValue()).toBe("");
+        expect(auth.isClosed()).toBe(false); expect(state().phase).toBe("interactive"); expect(posts()).toBe(0);
+      } else {
+        await expect.poll(() => auth.locator("#beta").inputValue()).toBe("fixture-password"); fill("fill-username", 80);
+        await expect.poll(() => auth.locator("#alpha").inputValue()).toBe("fixture-user");
+        socket.send(JSON.stringify({ type: "login-input", input: { type: "click", revision: state().revision, x: 40, y: 210 } }));
+        await until(() => wire.some((message) => message.view?.protectedLogin === null && message.view.title === "Business"));
+        expect(posts()).toBe(1);
+      }
+    });
+  }, 20_000);
+
+  it("keeps moving pages visible and fills the selected node after it moves, but rejects a replacement", async () => {
+    await fixture("moving", async ({ socket, wire, auth }) => {
+      await until(() => wire.some((message) => message.view?.protectedLogin?.targets?.length === 2));
+      const state = () => wire.filter((message) => message.view?.protectedLogin?.kind === "page").at(-1)!.view!.protectedLogin!;
+      const selected = state().targets!.find((item) => item.y > 100)!.token, revision = state().revision;
+      await auth.evaluate(() => { document.querySelector<HTMLElement>("#beta")!.style.left = "300px"; });
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(state().revision).toBe(revision); expect(state().image).not.toBe("");
+      socket.send(JSON.stringify({ type: "login-input", input: { type: "fill-password", targetToken: selected, revision } }));
+      await expect.poll(() => auth.locator("#beta").inputValue()).toBe("fixture-password");
+      await auth.evaluate(() => { document.querySelector("#beta")!.outerHTML = '<input id="beta" style="position:fixed;left:300px;top:120px;width:220px;height:40px">'; });
+      const count = wire.filter((message) => message.type === "login-input-result").length;
+      socket.send(JSON.stringify({ type: "login-input", input: { type: "fill-password", targetToken: selected, revision } }));
+      await until(() => wire.filter((message) => message.type === "login-input-result").length > count);
+      expect(await auth.locator("#beta").inputValue()).toBe(""); expect(auth.isClosed()).toBe(false);
+    });
+  }, 20_000);
+
+  it("does not inject the managed password into a new settings document after assisted login", async () => {
+    await fixture("settings", async ({ socket, wire, auth, origin }) => {
+      await until(() => wire.some((message) => message.view?.protectedLogin?.targets?.length === 2));
+      const state = () => wire.filter((message) => message.view?.protectedLogin?.kind === "page").at(-1)!.view!.protectedLogin!;
+      const oldToken = state().targets!.find((item) => item.y > 100)!.token;
+      socket.send(JSON.stringify({ type: "login-input", input: { type: "fill-password", targetToken: oldToken, revision: state().revision } }));
+      await expect.poll(() => auth.locator("#beta").inputValue()).toBe("fixture-password");
+      await auth.goto(origin + "/settings/security");
+      await until(() => state().targets?.some((item) => item.token !== oldToken) === true);
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      expect(await auth.locator('input[type=password]').inputValue()).toBe(""); expect(auth.isClosed()).toBe(false);
+      socket.send(JSON.stringify({ type: "login-input", input: { type: "fill-password", targetToken: oldToken, revision: state().revision } }));
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(await auth.locator('input[type=password]').inputValue()).toBe("");
     });
   }, 20_000);
 });

@@ -120,7 +120,7 @@ describe.skipIf(!enabled)("macOS local Web", () => {
       }
       const account = /(?:^|;\s*)account=([^;]+)/.exec(request.headers.cookie || "")?.[1];
       response.setHeader("Content-Type", "text/html; charset=utf-8");
-      if (account) response.end(`<!doctype html><title>Logged ${decodeURIComponent(account)}</title>`);
+      if (account) response.end(`<!doctype html><title>Logged ${decodeURIComponent(account)}</title><main id="authenticated">Account home</main>`);
       else response.end(`<!doctype html><title>Login</title><form method="post" action="/login"><input name="username" autocomplete="username"><input name="password" type="password" autocomplete="current-password"><button>登录</button></form><script>const form=document.querySelector("form");form.addEventListener("input",()=>{const values=new FormData(form);if(values.get("username")&&values.get("password"))setTimeout(()=>form.requestSubmit(),0)})</script>`);
     });
     servers.push(target);
@@ -151,11 +151,11 @@ describe.skipIf(!enabled)("macOS local Web", () => {
     const login = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { username: config.adminUsername, password: config.adminPassword } });
     const cookies = { envman_session: login.cookies.find((item) => item.name === "envman_session")!.value };
     const environment = await app.inject({ method: "POST", url: "/api/v1/environments", cookies, payload: { name: "Desktop local Web" } });
-    const entry = await app.inject({ method: "POST", url: `/api/v1/environments/${environment.json().id}/web-entries`, cookies, payload: { name: "Fixture", url: `http://127.0.0.1:${targetPort}/` } });
+    const entry = await app.inject({ method: "POST", url: `/api/v1/environments/${environment.json().id}/web-entries`, cookies, payload: { name: "Fixture", url: `http://127.0.0.1:${targetPort}/`, loginConfig: { successSelector: "#authenticated" } } });
     const credential = await app.inject({ method: "POST", url: `/api/v1/web-entries/${entry.json().id}/credentials`, cookies, payload: { username: config.adminUsername, password: "target-password", note: "", customFields: {} } });
 
     const secondEnvironment = await app.inject({ method: "POST", url: "/api/v1/environments", cookies, payload: { name: "Second Web environment" } });
-    const secondEntry = await app.inject({ method: "POST", url: `/api/v1/environments/${secondEnvironment.json().id}/web-entries`, cookies, payload: { name: "Other fixture", url: `http://127.0.0.1:${targetPort}/` } });
+    const secondEntry = await app.inject({ method: "POST", url: `/api/v1/environments/${secondEnvironment.json().id}/web-entries`, cookies, payload: { name: "Other fixture", url: `http://127.0.0.1:${targetPort}/`, loginConfig: { successSelector: "#authenticated" } } });
     const secondCredential = await app.inject({ method: "POST", url: `/api/v1/web-entries/${secondEntry.json().id}/credentials`, cookies, payload: { username: "second-account", password: "fixture-password", note: "", customFields: {} } });
     expect(secondCredential.statusCode).toBe(201);
 

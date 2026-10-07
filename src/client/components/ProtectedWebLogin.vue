@@ -10,7 +10,7 @@ let dragging = false;
 let moved = false;
 let start: { x: number; y: number; revision: string } | null = null;
 let lastMove = 0;
-const menu = ref<{ left: number; top: number; x: number; y: number; revision: string } | null>(null);
+const menu = ref<{ left: number; top: number; targetToken?: string; revision: string } | null>(null);
 function coordinates(event: MouseEvent | PointerEvent | WheelEvent) {
   const box = (event.currentTarget as HTMLImageElement).getBoundingClientRect();
   return { x: Math.max(0, Math.min(props.state.width - 1, (event.clientX - box.x) * props.state.width / box.width)),
@@ -18,12 +18,15 @@ function coordinates(event: MouseEvent | PointerEvent | WheelEvent) {
 }
 function context(event: MouseEvent) {
   if (props.state.kind !== "page") return;
-  menu.value = { ...coordinates(event), left: Math.min(event.clientX, window.innerWidth - 170), top: Math.min(event.clientY, window.innerHeight - 90), revision: props.state.revision };
+  const { x, y } = coordinates(event);
+  const target = props.state.targets?.find((item) => x >= item.x && y >= item.y && x < item.x + item.width && y < item.y + item.height);
+  menu.value = { targetToken: target?.token, left: Math.min(event.clientX, window.innerWidth - 170), top: Math.min(event.clientY, window.innerHeight - 90), revision: props.state.revision };
 }
 function fill(type: "fill-username" | "fill-password") {
   const selected = menu.value;
   menu.value = null;
-  if (selected) send({ type, x: selected.x, y: selected.y }, selected.revision);
+  if (!selected?.targetToken) { inputError.value = "请在可见的输入框上右键后填充"; return; }
+  send({ type, targetToken: selected.targetToken }, selected.revision);
 }
 function wheel(event: WheelEvent) {
   if (props.state.kind === "page") send({ type: "scroll", ...coordinates(event), deltaY: Math.max(-1000, Math.min(1000, event.deltaY)) });
@@ -32,7 +35,7 @@ function send(input: Omit<ProtectedLoginInput, "revision">, revision?: string) {
   queue = queue.then(async () => {
     if (props.state.phase !== "interactive") return;
     try { await props.send({ ...input, revision: revision ?? props.state.revision }); inputError.value = ""; }
-    catch { inputError.value = "未能完成验证操作，请重试；如持续失败，请重新后台登录"; }
+    catch { inputError.value = input.type.startsWith("fill-") ? "无法填充所选输入框：它可能已被替换、遮挡或设为只读。请在最新画面中重新选择。" : "未能完成验证操作，请重试；如持续失败，请重新后台登录"; }
   });
 }
 function pointer(event: PointerEvent, type: "mouseDown" | "mouseUp" | "mouseMove") {

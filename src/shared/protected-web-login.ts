@@ -24,7 +24,10 @@ export interface ProtectedLoginState {
   revision: string;
   width: number;
   height: number;
+  /** Opaque input identities and geometry, never website DOM or field values. */
+  targets?: ProtectedLoginTarget[];
 }
+export interface ProtectedLoginTarget { token: string; x: number; y: number; width: number; height: number }
 export interface ProtectedLoginInput {
   revision: string;
   type: "mouseDown" | "mouseUp" | "mouseMove" | "click" | "text" | "key" | "continue" | "fill-username" | "fill-password" | "scroll";
@@ -33,6 +36,7 @@ export interface ProtectedLoginInput {
   text?: string;
   key?: string;
   deltaY?: number;
+  targetToken?: string;
 }
 export function defaultWebLoginConfig(): WebLoginConfig {
   return { usernameSelector: "", passwordSelector: "", submitSelector: "", successSelector: "", interactionSelector: "", allowedOrigins: [], steps: [] };

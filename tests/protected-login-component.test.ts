@@ -6,7 +6,7 @@ import type { ProtectedLoginInput, ProtectedLoginState } from "../src/shared/pro
 
 function surface(kind: "agreement" | "challenge" | "page" = "agreement") {
   const inputs: ProtectedLoginInput[] = [];
-  const state: ProtectedLoginState = { phase: "interactive", message: "Read the terms", image: "data:image/png;base64,AA==", revision: "checkbox-frame", width: 500, height: 80, kind };
+  const state: ProtectedLoginState = { phase: "interactive", message: "Read the terms", image: "data:image/png;base64,AA==", revision: "checkbox-frame", width: 500, height: 80, kind, targets: [{ token: "fixture-document:field-1", x: 50, y: 0, width: 200, height: 40 }] };
   const wrapper = mount(ProtectedWebLogin, { props: { state, send: vi.fn(async (input: ProtectedLoginInput) => { inputs.push(input); }) }, global: { stubs: { "el-button": { template: "<button><slot /></button>" } } } });
   const image = wrapper.get("img").element as HTMLImageElement;
   image.setPointerCapture = vi.fn();
@@ -17,16 +17,25 @@ function surface(kind: "agreement" | "challenge" | "page" = "agreement") {
 const settle = async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); };
 
 describe("protected login interaction", () => {
-  it("offers coordinate-based credential fill actions without a password or live website DOM in the shell", async () => {
+  it("binds credential fill to an opaque field identity even when the frame is refreshed", async () => {
     const { wrapper, inputs } = surface("page");
     await wrapper.get("img").trigger("contextmenu", { clientX: 100, clientY: 20 });
     const menu = document.querySelector(".protected-login__menu")!;
     expect(menu.textContent).toContain("填充用户名"); expect(menu.textContent).toContain("填充密码");
+    await wrapper.setProps({ state: { ...wrapper.props("state"), image: "data:image/png;base64,BB==", targets: [{ token: "fixture-document:field-1", x: 55, y: 5, width: 200, height: 40 }] } });
+    expect(document.querySelector(".protected-login__menu")).toBe(menu);
     (menu.querySelectorAll("button")[1] as HTMLButtonElement).click();
     await settle();
-    expect(inputs).toEqual([{ type: "fill-password", x: 100, y: 20, revision: "checkbox-frame" }]);
+    expect(inputs).toEqual([{ type: "fill-password", targetToken: "fixture-document:field-1", revision: "checkbox-frame" }]);
     expect(wrapper.find("input[type=password]").exists()).toBe(false);
     wrapper.unmount();
+  });
+  it("explains a missing field selection instead of silently discarding fill", async () => {
+    const { wrapper, inputs } = surface("page");
+    await wrapper.get("img").trigger("contextmenu", { clientX: 400, clientY: 20 });
+    (document.querySelectorAll(".protected-login__menu button")[1] as HTMLButtonElement).click();
+    await settle(); expect(inputs).toEqual([]);
+    expect(wrapper.text()).toContain("请在可见的输入框上右键后填充"); wrapper.unmount();
   });
   it("sends a checkbox click once and keeps the coordinates bound to the displayed frame", async () => {
     const { wrapper, inputs, pointer } = surface();

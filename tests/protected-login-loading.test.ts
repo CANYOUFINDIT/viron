@@ -12,7 +12,7 @@ function pendingPage() {
     mouse: async () => {}, text: async () => {}, key: async () => {}, capture: async () => "data:image/png;base64,AA==",
     evaluate: async <T>(code: string) => ({ ok: true, released: false,
       value: code.includes("globalThis.__vironLogin.tick(") ? { status: "waiting" }
-        : code.includes("globalThis.__vironLogin.assist()") ? { status: "interactive", kind: "page", region: { x: 0, y: 0, width: 900, height: 650, revision: "fallback" } }
+        : code.includes("globalThis.__vironLogin.assist(") ? { status: "interactive", kind: "page", region: { x: 0, y: 0, width: 900, height: 650, revision: "fallback" } }
           : code.includes("globalThis.__vironLogin.pageRegion()") ? { x: 0, y: 0, width: 900, height: 650, revision: "fallback" }
         : code.includes('String(performance.timeOrigin)') ? "document"
           : code.includes("globalThis.__vironLogin.secretReleased()") ? false : undefined,
@@ -23,6 +23,29 @@ function pendingPage() {
 }
 
 describe("protected login page loading", () => {
+  it("keeps an unrecognized rendered page protected rather than claiming a cached session", async () => {
+    vi.useFakeTimers(); const { login, loaded, browser } = pendingPage();
+    const evaluate = browser.evaluate;
+    browser.evaluate = async <T>(code: string) => code.includes("globalThis.__vironLogin.tick(")
+      ? { ok: true, released: false, value: { status: "anonymous" } } as T : evaluate<T>(code);
+    loaded(); await vi.advanceTimersByTimeAsync(5000);
+    expect(login.state).toMatchObject({ phase: "interactive", kind: "page" });
+    expect(browser.destroy).not.toHaveBeenCalled(); login.dispose();
+  });
+  it("does not allow default assisted autofill after document or SPA route navigation", async () => {
+    vi.useFakeTimers(); const { login, loaded, browser } = pendingPage();
+    const evaluate = browser.evaluate, calls: string[] = [];
+    browser.evaluate = async <T>(code: string) => { calls.push(code); return evaluate<T>(code); };
+    loaded(); await vi.advanceTimersByTimeAsync(31_000);
+    expect(calls.some((code) => code.includes("__vironLogin.assist(true)"))).toBe(true);
+    browser.url = () => "https://console.example.test/#/settings";
+    calls.length = 0; login.navigationStarted(true); await vi.advanceTimersByTimeAsync(500);
+    expect(calls.some((code) => code.includes("__vironLogin.assist(false)"))).toBe(true);
+    expect(calls.some((code) => code.includes("__vironLogin.assist(true)"))).toBe(false);
+    calls.length = 0; login.navigationStarted(); await vi.advanceTimersByTimeAsync(500);
+    expect(calls.some((code) => code.includes("__vironLogin.assist(false)"))).toBe(true);
+    expect(login.state.phase).toBe("interactive"); login.dispose();
+  });
   it("recovers from a credential-overlapping verification crop without exposing or destroying the authentication document", async () => {
     vi.useFakeTimers(); const { login, loaded, browser } = pendingPage();
     const evaluate = browser.evaluate;

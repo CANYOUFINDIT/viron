@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { protectedLoginInstallScript } from "./protected-web-login-dom.js";
 import { containsPersistedWebLoginSecret } from "./web-login-storage.js";
-import { parseWebLoginConfig, type ProtectedLoginInput, type ProtectedLoginState, type WebLoginConfig } from "./protected-web-login.js";
+import { parseWebLoginConfig, type ProtectedLoginInput, type ProtectedLoginState, type ProtectedLoginTarget, type WebLoginConfig } from "./protected-web-login.js";
 
-export interface LoginRegion { x: number; y: number; width: number; height: number; revision: string }
+export interface LoginRegion { x: number; y: number; width: number; height: number; revision: string; targets?: ProtectedLoginTarget[] }
 type Region = LoginRegion;
 export interface ProtectedLoginBrowser {
   load(url: string): Promise<void>;
@@ -68,6 +68,7 @@ export class ProtectedLoginController {
   private credentialReleased = false;
   private storageVerified = false;
   private assisted = false;
+  private assistedScope: { document: string; url: string; navigation: number } | undefined;
   constructor(private options: {
     browser: ProtectedLoginBrowser; url: string; username: string; password: string; config?: WebLoginConfig;
     prepare?: () => Promise<void>; changed: () => void; completed: (result: ProtectedLoginResult) => Promise<void>;
@@ -102,7 +103,7 @@ export class ProtectedLoginController {
   private clearFrame() {
     this.interactionFrame = null;
     this.cancelPointer();
-    Object.assign(this.state, { image: "", revision: "", width: 0, height: 0 });
+    Object.assign(this.state, { image: "", revision: "", width: 0, height: 0, targets: undefined });
   }
   private cancelPointer() {
     if (this.pressed && !this.browser.destroyed()) void this.browser.mouse("mouseUp", -1, -1).catch(() => undefined);
@@ -154,6 +155,7 @@ export class ProtectedLoginController {
     this.options.changed();
   }
   private assist(message: string) {
+    if (!this.assisted && this.installedDocument) this.assistedScope = { document: this.installedDocument, url: this.browser.url(), navigation: this.navigationVersion };
     this.assisted = true;
     this.progressAt = Date.now();
     this.readyDocument = ""; this.readySince = 0;
@@ -197,13 +199,19 @@ export class ProtectedLoginController {
         await this.evaluate(protectedLoginInstallScript(this.config, this.options.username, this.options.password, randomUUID()));
         this.installedDocument = documentId;
       }
+      if (this.assisted && !this.assistedScope) this.assistedScope = { document: documentId, url, navigation: this.navigationVersion };
+      const sameAssistedScope = this.assistedScope?.document === documentId && this.assistedScope.url === url && this.assistedScope.navigation === this.navigationVersion;
       stage = "form";
       const alreadyReleased = this.credentialReleased;
       // Treat an interrupted renderer call conservatively: it can fill the form
       // before its reply reaches main. Never resume extensions on unchecked storage.
       this.credentialReleased ||= Boolean(this.options.password);
-      const result = await this.evaluate<Tick>(this.assisted ? "globalThis.__vironLogin.assist()" : `globalThis.__vironLogin.tick(${this.step}, ${this.submitted}, ${JSON.stringify(this.submittedUrl)}, ${this.passwordSubmitted}, ${JSON.stringify(this.submittedDocument)})`);
+      const result = await this.evaluate<Tick>(this.assisted ? `globalThis.__vironLogin.assist(${sameAssistedScope})` : `globalThis.__vironLogin.tick(${this.step}, ${this.submitted}, ${JSON.stringify(this.submittedUrl)}, ${this.passwordSubmitted}, ${JSON.stringify(this.submittedDocument)})`);
       if (!alreadyReleased && !result.released && !await this.evaluate<boolean>("globalThis.__vironLogin.secretReleased()")) this.credentialReleased = false;
+      // An unrecognized page can be an SPA splash, not a cached session. Keep
+      // the protected document available instead of abandoning login detection.
+      if (result.status === "anonymous" && !this.assisted) { this.assist("未识别到登录表单，请在受保护页面中继续操作"); return; }
+      if (result.status === "anonymous" && this.assisted && (!this.credentialReleased || sameAssistedScope)) result.status = "interactive";
       if (result.released) this.submittedUrl ||= url;
       if (result.status !== "waiting") this.progressAt = Date.now();
       if (!["success", "anonymous"].includes(result.status)) { this.readySince = 0; this.readyDocument = ""; }
@@ -226,10 +234,20 @@ export class ProtectedLoginController {
         const image = await contents.capture(before);
         const after = await this.evaluate<Region | null>(this.assisted ? "globalThis.__vironLogin.pageRegion()" : "globalThis.__vironLogin.region()");
         if (this.disposed || contents.destroyed()) return;
-        if (!after || JSON.stringify(before) !== JSON.stringify(after) || !image) { this.clearFrame(); return; }
+        if (!after || before.revision !== after.revision || before.x !== after.x || before.y !== after.y || before.width !== after.width || before.height !== after.height || !image) { this.clearFrame(); return; }
+        // Only publish target rectangles present throughout the capture. Moving
+        // unrelated controls never invalidate the entire page or an open menu.
+        const targets = before.targets?.flatMap((target) => {
+          const current = after.targets?.find((item) => item.token === target.token);
+          if (!current) return [];
+          const x = Math.max(target.x, current.x), y = Math.max(target.y, current.y);
+          const width = Math.min(target.x + target.width, current.x + current.width) - x;
+          const height = Math.min(target.y + target.height, current.y + current.height) - y;
+          return width > 2 && height > 2 ? [{ token: target.token, x, y, width, height }] : [];
+        });
         if (this.interactionFrame?.revision !== after.revision) this.cancelPointer();
         this.interactionFrame = after;
-        Object.assign(this.state, { phase: "interactive", message: result.kind === "page" ? "自动登录未完成。请继续操作页面；可右键输入框填充用户名或密码。" : result.kind === "agreement" ? "请确认页面的协议选项后继续登录" : "请完成验证，然后继续登录", image, kind: result.kind === "page" ? "page" : result.kind === "agreement" ? "agreement" : "challenge", revision: `${this.nonce}:${after.revision}`, width: after.width, height: after.height });
+        Object.assign(this.state, { phase: "interactive", message: result.kind === "page" ? "自动登录未完成。请继续操作页面；可右键输入框填充用户名或密码。" : result.kind === "agreement" ? "请确认页面的协议选项后继续登录" : "请完成验证，然后继续登录", image, kind: result.kind === "page" ? "page" : result.kind === "agreement" ? "agreement" : "challenge", revision: `${this.nonce}:${after.revision}`, width: after.width, height: after.height, targets });
         this.options.changed();
         return;
       } else if (result.status === "success" || result.status === "anonymous") {
@@ -285,14 +303,15 @@ export class ProtectedLoginController {
     if (this.disposed || this.state.phase !== "interactive" || !this.interactionFrame || !input) throw new Error("当前没有待完成的验证");
     // Reject a stale frame without turning an expected modal/layout transition
     // into an error. Never replay its coordinates against a different crop.
-    if (input.revision !== this.state.revision) { this.cancelPointer(); return; }
+    const targetedFill = this.assisted && (input.type === "fill-username" || input.type === "fill-password");
+    if (!targetedFill && input.revision !== this.state.revision) { this.cancelPointer(); return; }
     while (this.busy && !this.disposed) await new Promise((resolve) => setTimeout(resolve, 10));
-    if (this.disposed || !this.interactionFrame || input.revision !== this.state.revision) { this.cancelPointer(); return; }
+    if (this.disposed || !this.interactionFrame || (!targetedFill && input.revision !== this.state.revision)) { this.cancelPointer(); return; }
     this.inputBusy = true;
     try {
-      if (this.assisted && (input.type === "fill-username" || input.type === "fill-password")) {
-        if (!Number.isFinite(input.x) || !Number.isFinite(input.y)) throw new Error("请选择页面中的输入框");
-        const accepted = await this.evaluate<boolean>(`globalThis.__vironLogin.fillAt(${JSON.stringify(this.interactionFrame.revision)}, ${input.x}, ${input.y}, ${JSON.stringify(input.type)})`);
+      if (targetedFill) {
+        if (typeof input.targetToken !== "string" || input.targetToken.length > 160) throw new Error("请选择页面中的输入框");
+        const accepted = await this.evaluate<boolean>(`globalThis.__vironLogin.fillTarget(${JSON.stringify(input.targetToken)}, ${JSON.stringify(input.type)})`);
         if (!accepted) throw new Error("请选择可编辑的用户名或密码输入框");
         return;
       }
