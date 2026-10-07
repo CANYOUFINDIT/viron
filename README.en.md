@@ -129,7 +129,7 @@ cp .env.example .env
 
 API: `http://127.0.0.1:8080`. With the Web client enabled, the dev UI is `http://127.0.0.1:5173`.
 
-`dev-service.sh` runs local source code in the background without checking or building Docker images, waiting for HTTP health checks, or validating a client Endpoint. Returning from the command means the background process was launched; source initialization continues. Use `./scripts/dev-service.sh status` to inspect processes and listening ports, or `./scripts/dev-service.sh logs` to follow initialization and runtime errors.
+`dev-service.sh start` runs local source code in the background and waits until both the API's `/readyz` and the frontend page respond successfully, reporting each service as it becomes ready. With the Web client disabled, it only waits for the API. The default timeout is 120 seconds; set `DEV_SERVICE_HEALTH_TIMEOUT_SECONDS` in the environment or `.env` to change it. If the process exits or readiness times out, the command returns a nonzero exit code and prints recent logs; the background service may still be initializing after a timeout. Use `./scripts/dev-service.sh status` to inspect processes and listening ports, or `./scripts/dev-service.sh logs` for the full log. `./scripts/dev-service.sh down` is an alias for `stop`, and `restart` also waits for readiness.
 
 ```bash
 npm run typecheck

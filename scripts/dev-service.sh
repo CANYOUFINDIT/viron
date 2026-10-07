@@ -15,9 +15,10 @@ usage() {
 Usage: scripts/dev-service.sh <command>
 
 Commands:
-  start     Launch the local source development service in the background
+  start     Launch in the background and wait for API and frontend readiness
   restart   Relaunch the local source development service
   stop      Stop the local Viron development service
+  down      Alias for stop
   status    Show service status and listening ports
   logs      Tail the local service log
 
@@ -68,6 +69,18 @@ web_port() {
 
 bind_host() {
   env_value "HOST" "127.0.0.1"
+}
+
+url_host() {
+  local host
+  host="$(bind_host)"
+  case "$host" in
+    0.0.0.0) printf '127.0.0.1\n' ;;
+    ::|\[::\]) printf '[::1]\n' ;;
+    \[*\]) printf '%s\n' "$host" ;;
+    *:*) printf '[%s]\n' "$host" ;;
+    *) printf '%s\n' "$host" ;;
+  esac
 }
 
 web_client_enabled() {
@@ -198,15 +211,122 @@ stop_service() {
   fi
 }
 
+http_ready() {
+  local url="$1"
+  local port="$2"
+  local pid
+  local listener=0
+  while IFS= read -r pid; do
+    if is_project_pid "$pid"; then
+      listener=1
+      break
+    fi
+  done < <(port_pids "$port")
+  [[ "$listener" -eq 1 ]] || return 1
+
+  local status
+  status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    --noproxy '*' --connect-timeout 1 --max-time 1 "$url" 2>/dev/null)" || return 1
+  [[ "$status" == "200" ]]
+}
+
+startup_failure() {
+  echo "$1"
+  echo "Recent service log ($LOG_FILE):"
+  tail -n 40 "$LOG_FILE" 2>/dev/null || true
+  return 1
+}
+
+wait_for_service() {
+  local pid="$1"
+  local timeout="$2"
+  local api
+  local web
+  api="$(api_port)"
+  web="$(web_port)"
+  local api_url="http://$(url_host):$api"
+  local web_url="http://$(url_host):$web/"
+  local web_enabled=0
+  if web_client_enabled; then
+    web_enabled=1
+    echo "Frontend: $web_url"
+  else
+    echo "Frontend: disabled"
+  fi
+  echo "API: $api_url"
+  echo "Log: $LOG_FILE"
+  echo "Waiting for service readiness (timeout: ${timeout}s)..."
+
+  local started="$SECONDS"
+  local deadline=$((SECONDS + timeout))
+  local next_progress="$SECONDS"
+  local api_announced=0
+  local web_announced=0
+  local api_ready
+  local web_ready
+  local pending="API"
+  while [[ "$SECONDS" -lt "$deadline" ]]; do
+    if ! pid_running "$pid"; then
+      startup_failure "Viron dev service exited before becoming ready."
+      return 1
+    fi
+
+    api_ready=0
+    web_ready=$((1 - web_enabled))
+    if http_ready "$api_url/readyz" "$api"; then
+      api_ready=1
+      if [[ "$api_announced" -eq 0 ]]; then
+        echo "API ready: $api_url"
+        api_announced=1
+      fi
+    fi
+    if [[ "$web_enabled" -eq 1 ]] && http_ready "$web_url" "$web"; then
+      web_ready=1
+      if [[ "$web_announced" -eq 0 ]]; then
+        echo "Frontend ready: $web_url"
+        web_announced=1
+      fi
+    fi
+    if [[ "$api_ready" -eq 1 && "$web_ready" -eq 1 ]] && pid_running "$pid"; then
+      echo "Viron dev service is ready."
+      return 0
+    fi
+
+    pending=""
+    [[ "$api_ready" -eq 1 ]] || pending="API"
+    if [[ "$web_ready" -eq 0 ]]; then
+      pending="${pending:+$pending and }frontend"
+    fi
+    if [[ "$SECONDS" -ge "$next_progress" ]]; then
+      echo "Waiting for $pending... ($((SECONDS - started))s elapsed)"
+      next_progress=$((SECONDS + 5))
+    fi
+    [[ "$SECONDS" -lt "$deadline" ]] && sleep 1
+  done
+  startup_failure "Timed out after ${timeout}s waiting for $pending. The background service may still be initializing; use logs to inspect it or stop/down to stop it."
+}
+
 start_service() {
   ensure_runtime_dirs
+
+  local timeout
+  timeout="${DEV_SERVICE_HEALTH_TIMEOUT_SECONDS:-$(env_value "DEV_SERVICE_HEALTH_TIMEOUT_SECONDS" "120")}"
+  if [[ ! "$timeout" =~ ^[1-9][0-9]*$ ]]; then
+    echo "DEV_SERVICE_HEALTH_TIMEOUT_SECONDS must be a positive integer."
+    return 1
+  fi
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "curl is required to wait for service readiness."
+    return 1
+  fi
 
   local existing_pid
   existing_pid="$(service_pid)"
   if [[ -n "$existing_pid" ]] && pid_running "$existing_pid"; then
     echo "Viron dev service is already running with PID $existing_pid."
     status_service
-    return 0
+    wait_for_service "$existing_pid" "$timeout"
+    return
   fi
 
   if is_macos && launchd_job_exists; then
@@ -235,21 +355,13 @@ start_service() {
     sleep 0.05
   done
   if [[ -z "$pid" ]]; then
-    echo "Viron dev service did not expose a process ID."
-    tail -n 40 "$LOG_FILE" || true
-    exit 1
+    startup_failure "Viron dev service did not expose a process ID."
+    return 1
   fi
   printf '%s\n' "$pid" > "$PID_FILE"
 
   echo "Viron dev service launched with PID $pid."
-  if web_client_enabled; then
-    echo "Frontend: http://$(bind_host):$(web_port)/"
-  else
-    echo "Frontend: disabled"
-  fi
-  echo "API: http://$(bind_host):$(api_port)"
-  echo "Log: $LOG_FILE"
-  echo "Source initialization continues in the background. Use status or logs to inspect it."
+  wait_for_service "$pid" "$timeout"
 }
 
 restart_service() {
@@ -316,7 +428,7 @@ case "$command" in
   restart)
     restart_service
     ;;
-  stop)
+  stop|down)
     stop_service
     ;;
   status)

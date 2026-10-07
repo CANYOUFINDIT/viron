@@ -140,7 +140,7 @@ cp .env.example .env
 
 默认 API 地址为 `http://127.0.0.1:8080`。启用浏览器客户端时，开发界面为 `http://127.0.0.1:5173`。
 
-`dev-service.sh` 直接在后台运行本地源码，不检查或构建 Docker 镜像，也不等待 HTTP 健康检查或校验客户端 Endpoint。命令返回表示后台进程已启动，源码初始化仍会继续；使用 `./scripts/dev-service.sh status` 查看进程和监听端口，使用 `./scripts/dev-service.sh logs` 查看初始化进度与运行错误。
+`dev-service.sh start` 在后台运行本地源码，并等待 API 的 `/readyz` 和前端页面都可访问后才成功返回，期间会分别显示就绪状态；关闭浏览器客户端时只等待 API。默认最多等待 120 秒，可通过环境变量或 `.env` 中的 `DEV_SERVICE_HEALTH_TIMEOUT_SECONDS` 调整。启动进程退出或等待超时时，命令返回非零退出码并显示最近日志；超时后后台服务可能仍在初始化。使用 `./scripts/dev-service.sh status` 查看进程和监听端口，使用 `./scripts/dev-service.sh logs` 查看完整日志。`./scripts/dev-service.sh down` 与 `stop` 等效；`restart` 也会等待服务就绪。
 
 ```bash
 npm run typecheck
