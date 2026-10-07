@@ -22,7 +22,7 @@ export class ProtectedWebLogin extends ProtectedLoginController {
       mouse: async (type, x, y) => {
         if (type === "mouseDown") pressed = true;
         if (type === "mouseUp") pressed = false;
-        contents.sendInputEvent({ type, x, y, button: pressed || type !== "mouseMove" ? "left" : undefined, modifiers: pressed ? ["leftButtonDown"] : [], clickCount: type === "mouseMove" ? 0 : 1 });
+        contents.sendInputEvent({ type, x, y, button: pressed || type !== "mouseMove" ? "left" : undefined, modifiers: pressed ? ["leftbuttondown"] : [], clickCount: type === "mouseMove" ? 0 : 1 });
       },
       text: async (value) => { await contents.insertText(value); },
       key: async (value) => { contents.sendInputEvent({ type: "keyDown", keyCode: value }); contents.sendInputEvent({ type: "keyUp", keyCode: value }); },
