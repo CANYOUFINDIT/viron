@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { protectedLoginInstallScript } from "./protected-web-login-dom.js";
+import { containsPersistedWebLoginSecret } from "./web-login-storage.js";
 import { parseWebLoginConfig, type ProtectedLoginInput, type ProtectedLoginState, type WebLoginConfig } from "./protected-web-login.js";
 
 export interface LoginRegion { x: number; y: number; width: number; height: number; revision: string }
@@ -14,9 +15,9 @@ export interface ProtectedLoginBrowser {
   mouse(type: "mouseDown" | "mouseUp" | "mouseMove", x: number, y: number): Promise<void>;
   text(value: string): Promise<void>;
   key(value: string): Promise<void>;
-  cookies(): Promise<Array<{ value: string }>>;
+  cookies(): Promise<Array<{ name?: string; value: string }>>;
   clear(origins: string[]): Promise<void>;
-  destroy(): void;
+  destroy(): void | Promise<void>;
 }
 interface Tick { status: string; region?: Region; released?: boolean; kind?: string }
 export interface ProtectedLoginResult { url: string; sessionStorage: Record<string, string>; authenticated: boolean }
@@ -36,10 +37,11 @@ const guardMessages: Record<string, string> = {
 
 /** No webview ID, DOM, script, credentials or full-page image crosses the shell IPC. */
 export class ProtectedLoginController {
-  readonly state: ProtectedLoginState = { phase: "loading", message: "正在后台打开登录页", image: "", revision: "", width: 0, height: 0 };
+  readonly state: ProtectedLoginState = { phase: "loading", pageLoading: true, message: "正在加载登录网页", image: "", revision: "", width: 0, height: 0 };
   private browser: ProtectedLoginBrowser;
   private config: WebLoginConfig;
   private timer: ReturnType<typeof setTimeout> | undefined;
+  private loadTimer: ReturnType<typeof setTimeout> | undefined;
   private disposed = false;
   private busy = false;
   private step = 0;
@@ -59,6 +61,7 @@ export class ProtectedLoginController {
   private interactionFrame: Region | null = null;
   private nonce = randomUUID();
   private cleanup = Promise.resolve();
+  private destruction = Promise.resolve();
   private credentialReleased = false;
   private storageVerified = false;
   constructor(private options: {
@@ -69,7 +72,11 @@ export class ProtectedLoginController {
     this.origins = new Set([new URL(options.url).origin, ...this.config.allowedOrigins]);
     this.browser = options.browser;
     void Promise.resolve().then(() => options.prepare?.()).then(async () => {
-      if (!this.disposed) { await this.browser.load(options.url); this.schedule(); }
+      if (!this.disposed) {
+        this.pageLoadingChanged(true);
+        await this.browser.load(options.url);
+        if (!this.disposed && this.state.phase !== "failed") { this.pageLoadingChanged(false); this.schedule(); }
+      }
     }).catch(() => this.fail("登录页面准备或加载失败，请检查网络后重试"));
   }
   private allowed(url: string) {
@@ -97,12 +104,26 @@ export class ProtectedLoginController {
     if (this.pressed && !this.browser.destroyed()) void this.browser.mouse("mouseUp", -1, -1).catch(() => undefined);
     this.pressed = false;
   }
-  navigationStarted(): void {
+  pageLoadingChanged(loading: boolean): void {
     if (this.disposed || this.state.phase === "failed") return;
-    this.installedDocument = ""; this.readyDocument = ""; this.readySince = 0;
+    if (loading && !this.loadTimer) {
+      this.loadTimer = setTimeout(() => this.fail("网页加载超时，请检查站点连接后重试"), 30_000);
+      this.loadTimer.unref();
+    } else if (!loading) { clearTimeout(this.loadTimer); this.loadTimer = undefined; }
+    if (this.state.pageLoading === loading && (loading ? this.state.phase === "loading" : this.state.phase !== "loading")) return;
+    this.state.pageLoading = loading;
+    this.state.phase = loading ? "loading" : "authenticating";
+    this.state.message = loading ? "正在加载登录网页" : "网页已加载，正在识别登录表单";
+    if (!loading) this.progressAt = Date.now();
+    this.options.changed();
+  }
+  navigationStarted(inPlace = false): void {
+    if (this.disposed || this.state.phase === "failed") return;
+    if (!inPlace) this.installedDocument = "";
+    this.readyDocument = ""; this.readySince = 0;
     this.clearFrame();
-    this.state.phase = "authenticating";
-    this.state.message = "正在等待登录页面跳转";
+    if (!inPlace) this.pageLoadingChanged(true);
+    else { this.pageLoadingChanged(false); this.state.phase = "authenticating"; this.state.message = "正在确认登录页面状态"; }
     this.options.changed();
   }
   private schedule() {
@@ -114,8 +135,10 @@ export class ProtectedLoginController {
   fail(message: string) {
     if (this.disposed || this.state.phase === "failed") return;
     clearTimeout(this.timer);
+    clearTimeout(this.loadTimer); this.loadTimer = undefined;
     this.clearFrame();
     this.state.phase = "failed";
+    this.state.pageLoading = false;
     this.state.message = message;
     // Destroy the document even on failure; do not retain inspectable credentials.
     this.destroyWindow();
@@ -130,11 +153,12 @@ export class ProtectedLoginController {
     this.busy = true;
     let stage: "initialization" | "form" | "verification" | "storage" = "initialization";
     try {
-      if (this.state.phase !== "interactive" && Date.now() - this.progressAt > 30_000) return this.fail("登录流程等待超时，请检查登录步骤、成功标记或网络后重试");
       if (Date.now() - this.startedAt > 300_000) return this.fail("登录等待超时，请检查登录配置后重试");
       const contents = this.browser;
       if (contents.destroyed()) return;
-      if (contents.loading()) return;
+      if (contents.loading()) { this.pageLoadingChanged(true); return; }
+      if (this.state.pageLoading) this.pageLoadingChanged(false);
+      if (this.state.phase !== "interactive" && Date.now() - this.progressAt > 30_000) return this.fail("登录流程等待超时，请检查登录步骤、成功标记或网络后重试");
       const url = contents.url();
       if (!this.allowed(url)) return this.fail("登录页面不在允许的域名中");
       if (this.options.password && decodeURIComponent(url).includes(this.options.password)) return this.fail("站点将密码写入了页面地址，无法安全打开");
@@ -187,11 +211,12 @@ export class ProtectedLoginController {
         stage = "storage";
         const storage = await this.evaluate<Record<string, string>>("globalThis.__vironLogin.finish()");
         const cookies = await this.browser.cookies();
-        if (this.options.password && cookies.some((cookie) => cookie.value.includes(this.options.password))) return this.fail("站点将密码写入了会话存储，无法安全打开，请调整站点的登录实现");
+        if (cookies.some((cookie) => containsPersistedWebLoginSecret(cookie.value, this.options.password, this.options.username, cookie.name))) return this.fail("站点将密码写入了会话存储，无法安全打开，请调整站点的登录实现");
         this.storageVerified = true;
-        Object.assign(this.state, { phase: "authenticating", message: "认证通过，正在打开业务页面" });
+        Object.assign(this.state, { phase: "authenticating", pageLoading: true, message: "认证通过，正在加载业务页面" });
         this.dispose();
         this.options.changed();
+        await this.destruction;
         await this.options.completed({ url, sessionStorage: storage, authenticated: result.status === "success" });
         return;
       }
@@ -199,7 +224,7 @@ export class ProtectedLoginController {
       this.readyDocument = "";
       this.clearFrame();
       this.state.phase = "authenticating";
-      this.state.message = this.submitted ? "等待登录成功；如有验证，请在入口中配置验证区域" : "正在识别登录表单；复杂页面可在入口中配置登录步骤";
+      this.state.message = this.config.steps.length ? "正在执行登录步骤" : this.submitted ? "已填写登录信息，正在等待站点认证结果" : "网页已加载，正在等待登录表单";
       this.options.changed();
     } catch (error) {
       if (!this.disposed && !this.browser.destroyed()) {
@@ -284,12 +309,13 @@ export class ProtectedLoginController {
   private destroyWindow() {
     this.options.username = "";
     this.options.password = "";
-    this.browser.destroy();
+    this.destruction = Promise.resolve(this.browser.destroy());
   }
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
     clearTimeout(this.timer);
+    clearTimeout(this.loadTimer); this.loadTimer = undefined;
     this.clearFrame();
     this.destroyWindow();
     if (!this.storageVerified && this.credentialReleased && this.state.phase !== "failed") {
@@ -297,5 +323,5 @@ export class ProtectedLoginController {
       void this.cleanup.catch(() => undefined);
     }
   }
-  settled(): Promise<void> { return this.cleanup; }
+  settled(): Promise<void> { return Promise.all([this.cleanup, this.destruction]).then(() => undefined); }
 }

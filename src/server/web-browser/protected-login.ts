@@ -40,7 +40,7 @@ export async function createServerProtectedLogin(options: {
         await session.detach();
       } finally { await audit.close(); }
     },
-    destroy: () => { closed = true; closing = page.close().catch(() => undefined); },
+    destroy: () => { closed = true; closing = page.close().catch(() => undefined); return closing; },
   } });
   const allowed = new Set([new URL(options.url).origin, ...options.config.allowedOrigins]);
   await page.route("**/*", async (route) => {
@@ -49,7 +49,11 @@ export async function createServerProtectedLogin(options: {
       await route.abort(); login.fail("登录跳转到了未授权的域名，请检查入口配置");
     } else await route.continue();
   });
-  page.on("framenavigated", (frame) => { if (frame === page.mainFrame()) login.navigationStarted(); });
+  await cdp.send("Page.enable");
+  const mainFrameId = (await cdp.send("Page.getFrameTree")).frameTree.frame.id;
+  cdp.on("Page.frameNavigated", ({ frame }) => { if (!frame.parentId) login.navigationStarted(); });
+  cdp.on("Page.navigatedWithinDocument", ({ frameId }) => { if (frameId === mainFrameId) login.navigationStarted(true); });
+  page.on("load", () => login.pageLoadingChanged(false));
   page.on("popup", (popup) => { void popup.close(); login.fail("登录需要新窗口，请调整入口的登录流程后重试"); });
   page.on("dialog", (dialog) => { void dialog.dismiss(); login.fail("登录页面使用浏览器原生对话框，请调整入口的登录流程后重试"); });
   page.on("crash", () => login.fail("后台登录页面已退出，请重试"));

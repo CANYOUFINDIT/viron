@@ -58,6 +58,7 @@ interface ManagedPage {
   title: string;
   url: string;
   pendingUrl: string;
+  loading: boolean;
 }
 
 type InitialPageMode = "entry" | "blank";
@@ -106,6 +107,7 @@ interface DownloadArtifact {
 
 export interface PublicWebAccountView {
   protectedLogin: ProtectedLoginState | null;
+  loading: boolean;
   credentialId: string;
   entryId: string;
   entryName: string;
@@ -626,7 +628,7 @@ export class WebAccountViewManager {
       pendingFileChooser: null,
       pendingDialog: null,
       login: null,
-      protectedLogin: { phase: "loading", message: "正在后台打开登录页", image: "", revision: "", width: 0, height: 0 },
+      protectedLogin: { phase: "loading", pageLoading: true, message: "正在加载登录网页", image: "", revision: "", width: 0, height: 0 },
       loginConfig,
       loginAttempt: "",
       messageQueue: Promise.resolve(),
@@ -681,14 +683,21 @@ export class WebAccountViewManager {
 
   private async registerNewPage(view: ManagedWebView, page: Page, activate: boolean): Promise<void> {
     const id = randomUUID();
-    const item: ManagedPage = { id, page, title: "新页面", url: page.url(), pendingUrl: "" };
+    const item: ManagedPage = { id, page, title: "新页面", url: page.url(), pendingUrl: "", loading: false };
     view.pages.set(id, item);
     view.pageIds.set(page, id);
     page.on("domcontentloaded", () => {
       void this.syncPage(view, page);
     });
     page.on("load", () => {
+      item.loading = false;
       void this.syncPage(view, page);
+    });
+    page.on("request", (request) => {
+      if (request.isNavigationRequest() && request.frame() === page.mainFrame()) { item.loading = true; this.broadcastState(view); }
+    });
+    page.on("requestfailed", (request) => {
+      if (request.isNavigationRequest() && request.frame() === page.mainFrame()) { item.loading = false; this.broadcastState(view); }
     });
     page.on("request", () => {
       view.lastActivityAt = Date.now();
@@ -964,7 +973,7 @@ export class WebAccountViewManager {
     view.login = null;
     const attempt = randomUUID();
     view.loginAttempt = attempt;
-    view.protectedLogin = { phase: "loading", message: "正在后台打开登录页", image: "", revision: "", width: 0, height: 0 };
+    view.protectedLogin = { phase: "loading", pageLoading: true, message: "正在加载登录网页", image: "", revision: "", width: 0, height: 0 };
     view.pendingFileChooser = null; view.pendingDialog = null;
     this.broadcastState(view);
     await this.stopScreencast(view);
@@ -995,6 +1004,9 @@ export class WebAccountViewManager {
           }
           const target = preferredUrl && !/\/(?:log-?in|sign-?in|auth)(?:[/?#]|$)/i.test(new URL(preferredUrl).pathname + new URL(preferredUrl).hash) ? preferredUrl : url;
           await page.goto(target, { waitUntil: "load", timeout: 30_000 });
+          if (!current()) { await page.close(); return; }
+          if (view.protectedLogin) Object.assign(view.protectedLogin, { pageLoading: false, message: "业务网页已加载，正在确认登录状态" });
+          this.broadcastState(view);
           const selector = view.loginConfig.successSelector || view.loginConfig.steps.find((step) => step.action === "success")?.selector || "";
           await verifyServerBusinessPage(page, cdp, target === url ? selector : "", current);
           if (storageScript) await cdp.send("Page.removeScriptToEvaluateOnNewDocument", { identifier: storageScript });
@@ -1005,7 +1017,7 @@ export class WebAccountViewManager {
           if (authenticated) this.broadcast(view, { type: "login-complete", message: "后台登录已完成" });
         } catch {
           await page?.close().catch(() => undefined);
-          if (current()) { view.protectedLogin = { ...login.state, phase: "failed", message: "未能确认业务页面已登录，请检查登录成功标记后重试", image: "", revision: "" }; this.broadcastState(view); }
+          if (current()) { view.protectedLogin = { ...login.state, phase: "failed", pageLoading: false, message: "未能确认业务页面已登录，请检查登录成功标记后重试", image: "", revision: "" }; this.broadcastState(view); }
         }
       },
     });
@@ -1062,6 +1074,7 @@ export class WebAccountViewManager {
     const active = view.pages.get(view.activePageId);
     return {
       protectedLogin: view.protectedLogin,
+      loading: view.protectedLogin ? view.protectedLogin.pageLoading === true : active?.loading === true,
       credentialId: view.credentialId,
       entryId: view.entryId,
       entryName: view.entryName,

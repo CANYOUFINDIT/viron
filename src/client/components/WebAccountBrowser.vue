@@ -27,6 +27,7 @@ import TlsPopover from "./credentials/TlsPopover.vue";
 import ProtectedWebLogin from "./ProtectedWebLogin.vue";
 import type { ProtectedLoginInput, ProtectedLoginState } from "../../shared/protected-web-login";
 import WebPageTabStrip from "./WebPageTabStrip.vue";
+import WebPageLoadProgress from "./WebPageLoadProgress.vue";
 
 interface BrowserPage {
   id: string;
@@ -37,6 +38,7 @@ interface BrowserPage {
 
 interface BrowserView {
   protectedLogin: ProtectedLoginState | null;
+  loading: boolean;
   credentialId: string;
   entryId: string;
   entryName: string;
@@ -546,6 +548,7 @@ onBeforeUnmount(() => {
           @refreshed="emit('tlsRefreshed')"
         />
         <input v-model="address" :aria-label="$t('页面地址')" autocomplete="off" spellcheck="false" :readonly="status === 'idle' || Boolean(view?.protectedLogin)" />
+        <WebPageLoadProgress :loading="view?.loading === true" />
       </form>
       <div class="web-browser-tools">
         <button type="button" :aria-label="$t('新建空白标签页')" :title="$t('新建空白标签页')" @click="createBlankPage"><Plus :size="15" /></button>

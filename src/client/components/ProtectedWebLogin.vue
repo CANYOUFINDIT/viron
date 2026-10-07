@@ -58,7 +58,7 @@ watch(() => props.state.revision, () => { inputError.value = ""; });
   <div class="protected-login" @pointerdown.stop @mousedown.stop>
     <ShieldCheck v-if="state.phase === 'failed' || state.phase === 'interactive'" :size="28" />
     <LoaderCircle v-else :size="28" class="is-spinning" />
-    <strong>{{ state.phase === 'interactive' ? '完成登录验证' : state.phase === 'failed' ? '后台登录未完成' : '正在后台登录' }}</strong>
+    <strong>{{ state.phase === 'interactive' ? '完成登录验证' : state.phase === 'failed' ? '后台登录未完成' : state.pageLoading ? '正在加载网页' : '正在后台登录' }}</strong>
     <p>{{ state.message }}</p>
     <template v-if="state.phase === 'interactive' && state.image">
       <img class="protected-login__challenge" :src="state.image" :width="state.width" :height="state.height" alt="登录验证区域" tabindex="0" draggable="false"

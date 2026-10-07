@@ -18,6 +18,31 @@ function fixture(interactionSelector = "#challenge", uuidAvailable = true) {
 }
 
 describe("protected Web login", () => {
+  it("clicks a component form's unique Submit button instead of bypassing its login handler", () => {
+    const { window, guard } = fixture("");
+    const form = window.document.querySelector("form")!;
+    form.className = "next-form login-form";
+    window.document.querySelector("#challenge")!.remove();
+    const button = form.querySelector("button")!;
+    button.type = "button"; button.textContent = "提交";
+    let clicks = 0, nativeSubmits = 0;
+    form.addEventListener("submit", (event) => { event.preventDefault(); nativeSubmits++; });
+    button.addEventListener("click", () => { clicks++; });
+    expect(guard.tick(0, false, "").status).toBe("submitted");
+    expect(clicks).toBe(1); expect(nativeSubmits).toBe(0);
+    expect(guard.tick(0, true, window.location.href).status).toBe("waiting");
+    expect(clicks).toBe(1);
+  });
+  it("refuses to guess between multiple neutral Submit buttons", () => {
+    const { window, guard } = fixture("");
+    window.document.querySelector("#challenge")!.remove();
+    const button = window.document.querySelector("button")!;
+    button.type = "button"; button.textContent = "提交";
+    const other = button.cloneNode(true) as typeof button;
+    other.getBoundingClientRect = button.getBoundingClientRect;
+    button.after(other);
+    expect(() => guard.tick(0, false, "")).toThrow("ambiguous-selector");
+  });
   it("initializes without the secure-context-only browser UUID API", () => {
     const { window, guard } = fixture("#challenge", false);
     expect(window.crypto.randomUUID).toBeUndefined();

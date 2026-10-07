@@ -716,6 +716,9 @@ function startProtectedDesktopLogin(view: ManagedDesktopWebView): void {
         if (!current()) return;
         const target = view.lastUrl && !/\/(?:log-?in|sign-?in|auth)(?:[/?#]|$)/i.test(new URL(view.lastUrl).pathname + new URL(view.lastUrl).hash) ? view.lastUrl : url;
         await contents.loadURL(target);
+        if (!current()) return;
+        if (view.login) Object.assign(view.login.state, { pageLoading: false, message: "业务网页已加载，正在确认登录状态" });
+        sendWebViewState(view);
         const successSelector = view.loginConfig.successSelector || view.loginConfig.steps.find((step) => step.action === "success")?.selector || "";
         await verifyProtectedBusinessPage(contents, target === url ? successSelector : "", current);
         if (storageScriptId) {
@@ -730,7 +733,7 @@ function startProtectedDesktopLogin(view: ManagedDesktopWebView): void {
       } catch (error) {
         if (!current()) return;
         destroyDesktopWebPages(view);
-        if (view.login) Object.assign(view.login.state, { phase: "failed", message: error instanceof Error && error.message === "business-login"
+        if (view.login) Object.assign(view.login.state, { phase: "failed", pageLoading: false, message: error instanceof Error && error.message === "business-login"
           ? "业务页面仍在登录页，登录状态未生效。请检查登录配置后重试"
           : "未能确认业务页面已登录，请检查登录成功标记后重试" });
         sendWebViewState(view);

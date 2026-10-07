@@ -34,7 +34,9 @@ export class ProtectedWebLogin extends ProtectedLoginController {
     contents.setWindowOpenHandler(() => { this.fail("登录需要新窗口，请调整入口的登录流程后重试"); return { action: "deny" }; });
     contents.on("will-navigate", (event, url) => { if (!allowed(url)) { event.preventDefault(); this.fail("登录跳转到了未授权的域名，请检查入口配置"); } });
     contents.on("will-redirect", (event, url) => { if (!allowed(url)) { event.preventDefault(); this.fail("登录跳转到了未授权的域名，请检查入口配置"); } });
-    contents.on("did-start-navigation", (_event, _url, _inPlace, mainFrame) => { if (mainFrame) this.navigationStarted(); });
+    contents.on("did-start-navigation", (_event, _url, inPlace, mainFrame) => { if (mainFrame) this.navigationStarted(inPlace); });
+    contents.on("did-start-loading", () => this.pageLoadingChanged(true));
+    contents.on("did-stop-loading", () => this.pageLoadingChanged(false));
     contents.on("certificate-error", (event, _url, _error, _certificate, callback) => { event.preventDefault(); callback(false); this.fail("登录站点的 HTTPS 证书校验失败，请先修复证书"); });
     contents.on("render-process-gone", () => this.fail("后台登录页面已退出，请重试"));
     options.session.setPermissionCheckHandler(() => false);

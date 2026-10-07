@@ -182,7 +182,7 @@ export function webViewState(view: ManagedDesktopWebView): DesktopWebViewState {
   if (!active) {
     if (!view.login) throw new Error(tr("本机账号当前没有可用页面"));
     return { id: view.id, credentialId: view.credentialId, activePageId: "", pages: [], url: view.entryUrl, title: view.username,
-      faviconDataUrl: "", loading: view.login.state.phase !== "failed", canGoBack: false, canGoForward: false,
+      faviconDataUrl: "", loading: view.login.state.pageLoading === true, canGoBack: false, canGoForward: false,
       autofillMessage: "", error: "", certificateError: null, closedReason: view.closedReason, notice: view.notice,
       zoomFactor: 1, protectedLogin: { ...view.login.state } };
   }

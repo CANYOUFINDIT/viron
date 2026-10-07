@@ -43,7 +43,17 @@ const server = createServer((request, response) => {
   if (request.url === "/transient-home") { response.end('<title>Business</title><script>setTimeout(() => location.replace("/denied-login"), 1200)</script>'); return; }
   if (request.url === "/one-use-home" && ++oneUsePages === 1) { response.end('<title>Business</title><main id=success>Signed in once</main>'); return; }
   const challenge = ["/verify", "/unsafe", "/slider", "/retry"].includes(request.url);
-  const form = `<form method=post action="${request.url === "/retry" ? "/retry" : challenge ? "/verify" : request.url === "/transient" ? "/transient" : request.url === "/one-use" ? "/one-use" : request.url?.startsWith("/denied") ? "/denied" : "/plain"}"><input id=username name=username autocomplete=username><input id=password name=password type=password autocomplete=current-password>${challenge ? '<div id=challenge><label>Code<input id=otp name=otp autocomplete=one-time-code></label>' + (request.url === '/slider' ? '<div id=slider style="width:240px;height:24px;background:lightblue"><span id=knob style="display:block;width:24px;height:24px;background:navy"></span></div>' : '') + '</div>' : ''}${["/agreement", "/agreement-modal"].includes(request.url) ? '<label id=agreement><input id=agree type=checkbox required> I agree to the terms</label>' : ''}<button id=login type=submit>Login</button></form>`;
+  const form = request.url === "/component" ? '<form class="login-form"><input id="username" autocomplete="off"><input id="password" type="password" autocomplete="off"><button id="login" type="button">提交</button></form>' : `<form method=post action="${request.url === "/retry" ? "/retry" : challenge ? "/verify" : request.url === "/transient" ? "/transient" : request.url === "/one-use" ? "/one-use" : request.url?.startsWith("/denied") ? "/denied" : "/plain"}"><input id=username name=username autocomplete=username><input id=password name=password type=password autocomplete=current-password>${challenge ? '<div id=challenge><label>Code<input id=otp name=otp autocomplete=one-time-code></label>' + (request.url === '/slider' ? '<div id=slider style="width:240px;height:24px;background:lightblue"><span id=knob style="display:block;width:24px;height:24px;background:navy"></span></div>' : '') + '</div>' : ''}${["/agreement", "/agreement-modal"].includes(request.url) ? '<label id=agreement><input id=agree type=checkbox required> I agree to the terms</label>' : ''}<button id=login type=submit>Login</button></form>`;
+  if (request.url === "/component") {
+    response.end(`<!doctype html><title>Component console</title>${form}<script>
+      sessionStorage.setItem('fixture-tab','kept');localStorage.setItem('fixture-local','kept');
+      const values={};document.querySelector('form').addEventListener('submit',event=>event.preventDefault());
+      for(const input of document.querySelectorAll('input'))input.addEventListener('input',event=>values[input.id]=event.target.value);
+      const home=()=>{document.querySelector('form').remove();document.body.insertAdjacentHTML('beforeend','<main id="success">Signed in</main>');location.hash='/home'};
+      login.addEventListener('click',async()=>{const response=await fetch('/plain',{method:'POST',body:new URLSearchParams(values)});if(response.ok){localStorage.setItem('component-auth','yes');home()}});
+      if(localStorage.getItem('component-auth')==='yes')home();
+    </script>`); return;
+  }
   response.end(`<!doctype html><title>Login</title><style>input,button { display:block;margin:12px;width:180px;height:30px } #challenge { margin:20px;width:260px;height:100px;background:#ddd;padding:8px } #agreement { display:block;margin:20px;width:260px;height:80px; }</style>${request.url === "/delayed" ? `<script>setTimeout(() => {document.body.insertAdjacentHTML("beforeend", ${JSON.stringify(form)})}, 4200)</script>` : form}<script>sessionStorage.setItem('fixture-tab', 'kept');localStorage.setItem('fixture-local', 'kept');</script>${request.url === "/retry" ? `<script>document.querySelector('form').addEventListener('submit',async event=>{event.preventDefault();const response=await fetch('/retry',{method:'POST',body:new URLSearchParams(new FormData(event.target))});if(response.ok)location.href='/home';else{let error=document.querySelector('#code-error');if(!error){error=document.createElement('p');error.id='code-error';error.setAttribute('role','alert');challenge.append(error)}error.textContent='Invalid code, try again'}});</script>` : ''}${request.url === "/slider" ? `<script>let held=false;knob.addEventListener('mousedown',()=>held=true);document.addEventListener('mousemove',event=>{if(held&&event.buttons===1){const box=slider.getBoundingClientRect();const offset=Math.min(216,Math.max(0,event.clientX-box.x));knob.style.transform='translateX('+offset+'px)';if(offset>190)otp.value='654321'}});document.addEventListener('mouseup',()=>held=false);</script>` : ''}${request.url === "/agreement-modal" ? `<script>
   const clock=document.createElement('aside');document.body.append(clock);setInterval(()=>clock.textContent=String(Date.now()),30);
   agree.addEventListener('click', event=>{event.preventDefault();const dialog=document.createElement('section');dialog.id='terms';dialog.setAttribute('role','dialog');dialog.style.cssText='position:fixed;left:40px;top:40px;width:450px;height:220px;background:#222;color:white;padding:12px;';dialog.innerHTML='<p>Service agreement and privacy</p><button id="decline" type="button">Disagree</button><button id="confirm" type="button">Agree</button>';document.body.append(dialog);document.querySelector('#confirm').addEventListener('click',()=>{agree.checked=true;dialog.remove()});document.querySelector('#decline').addEventListener('click',()=>dialog.remove());});
@@ -73,13 +83,13 @@ try {
   assert.equal(capabilities.uuidAvailable, fixtureHost === "127.0.0.1");
   console.log(`Fixture context: ${fixtureHost === "127.0.0.1" ? "loopback" : "ordinary HTTP"}, browser UUID ${capabilities.uuidAvailable ? "available" : "unavailable"}`);
   contextProbe.destroy();
-  for (const path of ["/plain", "/verify", "/retry", "/slider", "/unsafe", "/denied", "/redirect", "/script", "/bad-selector", "/delayed", "/transient", "/agreement", "/agreement-modal", "/one-use"]) {
+  for (const path of ["/plain", "/component", "/verify", "/retry", "/slider", "/unsafe", "/denied", "/redirect", "/script", "/bad-selector", "/delayed", "/transient", "/agreement", "/agreement-modal", "/one-use"]) {
     console.log(`Checking ${path}`);
     const partition = session.fromPartition(`verify-protected-${randomUUID()}`);
     let completed;
     const snapshots = [];
-    const login = new ProtectedWebLogin({ session: partition, url: origin + path, username: "fixture-user", password: "fixture-secret",
-      config: { ...defaultWebLoginConfig(), usernameSelector: path === "/bad-selector" ? "input:fixture-secret()" : "", successSelector: ["/delayed", "/transient", "/agreement"].includes(path) ? "" : "#success", interactionSelector: path === "/unsafe" ? "form" : ["/verify", "/slider", "/retry"].includes(path) ? "#challenge" : "",
+    const login = new ProtectedWebLogin({ session: partition, url: origin + path + (path === "/component" ? "#/login" : ""), username: "fixture-user", password: "fixture-secret",
+      config: { ...defaultWebLoginConfig(), usernameSelector: path === "/bad-selector" ? "input:fixture-secret()" : "", successSelector: ["/component", "/delayed", "/transient", "/agreement"].includes(path) ? "" : "#success", interactionSelector: path === "/unsafe" ? "form" : ["/verify", "/slider", "/retry"].includes(path) ? "#challenge" : "",
         steps: path === "/script" ? [{ action: "type", selector: "#username", value: "{USERNAME}" }, { action: "type", selector: "#password", value: "{SECRET}" }, { action: "click", selector: "#login" }, { action: "success", selector: "#success" }] : [] },
       bounds: { x: 0, y: 0, width: 900, height: 650 }, changed: () => snapshots.push(JSON.stringify(login.state)), completed: async (result) => { completed = result; },
     });
@@ -160,6 +170,11 @@ try {
     assert.equal(login.window.isDestroyed(), true);
     assert.equal(completed.sessionStorage["fixture-tab"], "kept");
     assert.ok(snapshots.every((snapshot) => !snapshot.includes("fixture-secret")));
+    if (path === "/component") {
+      assert.ok(completed.url.endsWith("#/home"));
+      assert.ok(snapshots.some((snapshot) => JSON.parse(snapshot).pageLoading === true));
+      assert.ok(snapshots.some((snapshot) => { const state=JSON.parse(snapshot);return state.pageLoading === false && state.phase === "authenticating"; }));
+    }
     const business = new BrowserWindow({ show: false, webPreferences: { session: partition, contextIsolation: true, sandbox: true } });
     windows.push(business);
     await business.loadURL(completed.url);
@@ -170,7 +185,7 @@ try {
       continue;
     }
     await verifyProtectedBusinessPage(business.webContents, "#success", () => true);
-    assert.equal(business.webContents.getTitle(), "Business");
+    assert.equal(business.webContents.getTitle(), path === "/component" ? "Component console" : "Business");
     assert.equal(await business.webContents.executeJavaScript("localStorage.getItem('fixture-local')"), "kept");
     assert.equal((await partition.cookies.get({ name: "fixtureSession" })).length, 1);
     assert.equal(await business.webContents.executeJavaScript("document.querySelector('input[type=password]')?.value || ''"), "");
@@ -192,7 +207,7 @@ try {
   await audit.loadURL(origin + "/home");
   assert.equal(await audit.webContents.executeJavaScript('localStorage.getItem("unsafe-fixture")'), null);
   audit.destroy();
-  assert.equal(posts, 12);
+  assert.equal(posts, 13);
   console.log("Protected login passed: hidden credentials, CAPTCHA and agreement input, retained session, delayed SPA rendering, transient redirects, handoff returning to login, unsafe crop, rejected login and unauthorized origin blocked.");
 } catch (error) {
   console.error(error);

@@ -16,6 +16,8 @@ export interface WebLoginConfig {
 }
 export interface ProtectedLoginState {
   phase: "loading" | "authenticating" | "interactive" | "failed";
+  /** Actual document loading, distinct from credential submission/verification. */
+  pageLoading?: boolean;
   message: string;
   kind?: "agreement" | "challenge";
   image: string;

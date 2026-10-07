@@ -12,6 +12,10 @@
 
 有明确成功 selector 时，两次稳定观察各为 300 ms；无标记时分别为 1500 ms。业务文档等待最长 20 秒，自动步骤无进展最长 30 秒，整个认证最长 5 分钟。网络、页面渲染和人工验证仍影响总耗时。不要把提交表单或出现「成功」提示当作完整认证成功。
 
+地址栏在认证网页、业务网页及普通网页加载时显示不确定进度条，不显示虚构的百分比。网页加载、认证等待和业务页面确认分别显示状态；文档加载超时为 30 秒，加载时间不计入随后认证步骤的 30 秒无进展期限。组件表单中唯一的「提交」按钮通过点击调用站点自身处理逻辑，不绕过它执行原生表单提交。
+
+存储检查解析结构化值，只有明确身份字段中与已知用户名完全相同的内容被视为公开身份。密码字段、其他字段及非结构化密码文本仍被拦截；检查也覆盖 JSON 转义后的密码。服务端等待认证页面关闭完成后才创建业务页面。
+
 关闭账号保留该账号的浏览器 profile；显式清除登录状态才重置站点数据。本机扩展安装状态和设置保留。不同执行端不会自动共享 profile。
 
 ## 与 JumpServer 官方源码的比对
@@ -40,7 +44,7 @@ JumpServer 官方 [Chrome applet 清单](https://github.com/jumpserver/applets/b
 ```sh
 npm run typecheck
 npm test
-VIRON_WEB_BROWSER_TEST=1 npx vitest run tests/web-browser.integration.test.ts tests/protected-web-server.integration.test.ts
+VIRON_WEB_BROWSER_TEST=1 npx vitest run tests/web-browser.integration.test.ts tests/protected-web-server.integration.test.ts tests/protected-web-component-form.integration.test.ts
 npm run build:desktop
 node_modules/.bin/electron scripts/verify-protected-web-login.mjs
 VIRON_DESKTOP_WEB_TEST=1 npx vitest run tests/desktop-local-web.integration.test.ts

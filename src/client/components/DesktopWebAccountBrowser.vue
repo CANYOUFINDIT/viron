@@ -41,6 +41,7 @@ import { applyHistoryNavigationCommand, applyHistoryNavigationWheel } from "../h
 import type { TlsWebEntryBadge } from "../../shared/tls-certificates";
 import TlsPopover from "./credentials/TlsPopover.vue";
 import WebPageTabStrip from "./WebPageTabStrip.vue";
+import WebPageLoadProgress from "./WebPageLoadProgress.vue";
 
 const props = withDefaults(defineProps<{
   environmentId: string;
@@ -93,6 +94,7 @@ const zoomOutDisabled = computed(() => !zoomCanChange.value || pageZoomIndex(sta
 const zoomInDisabled = computed(() => !zoomCanChange.value || pageZoomIndex(state.value?.zoomFactor ?? 1) === PAGE_ZOOM_FACTORS.length - 1);
 const pageMenuStatus = computed(() => {
   if (state.value?.certificateError) return tr("页面证书校验失败");
+  if (state.value?.protectedLogin) return state.value.protectedLogin.message;
   if (state.value?.loading) return tr("本机页面加载中");
   return state.value?.autofillMessage || tr("页面由当前电脑本机直接访问");
 });
@@ -755,6 +757,7 @@ onBeforeUnmount(() => {
           @refreshed="emit('tlsRefreshed')"
         />
         <input v-model="address" :aria-label="$t('页面地址')" autocomplete="off" spellcheck="false" :readonly="!state" />
+        <WebPageLoadProgress :loading="state?.protectedLogin ? state.protectedLogin.pageLoading === true : state?.loading === true" />
       </form>
       <div class="web-browser-tools">
         <button type="button" :aria-label="$t('新建空白标签页')" :title="$t('新建空白标签页')" @click="createBlankPage"><Plus :size="15" /></button>

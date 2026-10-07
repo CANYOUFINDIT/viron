@@ -1,5 +1,6 @@
 import { selectWebCredentialAutofillFields, type WebCredentialAutofillField } from "./web-credential-autofill.js";
 import type { WebLoginConfig } from "./protected-web-login.js";
+import { containsPersistedWebLoginSecret } from "./web-login-storage.js";
 
 // A fresh business document must be checked too: an HTTP redirect or an empty
 // SPA render is not proof of authentication. No credentials enter this probe.
@@ -28,7 +29,7 @@ export function protectedLoginBusinessPageScript(successSelector = ""): string {
 
 // This function runs only in an isolated world of a main-process-owned hidden window.
 // Its results contain geometry/status, never input values or credential node handles.
-function installLoginGuard(config: WebLoginConfig, username: string, password: string, selectFields: typeof selectWebCredentialAutofillFields, documentId: string, pageStatus: typeof businessPageStatus) {
+function installLoginGuard(config: WebLoginConfig, username: string, password: string, selectFields: typeof selectWebCredentialAutofillFields, documentId: string, pageStatus: typeof businessPageStatus, persistedSecret: typeof containsPersistedWebLoginSecret) {
   const root = globalThis as typeof globalThis & { __vironLogin?: ReturnType<typeof createGuard> };
   function createGuard() {
     let revision = 0;
@@ -113,8 +114,21 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
       return { ...rect, revision: `${documentId}:${revision}` };
     }
     function submit(target: Element | null) {
-      const button = config.submitSelector ? one(config.submitSelector) : buttons(target).find((node) => /login|log in|sign in|next|登录|登入|下一步/i.test(text(node))) ?? buttons(target).find((node) => node.getAttribute("type") === "submit");
       const form = target?.closest("form");
+      let button = config.submitSelector ? one(config.submitSelector) : null;
+      if (!config.submitSelector) {
+        const candidates = buttons(target);
+        const primary = candidates.filter((node) => /login|log in|sign in|next|登录|登入|登陆|下一步/i.test(text(node)) || node.getAttribute("type") === "submit");
+        // Component forms often prevent native submission and bind login to a
+        // type="button" labelled Submit. Only accept a unique button inside the
+        // detected credential form; never guess among page-wide neutral actions.
+        const credentialForm = form && ([...credentials].some((node) => node instanceof HTMLInputElement && node.type === "password" && node.form === form)
+          || /login|sign.?in|auth|登录/i.test([form.id, form.className].join(" ")));
+        const neutral = credentialForm ? candidates.filter((node) => /^(?:submit|提交|确认)\s*$/i.test(text(node).trim())) : [];
+        const matches = primary.length ? primary : neutral;
+        if (matches.length > 1) throw new Error("ambiguous-selector");
+        button = matches[0] ?? null;
+      }
       if (button instanceof HTMLButtonElement && button.disabled) return false;
       if (button) button.click();
       else if (form) form.requestSubmit();
@@ -230,25 +244,8 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
       // Session. Refuse to hand over a document that persists the password itself.
       for (const storage of [localStorage, sessionStorage]) for (let i = 0; i < storage.length; i++) {
         const value = storage.getItem(storage.key(i)!);
-        if (password && value?.includes(password)) throw new Error("secret-in-storage");
+        if (persistedSecret(value, password, username, storage.key(i)!)) throw new Error("secret-in-storage");
       }
-      const containsSecret = (value: unknown): boolean => {
-        if (!password) return false;
-        if (typeof value === "string") return value.includes(password);
-        if (!value || typeof value !== "object") return false;
-        if (ArrayBuffer.isView(value)) return new TextDecoder().decode(value as Uint8Array).includes(password);
-        if (value instanceof ArrayBuffer) return new TextDecoder().decode(value).includes(password);
-        if (value instanceof Map) return [...value].some(([key, item]) => containsSecret(key) || containsSecret(item));
-        if (value instanceof Set) return [...value].some(containsSecret);
-        const seen = new WeakSet<object>();
-        const visit = (item: unknown): boolean => {
-          if (typeof item === "string") return item.includes(password);
-          if (!item || typeof item !== "object" || seen.has(item)) return false;
-          seen.add(item);
-          return Object.values(item).some(visit);
-        };
-        return visit(value);
-      };
       for (const info of await indexedDB.databases()) {
         if (!info.name) continue;
         const database = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -274,7 +271,7 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
             });
             for (const record of records) {
               const value = record.value instanceof Blob ? await record.value.text() : record.value;
-              if (containsSecret(record.key) || containsSecret(value)) throw new Error("secret-in-storage");
+              if (persistedSecret(record.key, password, username) || persistedSecret(value, password, username)) throw new Error("secret-in-storage");
             }
           }
         } finally { database.close(); }
@@ -298,5 +295,5 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
 export function protectedLoginInstallScript(config: WebLoginConfig, username: string, password: string, documentId: string): string {
   // Generate the nonce in the trusted main process. Browser crypto.randomUUID()
   // is unavailable on ordinary HTTP origins, including private network websites.
-  return `(() => { const __name = (fn) => fn; (${installLoginGuard.toString()})(${JSON.stringify(config)}, ${JSON.stringify(username)}, ${JSON.stringify(password)}, ${selectWebCredentialAutofillFields.toString()}, ${JSON.stringify(documentId)}, ${businessPageStatus.toString()}); })()`;
+  return `(() => { const __name = (fn) => fn; (${installLoginGuard.toString()})(${JSON.stringify(config)}, ${JSON.stringify(username)}, ${JSON.stringify(password)}, ${selectWebCredentialAutofillFields.toString()}, ${JSON.stringify(documentId)}, ${businessPageStatus.toString()}, ${containsPersistedWebLoginSecret.toString()}); })()`;
 }
