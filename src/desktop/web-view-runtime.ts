@@ -15,6 +15,7 @@ import {
   DESKTOP_WEB_PAGE_LIMIT,
   desktopWebContextMenuGroups,
   desktopWebLastUrlKey,
+  desktopWebPartitionName,
   pageAfterClose,
   supportedDesktopPopupUrl,
   supportedDesktopWebUrl,
@@ -23,6 +24,7 @@ import {
 import { normalizeWebAddress } from "../shared/web-address.js";
 import { reorderMap } from "../shared/tab-order.js";
 import { ProtectedWebLogin } from "./protected-web-login.js";
+import { verifyProtectedBusinessPage } from "./protected-web-login-business.js";
 import { defaultWebLoginConfig, type WebLoginConfig, type ProtectedLoginState, type ProtectedLoginInput } from "../shared/protected-web-login.js";
 import { loadWebIcon } from "../shared/web-favicon.js";
 import { immersiveNavigationEscapeAction } from "../shared/immersive-navigation.js";
@@ -62,7 +64,7 @@ import {
   handleDesktopHistoryNavigationMouse,
 } from "./history-navigation-runtime.js";
 import { mainWindow } from "./window-host.js";
-import { closeDesktopWebExtensionPopup, forgetDesktopWebExtensions, loadDesktopWebExtensions, releaseDesktopWebSessionExtensions } from "./web-extensions.js";
+import { closeDesktopWebExtensionPopup, forgetDesktopWebExtensions, loadDesktopWebExtensions, releaseDesktopWebSessionExtensions, resumeDesktopWebSessionExtensions, suspendDesktopWebSessionExtensions } from "./web-extensions.js";
 import { closeExtensionBrowser, handleExtensionShortcut, registerExtensionBrowser, registerExtensionTab, selectExtensionTab } from "./web-extension-browser.js";
 import { desktopWebExtensionContextMenuItems } from "./web-extension-context-menus.js";
 import {
@@ -96,6 +98,7 @@ import {
 } from "./web-view-support.js";
 
 export { activeDesktopWebPage, desktopWebViews, inspectDesktopWebElement, webViewBounds, webViewState };
+const closingProfiles = new WeakMap<Session, Promise<void>>();
 
 export interface DesktopWebViewBounds {
   x: number;
@@ -652,7 +655,7 @@ function registerBusinessExtensions(view: ManagedDesktopWebView): void {
   enableDesktopWebSessionExtensions(view.partition, view.lastUrlKey);
   registerExtensionBrowser(view.partition, {
     create: async (url, active) => {
-      if (view.login || view.closing || view.pages.size >= DESKTOP_WEB_PAGE_LIMIT) throw new Error("No space for another extension tab");
+      if ((view.login && view.login.state.phase !== "authenticating") || view.closing || view.pages.size >= DESKTOP_WEB_PAGE_LIMIT) throw new Error("No space for another extension tab");
       const page = await createDesktopWebPage(view, false);
       page.loadingUrl = url;
       void page.view.webContents.loadURL(url).catch(() => undefined);
@@ -664,31 +667,29 @@ function registerBusinessExtensions(view: ManagedDesktopWebView): void {
 }
 
 function startProtectedDesktopLogin(view: ManagedDesktopWebView): void {
-  view.login?.dispose();
-  const oldPartition = view.partition;
+  const previousLogin = view.login;
+  previousLogin?.dispose();
   const attempt = randomUUID();
   view.loginAttempt = attempt;
+  view.notice = null;
   const current = () => !view.closing && desktopWebViews.get(view.id) === view && view.loginAttempt === attempt;
   closeDesktopWebExtensionPopup();
   closeExtensionBrowser(view.partition);
-  void releaseDesktopWebSessionExtensions(view.partition).catch(() => undefined);
-  view.partition.off("will-download", view.downloadListener);
   destroyDesktopWebPages(view);
-  void oldPartition.clearData().catch(() => undefined);
-  // A fresh temporary partition has no prior page, service worker, extension or
-  // persisted password. The successful business browser inherits all its storage.
-  view.partitionName = `persist:viron-protected-${randomUUID()}`;
-  view.partition = session.fromPartition(view.partitionName);
-  trackDesktopWebPartition(view.partition);
-  view.partition.on("will-download", view.downloadListener);
+  const preparation = suspendDesktopWebSessionExtensions(view.partition).then(() => previousLogin?.settled());
+  // Retain the stable account profile. The hidden authentication document is
+  // loaded only after extension workers, preloads and old website workers stop.
   view.login = new ProtectedWebLogin({
     session: view.partition, url: view.entryUrl, username: view.username, password: view.password,
+    prepare: () => preparation,
     config: view.loginConfig, bounds: view.bounds,
     changed: () => { if (current()) sendWebViewState(view); },
-    completed: async ({ url, sessionStorage }) => {
+    completed: async ({ url, sessionStorage, authenticated }) => {
       if (!current()) return;
       try {
         // Authentication document was destroyed before any extension or guest exists.
+        await resumeDesktopWebSessionExtensions(view.partition);
+        if (!current()) return;
         registerBusinessExtensions(view);
         await loadDesktopWebExtensions(view.partition, view.lastUrlKey);
         if (!current()) return;
@@ -704,7 +705,10 @@ function startProtectedDesktopLogin(view: ManagedDesktopWebView): void {
           storageScriptId = result.identifier;
         }
         if (!current()) return;
-        await contents.loadURL(view.lastUrl || url);
+        const target = view.lastUrl || url;
+        await contents.loadURL(target);
+        const successSelector = view.loginConfig.successSelector || view.loginConfig.steps.find((step) => step.action === "success")?.selector || "";
+        await verifyProtectedBusinessPage(contents, target === url ? successSelector : "", current);
         if (storageScriptId) {
           await contents.debugger.sendCommand("Page.removeScriptToEvaluateOnNewDocument", { identifier: storageScriptId });
           contents.debugger.detach();
@@ -712,11 +716,14 @@ function startProtectedDesktopLogin(view: ManagedDesktopWebView): void {
         if (!current()) return;
         view.login = null;
         activateDesktopWebPage(view, page.id);
-        notifyWebView(view, "success", "后台登录已完成");
-      } catch {
+        if (authenticated) notifyWebView(view, "success", "后台登录已完成");
+        else sendWebViewState(view);
+      } catch (error) {
         if (!current()) return;
         destroyDesktopWebPages(view);
-        if (view.login) Object.assign(view.login.state, { phase: "failed", message: "业务页面打开失败，请重试后台登录" });
+        if (view.login) Object.assign(view.login.state, { phase: "failed", message: error instanceof Error && error.message === "business-login"
+          ? "业务页面仍在登录页，登录状态未生效。请检查登录配置后重试"
+          : "未能确认业务页面已登录，请检查登录成功标记后重试" });
         sendWebViewState(view);
       }
     },
@@ -750,7 +757,7 @@ export async function resetDesktopWebViews(views: ManagedDesktopWebView[]): Prom
   const credential = await latestDesktopWebCredential(first.credentialId);
   forgetDesktopWebLastUrl(first.lastUrlKey);
   for (const view of views) view.lastUrl = "";
-  for (const view of views) destroyDesktopWebPages(view);
+  for (const view of views) { view.login?.dispose(); destroyDesktopWebPages(view); }
   try {
     await clearDesktopWebSession(first.partition);
   } catch (error) {
@@ -758,7 +765,7 @@ export async function resetDesktopWebViews(views: ManagedDesktopWebView[]): Prom
     throw error;
   }
   await reopenDesktopWebViews(views, credential);
-  for (const view of views) notifyWebView(view, "success", tr("已清除本机登录状态并重新打开账号页面"));
+  for (const view of views) notifyWebView(view, "info", tr("已清除本机登录状态，正在重新后台登录"));
 }
 
 export async function resetDesktopWebView(view: ManagedDesktopWebView): Promise<DesktopWebViewState> {
@@ -774,6 +781,8 @@ export async function openDesktopWebView(
   originEnvironmentId?: string,
 ): Promise<DesktopWebViewState> {
   if (!mainWindow) throw new Error(tr("主窗口不可用"));
+  const existing = [...desktopWebViews.values()].find((view) => view.credentialId === credentialId && !view.closing);
+  if (existing) return webViewState(existing);
   if (desktopWebViews.size >= 8) throw new Error(tr("本机最多同时打开 8 个账号页面，请先关闭一个页面"));
   const { auth, credential } = await localWebCredential(credentialId);
   if (!supportedDesktopWebUrl(credential.entryUrl)) throw new Error(tr("Web 入口地址只支持 HTTP 或 HTTPS"));
@@ -781,8 +790,15 @@ export async function openDesktopWebView(
   if (!endpoint) throw new Error(tr("请先验证 Viron Endpoint"));
   const registrationId = await reserveDesktopRuntime("web", credentialId, undefined, originEnvironmentId);
   const id = randomUUID();
-  const partitionName = `persist:viron-protected-${id}`;
+  const partitionName = desktopWebPartitionName(endpoint, auth.user.id, credential.credentialId);
   const webPartition = session.fromPartition(partitionName);
+  try { await closingProfiles.get(webPartition); }
+  catch (error) { await releaseDesktopRuntimeReservation(registrationId); throw error; }
+  const concurrent = [...desktopWebViews.values()].find((view) => view.partition === webPartition && !view.closing);
+  if (concurrent) {
+    await releaseDesktopRuntimeReservation(registrationId);
+    return webViewState(concurrent);
+  }
   const lastUrlKey = desktopWebLastUrlKey(endpoint, auth.user.id, credential.credentialId);
   const managed: ManagedDesktopWebView = {
     id,
@@ -1002,26 +1018,35 @@ export async function uploadDesktopWebCredential(credentialId: string, filenameV
 export async function closeDesktopWebView(id: string, reason = tr("用户主动关闭连接")): Promise<void> {
   const managed = desktopWebViews.get(id);
   if (!managed) return;
+  if (managed.closing) { await closingProfiles.get(managed.partition); return; }
   closeDesktopWebExtensionPopup(managed.lastUrlKey);
   managed.closedReason = reason;
   sendWebViewState(managed);
   managed.closing = true;
-  managed.login?.dispose();
+  const login = managed.login;
+  login?.dispose();
   managed.login = null;
   closeExtensionBrowser(managed.partition);
-  void releaseDesktopWebSessionExtensions(managed.partition).catch(() => undefined);
-  desktopWebViews.delete(id);
   managed.partition.off("will-download", managed.downloadListener);
   const releaseReservation = releaseDesktopRuntimeReservation(managed.registrationId);
-  try {
-    managed.partition.flushStorageData();
-    await managed.partition.cookies.flushStore();
-  } finally {
-    destroyDesktopWebPages(managed);
-    void managed.partition.clearData().catch(() => undefined);
-    managed.password = "";
-    await releaseReservation;
-  }
+  const pending = (async () => {
+    try {
+      destroyDesktopWebPages(managed);
+      await login?.settled();
+      await resumeDesktopWebSessionExtensions(managed.partition);
+      await releaseDesktopWebSessionExtensions(managed.partition);
+      managed.partition.flushStorageData();
+      await managed.partition.cookies.flushStore();
+    } finally {
+      destroyDesktopWebPages(managed);
+      managed.password = "";
+      try { await releaseReservation; }
+      finally { desktopWebViews.delete(id); }
+    }
+  })();
+  closingProfiles.set(managed.partition, pending);
+  try { await pending; }
+  finally { if (closingProfiles.get(managed.partition) === pending) closingProfiles.delete(managed.partition); }
 }
 
 export async function closeAllDesktopWebViews(): Promise<void> {

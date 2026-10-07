@@ -62,6 +62,28 @@ function runElectron(args: string[], env: NodeJS.ProcessEnv): Promise<{ code: nu
 }
 
 describe.skipIf(!enabled)("macOS local Web", () => {
+  it("retains website cookies, storage and extension installation across a process restart", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "viron-profile-restart-"));
+    directories.push(directory);
+    const scope = createHash("sha256").update("https://endpoint.example.test\0fixture-user\0fixture-account").digest("hex");
+    const installId = "eb496248-beb8-4b0e-9e92-834a3aa72b08";
+    const extension = join(directory, "web-extensions", scope, installId);
+    mkdirSync(extension, { recursive: true });
+    writeFileSync(join(extension, "manifest.json"), JSON.stringify({ manifest_version: 3, name: "Profile fixture", version: "1.0.0", permissions: ["storage"], background: { service_worker: "background.js" }, content_scripts: [{ matches: ["http://127.0.0.1/*"], js: ["content.js"], run_at: "document_end" }] }));
+    writeFileSync(join(extension, "background.js"), 'chrome.runtime.onInstalled.addListener(async () => {const state=await chrome.storage.local.get("installCount");await chrome.storage.local.set({installCount:(state.installCount||0)+1});});');
+    writeFileSync(join(extension, "content.js"), 'chrome.storage.local.get("installCount").then(state=>document.documentElement.dataset.installCount=String(state.installCount||0));chrome.storage.onChanged.addListener(changes=>{if(changes.installCount)document.documentElement.dataset.installCount=String(changes.installCount.newValue||0)});');
+    writeFileSync(join(directory, "desktop-state.json"), JSON.stringify({ globalWebExtensions: [{ installId, extensionId: "pending", name: "Profile fixture", version: "1.0.0", sourceScope: scope }] }));
+    const target = createServer((_request, response) => response.end("<!doctype html><title>Business fixture</title><main>Welcome</main>"));
+    servers.push(target);
+    const port = await listen(target);
+    const env = { VIRON_FIXTURE_PROFILE: directory, VIRON_FIXTURE_URL: `http://127.0.0.1:${port}/` };
+    for (const args of [["--write"], []]) {
+      const result = await runElectron(["scripts/verify-web-profile.mjs", ...args], env);
+      expect(result.code, result.stdout + result.stderr).toBe(0);
+      expect(result.stdout).toContain("VIRON_PROFILE_RESTART_OK");
+    }
+  }, 60_000);
+
   it("opens, uploads, downloads, and clears an isolated account Profile", async () => {
     const target = createServer((request, response) => {
       if (request.method === "POST" && request.url === "/login") {
@@ -147,9 +169,24 @@ describe.skipIf(!enabled)("macOS local Web", () => {
       name: "Viron smoke extension",
       version: "1.0.0",
       permissions: ["storage"],
+      background: { service_worker: "background.js" },
       content_scripts: [{ matches: ["http://127.0.0.1/*"], js: ["content.js"], run_at: "document_end" }],
     }));
-    writeFileSync(join(extensionDir, "content.js"), 'try { chrome.storage.sync.set({ vironContentReady: true }).then(() => { document.documentElement.dataset.vironExtension = "loaded"; }).catch((error) => { document.documentElement.dataset.vironExtensionError = String(error); }); } catch (error) { document.documentElement.dataset.vironExtensionError = String(error); }');
+    writeFileSync(join(extensionDir, "background.js"), 'chrome.runtime.onInstalled.addListener(async () => { const state = await chrome.storage.local.get("installCount"); await chrome.storage.local.set({ installCount: (state.installCount || 0) + 1 }); });');
+    writeFileSync(join(extensionDir, "content.js"), `try {
+      const observe = () => { if ([...document.querySelectorAll('input[type=password]')].some(input => input.value)) chrome.storage.local.set({ credentialObserved: true }); };
+      document.addEventListener("input", observe, true); observe();
+      chrome.storage.onChanged.addListener(changes => {
+        if (changes.installCount) document.documentElement.dataset.vironInstallCount = String(changes.installCount.newValue || 0);
+        if (changes.credentialObserved) document.documentElement.dataset.vironCredentialObserved = changes.credentialObserved.newValue ? "yes" : "no";
+      });
+      chrome.storage.sync.set({ vironContentReady: true }).then(async () => {
+        const state = await chrome.storage.local.get(["installCount", "credentialObserved"]);
+        document.documentElement.dataset.vironInstallCount = String(state.installCount || 0);
+        document.documentElement.dataset.vironCredentialObserved = state.credentialObserved ? "yes" : "no";
+        document.documentElement.dataset.vironExtension = "loaded";
+      }).catch(error => { document.documentElement.dataset.vironExtensionError = String(error); });
+    } catch (error) { document.documentElement.dataset.vironExtensionError = String(error); }`);
     writeFileSync(join(userData, "desktop-state.json"), JSON.stringify({
       webExtensions: { [scopeKey]: [{ installId, extensionId: "pending", name: "Viron smoke extension", version: "1.0.0" }] },
     }));
@@ -209,7 +246,7 @@ describe.skipIf(!enabled)("macOS local Web", () => {
     const line = result.stdout.split("\n").find((item) => item.startsWith("VIRON_DESKTOP_SMOKE "));
     expect(line, result.stdout).toBeTruthy();
     const smoke = JSON.parse(line!.slice("VIRON_DESKTOP_SMOKE ".length));
-    expect(smoke.localWeb, result.stdout).toEqual({ opened: true, blankOpenedWithoutEntry: true, manualRefillOnCurrentPage: true, sessionIsolatedPerLaunch: true, lastLocationRestored: true, tabsReordered: true, popupPreservesOpener: true, inspectorOpened: true, resetCleared: true, extensionInjected: true, extensionManaged: true, extensionGlobal: true, uploadSelected: true, downloadTriggered: true });
+    expect(smoke.localWeb, result.stdout).toEqual({ opened: true, blankOpenedWithoutEntry: true, manualRefillOnCurrentPage: true, sessionStatePersisted: true, extensionProfilePersisted: true, lastLocationRestored: true, tabsReordered: true, popupPreservesOpener: true, inspectorOpened: true, resetCleared: true, extensionInjected: true, extensionManaged: true, extensionGlobal: true, uploadSelected: true, downloadTriggered: true });
     const saved = JSON.parse(readFileSync(join(userData, "desktop-state.json"), "utf8"));
     expect(saved.webExtensions).toBeUndefined();
     expect(saved.globalWebExtensions).toHaveLength(1);

@@ -1,9 +1,34 @@
 import { selectWebCredentialAutofillFields, type WebCredentialAutofillField } from "./web-credential-autofill.js";
 import type { WebLoginConfig } from "./protected-web-login.js";
 
+// A fresh business document must be checked too: an HTTP redirect or an empty
+// SPA render is not proof of authentication. No credentials enter this probe.
+function businessPageStatus(successSelector = "") {
+  const visible = (element: Element) => {
+    if (!(element instanceof HTMLElement)) return false;
+    const rect = element.getBoundingClientRect(), style = getComputedStyle(element);
+    return rect.width > 2 && rect.height > 2 && style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity || 1) > 0;
+  };
+  if (!document.body || document.readyState !== "complete") return "waiting";
+  const fields = [...document.querySelectorAll<HTMLInputElement>("input")].filter(visible);
+  if (fields.some((node) => node.type === "password" || /username|current-password/.test(node.autocomplete)
+    || /username|用户名|账号|帐号|password|密码/i.test([node.name, node.id, node.placeholder].join(" ")))) return "login";
+  if (fields.some((node) => node.autocomplete === "one-time-code" || /otp|captcha|验证码/i.test([node.name, node.id, node.placeholder].join(" ")))) return "waiting";
+  if (successSelector) return [...document.querySelectorAll(successSelector)].some(visible) ? "ready" : "waiting";
+  if (/\/(?:log-?in|sign-?in|auth)(?:[/?#]|$)/i.test(location.pathname + location.hash)
+    || /^(?:登录|登入|登陆|log ?in|sign ?in)(?:\s|$)/i.test(document.title.trim())) return "login";
+  if (!document.body.innerText?.trim() && !document.title.trim()) return "waiting";
+  if (document.querySelector("iframe,frame")) return "waiting";
+  return "ready";
+}
+
+export function protectedLoginBusinessPageScript(successSelector = ""): string {
+  return `(() => { const __name = (fn) => fn; return (${businessPageStatus.toString()})(${JSON.stringify(successSelector)}); })()`;
+}
+
 // This function runs only in an isolated world of a main-process-owned hidden window.
 // Its results contain geometry/status, never input values or credential node handles.
-function installLoginGuard(config: WebLoginConfig, username: string, password: string, selectFields: typeof selectWebCredentialAutofillFields, documentId: string) {
+function installLoginGuard(config: WebLoginConfig, username: string, password: string, selectFields: typeof selectWebCredentialAutofillFields, documentId: string, pageStatus: typeof businessPageStatus) {
   const root = globalThis as typeof globalThis & { __vironLogin?: ReturnType<typeof createGuard> };
   function createGuard() {
     let revision = 0;
@@ -87,12 +112,15 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
     function tick(stepIndex: number, previouslySubmitted: boolean, submittedUrl: string, passwordSubmitted = false, submittedDocument = "") {
       if (!document.body) return { status: "waiting" };
       if (config.steps.length) {
+        const success = config.steps.find((step) => step.action === "success")!;
+        const credentialForm = config.steps.some((step) => step.action === "type" && ["{USERNAME}", "{SECRET}"].includes(step.value ?? "") && one(step.selector));
+        if (!credentialForm && (!success.origin || success.origin === location.origin) && one(success.selector) && pageStatus(success.selector) === "ready") return { status: "success", released: passwordReleased };
         const step = config.steps[stepIndex];
         if (!step) throw new Error("invalid-step");
         if (step.origin && step.origin !== location.origin) return { status: "waiting" };
         const target = one(step.selector);
         if (!target) return { status: "waiting" };
-        if (step.action === "success") return { status: "success", released: passwordReleased };
+        if (step.action === "success") return { status: pageStatus(step.selector) === "ready" ? "success" : "waiting", released: passwordReleased };
         if (step.action === "interactive") {
           interactionSelector = step.selector;
           return { status: "interactive", region: region() };
@@ -108,7 +136,7 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
       const pass = config.passwordSelector ? one(config.passwordSelector) : detected.password;
       const visiblePasswords = inputs().filter((node) => node.type === "password" || credentials.has(node));
       const pendingVerification = inputs().some((node) => node.autocomplete === "one-time-code" || /otp|captcha|verification|验证码|动态口令/i.test([node.id, node.name, node.placeholder].join(" ")));
-      if (previouslySubmitted && !visiblePasswords.length && (config.successSelector ? Boolean(one(config.successSelector)) : (location.href !== submittedUrl || String(performance.timeOrigin) !== submittedDocument) && !pendingVerification && !(config.interactionSelector && one(config.interactionSelector)))) return { status: "success" };
+      if (previouslySubmitted && !visiblePasswords.length && pageStatus(config.successSelector) === "ready" && (config.successSelector || location.href !== submittedUrl || String(performance.timeOrigin) !== submittedDocument) && !pendingVerification && !(config.interactionSelector && one(config.interactionSelector))) return { status: "success" };
       if (passwordSubmitted && !filled && visiblePasswords.length) return { status: "rejected" };
       if (!filled && (pass || user)) {
         if (user) setValue(user, username, true);
@@ -119,6 +147,17 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
         interactionSelector = config.interactionSelector;
         return { status: "interactive", region: region(), released: passwordReleased };
       }
+      // Do not consent to terms on the user's behalf. Expose only the separate
+      // agreement label/checkbox; the same crop checks exclude credential fields.
+      const agreement = [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].find((node) => !node.checked
+        && (node.required || /agree|terms|privacy|同意|协议|隐私|条款/i.test([node.name, node.id, node.getAttribute("aria-label") ?? "", ...(node.labels ?? [])].map((item) => typeof item === "string" ? item : item.textContent).join(" ")))
+        && visible(node.closest("label") ?? [...(node.labels ?? [])][0] ?? node));
+      if (agreement && filled) {
+        const area = agreement.closest("label") ?? [...(agreement.labels ?? [])][0] ?? agreement;
+        if (area.getAttribute("data-viron-agreement") !== documentId) area.setAttribute("data-viron-agreement", documentId);
+        interactionSelector = `[data-viron-agreement="${documentId}"]`;
+        return { status: "interactive", kind: "agreement", region: region(), released: passwordReleased };
+      }
       if (filled && !submitted) {
         submit(pass ?? user);
         return { status: "submitted", released: passwordReleased };
@@ -126,8 +165,8 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
       if (submitted || previouslySubmitted) return { status: "waiting", released: passwordReleased };
       // An anonymous entry can be opened without releasing credentials. A configured
       // success marker still takes precedence over this convenience path.
-      if (!inputs().some((node) => node.type === "password") && !document.querySelector("iframe,frame") && !config.usernameSelector && !config.passwordSelector && !config.successSelector) return { status: "anonymous" };
-      if (config.successSelector && one(config.successSelector) && !visiblePasswords.length) return { status: "success" };
+      if (pageStatus() === "ready" && !config.usernameSelector && !config.passwordSelector && !config.successSelector) return { status: "anonymous" };
+      if (config.successSelector && pageStatus(config.successSelector) === "ready" && !visiblePasswords.length) return { status: "success" };
       return { status: "waiting" };
     }
     function authorize(revisionValue: string, x?: number, y?: number, keyboard = false) {
@@ -207,7 +246,7 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
       }
       return Object.fromEntries(Object.keys(sessionStorage).map((key) => [key, sessionStorage.getItem(key)]));
     }
-    return { tick, region, authorize, continueInteraction, finish };
+    return { tick, region, authorize, continueInteraction, finish, secretReleased: () => passwordReleased };
   }
   root.__vironLogin ??= createGuard();
 }
@@ -215,5 +254,5 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
 export function protectedLoginInstallScript(config: WebLoginConfig, username: string, password: string, documentId: string): string {
   // Generate the nonce in the trusted main process. Browser crypto.randomUUID()
   // is unavailable on ordinary HTTP origins, including private network websites.
-  return `(() => { const __name = (fn) => fn; (${installLoginGuard.toString()})(${JSON.stringify(config)}, ${JSON.stringify(username)}, ${JSON.stringify(password)}, ${selectWebCredentialAutofillFields.toString()}, ${JSON.stringify(documentId)}); })()`;
+  return `(() => { const __name = (fn) => fn; (${installLoginGuard.toString()})(${JSON.stringify(config)}, ${JSON.stringify(username)}, ${JSON.stringify(password)}, ${selectWebCredentialAutofillFields.toString()}, ${JSON.stringify(documentId)}, ${businessPageStatus.toString()}); })()`;
 }

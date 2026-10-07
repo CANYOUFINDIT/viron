@@ -35,6 +35,8 @@ export interface DesktopChromeExtensionInfo {
 
 const failedLoads = new Map<string, string>();
 const extensionSessions = new Map<Session, string>();
+const suspendedSessions = new WeakSet<Session>();
+const suspendedPreloads = new WeakMap<Session, Electron.PreloadScript[]>();
 let extensionOperations: Promise<unknown> = Promise.resolve();
 
 // Serialize loads and mutations so a late load cannot resurrect a removed extension.
@@ -45,6 +47,7 @@ function extensionOperation<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 function trackExtensionSession(partition: Session, scopeKey: string): void {
+  if (suspendedSessions.has(partition)) throw new Error(tr("后台登录期间不能加载扩展，请等待登录完成"));
   if (!SCOPE_PATTERN.test(scopeKey)) throw new Error(tr("本机扩展所属账号无效"));
   extensionSessions.set(partition, scopeKey);
 }
@@ -139,6 +142,7 @@ async function ensureContentScriptStorageCompat(path: string): Promise<void> {
 }
 
 async function loadSessionExtensions(partition: Session, scopeKey: string): Promise<void> {
+  if (suspendedSessions.has(partition)) return;
   for (const item of installedExtensions()) {
     if (item.enabled === false) continue;
     const errorKey = `${scopeKey}:${item.installId}`;
@@ -184,6 +188,36 @@ export function releaseDesktopWebSessionExtensions(partition: Session): Promise<
       if (scope) clearDesktopWebExtensionContextMenus(partition, extension.id);
       partition.extensions.removeExtension(extension.id);
     }
+  });
+}
+
+/** Keep the account profile, but remove every extension execution path before filling a secret. */
+export function suspendDesktopWebSessionExtensions(partition: Session): Promise<void> {
+  suspendedSessions.add(partition);
+  return extensionOperation(async () => {
+    extensionSessions.delete(partition);
+    storeViews.delete(partition);
+    for (const extension of partition.extensions.getAllExtensions()) {
+      partition.extensions.removeExtension(extension.id);
+    }
+    if (!suspendedPreloads.has(partition)) {
+      const preloads = partition.getPreloadScripts();
+      suspendedPreloads.set(partition, preloads);
+      for (const preload of preloads) partition.unregisterPreloadScript(preload.id);
+    }
+    // Old website workers must not observe credential-bearing requests either.
+    // This leaves cookies, localStorage, IndexedDB and chrome.storage intact.
+    await partition.clearStorageData({ storages: ["serviceworkers"] });
+  });
+}
+
+export function resumeDesktopWebSessionExtensions(partition: Session): Promise<void> {
+  return extensionOperation(async () => {
+    for (const preload of suspendedPreloads.get(partition) ?? []) {
+      partition.registerPreloadScript({ type: preload.type, filePath: preload.filePath });
+    }
+    suspendedPreloads.delete(partition);
+    suspendedSessions.delete(partition);
   });
 }
 

@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { Window } from "happy-dom";
 import { defaultWebLoginConfig, parseWebLoginConfig } from "../src/shared/protected-web-login.js";
-import { protectedLoginInstallScript } from "../src/shared/protected-web-login-dom.js";
+import { protectedLoginBusinessPageScript, protectedLoginInstallScript } from "../src/shared/protected-web-login-dom.js";
 
 function fixture(interactionSelector = "#challenge", uuidAvailable = true) {
   const window = new Window({ url: "https://console.example.com/login" });
+  Object.defineProperty(window.document, "readyState", { get: () => "complete" });
   if (!uuidAvailable) Object.defineProperty(window.crypto, "randomUUID", { value: undefined });
   window.document.body.innerHTML = `<form><input id="username" autocomplete="username"><input id="password" type="password"><div id="challenge"><input id="otp" autocomplete="one-time-code"><button type="button">Refresh</button></div><button type="submit">Login</button></form>`;
   for (const element of window.document.querySelectorAll("*")) {
@@ -75,5 +76,55 @@ describe("protected Web login", () => {
     const { window, guard } = fixture();
     window.localStorage.setItem("unsafe", "fixture-password");
     await expect(guard.finish()).rejects.toThrow("secret-in-storage");
+  });
+  it("does not accept a login route or a blank SPA render as anonymous success", () => {
+    const { window, guard } = fixture("");
+    window.document.body.replaceChildren();
+    expect(guard.tick(0, false, "").status).toBe("waiting");
+    window.location.href = "https://console.example.com/home";
+    expect(guard.tick(0, true, "https://console.example.com/login", true, "old-document").status).toBe("waiting");
+    expect(window.eval(protectedLoginBusinessPageScript())).toBe("waiting");
+  });
+  it("does not let a success marker override a visible credential form", () => {
+    const { window } = fixture();
+    const marker = window.document.createElement("main");
+    marker.id = "success";
+    marker.getBoundingClientRect = window.document.querySelector("#challenge")!.getBoundingClientRect;
+    window.document.body.append(marker);
+    expect(window.eval(protectedLoginBusinessPageScript("#success"))).toBe("login");
+  });
+  it("recognizes a cached session before replaying a multi-step login recipe", () => {
+    const { window } = fixture("");
+    window.location.href = "https://console.example.com/home";
+    window.document.body.innerHTML = '<main id="home">Already signed in</main>';
+    window.document.querySelector("#home")!.getBoundingClientRect = () => ({ x: 10, y: 10, top: 10, left: 10, bottom: 110, right: 210, width: 200, height: 100, toJSON() {} });
+    window.eval("delete globalThis.__vironLogin");
+    window.eval(protectedLoginInstallScript({ ...defaultWebLoginConfig(), steps: [
+      { action: "type", selector: "#username", value: "{USERNAME}" },
+      { action: "type", selector: "#password", value: "{SECRET}" },
+      { action: "click", selector: "#login" },
+      { action: "success", selector: "#home" },
+    ] }, "fixture-user", "fixture-password", "cached-document"));
+    const guard = window.eval("globalThis.__vironLogin");
+    expect(guard.tick(0, false, "").status).toBe("success");
+    expect(guard.secretReleased()).toBe(false);
+  });
+  it("asks for agreement confirmation in a crop that excludes the password", () => {
+    const { window, guard } = fixture("");
+    const label = window.document.createElement("label");
+    label.innerHTML = '<input type="checkbox" required> I agree to the terms';
+    label.getBoundingClientRect = window.document.querySelector("#challenge")!.getBoundingClientRect;
+    const checkbox = label.querySelector<HTMLInputElement>("input")!;
+    checkbox.getBoundingClientRect = label.getBoundingClientRect;
+    checkbox.style.opacity = "0"; // Component libraries paint the visible label instead.
+    window.document.querySelector("form")!.append(label);
+    const result = guard.tick(0, false, "");
+    expect(result.status).toBe("interactive");
+    expect(result.kind).toBe("agreement");
+    expect(result.region).toMatchObject({ y: 140 });
+    expect(JSON.stringify(result)).not.toContain("fixture-password");
+    checkbox.checked = true;
+    expect(guard.continueInteraction(result.region.revision)).toBe(true);
+    expect(guard.tick(0, false, "").status).toBe("submitted");
   });
 });

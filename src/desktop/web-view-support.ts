@@ -25,6 +25,7 @@ import {
 } from "../shared/page-zoom.js";
 import { resolveWebViewBounds } from "./web-view-bounds.js";
 import { registerDesktopWebExtensionWorkerMenus } from "./web-extension-context-menus.js";
+import { installedWebExtensions } from "./web-extension-catalog.js";
 import type {
   DesktopWebViewBounds,
   DesktopWebViewState,
@@ -274,7 +275,12 @@ export function inspectDesktopWebElement(webContents: Electron.WebContents, x: n
 
 export async function clearDesktopWebSession(partition: Session): Promise<void> {
   await partition.closeAllConnections();
-  await partition.clearData();
+  // Reset websites while keeping extension preferences and first-install markers.
+  const excludeOrigins = [...new Set([
+    ...partition.extensions.getAllExtensions().map((extension) => extension.id),
+    ...installedWebExtensions().map((extension) => extension.extensionId),
+  ])].map((id) => `chrome-extension://${id}`);
+  await partition.clearData({ excludeOrigins });
 }
 
 export async function latestDesktopWebCredential(credentialId: string): Promise<DesktopWebCredential> {

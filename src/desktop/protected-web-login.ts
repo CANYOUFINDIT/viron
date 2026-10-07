@@ -4,8 +4,8 @@ import { protectedLoginInstallScript } from "../shared/protected-web-login-dom.j
 import { parseWebLoginConfig, type ProtectedLoginInput, type ProtectedLoginState, type WebLoginConfig } from "../shared/protected-web-login.js";
 
 type Region = Rectangle & { revision: string };
-interface Tick { status: string; region?: Region; released?: boolean }
-export interface ProtectedLoginResult { url: string; sessionStorage: Record<string, string> }
+interface Tick { status: string; region?: Region; released?: boolean; kind?: string }
+export interface ProtectedLoginResult { url: string; sessionStorage: Record<string, string>; authenticated: boolean }
 
 const guardMessages: Record<string, string> = {
   "ambiguous-selector": "登录选择器匹配到多个可见控件，请配置唯一的 CSS 选择器",
@@ -34,15 +34,19 @@ export class ProtectedWebLogin {
   private submittedUrl = "";
   private submittedDocument = "";
   private startedAt = Date.now();
-  private anonymousSince = 0;
+  private readySince = 0;
+  private readyDocument = "";
   private installedDocument = "";
   private inputBusy = false;
   private origins: Set<string>;
   private interactionFrame: Region | null = null;
   private nonce = randomUUID();
+  private cleanup = Promise.resolve();
+  private credentialReleased = false;
+  private storageVerified = false;
   constructor(private options: {
     session: Session; url: string; username: string; password: string; config?: WebLoginConfig;
-    bounds: Rectangle; changed: () => void; completed: (result: ProtectedLoginResult) => Promise<void>;
+    bounds: Rectangle; prepare?: () => Promise<void>; changed: () => void; completed: (result: ProtectedLoginResult) => Promise<void>;
   }) {
     this.config = parseWebLoginConfig(options.config);
     this.origins = new Set([new URL(options.url).origin, ...this.config.allowedOrigins]);
@@ -65,7 +69,9 @@ export class ProtectedWebLogin {
     contents.on("render-process-gone", () => this.fail("后台登录页面已退出，请重试"));
     options.session.setPermissionCheckHandler(() => false);
     options.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
-    void contents.loadURL(options.url).then(() => this.schedule(), () => this.fail("登录页面加载失败，请检查网络和入口地址"));
+    void Promise.resolve().then(() => options.prepare?.()).then(async () => {
+      if (!this.disposed) { await contents.loadURL(options.url); this.schedule(); }
+    }).catch(() => this.fail("登录页面准备或加载失败，请检查网络后重试"));
   }
   private allowed(url: string) {
     try { const parsed = new URL(url); return ["http:", "https:"].includes(parsed.protocol) && !parsed.username && !parsed.password && this.origins.has(parsed.origin); } catch { return false; }
@@ -75,10 +81,11 @@ export class ProtectedWebLogin {
     // Return only recognized guard codes from the isolated world, never arbitrary
     // exception text (which could contain credentials supplied by the target page).
     const wrapped = `Promise.resolve().then(() => (${code})).then(
-      value => ({ ok: true, value }),
-      error => ({ ok: false, code: ${JSON.stringify(Object.keys(guardMessages))}.includes(error?.message) ? error.message : "runtime-error" })
+      value => ({ ok: true, value, released: globalThis.__vironLogin?.secretReleased() === true }),
+      error => ({ ok: false, released: globalThis.__vironLogin?.secretReleased() === true, code: ${JSON.stringify(Object.keys(guardMessages))}.includes(error?.message) ? error.message : "runtime-error" })
     )`;
-    const result = await this.window.webContents.executeJavaScriptInIsolatedWorld(997, [{ code: wrapped }], true) as { ok: boolean; value?: T; code?: string };
+    const result = await this.window.webContents.executeJavaScriptInIsolatedWorld(997, [{ code: wrapped }], true) as { ok: boolean; value?: T; code?: string; released?: boolean };
+    this.credentialReleased ||= result?.released === true;
     if (!result?.ok) throw new Error(result?.code || "runtime-error");
     return result.value as T;
   }
@@ -93,14 +100,17 @@ export class ProtectedWebLogin {
     this.timer.unref();
   }
   private fail(message: string) {
-    if (this.disposed) return;
+    if (this.disposed || this.state.phase === "failed") return;
     clearTimeout(this.timer);
     this.clearFrame();
     this.state.phase = "failed";
     this.state.message = message;
     // Destroy the document even on failure; do not retain inspectable credentials.
     this.destroyWindow();
-    void this.options.session.clearData().catch(() => undefined);
+    if (!this.storageVerified && (this.credentialReleased || /将密码写入/.test(message))) {
+      this.cleanup = this.options.session.clearData({ origins: [...this.origins] });
+      void this.cleanup.catch(() => undefined); // Settled callers still observe cleanup failures.
+    }
     this.options.changed();
   }
   private async tick() {
@@ -121,12 +131,19 @@ export class ProtectedWebLogin {
         this.installedDocument = documentId;
       }
       stage = "form";
+      const alreadyReleased = this.credentialReleased;
+      // Treat an interrupted renderer call conservatively: it can fill the form
+      // before its reply reaches main. Never resume extensions on unchecked storage.
+      this.credentialReleased ||= Boolean(this.options.password);
       const result = await this.evaluate<Tick>(`globalThis.__vironLogin.tick(${this.step}, ${this.submitted}, ${JSON.stringify(this.submittedUrl)}, ${this.passwordSubmitted}, ${JSON.stringify(this.submittedDocument)})`);
+      if (!alreadyReleased && !result.released && !await this.evaluate<boolean>("globalThis.__vironLogin.secretReleased()")) this.credentialReleased = false;
       if (result.released) this.submittedUrl ||= url;
       if (result.status === "next") {
         this.step++;
         this.submitted = true;
+        this.passwordSubmitted ||= Boolean(result.released);
         this.submittedUrl ||= url;
+        this.submittedDocument ||= documentId;
       } else if (result.status === "submitted") {
         this.submitted = true;
         this.passwordSubmitted ||= Boolean(result.released);
@@ -142,24 +159,26 @@ export class ProtectedWebLogin {
         if (this.disposed || contents.isDestroyed()) return;
         if (!after || JSON.stringify(before) !== JSON.stringify(after) || image.isEmpty()) { this.clearFrame(); return; }
         this.interactionFrame = after;
-        Object.assign(this.state, { phase: "interactive", message: "请完成验证，然后继续登录", image: image.toDataURL(), revision: `${this.nonce}:${after.revision}`, width: after.width, height: after.height });
+        Object.assign(this.state, { phase: "interactive", message: result.kind === "agreement" ? "请确认页面的协议选项后继续登录" : "请完成验证，然后继续登录", image: image.toDataURL(), revision: `${this.nonce}:${after.revision}`, width: after.width, height: after.height });
         this.options.changed();
         return;
       } else if (result.status === "success" || result.status === "anonymous") {
-        if (result.status === "anonymous") {
-          this.anonymousSince ||= Date.now();
-          if (Date.now() - this.anonymousSince < 3000) return;
-        }
+        const candidate = `${documentId}:${url}:${result.status}`;
+        if (this.readyDocument !== candidate) { this.readyDocument = candidate; this.readySince = Date.now(); }
+        if (Date.now() - this.readySince < 3000) return;
         stage = "storage";
         const storage = await this.evaluate<Record<string, string>>("globalThis.__vironLogin.finish()");
         const cookies = await this.options.session.cookies.get({});
         if (this.options.password && cookies.some((cookie) => cookie.value.includes(this.options.password))) return this.fail("站点将密码写入了会话存储，无法安全打开，请调整站点的登录实现");
+        this.storageVerified = true;
         Object.assign(this.state, { phase: "authenticating", message: "认证通过，正在打开业务页面" });
         this.dispose();
         this.options.changed();
-        await this.options.completed({ url, sessionStorage: storage });
+        await this.options.completed({ url, sessionStorage: storage, authenticated: result.status === "success" });
         return;
-      } else this.anonymousSince = 0;
+      }
+      this.readySince = 0;
+      this.readyDocument = "";
       this.clearFrame();
       this.state.phase = "authenticating";
       this.state.message = this.submitted ? "等待登录成功；如有验证，请在入口中配置验证区域" : "正在识别登录表单；复杂页面可在入口中配置登录步骤";
@@ -230,9 +249,15 @@ export class ProtectedWebLogin {
     if (!this.window.isDestroyed()) this.window.destroy();
   }
   dispose() {
+    if (this.disposed) return;
     this.disposed = true;
     clearTimeout(this.timer);
     this.clearFrame();
     this.destroyWindow();
+    if (!this.storageVerified && this.credentialReleased && this.state.phase !== "failed") {
+      this.cleanup = this.options.session.clearData({ origins: [...this.origins] });
+      void this.cleanup.catch(() => undefined);
+    }
   }
+  settled(): Promise<void> { return this.cleanup; }
 }
