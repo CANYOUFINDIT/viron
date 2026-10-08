@@ -463,7 +463,8 @@ export function useDatabaseQueryTabs(
               }),
           });
           tab.job = response.job;
-          pollJob(tab, response.job.id);
+          if (["pending", "running"].includes(response.job.status)) pollJob(tab, response.job.id);
+          else void $artifacts.loadHistory().catch(() => undefined);
       }
       catch (error) {
           tab.job = { id: "", status: "error", error: error instanceof Error ? error.message : tr("查询启动失败"), resultSets: [] };
@@ -471,25 +472,35 @@ export function useDatabaseQueryTabs(
   }
 
   function pollJob(tab: QueryTab, jobId: string) {
-      const timer = window.setInterval(async () => {
+      let polling = false;
+      const poll = async () => {
+          if (polling || !pollTimers.has(timer)) return;
+          polling = true;
           try {
               const response = await api<{
                   job: QueryJob;
               }>(`/api/v1/database-queries/${jobId}`);
+              if (!pollTimers.has(timer)) return;
               tab.job = response.job;
               if (!["pending", "running"].includes(response.job.status)) {
                   window.clearInterval(timer);
                   pollTimers.delete(timer);
-                  await $artifacts.loadHistory();
+                  void $artifacts.loadHistory().catch(() => undefined);
               }
           }
           catch (error) {
+              if (!pollTimers.has(timer)) return;
               window.clearInterval(timer);
               pollTimers.delete(timer);
               tab.job = { id: jobId, status: "error", error: error instanceof Error ? error.message : tr("读取查询结果失败"), resultSets: [] };
           }
-      }, 350);
+          finally {
+              polling = false;
+          }
+      };
+      const timer = window.setInterval(poll, 350);
       pollTimers.add(timer);
+      void poll();
   }
 
   async function cancelQuery() {

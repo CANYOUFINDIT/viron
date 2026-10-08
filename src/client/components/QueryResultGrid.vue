@@ -4,6 +4,7 @@ import { TabulatorFull as Tabulator, type ColumnDefinition } from "tabulator-tab
 import "tabulator-tables/dist/css/tabulator_midnight.min.css";
 import { nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { TABLE_GRID_LAYOUT, tableGridColumnSize } from "../database-table-grid";
+import { observeTableGridResize } from "../table-grid-resize";
 
 const props = defineProps<{
   columns: Array<{ name: string; table?: string; type?: number }>;
@@ -12,6 +13,7 @@ const props = defineProps<{
 
 const element = ref<HTMLElement | null>(null);
 let table: Tabulator | null = null;
+let stopGridResize: (() => void) | undefined;
 
 function definitions(): ColumnDefinition[] {
   return props.columns.map((column) => ({
@@ -41,12 +43,17 @@ async function render() {
       columns: definitions(),
       height: "100%",
       layout: TABLE_GRID_LAYOUT,
+      autoResize: false,
       movableColumns: true,
       resizableColumnFit: false,
       clipboard: true,
       selectableRows: true,
       columnDefaults: { resizable: true },
       placeholder: tr("查询没有返回数据行"),
+    });
+    const created = table;
+    created.on("tableBuilt", () => {
+      stopGridResize = observeTableGridResize(element.value!, created);
     });
   } else {
     table.setColumns(definitions());
@@ -56,8 +63,11 @@ async function render() {
 
 onMounted(render);
 onActivated(() => nextTick(() => table?.redraw(true)));
-watch(() => [props.columns, props.rows], render, { deep: true });
-onBeforeUnmount(() => table?.destroy());
+watch(() => [props.columns, props.rows], render);
+onBeforeUnmount(() => {
+  stopGridResize?.();
+  table?.destroy();
+});
 </script>
 
 <template>

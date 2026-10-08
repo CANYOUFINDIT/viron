@@ -1,5 +1,6 @@
 import { computed, onScopeDispose, ref } from "vue";
 import { WORKBENCH_SIDEBAR_COLLAPSE_THRESHOLD, WORKBENCH_SIDEBAR_RESTORE_WIDTH } from "../../workbench-sidebar-width";
+import { WORKBENCH_RESIZE_END_EVENT } from "../../table-grid-resize";
 import type { DatabaseWorkbenchProps } from "./types";
 
 export function useDatabaseLayout(props: Readonly<DatabaseWorkbenchProps>) {
@@ -12,6 +13,7 @@ export function useDatabaseLayout(props: Readonly<DatabaseWorkbenchProps>) {
   const queryFocused = ref(false);
   const workbenchElement = ref<HTMLElement | null>(null);
   let stopConnectionPaneResize: (() => void) | null = null;
+  let stopExplorerPaneResize: (() => void) | null = null;
   const persistenceKey = computed(() => `envman:database-workbench:${props.workspaceKey}:${props.environmentId ?? "global"}`);
   const workbenchStyle = computed(() => ({
     "--connection-pane-width": `${connectionPaneWidth.value}px`,
@@ -53,6 +55,16 @@ export function useDatabaseLayout(props: Readonly<DatabaseWorkbenchProps>) {
     connectionPaneWidth.value = clampConnectionPaneWidth(value);
   }
 
+  function previewPaneWidths(workbench: HTMLElement, connectionWidth: number, informationWidth: number) {
+    // Inherited CSS variables invalidate styles throughout the navigator and data grid.
+    // Override only the grid tracks while dragging; commit the variables on release.
+    workbench.style.gridTemplateColumns = [
+      ...(connectionPaneVisible.value ? [`${connectionWidth}px`] : []),
+      "minmax(0, 1fr)",
+      ...(informationPaneVisible.value ? [`${informationWidth}px`] : []),
+    ].join(" ");
+  }
+
   function startConnectionPaneResize(event: PointerEvent) {
     if (!event.isPrimary || event.button !== 0) return;
     event.preventDefault();
@@ -60,6 +72,9 @@ export function useDatabaseLayout(props: Readonly<DatabaseWorkbenchProps>) {
     const bounds = workbench?.getBoundingClientRect();
     if (!workbench || !bounds) return;
     stopConnectionPaneResize?.();
+    stopExplorerPaneResize?.();
+    const divider = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+    workbench.setAttribute("data-workbench-resizing", "");
 
     const pointerId = event.pointerId;
     const maxWidth = Math.min(520, bounds.width * .5);
@@ -69,8 +84,8 @@ export function useDatabaseLayout(props: Readonly<DatabaseWorkbenchProps>) {
     let frame = 0;
     const resizeGrid = () => {
       frame = 0;
-      // Resize the real grid once per frame without rerendering the workbench's large Vue tree.
-      workbench.style.setProperty("--connection-pane-width", `${nextWidth}px`);
+      previewPaneWidths(workbench, nextWidth, explorerPaneWidth.value);
+      if (divider) divider.style.left = `${nextWidth}px`;
     };
     const move = (moveEvent: PointerEvent) => {
       if (moveEvent.pointerId !== pointerId) return;
@@ -87,6 +102,10 @@ export function useDatabaseLayout(props: Readonly<DatabaseWorkbenchProps>) {
       document.removeEventListener("pointerup", finish);
       document.removeEventListener("pointercancel", cancel);
       window.removeEventListener("blur", cancel);
+      workbench.style.removeProperty("grid-template-columns");
+      divider?.style.removeProperty("left");
+      workbench.removeAttribute("data-workbench-resizing");
+      workbench.dispatchEvent(new Event(WORKBENCH_RESIZE_END_EVENT));
       stopConnectionPaneResize = null;
     };
     const collapse = () => {
@@ -118,7 +137,10 @@ export function useDatabaseLayout(props: Readonly<DatabaseWorkbenchProps>) {
     window.addEventListener("blur", cancel, { once: true });
   }
 
-  onScopeDispose(() => stopConnectionPaneResize?.());
+  onScopeDispose(() => {
+    stopConnectionPaneResize?.();
+    stopExplorerPaneResize?.();
+  });
 
   function resizeConnectionPane(delta: number) {
     const width = connectionPaneWidth.value + delta;
@@ -139,17 +161,55 @@ export function useDatabaseLayout(props: Readonly<DatabaseWorkbenchProps>) {
   }
 
   function startExplorerPaneResize(event: PointerEvent) {
+    if (!event.isPrimary || event.button !== 0) return;
     event.preventDefault();
-    const bounds = workbenchElement.value?.getBoundingClientRect();
-    if (!bounds) return;
-    const move = (moveEvent: PointerEvent) => setExplorerPaneWidth(bounds.right - moveEvent.clientX);
-    const finish = () => {
+    const workbench = workbenchElement.value;
+    const bounds = workbench?.getBoundingClientRect();
+    if (!workbench || !bounds) return;
+    stopConnectionPaneResize?.();
+    stopExplorerPaneResize?.();
+    const divider = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+    workbench.setAttribute("data-workbench-resizing", "");
+    const pointerId = event.pointerId;
+    const connectionWidth = connectionPaneVisible.value ? connectionPaneWidth.value : 0;
+    const maxWidth = Math.max(220, Math.min(420, bounds.width - connectionWidth - 420));
+    const widthAt = (clientX: number) => Math.round(Math.max(220, Math.min(maxWidth, bounds.right - clientX)));
+    let nextWidth = explorerPaneWidth.value;
+    let frame = 0;
+    const resizeGrid = () => {
+      frame = 0;
+      previewPaneWidths(workbench, connectionWidth, nextWidth);
+      if (divider) divider.style.right = `${nextWidth}px`;
+    };
+    const move = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId !== pointerId) return;
+      nextWidth = widthAt(moveEvent.clientX);
+      if (!frame) frame = requestAnimationFrame(resizeGrid);
+    };
+    const cleanup = () => {
+      if (frame) cancelAnimationFrame(frame);
       document.removeEventListener("pointermove", move);
       document.removeEventListener("pointerup", finish);
+      document.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("blur", cancel);
+      workbench.style.removeProperty("grid-template-columns");
+      divider?.style.removeProperty("right");
+      workbench.removeAttribute("data-workbench-resizing");
+      workbench.dispatchEvent(new Event(WORKBENCH_RESIZE_END_EVENT));
+      stopExplorerPaneResize = null;
+    };
+    const finish = (upEvent: PointerEvent) => {
+      if (upEvent.pointerId !== pointerId) return;
+      cleanup();
+      setExplorerPaneWidth(widthAt(upEvent.clientX));
       persistWorkbenchPreferences();
     };
+    const cancel = () => cleanup();
+    stopExplorerPaneResize = cancel;
     document.addEventListener("pointermove", move);
-    document.addEventListener("pointerup", finish, { once: true });
+    document.addEventListener("pointerup", finish);
+    document.addEventListener("pointercancel", cancel, { once: true });
+    window.addEventListener("blur", cancel, { once: true });
   }
 
   function resizeExplorerPane(delta: number) {

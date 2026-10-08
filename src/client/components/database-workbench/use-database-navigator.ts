@@ -455,14 +455,15 @@ export function useDatabaseNavigator(
   }
 
   async function loadObjectGroups() {
-      if (!$connections.selectedConnectionId.value) {
+      const connectionId = $connections.selectedConnectionId.value;
+      if (!connectionId) {
           objectGroups.value = [];
           return;
       }
       const response = await api<{
           items: ObjectGroupItem[];
-      }>(`/api/v1/database-object-groups?connectionId=${encodeURIComponent($connections.selectedConnectionId.value)}`);
-      objectGroups.value = response.items;
+      }>(`/api/v1/database-object-groups?connectionId=${encodeURIComponent(connectionId)}`);
+      if ($connections.selectedConnectionId.value === connectionId) objectGroups.value = response.items;
   }
 
   function objectGroup(database: string, category: NavigatorCategoryKey, item: DatabaseObject | {

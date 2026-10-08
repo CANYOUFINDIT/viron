@@ -334,7 +334,11 @@ export function useDatabaseConnections(
               items: SchemaItem[];
           }>(`/api/v1/database-connections/${target.id}/schemas`);
           $navigator.schemas.value = response.items;
-          await Promise.all([$artifacts.loadHistory(), $artifacts.loadFavorites(), $artifacts.loadSavedQueries(), $artifacts.loadDatabaseTasks(), $navigator.loadObjectGroups()]);
+          void Promise.all([$artifacts.loadHistory(), $artifacts.loadFavorites(), $artifacts.loadSavedQueries(), $artifacts.loadDatabaseTasks(), $navigator.loadObjectGroups()])
+              .catch((error) => {
+                  if (selectedConnectionId.value === target.id && databaseSessionId.value === runtime.item.id)
+                      ElMessage.warning(error instanceof Error ? error.message : tr("请求失败"));
+              });
           setConnectionCollapsed(root.id, false);
           ElMessage.success(tr("已连接 {0}{1}", [root.name, target.profileName ? ` · ${target.profileName}` : ""]));
           return true;
@@ -767,6 +771,7 @@ export function useDatabaseConnections(
 
   function disposeDatabaseWorkbench() {
       $queryTabs.pollTimers.forEach((timer) => window.clearInterval(timer));
+      $queryTabs.pollTimers.clear();
       window.clearInterval($queryTabs.databaseSessionPollTimer);
       document.removeEventListener("keydown", $queryTabs.handleWorkbenchKeydown);
       $queryTabs.removeShortcutListener?.();

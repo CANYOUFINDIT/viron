@@ -37,6 +37,7 @@ import "tabulator-tables/dist/css/tabulator_midnight.min.css";
 import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { api } from "../api";
 import { createClientId } from "../client-id";
+import { observeTableGridResize } from "../table-grid-resize";
 import { copyTextToClipboard } from "../clipboard";
 import { isBitFlagColumn } from "../../shared/database-cell-value";
 import { copyTableRows, parseTableClipboard, type TableRowCopyFormat } from "../database-table-row-actions";
@@ -134,6 +135,7 @@ const editorElement = ref<HTMLElement | null>(null);
 let removeShortcutListener: (() => void) | undefined;
 const transactionActive = ref(false);
 let tableGrid: Tabulator | null = null;
+let stopGridResize: (() => void) | undefined;
 let loadController: AbortController | null = null;
 let loadGeneration = 0;
 let findMatches: TableFindMatch[] = [];
@@ -824,6 +826,7 @@ function installTable(rows: Array<Record<string, unknown>>) {
       columns: definitions(),
       height: "100%",
       layout: TABLE_GRID_LAYOUT,
+      autoResize: false,
       movableColumns: true,
       selectableRows: false,
       selectableRange: true,
@@ -851,6 +854,10 @@ function installTable(rows: Array<Record<string, unknown>>) {
     tableGrid.on("cellEdited", (cell: CellComponent) => {
       if (applyingBatchEdit || fillActive.value) return;
       trackUpdate(cell.getRow());
+    });
+    const created = tableGrid;
+    created.on("tableBuilt", () => {
+      stopGridResize = observeTableGridResize(tableElement.value!, created);
     });
     tableGrid.on("columnResized", (column) => {
       const name = column.getField();
@@ -1435,6 +1442,7 @@ onBeforeUnmount(() => {
   stopLoading();
   clearFindHighlights();
   clearFillSession();
+  stopGridResize?.();
   tableGrid?.destroy();
 });
 </script>

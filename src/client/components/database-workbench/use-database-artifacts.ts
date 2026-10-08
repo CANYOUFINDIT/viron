@@ -610,30 +610,33 @@ export function useDatabaseArtifacts(
   }
 
   async function loadHistory() {
-      if (!$connections.selectedConnectionId.value)
+      const connectionId = $connections.selectedConnectionId.value;
+      if (!connectionId)
           return;
       const response = await api<{
           items: HistoryItem[];
-      }>(`/api/v1/database-query-history?connectionId=${$connections.selectedConnectionId.value}`);
-      historyItems.value = response.items;
+      }>(`/api/v1/database-query-history?connectionId=${connectionId}`);
+      if ($connections.selectedConnectionId.value === connectionId) historyItems.value = response.items;
   }
 
   async function loadFavorites() {
-      if (!$connections.selectedConnectionId.value)
+      const connectionId = $connections.selectedConnectionId.value;
+      if (!connectionId)
           return;
       const response = await api<{
           items: FavoriteItem[];
-      }>(`/api/v1/database-query-favorites?connectionId=${$connections.selectedConnectionId.value}`);
-      favorites.value = response.items;
+      }>(`/api/v1/database-query-favorites?connectionId=${connectionId}`);
+      if ($connections.selectedConnectionId.value === connectionId) favorites.value = response.items;
   }
 
   async function loadSavedQueries() {
-      if (!$connections.selectedConnectionId.value)
+      const connectionId = $connections.selectedConnectionId.value;
+      if (!connectionId)
           return;
       const response = await api<{
           items: SavedQueryItem[];
-      }>(`/api/v1/database-saved-queries?connectionId=${$connections.selectedConnectionId.value}`);
-      savedQueries.value = response.items;
+      }>(`/api/v1/database-saved-queries?connectionId=${connectionId}`);
+      if ($connections.selectedConnectionId.value === connectionId) savedQueries.value = response.items;
   }
 
   async function loadDatabaseTasks() {
