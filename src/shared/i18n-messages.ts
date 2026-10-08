@@ -4251,6 +4251,19 @@ const generatedEnMessages: Record<string, string> = {
 };
 
 const enOverrides: Record<string, string> = {
+  "登录方式": "Login method",
+  "安全自动登录（默认）": "Protected automatic login (default)",
+  "直接填充（允许查看密码）": "Direct fill (password can be viewed)",
+  "后台自动登录，失败后自动回退到受保护的密码填充和右键填充。使用者无法通过登录页面查看托管密码。": "Log in in the background, with protected autofill and context-menu fill as fallbacks. Users cannot view the managed password through the login page.",
+  "在可操作的登录页填入用户名和密码，由使用者完成协议、验证码并提交登录。密码可以通过页面、开发者工具或浏览器插件查看，请仅用于允许共享密码的入口。": "Fill an interactive login page. Users complete agreements or verification and submit the form. The password can be viewed through the page, developer tools or browser extensions. Use only where password sharing is allowed.",
+  "配置对该 Web 入口下的所有账号生效。用户名和密码选择器留空时自动识别。": "Applies to all accounts in this Web entry. Leave the username and password selectors blank for automatic detection.",
+  "填充用户名和密码": "Fill username and password",
+  "重新填充": "Fill again",
+  "登录方式无效": "Invalid login method",
+  "已填充登录信息，请确认协议或验证码后自行提交登录。": "Login details filled. Complete any agreement or verification, then submit the form.",
+  "未识别到可填充的登录表单，网页仍可继续使用。可配置用户名和密码选择器后重新填充。": "No fillable login form found. You can still use the page. Configure username and password selectors and try filling again.",
+  "当前页面不在允许登录域名中，未填入账号密码。": "This page is outside the allowed login origins. No credentials were filled.",
+  "已清除本机登录状态，正在重新打开登录页": "Local login state cleared. Reopening the login page.",
   "拓展程序": "Extensions",
   "本机已添加此 Chrome 扩展": "This Chrome extension is already installed on this computer",
   "从本机全部环境移除扩展「{{0}}」及其本机文件？": "Remove extension “{{0}}” and its local files from all environments on this computer?",

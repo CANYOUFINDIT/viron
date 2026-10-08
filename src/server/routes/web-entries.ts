@@ -119,6 +119,7 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
         resourceType: "web_entry",
         resourceId: id,
         summary: `添加 Web 入口 ${body.name}`,
+        details: { loginMode: body.loginConfig?.mode ?? "protected" },
         request,
       });
       return reply.code(201).send({ id, tlsEndpointId, tlsProbeReady: Boolean(tlsEndpoint?.sshConnectionId) });
@@ -171,7 +172,8 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
       await Promise.all(credentials.map((credential) => app.webAccountViews.sleepCredential(credential.id)));
       const tlsEndpointId = await syncWebEntryTlsEndpoint(app, environmentId, request.params.id, body.url);
       const tlsEndpoint = tlsEndpointId ? await getTlsEndpoint(app, tlsEndpointId) : null;
-      await writeAudit(app.db, { action: "web_entry.updated", resourceType: "web_entry", resourceId: request.params.id, summary: `更新 Web 入口 ${body.name}`, request });
+      await writeAudit(app.db, { action: "web_entry.updated", resourceType: "web_entry", resourceId: request.params.id, summary: `更新 Web 入口 ${body.name}`,
+        details: { previousLoginMode: parseWebLoginConfig(JSON.parse(previous.login_config_json || "{}")).mode, loginMode: parseWebLoginConfig(JSON.parse(loginConfigJson)).mode }, request });
       return { ok: true, tlsEndpointId, tlsProbeReady: Boolean(tlsEndpoint?.sshConnectionId) };
     },
   );

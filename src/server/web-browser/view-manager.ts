@@ -23,6 +23,7 @@ import { normalizeWebAddress } from "../../shared/web-address.js";
 import { idAfterClose, reorderMap } from "../../shared/tab-order.js";
 import { parseWebLoginConfig, type WebLoginConfig, type ProtectedLoginState, type ProtectedLoginInput } from "../../shared/protected-web-login.js";
 import type { ProtectedLoginController } from "../../shared/protected-web-login-controller.js";
+import { DirectWebAutofill } from "../../shared/direct-web-autofill.js";
 import { createServerProtectedLogin, verifyServerBusinessPage } from "./protected-login.js";
 import type { AuthenticatedUser } from "../access-control.js";
 
@@ -53,6 +54,7 @@ interface StoredCredential {
 }
 
 interface ManagedPage {
+  directAutofill?: DirectWebAutofill;
   id: string;
   page: Page;
   title: string;
@@ -108,6 +110,7 @@ interface DownloadArtifact {
 }
 
 export interface PublicWebAccountView {
+  loginMode: WebLoginConfig["mode"];
   protectedLogin: ProtectedLoginState | null;
   loginNotice: string;
   loading: boolean;
@@ -643,6 +646,7 @@ export class WebAccountViewManager {
     context.on("page", (page) => { if (!view.closed && !view.protectedLogin) void this.registerPage(view, page, true); });
     context.on("close", () => {
       view.closed = true;
+      for (const page of view.pages.values()) page.directAutofill?.dispose();
       if (this.views.get(view.key) === view) this.views.delete(view.key);
       this.app.activeConnections.release(view.runtimeId);
     });
@@ -659,7 +663,7 @@ export class WebAccountViewManager {
       const item = view.pages.get(view.pageIds.get(page)!)!;
       item.pendingUrl = initialUrl; item.url = initialUrl; item.title = view.entryName || view.username;
       await this.createBlankPage(view);
-    } else await this.startProtectedLogin(view, initialUrl);
+    } else await this.startConfiguredLogin(view, initialUrl);
 
     return view;
   }
@@ -745,10 +749,11 @@ export class WebAccountViewManager {
 
   private async pageClosed(view: ManagedWebView, pageId: string): Promise<void> {
     const nextPageId = idAfterClose([...view.pages.keys()], view.activePageId, pageId);
+    view.pages.get(pageId)?.directAutofill?.dispose();
     view.pages.delete(pageId);
     if (view.closed || view.protectedLogin) return;
     if (!view.pages.size) {
-      await this.startProtectedLogin(view);
+      await this.startConfiguredLogin(view);
       return;
     }
     if (view.activePageId === pageId) {
@@ -769,7 +774,7 @@ export class WebAccountViewManager {
     const pendingUrl = item.pendingUrl;
     if (pendingUrl) {
       item.pendingUrl = "";
-      await this.startProtectedLogin(view, pendingUrl, true);
+      await this.startConfiguredLogin(view, pendingUrl, true);
       return;
     }
     await this.stopScreencast(view);
@@ -848,7 +853,12 @@ export class WebAccountViewManager {
       } catch { this.send(socket, { type: "login-input-result", requestId: message.requestId, message: "未能完成验证操作，请重试" }); }
       return;
     }
-    if (message.type === "refill") { await this.startProtectedLogin(view); return; }
+    if (message.type === "refill") {
+      const active = view.pages.get(view.activePageId);
+      if (view.loginConfig.mode === "direct" && active && !view.protectedLogin) await this.fillDirectPage(view, active);
+      else await this.startConfiguredLogin(view);
+      return;
+    }
     if (message.type === "browse") { await this.browseWithoutAutofill(view); return; }
     if (message.type === "visibility") { await this.setSocketVisibility(view, socket, message.visible === true); return; }
     if (message.type === "resize") { await this.resize(view, Number(message.width), Number(message.height)); return; }
@@ -973,10 +983,63 @@ export class WebAccountViewManager {
     else await dialog.dismiss();
   }
 
-  private startProtectedLogin(view: ManagedWebView, preferredUrl = "", preservePages = false): Promise<void> {
-    const preparation = this.prepareProtectedLogin(view, preferredUrl, preservePages);
+  private startConfiguredLogin(view: ManagedWebView, preferredUrl = "", preservePages = false): Promise<void> {
+    for (const page of view.pages.values()) page.directAutofill?.dispose();
+    const preparation = view.loginConfig.mode === "direct"
+      ? this.prepareDirectLogin(view, preferredUrl, preservePages)
+      : this.prepareProtectedLogin(view, preferredUrl, preservePages);
     view.loginPreparation = preparation;
     return preparation;
+  }
+
+  private async prepareDirectLogin(view: ManagedWebView, preferredUrl: string, preservePages: boolean): Promise<void> {
+    const previous = view.login;
+    previous?.dispose();
+    const attempt = randomUUID();
+    view.loginAttempt = attempt;
+    view.loginNotice = "";
+    view.protectedLogin = { phase: "loading", pageLoading: true, message: "正在加载登录网页", image: "", revision: "", width: 0, height: 0 };
+    await this.stopScreencast(view);
+    await previous?.settled();
+    const current = () => !view.closed && view.loginAttempt === attempt;
+    if (!current()) return;
+    const oldPages = preservePages ? [view.pages.get(view.activePageId)?.page].filter((page): page is Page => Boolean(page)) : view.context.pages();
+    await Promise.all(oldPages.map((page) => page.close().catch(() => undefined)));
+    if (!current()) return;
+    const page = await view.context.newPage();
+    if (!current()) { await page.close(); return; }
+    view.login = null;
+    view.protectedLogin = null;
+    await this.registerPage(view, page, true);
+    const item = view.pages.get(view.pageIds.get(page)!)!;
+    const url = preferredUrl || view.entryUrl;
+    item.url = url;
+    item.loading = true;
+    this.broadcastState(view);
+    // Present the normal browser immediately; loading/fill never blocks interaction.
+    void page.goto(url, { waitUntil: "load", timeout: 30_000 }).then(async () => {
+      if (current()) await this.fillDirectPage(view, item);
+    }).catch(() => {
+      if (current()) { item.loading = false; view.loginNotice = "网页加载失败，请检查地址或网络后刷新"; this.broadcastState(view); }
+    });
+  }
+
+  private async fillDirectPage(view: ManagedWebView, item: ManagedPage): Promise<void> {
+    item.directAutofill?.dispose();
+    const attempt = randomUUID();
+    view.loginAttempt = attempt;
+    const credential = await this.app.db.prepare("SELECT username, password_ciphertext FROM web_credentials WHERE id = ?").get(view.credentialId) as { username: string; password_ciphertext: string } | undefined;
+    const current = () => !view.closed && view.loginAttempt === attempt && view.pages.get(item.id) === item && !item.page.isClosed();
+    if (!current()) return;
+    if (!credential) throw new Error("登录账号不存在");
+    view.username = credential.username;
+    view.loginNotice = "";
+    item.directAutofill = new DirectWebAutofill({
+      browser: { destroyed: () => !current(), loading: () => item.loading, evaluate: (source) => item.page.evaluate(source) },
+      entryUrl: view.entryUrl, config: view.loginConfig, username: credential.username, password: this.app.secrets.decrypt(credential.password_ciphertext),
+      changed: (message) => { if (current()) { view.loginNotice = message; this.broadcastState(view); } },
+    });
+    this.broadcastState(view);
   }
 
   private async prepareProtectedLogin(view: ManagedWebView, preferredUrl: string, preservePages: boolean): Promise<void> {
@@ -1153,6 +1216,7 @@ export class WebAccountViewManager {
   private publicView(view: ManagedWebView): PublicWebAccountView {
     const active = view.pages.get(view.activePageId);
     return {
+      loginMode: view.loginConfig.mode,
       protectedLogin: view.protectedLogin,
       loginNotice: view.loginNotice,
       loading: view.protectedLogin ? view.protectedLogin.pageLoading === true : active?.loading === true,
@@ -1213,6 +1277,7 @@ export class WebAccountViewManager {
     view.sockets.clear();
     view.visibleSockets.clear();
     view.login?.dispose();
+    for (const page of view.pages.values()) page.directAutofill?.dispose();
     await this.stopScreencast(view);
     await view.login?.settled().catch(() => undefined);
     await view.context.close().catch(() => undefined);

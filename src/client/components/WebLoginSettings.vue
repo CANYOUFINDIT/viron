@@ -9,23 +9,34 @@ const fields = [
   ["successSelector", "登录成功标记", '[data-testid="user-menu"]'],
   ["interactionSelector", "验证区域选择器", '#verification'],
 ] as const;
+const modes = [
+  { value: "protected", label: "安全自动登录（默认）", description: "后台自动登录，失败后自动回退到受保护的密码填充和右键填充。使用者无法通过登录页面查看托管密码。" },
+  { value: "direct", label: "直接填充（允许查看密码）", description: "在可操作的登录页填入用户名和密码，由使用者完成协议、验证码并提交登录。密码可以通过页面、开发者工具或浏览器插件查看，请仅用于允许共享密码的入口。" },
+] as const;
 </script>
 
 <template>
   <details class="login-settings">
-    <summary>后台登录配置</summary>
-    <p>账号密码仅在后台页面中填写。普通表单可留空自动识别；验证码、滑块或多步登录请配置下方选项。</p>
-    <el-form-item v-for="[key, label, placeholder] in fields" :key="key" :label="label">
+    <summary>{{ $t('高级配置') }}</summary>
+    <fieldset class="login-settings__modes">
+      <legend>{{ $t('登录方式') }}</legend>
+      <label v-for="mode in modes" :key="mode.value" class="login-settings__mode" :class="{ 'is-selected': modelValue.mode === mode.value }">
+        <input v-model="modelValue.mode" type="radio" name="web-login-mode" :value="mode.value" />
+        <span><strong>{{ $t(mode.label) }}</strong><small>{{ $t(mode.description) }}</small></span>
+      </label>
+    </fieldset>
+    <p>{{ $t('配置对该 Web 入口下的所有账号生效。用户名和密码选择器留空时自动识别。') }}</p>
+    <el-form-item v-for="[key, label, placeholder] in fields.filter(([key]) => modelValue.mode === 'protected' || key === 'usernameSelector' || key === 'passwordSelector')" :key="key" :label="$t(label)">
       <el-input v-model="modelValue[key]" :placeholder="placeholder" />
     </el-form-item>
-    <p class="login-settings__hint">验证区域必须只包含验证控件，不能包含账号、密码或 iframe。建议配置成功标记，确认登录后再打开业务页面。</p>
+    <p v-if="modelValue.mode === 'protected'" class="login-settings__hint">验证区域必须只包含验证控件，不能包含账号、密码或 iframe。建议配置成功标记，确认登录后再打开业务页面。</p>
     <el-form-item label="允许登录域名（每行一个 Origin）">
       <el-input :model-value="originsText" type="textarea" :rows="2" placeholder="https://login.example.com" @update:model-value="emit('update:originsText', $event)" />
     </el-form-item>
-    <el-form-item label="多步登录脚本（可选，JSON）">
+    <el-form-item v-if="modelValue.mode === 'protected'" label="多步登录脚本（可选，JSON）">
       <el-input :model-value="stepsText" type="textarea" :rows="6" spellcheck="false" placeholder='[{"action":"type","selector":"#username","value":"{USERNAME}"},{"action":"type","selector":"#password","value":"{SECRET}"},{"action":"click","selector":"#login"},{"action":"success","selector":"#user-menu"}]' @update:model-value="emit('update:stepsText', $event)" />
     </el-form-item>
-    <p class="login-settings__hint">操作支持 type、click、interactive、success。密码使用 {SECRET}，用户名使用 {USERNAME}；修改账号密码后无需重写脚本。最后一步必须为 success。</p>
+    <p v-if="modelValue.mode === 'protected'" class="login-settings__hint">操作支持 type、click、interactive、success。密码使用 {SECRET}，用户名使用 {USERNAME}；修改账号密码后无需重写脚本。最后一步必须为 success。</p>
   </details>
 </template>
 
@@ -34,4 +45,12 @@ const fields = [
 .login-settings summary { cursor: pointer; font-weight: 600; color: var(--ink-800); }
 .login-settings p { color: var(--ink-500); font-size: 12px; line-height: 1.7; margin: 12px 0; }
 .login-settings .login-settings__hint { margin-top: -8px; }
+.login-settings__modes { border: 0; padding: 0; margin: 18px 0 0; min-width: 0; }
+.login-settings__modes legend { padding: 0; margin-bottom: 10px; color: var(--ink-800); font-size: 14px; font-weight: 600; }
+.login-settings__mode { display: flex; align-items: flex-start; gap: 10px; border: 1px solid var(--ink-100); border-radius: 8px; padding: 12px; cursor: pointer; }
+.login-settings__mode + .login-settings__mode { margin-top: 8px; }
+.login-settings__mode.is-selected { border-color: var(--teal-600); }
+.login-settings__mode input { margin: 3px 0 0; flex: none; accent-color: var(--teal-600); }
+.login-settings__mode strong { display: block; color: var(--ink-800); font-size: 13px; font-weight: 600; line-height: 1.5; }
+.login-settings__mode small { display: block; margin-top: 4px; color: var(--ink-500); font-size: 12px; line-height: 1.7; }
 </style>

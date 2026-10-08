@@ -18,6 +18,12 @@ function fixture(interactionSelector = "#challenge", uuidAvailable = true) {
 }
 
 describe("protected Web login", () => {
+  it("defaults legacy entries to protected login and only accepts an explicit direct policy", () => {
+    expect(parseWebLoginConfig({ usernameSelector: "#user" }).mode).toBe("protected");
+    expect(parseWebLoginConfig({ mode: "direct" }).mode).toBe("direct");
+    expect(() => parseWebLoginConfig({ mode: "unsafe" })).toThrow("登录方式无效");
+    expect(() => parseWebLoginConfig({ mode: null })).toThrow("登录方式无效");
+  });
   it("freezes and covers credentials in a fully interactive fallback page", () => {
     const { window, guard } = fixture("");
     const result = guard.assist();

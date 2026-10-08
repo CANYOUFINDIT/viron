@@ -25,7 +25,7 @@ import { applyHistoryNavigationCommand, applyHistoryNavigationWheel } from "../h
 import type { TlsWebEntryBadge } from "../../shared/tls-certificates";
 import TlsPopover from "./credentials/TlsPopover.vue";
 import ProtectedWebLogin from "./ProtectedWebLogin.vue";
-import type { ProtectedLoginInput, ProtectedLoginState } from "../../shared/protected-web-login";
+import type { ProtectedLoginInput, ProtectedLoginState, WebLoginMode } from "../../shared/protected-web-login";
 import WebPageTabStrip from "./WebPageTabStrip.vue";
 import WebPageLoadProgress from "./WebPageLoadProgress.vue";
 import WebLoginNotice from "./WebLoginNotice.vue";
@@ -38,6 +38,7 @@ interface BrowserPage {
 }
 
 interface BrowserView {
+  loginMode?: WebLoginMode;
   protectedLogin: ProtectedLoginState | null;
   loginNotice: string;
   loading: boolean;
@@ -554,13 +555,13 @@ onBeforeUnmount(() => {
       </form>
       <div class="web-browser-tools">
         <button type="button" :aria-label="$t('新建空白标签页')" :title="$t('新建空白标签页')" @click="createBlankPage"><Plus :size="15" /></button>
-        <button type="button" :aria-label="$t('重新后台登录')" :title="$t('重新后台登录')" :disabled="!view" @click="send({ type: 'refill' })"><KeyRound :size="15" /></button>
+        <button type="button" :aria-label="$t(view?.loginMode === 'direct' ? '填充用户名和密码' : '重新后台登录')" :title="$t(view?.loginMode === 'direct' ? '填充用户名和密码' : '重新后台登录')" :disabled="!view" @click="send({ type: 'refill' })"><KeyRound :size="15" /></button>
         <button type="button" :aria-label="$t('重新登录')" :title="$t('清除登录状态并重新登录')" :disabled="!view" @click="resetLogin"><RotateCcw :size="15" /></button>
         <button v-if="focused !== undefined" type="button" :aria-label="focused ? $t('退出沉浸模式') : $t('进入沉浸模式')" :title="focused ? $t('退出沉浸模式') : $t('进入沉浸模式')" @click="emit('focusChange', !focused)"><Minimize2 v-if="focused" :size="15" /><Maximize2 v-else :size="15" /></button>
         <a v-if="!desktopApp" :href="externalHref" target="_blank" rel="noopener noreferrer" :aria-label="$t('在浏览器新标签页打开')" :title="$t('在浏览器新标签页打开')"><ExternalLink :size="15" /></a>
       </div>
     </header>
-    <WebLoginNotice v-if="!view?.protectedLogin" :message="view?.loginNotice" @retry="send({ type: 'refill' })" />
+    <WebLoginNotice v-if="!view?.protectedLogin" :message="view?.loginNotice" :mode="view?.loginMode" @retry="send({ type: 'refill' })" />
 
     <div
       ref="surface"

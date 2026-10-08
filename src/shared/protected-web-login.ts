@@ -5,7 +5,9 @@ export interface WebLoginStep {
   origin?: string;
   value?: string;
 }
+export type WebLoginMode = "protected" | "direct";
 export interface WebLoginConfig {
+  mode: WebLoginMode;
   usernameSelector: string;
   passwordSelector: string;
   submitSelector: string;
@@ -39,13 +41,17 @@ export interface ProtectedLoginInput {
   targetToken?: string;
 }
 export function defaultWebLoginConfig(): WebLoginConfig {
-  return { usernameSelector: "", passwordSelector: "", submitSelector: "", successSelector: "", interactionSelector: "", allowedOrigins: [], steps: [] };
+  return { mode: "protected", usernameSelector: "", passwordSelector: "", submitSelector: "", successSelector: "", interactionSelector: "", allowedOrigins: [], steps: [] };
 }
 export function parseWebLoginConfig(value: unknown): WebLoginConfig {
   if (value == null) return defaultWebLoginConfig();
   if (typeof value !== "object" || Array.isArray(value)) throw new Error("登录配置必须是对象");
   const input = value as Record<string, unknown>;
   const result = defaultWebLoginConfig();
+  if (input.mode !== undefined) {
+    if (input.mode !== "protected" && input.mode !== "direct") throw new Error("登录方式无效");
+    result.mode = input.mode;
+  }
   for (const name of ["usernameSelector", "passwordSelector", "submitSelector", "successSelector", "interactionSelector"] as const) {
     if (input[name] === undefined) continue;
     if (typeof input[name] !== "string" || input[name].length > 1000) throw new Error("登录选择器无效");

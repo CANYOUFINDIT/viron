@@ -826,7 +826,7 @@ onBeforeUnmount(() => {
               <span class="web-page-menu__rule" aria-hidden="true"></span>
               <button type="button" class="web-page-menu__immersive" :aria-label="focused ? $t('退出沉浸模式') : $t('进入沉浸模式')" :title="focused ? $t('退出沉浸模式') : $t('进入沉浸模式')" @click="toggleImmersiveFromMenu"><Minimize2 v-if="focused" :size="15" /><Maximize2 v-else :size="15" /></button>
             </div>
-            <button type="button" class="web-page-menu__item" :disabled="!state" @click="refillFromMenu"><KeyRound :size="15" />{{ $t('后台登录') }}</button>
+            <button type="button" class="web-page-menu__item" :disabled="!state" @click="refillFromMenu"><KeyRound :size="15" />{{ $t(state?.loginMode === 'direct' ? '填充用户名和密码' : '后台登录') }}</button>
             <button type="button" class="web-page-menu__item" :disabled="!state || resetting" @click="reloginFromMenu"><RotateCcw :size="15" />{{ $t('重新登录') }}</button>
             <p class="web-page-menu__status">
               <ShieldAlert v-if="state?.certificateError" :size="14" />
@@ -838,7 +838,7 @@ onBeforeUnmount(() => {
         </el-popover>
       </div>
     </header>
-    <WebLoginNotice v-if="!state?.protectedLogin" :message="state?.loginNotice" @retry="runAction('refill')" />
+    <WebLoginNotice v-if="!state?.protectedLogin" :message="state?.loginNotice" :mode="state?.loginMode" @retry="runAction('refill')" />
     <div ref="surface" class="web-browser-surface desktop-web-browser-surface" :class="{ 'is-preview': preview }">
       <img v-if="preview && previewFrame" :src="previewFrame" :alt="$t('{0} 的页面画面', [username])" draggable="false" />
       <div v-else-if="!started || preloading" class="web-browser-loading web-browser-idle" :title="$t('双击空白处访问页面')" @pointerdown.stop @mousedown.stop @dblclick="visitPage">

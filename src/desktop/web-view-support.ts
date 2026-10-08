@@ -181,13 +181,14 @@ export function webViewState(view: ManagedDesktopWebView): DesktopWebViewState {
   const active = view.pages.get(view.activePageId);
   if (!active) {
     if (!view.login) throw new Error(tr("本机账号当前没有可用页面"));
-    return { id: view.id, credentialId: view.credentialId, activePageId: "", pages: [], url: view.entryUrl, title: view.username,
+    return { loginMode: view.loginConfig.mode, id: view.id, credentialId: view.credentialId, activePageId: "", pages: [], url: view.entryUrl, title: view.username,
       faviconDataUrl: "", loading: view.login.state.pageLoading === true, canGoBack: false, canGoForward: false,
       autofillMessage: "", error: "", certificateError: null, closedReason: view.closedReason, notice: view.notice,
       zoomFactor: 1, protectedLogin: { ...view.login.state }, loginNotice: view.loginNotice };
   }
   const navigation = active.view.webContents.navigationHistory;
   return {
+    loginMode: view.loginConfig.mode,
     id: view.id,
     credentialId: view.credentialId,
     activePageId: active.id,

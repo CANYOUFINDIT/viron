@@ -34,6 +34,10 @@ export interface WebCredentialAutofillScriptOptions {
   password: string;
   previousSignature: string;
   autoSubmit: boolean;
+  usernameSelector?: string;
+  passwordSelector?: string;
+  /** Checked inside the target document before any credentials are written. */
+  scope?: { href: string; timeOrigin: number; allowedOrigins: string[] };
   messages: WebCredentialAutofillMessages;
 }
 
@@ -280,7 +284,8 @@ export function buildWebCredentialAutofillScript(
   const selectorSource = selectWebCredentialAutofillFields.toString();
   return `(() => {
     const bytes = Uint8Array.from(atob(${JSON.stringify(payload)}), (character) => character.charCodeAt(0));
-    const { username, password, previousSignature, autoSubmit, messages } = JSON.parse(new TextDecoder().decode(bytes));
+    const { username, password, previousSignature, autoSubmit, messages, usernameSelector, passwordSelector, scope } = JSON.parse(new TextDecoder().decode(bytes));
+    if (scope && (location.href !== scope.href || performance.timeOrigin !== scope.timeOrigin || !scope.allowedOrigins.includes(location.origin))) return { status: "skipped", signature: "", message: messages.noReliableForm };
     const __name = (target) => target;
     const selectFields = ${selectorSource};
     const visible = (element) => {
@@ -334,6 +339,18 @@ export function buildWebCredentialAutofillScript(
     const initialSignature = signatureOf(fields);
     if (initialSignature === previousSignature) return { status: "duplicate", signature: initialSignature, message: messages.duplicate };
     const selection = selectFields(fields);
+    const configuredInput = (selector, types) => {
+      const matches = [...document.querySelectorAll(selector)].filter(visible);
+      if (matches.length !== 1 || !(matches[0] instanceof HTMLInputElement) || !types.includes(matches[0].type.toLowerCase())) throw new Error("invalid-input");
+      const index = inputs.indexOf(matches[0]);
+      if (index < 0) throw new Error("invalid-input");
+      return index;
+    };
+    try {
+      if (usernameSelector) selection.usernameIndex = configuredInput(usernameSelector, ["text", "email", "tel", "number"]);
+      if (passwordSelector) selection.passwordIndex = configuredInput(passwordSelector, ["password", "text"]);
+      if (selection.usernameIndex !== null && selection.usernameIndex === selection.passwordIndex) throw new Error("invalid-input");
+    } catch { return { status: "skipped", signature: initialSignature, message: messages.noReliableForm }; }
     if (selection.usernameIndex === null && selection.passwordIndex === null) {
       return {
         status: "skipped",

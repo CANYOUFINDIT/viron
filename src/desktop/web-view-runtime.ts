@@ -25,6 +25,7 @@ import { normalizeWebAddress } from "../shared/web-address.js";
 import { reorderMap } from "../shared/tab-order.js";
 import { ProtectedWebLogin } from "./protected-web-login.js";
 import { verifyProtectedBusinessPage } from "./protected-web-login-business.js";
+import { DirectWebAutofill } from "../shared/direct-web-autofill.js";
 import { defaultWebLoginConfig, type WebLoginConfig, type ProtectedLoginState, type ProtectedLoginInput } from "../shared/protected-web-login.js";
 import { loadWebIcon } from "../shared/web-favicon.js";
 import { immersiveNavigationEscapeAction } from "../shared/immersive-navigation.js";
@@ -110,6 +111,7 @@ export interface DesktopWebViewBounds {
 export type DesktopWebInitialPage = "entry" | "blank";
 
 export interface DesktopWebViewState {
+  loginMode?: WebLoginConfig["mode"];
   id: string;
   credentialId: string;
   activePageId: string;
@@ -143,6 +145,7 @@ export interface DesktopWebViewState {
 }
 
 export interface ManagedDesktopWebPage {
+  directAutofill?: DirectWebAutofill;
   id: string;
   view: BrowserPageHost;
   allowAutofill: boolean;
@@ -296,6 +299,7 @@ export async function removeDesktopWebPage(view: ManagedDesktopWebView, pageId: 
   const page = view.pages.get(pageId);
   if (!page) return;
   const nextPageId = pageAfterClose([...view.pages.values()].filter((item) => item.view.kind === "guest").map((item) => item.id), view.activePageId, pageId);
+  page.directAutofill?.dispose();
   page.closing = closeContents;
   view.pages.delete(pageId);
   if (closeContents) page.view.dispose();
@@ -316,6 +320,7 @@ export function destroyDesktopWebPages(view: ManagedDesktopWebView): void {
   view.pageGeneration += 1;
   view.pendingPages = 0;
   for (const page of view.pages.values()) {
+    page.directAutofill?.dispose();
     page.closing = true;
     resolveDesktopWebCertificateError(page, false);
     page.view.dispose();
@@ -678,6 +683,54 @@ function registerBusinessExtensions(view: ManagedDesktopWebView): void {
   });
 }
 
+async function startConfiguredDesktopLogin(view: ManagedDesktopWebView): Promise<void> {
+  if (view.loginConfig.mode !== "direct") { startProtectedDesktopLogin(view); return; }
+  const previous = view.login;
+  previous?.dispose();
+  const attempt = randomUUID();
+  view.loginAttempt = attempt;
+  view.notice = null;
+  view.loginNotice = "";
+  const current = () => !view.closing && desktopWebViews.get(view.id) === view && view.loginAttempt === attempt;
+  destroyDesktopWebPages(view);
+  await view.loginPreparation;
+  await previous?.settled();
+  if (!current()) return;
+  await resumeDesktopWebSessionExtensions(view.partition);
+  if (!current()) return;
+  // Direct fill is an explicit administrator policy: this is a normal guest,
+  // with ordinary editing, developer tools and the account's installed extensions.
+  enableDesktopWebSessionExtensions(view.partition, view.lastUrlKey);
+  await loadDesktopWebExtensions(view.partition, view.lastUrlKey);
+  if (!current()) return;
+  const page = await createDesktopWebPage(view, true);
+  if (!current()) { page.view.dispose(); return; }
+  view.login = null;
+  registerBusinessExtensions(view);
+  page.loadingUrl = view.entryUrl;
+  activateDesktopWebPage(view, page.id);
+  const navigation = page.view.webContents.loadURL(view.entryUrl);
+  fillDirectDesktopPage(view, page);
+  void navigation.catch(() => {
+    if (current()) { page.loadingUrl = ""; page.error = tr("网页加载失败，请检查地址或网络后刷新"); sendWebViewState(view); }
+  });
+}
+
+function fillDirectDesktopPage(view: ManagedDesktopWebView, page: ManagedDesktopWebPage): void {
+  page.directAutofill?.dispose();
+  page.autofillMessage = "";
+  view.loginNotice = "";
+  const contents = page.view.webContents;
+  const current = () => !view.closing && desktopWebViews.get(view.id) === view && view.pages.get(page.id) === page && view.loginConfig.mode === "direct";
+  page.directAutofill = new DirectWebAutofill({
+    browser: { destroyed: () => !current() || contents.isDestroyed(), loading: () => contents.isLoading(), evaluate: (source) => contents.executeJavaScriptInIsolatedWorld(999, [{ code: source }], true) },
+    entryUrl: view.entryUrl, config: view.loginConfig, username: view.username, password: view.password,
+    changed: (message) => { if (current()) { view.loginNotice = message; sendWebViewState(view); } },
+  });
+  view.password = "";
+  sendWebViewState(view);
+}
+
 function startProtectedDesktopLogin(view: ManagedDesktopWebView): void {
   const previousLogin = view.login;
   previousLogin?.dispose();
@@ -811,7 +864,7 @@ export async function reopenDesktopWebViews(views: ManagedDesktopWebView[], cred
   for (const view of views) {
     if (view.closing || desktopWebViews.get(view.id) !== view) continue;
     applyDesktopWebCredential(view, credential);
-    startProtectedDesktopLogin(view);
+    await startConfiguredDesktopLogin(view);
   }
 }
 
@@ -822,8 +875,12 @@ export async function refreshDesktopWebViews(views: ManagedDesktopWebView[], reo
   if (reopen) await reopenDesktopWebViews(views, credential);
   else for (const view of views) {
     applyDesktopWebCredential(view, credential);
-    if (view.login) startProtectedDesktopLogin(view);
-    else view.password = "";
+    if (view.login) await startConfiguredDesktopLogin(view);
+    else {
+      for (const page of view.pages.values()) page.directAutofill?.dispose();
+      view.password = "";
+      sendWebViewState(view);
+    }
   }
 }
 
@@ -841,7 +898,7 @@ export async function resetDesktopWebViews(views: ManagedDesktopWebView[]): Prom
     throw error;
   }
   await reopenDesktopWebViews(views, credential);
-  for (const view of views) notifyWebView(view, "info", tr("已清除本机登录状态，正在重新后台登录"));
+  for (const view of views) notifyWebView(view, "info", tr("已清除本机登录状态，正在重新打开登录页"));
 }
 
 export async function resetDesktopWebView(view: ManagedDesktopWebView): Promise<DesktopWebViewState> {
@@ -930,7 +987,7 @@ export async function openDesktopWebView(
       activity: () => desktopWebViews.get(id)?.lastActivityAt ?? null,
       close: (reason) => closeDesktopWebView(id, reason),
     });
-    if (initialPage === "entry") startProtectedDesktopLogin(managed);
+    if (initialPage === "entry") await startConfiguredDesktopLogin(managed);
     else {
       managed.password = "";
       registerBusinessExtensions(managed);
@@ -1154,7 +1211,11 @@ export async function handleDesktopWebViewAction(id: string, action: { type: str
     return webViewState(managed);
   }
   if (action.type === "refill") {
-    await refreshDesktopWebViews([managed], true);
+    const credential = await latestDesktopWebCredential(managed.credentialId);
+    const active = managed.pages.get(managed.activePageId);
+    applyDesktopWebCredential(managed, credential);
+    if (managed.loginConfig.mode === "direct" && active && !managed.login) fillDirectDesktopPage(managed, active);
+    else await startConfiguredDesktopLogin(managed);
     return webViewState(managed);
   }
   if (managed.login) throw new Error("请先完成后台登录");

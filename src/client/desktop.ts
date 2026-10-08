@@ -1,4 +1,4 @@
-import type { ProtectedLoginState, ProtectedLoginInput } from "../shared/protected-web-login";
+import type { ProtectedLoginState, ProtectedLoginInput, WebLoginMode } from "../shared/protected-web-login";
 import { translate as tr } from "./i18n";
 import { computed, shallowRef } from "vue";
 import { resolveExecutionTargets, type DesktopExecutionMode } from "../shared/execution-mode";
@@ -110,6 +110,7 @@ export interface DesktopWebViewBounds {
 export type DesktopWebInitialPage = "entry" | "blank";
 
 export interface DesktopWebViewState {
+  loginMode?: WebLoginMode;
   id: string;
   credentialId: string;
   activePageId: string;

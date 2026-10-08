@@ -92,7 +92,7 @@ describe("desktop credential envelopes", () => {
       method: "POST",
       url: `/api/v1/environments/${environment.json().id}/web-entries`,
       cookies,
-      payload: { name: "Console", url: "https://console.example.com/login", loginConfig: { successSelector: "#user-menu", interactionSelector: "#verification" } },
+      payload: { name: "Console", url: "https://console.example.com/login", loginConfig: { mode: "direct", successSelector: "#user-menu", interactionSelector: "#verification" } },
     });
     expect(entry.statusCode).toBe(201);
     const credential = await app.inject({
@@ -158,7 +158,7 @@ describe("desktop credential envelopes", () => {
       credentialId: credential.json().id,
       entryId: entry.json().id,
       entryUrl: "https://console.example.com/login",
-      loginConfig: expect.objectContaining({ successSelector: "#user-menu", interactionSelector: "#verification" }),
+      loginConfig: expect.objectContaining({ mode: "direct", successSelector: "#user-menu", interactionSelector: "#verification" }),
       username: "operator",
       password: "desktop-secret",
       customFields: { tenant: "north" },
