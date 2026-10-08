@@ -154,6 +154,8 @@ const splitMode = ref(false);
 const activeWebPane = ref<0 | 1>(0);
 const paneCredentialIds = ref<[string, string]>(["", ""]);
 const paneOpenedCredentials = ref<[OpenedWebCredential[], OpenedWebCredential[]]>([[], []]);
+const entryPaneCredentialIds = new Map<string, [string, string]>();
+let credentialLoadVersion = 0;
 const draggingEntryId = ref("");
 const entryDropTarget = ref<TabDropTarget | null>(null);
 const savingEntryOrder = ref(false);
@@ -562,7 +564,7 @@ async function loadEnvironment() {
     const requestedEntryId = workspaceQuery.value.webEntryId ?? "";
     if (requestedEntryId && webEntries.value.some((entry) => entry.id === requestedEntryId)) selectedEntryId.value = requestedEntryId;
     if (!selectedEntryId.value && webEntries.value.length) selectedEntryId.value = webEntries.value[0].id;
-    if (selectedEntryId.value) await loadCredentials();
+    if (selectedEntryId.value) await loadCredentials(requestedEntryId === selectedEntryId.value ? workspaceQuery.value.webCredentialId : "");
     scheduleEnvironmentPreloads();
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : tr("加载环境失败"));
@@ -572,15 +574,23 @@ async function loadEnvironment() {
 }
 
 async function loadCredentials(preferredCredentialId = "") {
-  if (!selectedEntryId.value) {
+  const entryId = selectedEntryId.value;
+  const version = ++credentialLoadVersion;
+  if (!entryId) {
     credentials.value = [];
     return;
   }
   if (preferredCredentialId) paneCredentialIds.value[0] = preferredCredentialId;
-  const response = await api<{ items: WebCredential[] }>(`/api/v1/web-entries/${selectedEntryId.value}/credentials`);
-  credentials.value = response.items;
-  immersiveCredentials.value = { ...immersiveCredentials.value, [selectedEntryId.value]: response.items };
-  syncWebPanes();
+  try {
+    const response = await api<{ items: WebCredential[] }>(`/api/v1/web-entries/${entryId}/credentials`);
+    if (version !== credentialLoadVersion || selectedEntryId.value !== entryId) return;
+    credentials.value = response.items;
+    immersiveCredentials.value = { ...immersiveCredentials.value, [entryId]: response.items };
+    syncWebPanes();
+  } catch (error) {
+    if (version !== credentialLoadVersion || selectedEntryId.value !== entryId) return;
+    ElMessage.error(error instanceof Error ? error.message : tr("加载登录账号失败"));
+  }
 }
 
 async function loadImmersiveCredentials(entryId: string) {
@@ -601,8 +611,6 @@ async function loadImmersiveCredentials(entryId: string) {
 function syncWebPanes() {
   const available = new Set(credentials.value.map((credential) => credential.id));
   reconcileOpenedCredentials();
-  const requestedCredentialId = workspaceQuery.value.webCredentialId ?? "";
-  if (requestedCredentialId && available.has(requestedCredentialId)) paneCredentialIds.value[0] = requestedCredentialId;
   if (!available.has(paneCredentialIds.value[0])) paneCredentialIds.value[0] = credentials.value[0]?.id ?? "";
   if (!available.has(paneCredentialIds.value[1])) paneCredentialIds.value[1] = "";
   if (splitMode.value && !paneCredentialIds.value[1]) {
@@ -610,6 +618,11 @@ function syncWebPanes() {
   }
   rememberCredential(0, paneCredentialIds.value[0]);
   rememberCredential(1, paneCredentialIds.value[1]);
+  rememberWebPaneSelection();
+}
+
+function rememberWebPaneSelection() {
+  if (selectedEntryId.value) entryPaneCredentialIds.set(selectedEntryId.value, [...paneCredentialIds.value]);
 }
 
 function credentialForPane(index: 0 | 1) {
@@ -645,6 +658,10 @@ function removeOpenedCredential(id: string) {
 }
 
 function removeOpenedEntry(entryId: string) {
+  entryPaneCredentialIds.delete(entryId);
+  const cachedCredentials = { ...immersiveCredentials.value };
+  delete cachedCredentials[entryId];
+  immersiveCredentials.value = cachedCredentials;
   paneOpenedCredentials.value = [
     paneOpenedCredentials.value[0].filter((item) => item.entryId !== entryId),
     paneOpenedCredentials.value[1].filter((item) => item.entryId !== entryId),
@@ -665,6 +682,7 @@ async function selectCredential(id: string, event?: MouseEvent) {
   }
   paneCredentialIds.value[activeWebPane.value] = id;
   rememberCredential(activeWebPane.value, id);
+  rememberWebPaneSelection();
   await nextTick();
   const row = (event?.currentTarget as HTMLElement | null)?.closest<HTMLElement>(".web-account-row");
   if (!row) return;
@@ -720,12 +738,20 @@ async function setFocusedWebView(focused: boolean, credential: OpenedWebCredenti
   if (!focused && environmentImmersive.value) immersiveMode?.setActive(false);
 }
 
-async function selectEntry(id: string) {
+async function selectEntry(id: string, preferredCredentialId = "") {
+  if (selectedEntryId.value === id && !preferredCredentialId) return;
+  rememberWebPaneSelection();
   selectedEntryId.value = id;
   revealed.value = {};
-  paneCredentialIds.value = ["", ""];
+  const rememberedCredentialIds = entryPaneCredentialIds.get(id);
+  paneCredentialIds.value = rememberedCredentialIds ? [...rememberedCredentialIds] : ["", ""];
+  if (preferredCredentialId) paneCredentialIds.value[0] = preferredCredentialId;
   activeWebPane.value = 0;
-  await loadCredentials();
+  // Restore the existing browser immediately while refreshing the account list.
+  const cachedCredentials = immersiveCredentials.value[id];
+  credentials.value = cachedCredentials ?? [];
+  if (cachedCredentials) syncWebPanes();
+  await loadCredentials(preferredCredentialId);
 }
 
 async function selectImmersiveCredential(entryId: string, credentialId: string) {
@@ -738,11 +764,7 @@ async function selectImmersiveCredential(entryId: string, credentialId: string) 
     await selectCredential(credentialId);
     return;
   }
-  selectedEntryId.value = entryId;
-  revealed.value = {};
-  paneCredentialIds.value = [credentialId, ""];
-  activeWebPane.value = 0;
-  await loadCredentials(credentialId);
+  await selectEntry(entryId, credentialId);
 }
 
 function exitEnvironmentImmersive() {
@@ -985,6 +1007,7 @@ onMounted(async () => {
   await loadEnvironment();
 });
 onBeforeUnmount(() => {
+  credentialLoadVersion += 1;
   cancelEnvironmentPreloads();
   window.clearTimeout(credentialScrollTimer);
   document.removeEventListener("visibilitychange", handleVisibilityChange);
