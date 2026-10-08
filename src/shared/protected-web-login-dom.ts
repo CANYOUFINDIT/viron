@@ -41,6 +41,9 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
     let interactionSelector = "";
     let passwordReleased = false;
     let assisted = false;
+    let submittedButton: HTMLElement | null = null;
+    let rejectionSignature = "";
+    let rejectionSince = 0;
     const autofilledRoles = new Set<string>();
     const targetNodes = new Map<string, HTMLInputElement>();
     const credentialRoles = new Map<Element, string>();
@@ -222,9 +225,15 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
     function submit(target: Element | null) {
       const form = target?.closest("form");
       let button = config.submitSelector ? one(config.submitSelector) : null;
+      // A configured component handler may not have mounted yet. Native form
+      // submission is not an equivalent fallback for that handler.
+      if (config.submitSelector && !button) return false;
       if (!config.submitSelector) {
         const candidates = buttons(target);
-        const primary = candidates.filter((node) => /login|log in|sign in|next|登录|登入|登陆|下一步/i.test(text(node)) || node.getAttribute("type") === "submit");
+        const submitters = form ? candidates.filter((node) => (node instanceof HTMLButtonElement || node instanceof HTMLInputElement) && node.type === "submit") : [];
+        // A password form can also offer "Sign in with Google". Its native
+        // submitter is stronger evidence than the shared words in both labels.
+        const primary = submitters.length ? submitters : candidates.filter((node) => /login|log in|sign in|next|登录|登入|登陆|下一步/i.test(text(node)) || node.getAttribute("type") === "submit");
         // Component forms often prevent native submission and bind login to a
         // type="button" labelled Submit. Only accept a unique button inside the
         // detected credential form; never guess among page-wide neutral actions.
@@ -235,7 +244,10 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
         if (matches.length > 1) throw new Error("ambiguous-selector");
         button = matches[0] ?? null;
       }
-      if (button instanceof HTMLButtonElement && button.disabled) return false;
+      if ((button instanceof HTMLButtonElement || button instanceof HTMLInputElement) && button.disabled
+        || button?.getAttribute("aria-disabled") === "true") return false;
+      submittedButton = button;
+      rejectionSignature = ""; rejectionSince = 0;
       if (button) button.click();
       else if (form) form.requestSubmit();
       else throw new Error("missing-submit");
@@ -243,6 +255,28 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
       // Keep a still-visible challenge available for correction after submission.
       if (config.interactionSelector) interactionDone = false;
       return true;
+    }
+    function submissionPending() {
+      return submittedButton?.isConnected && (submittedButton.getAttribute("aria-busy") === "true"
+        || submittedButton.matches(":disabled,.is-loading,[data-loading='true']")
+        || /登录中|正在登录|signing\s*in|logging\s*in|authenticating/i.test(text(submittedButton)));
+    }
+    function loginRejected(target: Element | null) {
+      const area = target?.closest('form,[role="form"],.login-form,.auth-form');
+      const failure = /invalid|incorrect|failed|failure|wrong|error|denied|expired|required|missing|empty|blocked|bad\s+credentials|not\s+found|不正确|错误|失败|拒绝|无效|过期|不匹配|不存在|未找到|不能为空|请.*(?:输入|填写)/i;
+      const auth = /password|username|credential|log.?in|sign.?in|authenticat|密码|用户名|账号|登录/i;
+      const errors = [...document.querySelectorAll<HTMLElement>('[role="alert"],.el-form-item__error,.auth-form__error-message')].filter((node) => {
+        const message = node.textContent?.trim() ?? "";
+        if (!visible(node) || !message || /登录中|正在登录|signing\s*in|logging\s*in/i.test(message)) return false;
+        if (node.matches('.el-form-item__error,.auth-form__error-message')) return Boolean(area?.contains(node));
+        return failure.test(message) && (Boolean(area?.contains(node)) || auth.test(message));
+      });
+      const signature = JSON.stringify(errors.map((node) => [identity(node), node.textContent]));
+      if (!errors.length || submissionPending()) { rejectionSignature = ""; rejectionSince = 0; return false; }
+      if (signature !== rejectionSignature) { rejectionSignature = signature; rejectionSince = Date.now(); return false; }
+      // Component validation can briefly show an old error while updating. Only
+      // hand control to the user after an idle form retains the same failure.
+      return Date.now() - rejectionSince >= 800;
     }
     function tick(stepIndex: number, previouslySubmitted: boolean, submittedUrl: string, passwordSubmitted = false, submittedDocument = "") {
       restoreMasks();
@@ -290,9 +324,15 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
       const pendingVerification = inputs().some((node) => node.autocomplete === "one-time-code" || /otp|captcha|verification|验证码|动态口令/i.test([node.id, node.name, node.placeholder].join(" ")));
       if (previouslySubmitted && !visiblePasswords.length && pageStatus(config.successSelector) === "ready" && (config.successSelector || location.href !== submittedUrl || String(performance.timeOrigin) !== submittedDocument) && !pendingVerification && !(config.interactionSelector && one(config.interactionSelector))) return { status: "success" };
       if (passwordSubmitted && !filled && visiblePasswords.length) return { status: "rejected" };
-      if (!filled && (pass || user)) {
-        if (user) setValue(user, username, true);
-        if (pass) setValue(pass, password, true);
+      if ((config.usernameSelector && !user) || (config.passwordSelector && !pass)) return { status: "waiting", released: passwordReleased };
+      let wroteCredentials = false;
+      if (!submitted && (pass || user)) {
+        for (const [node, value] of [[user, username], [pass, password]] as const) {
+          if (!node?.isConnected) continue;
+          if (!credentials.has(node) || (node instanceof HTMLInputElement && node.value !== value)) {
+            setValue(node, value, true); wroteCredentials = true;
+          }
+        }
         filled = true;
       }
       if (config.interactionSelector && one(config.interactionSelector) && !interactionDone) {
@@ -312,12 +352,16 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
         interactionSelector = `[data-viron-agreement="${areaId}"]`;
         return { status: "interactive", kind: "agreement", region: region(), released: passwordReleased };
       }
-      if (!config.interactionSelector && (submitted || previouslySubmitted) && [...document.querySelectorAll<HTMLElement>('[role="alert"],.el-form-item__error,.auth-form__error-message')].some((node) => visible(node) && /.+/.test(node.textContent?.trim() ?? ""))) return { status: "rejected" };
+      if (!config.interactionSelector && (submitted || previouslySubmitted) && loginRejected(pass ?? user)) return { status: "rejected" };
       if (filled && !submitted) {
+        // Let input/change handlers and reactive rendering commit before clicking.
+        // Re-detect on the next tick so replaced or cleared inputs are filled too.
+        if (wroteCredentials) return { status: "filled", released: passwordReleased };
+        if (!pass && !user) return { status: "waiting", released: passwordReleased };
         if (!submit(pass ?? user)) return { status: "waiting", released: passwordReleased };
         return { status: "submitted", released: passwordReleased };
       }
-      if (submitted || previouslySubmitted) return { status: "waiting", released: passwordReleased };
+      if (submitted || previouslySubmitted) return { status: submissionPending() ? "pending" : "waiting", released: passwordReleased };
       // A rendered but unrecognized page still needs protected assistance; the
       // controller must not infer a cached session from a missing login form.
       if (pageStatus() === "ready" && !config.usernameSelector && !config.passwordSelector && !config.successSelector) return { status: "anonymous" };

@@ -47,10 +47,21 @@ const server = createServer((request, response) => {
   if (request.url === "/component") {
     response.end(`<!doctype html><title>Component console</title>${form}<script>
       sessionStorage.setItem('fixture-tab','kept');localStorage.setItem('fixture-local','kept');
-      const values={};document.querySelector('form').addEventListener('submit',event=>event.preventDefault());
-      for(const input of document.querySelectorAll('input'))input.addEventListener('input',event=>values[input.id]=event.target.value);
+      const values={};let replaced=false;document.querySelector('form').addEventListener('submit',event=>event.preventDefault());
+      const listen=input=>input.addEventListener('input',()=>{const value=input.value;queueMicrotask(()=>{
+        values[input.id]=value;
+        if(input.id==='username'&&!replaced){replaced=true;const next=password.cloneNode();next.value='';password.replaceWith(next);listen(next)}
+      })});for(const input of document.querySelectorAll('input'))listen(input);
+      const stale=document.createElement('p');stale.className='el-form-item__error';stale.textContent='Password is required';document.querySelector('form').append(stale);
+      const background=document.createElement('p');background.setAttribute('role','alert');background.textContent='A background request failed';document.body.append(background);
       const home=()=>{document.querySelector('form').remove();document.body.insertAdjacentHTML('beforeend','<main id="success">Signed in</main>');location.hash='/home'};
-      login.addEventListener('click',async()=>{const response=await fetch('/plain',{method:'POST',body:new URLSearchParams(values)});if(response.ok){localStorage.setItem('component-auth','yes');home()}});
+      login.addEventListener('click',async()=>{
+        login.disabled=true;login.textContent='Signing in…';
+        const progress=document.createElement('p');progress.setAttribute('role','alert');progress.textContent='Signing in…';document.querySelector('form').append(progress);
+        setTimeout(()=>stale.remove(),300);
+        const response=await fetch('/plain',{method:'POST',body:new URLSearchParams(values)});
+        if(response.ok){localStorage.setItem('component-auth','yes');setTimeout(home,1000)}
+      });
       if(localStorage.getItem('component-auth')==='yes')home();
     </script>`); return;
   }
@@ -178,6 +189,7 @@ try {
     assert.ok(snapshots.every((snapshot) => !snapshot.includes("fixture-secret")));
     if (path === "/component") {
       assert.ok(completed.url.endsWith("#/home"));
+      assert.ok(snapshots.every((snapshot) => JSON.parse(snapshot).phase !== "interactive"), "Reactive form updates and progress alerts must not abandon automatic login");
       assert.ok(snapshots.some((snapshot) => JSON.parse(snapshot).pageLoading === true));
       assert.ok(snapshots.some((snapshot) => { const state=JSON.parse(snapshot);return state.pageLoading === false && state.phase === "authenticating"; }));
     }

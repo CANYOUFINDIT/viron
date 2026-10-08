@@ -116,6 +116,8 @@ describe("protected Web login", () => {
     let clicks = 0, nativeSubmits = 0;
     form.addEventListener("submit", (event) => { event.preventDefault(); nativeSubmits++; });
     button.addEventListener("click", () => { clicks++; });
+    expect(guard.tick(0, false, "").status).toBe("filled");
+    expect(clicks).toBe(0);
     expect(guard.tick(0, false, "").status).toBe("submitted");
     expect(clicks).toBe(1); expect(nativeSubmits).toBe(0);
     expect(guard.tick(0, true, window.location.href).status).toBe("waiting");
@@ -129,6 +131,7 @@ describe("protected Web login", () => {
     const other = button.cloneNode(true) as typeof button;
     other.getBoundingClientRect = button.getBoundingClientRect;
     button.after(other);
+    expect(guard.tick(0, false, "").status).toBe("filled");
     expect(() => guard.tick(0, false, "")).toThrow("ambiguous-selector");
   });
   it("initializes without the secure-context-only browser UUID API", () => {

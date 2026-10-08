@@ -264,7 +264,7 @@ export class ProtectedLoginController {
       this.readyDocument = "";
       this.clearFrame();
       this.state.phase = "authenticating";
-      this.state.message = this.config.steps.length ? "正在执行登录步骤" : this.submitted ? "已填写登录信息，正在等待站点认证结果" : "网页已加载，正在等待登录表单";
+      this.state.message = this.config.steps.length ? "正在执行登录步骤" : this.submitted || result.status === "filled" ? "已填写登录信息，正在等待站点认证结果" : "网页已加载，正在等待登录表单";
       this.options.changed();
     } catch (error) {
       if (!this.disposed && !this.browser.destroyed()) {

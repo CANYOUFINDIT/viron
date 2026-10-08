@@ -69,7 +69,7 @@ describe("environment preload policy", () => {
     expect(desktopWeb).toContain('startError.value = preload ? ""');
     expect(viewManager).toContain('frame: preload ? "" : await this.captureInitialFrame(view)');
     expect(viewManager).toContain("if (ticketData.initiallyVisible) view.visibleSockets.add(socket)");
-    expect(viewManager).toContain("await this.startProtectedLogin(view, initialUrl)");
+    expect(viewManager).toContain("await this.startConfiguredLogin(view, initialUrl)");
     expect(viewManager).toContain('if (view.protectedLogin) return ""');
     expect(viewManager).toContain("starting.cancelled = true");
     expect(viewManager.indexOf("this.app.activeConnections.release(view.runtimeId)")).toBeLessThan(viewManager.indexOf("await view.context.close().catch(() => undefined)"));

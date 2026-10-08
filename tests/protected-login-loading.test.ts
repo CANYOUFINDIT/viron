@@ -23,6 +23,22 @@ function pendingPage() {
 }
 
 describe("protected login page loading", () => {
+  it("keeps observing an active authentication request without duplicate submissions or premature fallback", async () => {
+    vi.useFakeTimers(); const { login, loaded, browser } = pendingPage();
+    const evaluate = browser.evaluate;
+    let submitted = false, submissions = 0;
+    browser.evaluate = async <T>(code: string) => {
+      if (!code.includes("globalThis.__vironLogin.tick(")) return evaluate<T>(code);
+      if (!submitted) { submitted = true; submissions++; return { ok: true, released: true, value: { status: "submitted", released: true } } as T; }
+      return { ok: true, released: true, value: { status: "pending", released: true } } as T;
+    };
+    loaded(); await vi.advanceTimersByTimeAsync(35_000);
+    expect(login.state).toMatchObject({ phase: "authenticating", pageLoading: false });
+    expect(submissions).toBe(1); expect(browser.destroy).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(266_000);
+    expect(login.state).toMatchObject({ phase: "interactive", kind: "page" });
+    login.dispose();
+  });
   it("keeps an unrecognized rendered page protected rather than claiming a cached session", async () => {
     vi.useFakeTimers(); const { login, loaded, browser } = pendingPage();
     const evaluate = browser.evaluate;
