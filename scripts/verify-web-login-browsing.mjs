@@ -1,13 +1,13 @@
 // Run after build:desktop with Electron. Uses invented credentials and hidden windows.
-import { app, BrowserWindow, session } from "electron";
+import { app, BrowserWindow, Menu, session } from "electron";
 import { createServer } from "node:http";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { createHash, randomUUID } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { createCipheriv, createHash, publicEncrypt, randomBytes, randomUUID } from "node:crypto";
 import assert from "node:assert/strict";
 
-const directory = mkdtempSync(join(tmpdir(), "viron-browsing-native-"));
+const parent = resolve("private/web-login-mode-tests"); mkdirSync(parent, { recursive: true });
+const directory = mkdtempSync(join(parent, "browsing-native-"));
 app.setPath("userData", directory);
 app.on("window-all-closed", () => {});
 let posts = 0, loads = 0;
@@ -32,7 +32,7 @@ const target = createServer((request, response) => {
 
 async function until(predicate, description, timeout = 12_000) {
   const deadline = Date.now() + timeout;
-  while (!predicate()) {
+  while (!await predicate()) {
     if (Date.now() > deadline) throw new Error("Timeout: " + description);
     await new Promise(resolve => setTimeout(resolve, 25));
   }
@@ -59,7 +59,43 @@ async function run() {
   </script>`));
   await new Promise(resolve => target.listen(0, "127.0.0.1", resolve));
   const origin = `http://127.0.0.1:${target.address().port}`;
+  const { setActiveEndpoint } = await import("../dist/desktop/endpoint-context.js");
+  const { desktopDeviceAuthorizationContext } = await import("../dist/desktop/desktop-runtime-context.js");
+  const { createDeviceIdentity } = await import("../dist/desktop/device-identity.js");
+  const identity = createDeviceIdentity();
+  const auth = { user: { id: "fixture-user-id", username: "fixture-user" }, workspace: { type: "personal", id: "fixture-workspace" } };
+  const endpoint = "https://endpoint.example.test";
+  const authorization = { auth, identity, endpoint };
   const views = [];
+  setActiveEndpoint({ endpoint, protocolVersion: 1, capabilities: {}, partition: { fetch: async (url, options) => {
+    const id = new URL(url).pathname.split("/").at(-2);
+    const view = views.find(item => item.credentialId === id);
+    assert.ok(view);
+    const request = JSON.parse(options.body);
+    const credential = { credentialId: id, entryId: view.entryId, entryUrl: view.entryUrl, username: "fixture-user", password: "fixture-password", customFields: {}, credentialUpdatedAt: new Date().toISOString(), loginConfig: { ...defaultWebLoginConfig(), usernameSelector: "#alpha", passwordSelector: "#beta" } };
+    const claims = { version: 1, algorithm: "RSA-OAEP-256+A256GCM", keyId: identity.keyId, deviceId: identity.deviceId,
+      requestId: request.requestId, userId: auth.user.id, workspaceType: auth.workspace.type, workspaceId: auth.workspace.id, credentialId: id,
+      endpoint, targetOrigin: origin, credentialUpdatedAt: credential.credentialUpdatedAt, issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 30_000).toISOString() };
+    const protectedBytes = Buffer.from(JSON.stringify(claims)), key = randomBytes(32), iv = randomBytes(12);
+    const cipher = createCipheriv("aes-256-gcm", key, iv); cipher.setAAD(protectedBytes);
+    const ciphertext = Buffer.concat([cipher.update(JSON.stringify(credential)), cipher.final()]);
+    return new Response(JSON.stringify({ protected: protectedBytes.toString("base64url"), encryptedKey: publicEncrypt({ key: identity.publicKey, oaepHash: "sha256" }, key).toString("base64url"), iv: iv.toString("base64url"), ciphertext: ciphertext.toString("base64url"), tag: cipher.getAuthTag().toString("base64url") }));
+  } } });
+  const buildMenu = Menu.buildFromTemplate;
+  let menu = [];
+  Menu.buildFromTemplate = template => { menu = template; return { popup() {} }; };
+  async function rightFill(contents, y, label) {
+    menu = [];
+    let coordinates = {};
+    contents.once("context-menu", (_event, params) => { coordinates = { x: params.x, y: params.y, isEditable: params.isEditable, zoom: contents.getZoomFactor() }; });
+    contents.sendInputEvent({ type: "mouseDown", x: Math.round(40 * contents.getZoomFactor()), y: Math.round(y * contents.getZoomFactor()), button: "right", clickCount: 1 });
+    contents.sendInputEvent({ type: "mouseUp", x: Math.round(40 * contents.getZoomFactor()), y: Math.round(y * contents.getZoomFactor()), button: "right", clickCount: 1 });
+    try { await until(() => menu.some(item => item.label === label), "native input context menu"); }
+    catch (error) { throw new Error(`${error.message}: ${JSON.stringify(coordinates)}`); }
+    assert.ok(menu.some(item => item.label === "填入用户名")); assert.ok(menu.some(item => item.label === "填入密码"));
+    desktopDeviceAuthorizationContext.run(authorization, () => menu.find(item => item.label === label).click());
+  }
+
   try {
     for (const path of ["/ambiguous", "/cancel", "/manual"]) {
       const partitionName = `verify-browsing-${randomUUID()}`;
@@ -70,6 +106,7 @@ async function run() {
       views.push(view); desktopWebViews.set(view.id, view);
       const login = view.login = new ProtectedWebLogin({ session: view.partition, url: view.entryUrl, username: "fixture-user", password: "fixture-password", bounds: view.bounds,
         config: { ...defaultWebLoginConfig(), usernameSelector: path === "/manual" ? "[broken(" : "" },
+        manualFallback: () => { if (view.login === login) void browseDesktopWebWithoutAutofill(view); },
         changed: () => { if (view.login === login && login.state.phase === "failed") void browseDesktopWebWithoutAutofill(view); },
         completed: async () => { if (path !== "/manual") throw new Error("Fixture must never claim authentication"); await browseDesktopWebWithoutAutofill(view); } });
       const auth = login.window;
@@ -78,32 +115,36 @@ async function run() {
         const started = Date.now();
         await Promise.all([handleDesktopWebViewAction(view.id, { type: "browse" }), handleDesktopWebViewAction(view.id, { type: "browse" })]);
         assert.ok(Date.now() - started < 5000);
-      } else {
-        await until(() => login.state.kind === "page" && Boolean(login.state.image), "interactive login fallback");
-        assert.equal(auth.isDestroyed(), false);
-        assert.equal(view.pages.size, 0, "No native page or inspector can access the auth DOM");
-        if (path === "/manual") {
-          const token = y => login.state.targets.find(item => y >= item.y && y < item.y + item.height).token;
-          await login.input({ type: "fill-username", targetToken: token(80), revision: login.state.revision });
-          await login.input({ type: "fill-password", targetToken: token(140), revision: login.state.revision });
-          const frozen = await auth.webContents.executeJavaScript('({value:beta.value,readonly:beta.readOnly,visibility:getComputedStyle(beta).visibility})');
-          assert.deepEqual(frozen, { value: "fixture-password", readonly: true, visibility: "hidden" });
-          await auth.webContents.executeJavaScript('beta.type="text";beta.style.visibility="visible"');
-          assert.equal(await auth.webContents.executeJavaScript('getComputedStyle(beta).visibility'), "hidden");
-          await login.input({ type: "click", x: 40, y: 210, revision: login.state.revision });
-          await until(() => !view.login && view.pages.size === 1 && activeDesktopWebPage(view).view.webContents.getTitle() === "Business", "manual login handoff");
-          assert.equal(auth.isDestroyed(), true);
-          view.closing = true; destroyDesktopWebPages(view); desktopWebViews.delete(view.id);
-          continue;
-        }
-        assert.equal(await auth.webContents.executeJavaScript('document.querySelector("input[type=password]").readOnly'), true);
-        await handleDesktopWebViewAction(view.id, { type: "browse" });
       }
       try { await until(() => !view.login && view.pages.size === 1 && activeDesktopWebPage(view).view.webContents.getTitle() === "Login fixture", "fresh usable page"); }
       catch (error) { console.error("Fixture state", path, view.login?.state, view.pages.size, view.pendingPages); throw error; }
       assert.equal(auth.isDestroyed(), true);
-      assert.match(view.loginNotice, /未填入托管密码/);
+      assert.equal(view.loginNotice, "");
       const contents = activeDesktopWebPage(view).view.webContents;
+      if (path === "/manual") {
+        assert.equal(login.state.image, "");
+        contents.setZoomFactor(1.25);
+        await contents.executeJavaScript("document.documentElement.getBoundingClientRect().width");
+        await rightFill(contents, 80, "填入用户名");
+        await until(() => contents.executeJavaScript("alpha.value === 'fixture-user'"), "native username fill");
+        assert.equal(await contents.executeJavaScript("beta.value"), "");
+        await rightFill(contents, 140, "填入密码");
+        await until(() => contents.executeJavaScript("beta.value === 'fixture-password'"), "native password fill");
+        assert.deepEqual(await contents.executeJavaScript("({readonly:beta.readOnly,visibility:getComputedStyle(beta).visibility})"), { readonly: false, visibility: "visible" });
+        assert.equal(posts, 0);
+        contents.setZoomFactor(1);
+        const pageId = view.activePageId, documentTime = await contents.executeJavaScript("performance.timeOrigin");
+        await contents.executeJavaScript("alpha.value='';beta.value=''");
+        await desktopDeviceAuthorizationContext.run(authorization, () => handleDesktopWebViewAction(view.id, { type: "refill" }));
+        await until(() => contents.executeJavaScript("alpha.value === 'fixture-user' && beta.value === 'fixture-password'"), "native active fill");
+        assert.equal(view.activePageId, pageId); assert.equal(await contents.executeJavaScript("performance.timeOrigin"), documentTime); assert.equal(posts, 0);
+        contents.sendInputEvent({ type: "mouseDown", x: 40, y: 210, button: "left", clickCount: 1 });
+        contents.sendInputEvent({ type: "mouseUp", x: 40, y: 210, button: "left", clickCount: 1 });
+        await until(() => contents.getTitle() === "Business", "user submitted native login");
+        assert.equal(posts, 1);
+        view.closing = true; destroyDesktopWebPages(view); desktopWebViews.delete(view.id);
+        continue;
+      }
       const values = await contents.executeJavaScript('({password:document.querySelector("input[type=password]").value,local:localStorage.getItem("unverified-password"),tab:sessionStorage.getItem("unverified-password")})');
       assert.deepEqual(values, { password: "", local: null, tab: null });
       assert.equal((await view.partition.cookies.get({})).some(cookie => cookie.name === "unverified-password"), false);
@@ -119,9 +160,10 @@ async function run() {
     }
     assert.equal(posts, 1);
     assert.ok(!(await owner.webContents.executeJavaScript("JSON.stringify(states)")).includes("fixture-password"));
-    console.log("VIRON_PROTECTED_BROWSING_OK: interactive login fallback, targeted credential fill and freeze, manual authentication, safe handoff, cancelled loads and normal navigation passed.");
+    console.log("VIRON_PROTECTED_BROWSING_OK: normal fallback page, native input context menus, editable targeted fills, active fill without reload or submit, user login, cancelled loads and normal navigation passed.");
   } finally {
     for (const view of views) { view.closing = true; view.login?.dispose(); destroyDesktopWebPages(view); desktopWebViews.delete(view.id); }
+    Menu.buildFromTemplate = buildMenu; setActiveEndpoint(null);
     owner.destroy(); for (const timer of timers) clearTimeout(timer);
     target.closeAllConnections(); await new Promise(resolve => target.close(resolve));
   }

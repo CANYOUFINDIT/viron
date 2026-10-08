@@ -39,13 +39,13 @@ describe("protected login page loading", () => {
     expect(login.state).toMatchObject({ phase: "interactive", kind: "page" });
     login.dispose();
   });
-  it("keeps an unrecognized rendered page protected rather than claiming a cached session", async () => {
+  it("keeps probing a rendered SPA splash instead of abandoning its delayed form", async () => {
     vi.useFakeTimers(); const { login, loaded, browser } = pendingPage();
     const evaluate = browser.evaluate;
     browser.evaluate = async <T>(code: string) => code.includes("globalThis.__vironLogin.tick(")
       ? { ok: true, released: false, value: { status: "anonymous" } } as T : evaluate<T>(code);
     loaded(); await vi.advanceTimersByTimeAsync(5000);
-    expect(login.state).toMatchObject({ phase: "interactive", kind: "page" });
+    expect(login.state).toMatchObject({ phase: "authenticating" });
     expect(browser.destroy).not.toHaveBeenCalled(); login.dispose();
   });
   it("does not allow default assisted autofill after document or SPA route navigation", async () => {

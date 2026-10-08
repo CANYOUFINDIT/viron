@@ -6,7 +6,7 @@ import type { WebLoginConfig } from "../../shared/protected-web-login.js";
 /** Credentials are evaluated in a CDP isolated world of an undisclosed auth page. */
 export async function createServerProtectedLogin(options: {
   context: BrowserContext; url: string; username: string; password: string; config: WebLoginConfig;
-  changed: () => void; completed: (result: ProtectedLoginResult) => Promise<void>;
+  manualFallback?: () => void; changed: () => void; completed: (result: ProtectedLoginResult) => Promise<void>;
 }): Promise<ProtectedLoginController> {
   const page = await options.context.newPage();
   const cdp = await options.context.newCDPSession(page);

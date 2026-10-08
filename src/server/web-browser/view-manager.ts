@@ -23,7 +23,8 @@ import { normalizeWebAddress } from "../../shared/web-address.js";
 import { idAfterClose, reorderMap } from "../../shared/tab-order.js";
 import { parseWebLoginConfig, type WebLoginConfig, type ProtectedLoginState, type ProtectedLoginInput } from "../../shared/protected-web-login.js";
 import type { ProtectedLoginController } from "../../shared/protected-web-login-controller.js";
-import { DirectWebAutofill } from "../../shared/direct-web-autofill.js";
+import { DirectWebAutofill, DIRECT_WEB_FILL_MESSAGE } from "../../shared/direct-web-autofill.js";
+import { captureWebCredentialTargetScript, fillWebCredentialTargetScript } from "../../shared/web-credential-context-fill.js";
 import { createServerProtectedLogin, verifyServerBusinessPage } from "./protected-login.js";
 import type { AuthenticatedUser } from "../access-control.js";
 
@@ -855,7 +856,7 @@ export class WebAccountViewManager {
     }
     if (message.type === "refill") {
       const active = view.pages.get(view.activePageId);
-      if (view.loginConfig.mode === "direct" && active && !view.protectedLogin) await this.fillDirectPage(view, active);
+      if (active && !view.protectedLogin) await this.fillDirectPage(view, active);
       else await this.startConfiguredLogin(view);
       return;
     }
@@ -867,6 +868,27 @@ export class WebAccountViewManager {
     if (!page) return;
     try {
       switch (message.type) {
+        case "credential-context": {
+          if (message.pageId !== view.activePageId) break;
+          const token = randomUUID();
+          const available = await this.evaluateCredentialFill<boolean>(page, captureWebCredentialTargetScript(token, Number(message.x), Number(message.y), [new URL(view.entryUrl).origin, ...view.loginConfig.allowedOrigins]));
+          this.send(socket, { type: "credential-context", requestId: message.requestId, pageId: message.pageId, token: available ? token : "" });
+          break;
+        }
+        case "fill-username":
+        case "fill-password": {
+          const item = view.pages.get(view.activePageId);
+          if (!item || message.pageId !== item.id || typeof message.token !== "string") break;
+          item.directAutofill?.dispose();
+          const credential = await this.app.db.prepare("SELECT username, password_ciphertext FROM web_credentials WHERE id = ?").get(view.credentialId) as { username: string; password_ciphertext: string } | undefined;
+          if (!credential || view.closed || view.protectedLogin || view.pages.get(view.activePageId) !== item) break;
+          const value = message.type === "fill-username" ? credential.username : this.app.secrets.decrypt(credential.password_ciphertext);
+          const filled = await this.evaluateCredentialFill<boolean>(page, fillWebCredentialTargetScript(message.token, value, [new URL(view.entryUrl).origin, ...view.loginConfig.allowedOrigins]));
+          if (!filled) throw new Error("输入框已变化，请重新右键选择输入框");
+          view.loginNotice = "";
+          this.broadcastState(view);
+          break;
+        }
         case "resize":
           await this.resize(view, Number(message.width), Number(message.height));
           break;
@@ -928,6 +950,17 @@ export class WebAccountViewManager {
     } catch (error) {
       this.send(socket, { type: "error", message: error instanceof Error ? error.message : "页面操作失败" });
     }
+  }
+
+  private async evaluateCredentialFill<T>(page: Page, expression: string): Promise<T> {
+    const session = await page.context().newCDPSession(page);
+    try {
+      const tree = await session.send("Page.getFrameTree");
+      const world = await session.send("Page.createIsolatedWorld", { frameId: tree.frameTree.frame.id, worldName: "viron-credential-fill" });
+      const result = await session.send("Runtime.evaluate", { expression, contextId: world.executionContextId, returnByValue: true, awaitPromise: true, userGesture: true });
+      if (result.exceptionDetails) throw new Error("未能填入登录信息，请重新右键选择输入框");
+      return result.result.value as T;
+    } finally { await session.detach().catch(() => undefined); }
   }
 
   private async handleMouse(page: Page, message: Record<string, unknown>): Promise<void> {
@@ -1037,7 +1070,7 @@ export class WebAccountViewManager {
     item.directAutofill = new DirectWebAutofill({
       browser: { destroyed: () => !current(), loading: () => item.loading, evaluate: (source) => item.page.evaluate(source) },
       entryUrl: view.entryUrl, config: view.loginConfig, username: credential.username, password: this.app.secrets.decrypt(credential.password_ciphertext),
-      changed: (message) => { if (current()) { view.loginNotice = message; this.broadcastState(view); } },
+      changed: (message) => { if (current()) { view.loginNotice = message === DIRECT_WEB_FILL_MESSAGE ? "" : message; this.broadcastState(view); } },
     });
     this.broadcastState(view);
   }
@@ -1066,6 +1099,7 @@ export class WebAccountViewManager {
     view.username = credential.username;
     const login = await createServerProtectedLogin({
       context: view.context, url: view.entryUrl, username: credential.username, password: this.app.secrets.decrypt(credential.password_ciphertext), config: view.loginConfig,
+      manualFallback: () => { if (current()) void this.browseWithoutAutofill(view).catch(() => undefined); },
       changed: () => {
         if (!current() || !view.login) return;
         view.protectedLogin = view.login.state;
@@ -1130,7 +1164,6 @@ export class WebAccountViewManager {
     if (!view.protectedLogin || view.closed) return Promise.resolve();
     const login = view.login;
     const preparation = view.loginPreparation;
-    const message = view.protectedLogin.phase === "failed" ? view.protectedLogin.message : "自动登录已停止";
     const attempt = randomUUID();
     view.loginAttempt = attempt;
     const current = () => !view.closed && view.loginAttempt === attempt;
@@ -1150,7 +1183,7 @@ export class WebAccountViewManager {
         const page = await view.context.newPage();
         if (!current()) { await page.close(); return; }
         view.login = null; view.protectedLogin = null;
-        view.loginNotice = `${message}。网页已打开，当前页面未填入托管密码。`;
+        view.loginNotice = "";
         await this.registerPage(view, page, true);
         // Navigation errors remain ordinary webpage errors; they never restore
         // the automatic-login overlay or lock the address bar.

@@ -6,6 +6,8 @@ export const DESKTOP_WEB_PAGE_LIMIT = 8;
 export type DesktopWebContextMenuAction =
   | "open-link-new-page"
   | "copy-link"
+  | "fill-username"
+  | "fill-password"
   | "undo"
   | "redo"
   | "cut"
@@ -21,6 +23,7 @@ export interface DesktopWebContextMenuContext {
   linkUrl: string;
   isEditable: boolean;
   hasSelection: boolean;
+  credentialFillAvailable?: boolean;
 }
 
 export function desktopWebPartitionName(endpoint: string, userId: string, credentialId: string): string {
@@ -82,6 +85,7 @@ export function desktopWebContextMenuGroups(context: DesktopWebContextMenuContex
     ]);
   }
   if (context.isEditable) {
+    if (context.credentialFillAvailable) groups.push(["fill-username", "fill-password"]);
     groups.push(["undo", "redo"], ["cut", "copy", "paste"], ["select-all"]);
   } else if (context.hasSelection) {
     groups.push(["copy"]);

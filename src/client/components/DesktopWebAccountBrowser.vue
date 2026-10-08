@@ -826,7 +826,7 @@ onBeforeUnmount(() => {
               <span class="web-page-menu__rule" aria-hidden="true"></span>
               <button type="button" class="web-page-menu__immersive" :aria-label="focused ? $t('退出沉浸模式') : $t('进入沉浸模式')" :title="focused ? $t('退出沉浸模式') : $t('进入沉浸模式')" @click="toggleImmersiveFromMenu"><Minimize2 v-if="focused" :size="15" /><Maximize2 v-else :size="15" /></button>
             </div>
-            <button type="button" class="web-page-menu__item" :disabled="!state" @click="refillFromMenu"><KeyRound :size="15" />{{ $t(state?.loginMode === 'direct' ? '填充用户名和密码' : '后台登录') }}</button>
+            <button type="button" class="web-page-menu__item" :disabled="!state" @click="refillFromMenu"><KeyRound :size="15" />{{ $t('填充用户名和密码') }}</button>
             <button type="button" class="web-page-menu__item" :disabled="!state || resetting" @click="reloginFromMenu"><RotateCcw :size="15" />{{ $t('重新登录') }}</button>
             <p class="web-page-menu__status">
               <ShieldAlert v-if="state?.certificateError" :size="14" />

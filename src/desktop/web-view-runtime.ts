@@ -25,7 +25,8 @@ import { normalizeWebAddress } from "../shared/web-address.js";
 import { reorderMap } from "../shared/tab-order.js";
 import { ProtectedWebLogin } from "./protected-web-login.js";
 import { verifyProtectedBusinessPage } from "./protected-web-login-business.js";
-import { DirectWebAutofill } from "../shared/direct-web-autofill.js";
+import { DirectWebAutofill, DIRECT_WEB_FILL_MESSAGE } from "../shared/direct-web-autofill.js";
+import { captureWebCredentialTargetScript, fillWebCredentialTargetScript, installWebCredentialContextListenerScript } from "../shared/web-credential-context-fill.js";
 import { defaultWebLoginConfig, type WebLoginConfig, type ProtectedLoginState, type ProtectedLoginInput } from "../shared/protected-web-login.js";
 import { loadWebIcon } from "../shared/web-favicon.js";
 import { immersiveNavigationEscapeAction } from "../shared/immersive-navigation.js";
@@ -354,9 +355,16 @@ export function desktopWebContextMenuItem(
   webContents: Electron.WebContents,
   params: Electron.ContextMenuParams,
   action: DesktopWebContextMenuAction,
+  credentialTarget?: string,
 ): Electron.MenuItemConstructorOptions {
   const navigation = webContents.navigationHistory;
   switch (action) {
+    case "fill-username":
+    case "fill-password": return { label: tr(action === "fill-username" ? "填入用户名" : "填入密码"), enabled: Boolean(credentialTarget), click: () => {
+      void fillDesktopWebCredentialTarget(view, webContents, credentialTarget!, action).catch(() => {
+        if (!view.closing) notifyWebView(view, "error", tr("未能填入登录信息，请重新右键选择输入框"));
+      });
+    } };
     case "open-link-new-page": return { label: tr("在新标签页中打开链接"), click: () => {
       void openDesktopWebLinkInNewPage(view, params.linkURL).catch((error) => {
         if (!view.closing) notifyWebView(view, "error", error instanceof Error ? error.message : tr("本机页面加载失败"));
@@ -374,6 +382,19 @@ export function desktopWebContextMenuItem(
     case "reload": return { label: tr("重新加载"), accelerator: "CommandOrControl+R", click: () => webContents.reload() };
     case "inspect": return { label: tr("检查元素"), click: () => inspectDesktopWebElement(webContents, params.x, params.y) };
   }
+}
+
+async function fillDesktopWebCredentialTarget(view: ManagedDesktopWebView, contents: Electron.WebContents, token: string, action: "fill-username" | "fill-password"): Promise<void> {
+  const page = activeDesktopWebPage(view);
+  if (!page || page.view.webContents !== contents || view.login) return;
+  page.directAutofill?.dispose();
+  const credential = await latestDesktopWebCredential(view.credentialId);
+  if (view.closing || desktopWebViews.get(view.id) !== view || activeDesktopWebPage(view) !== page || contents.isDestroyed() || view.login) return;
+  const origins = [new URL(credential.entryUrl).origin, ...(credential.loginConfig?.allowedOrigins ?? [])];
+  const filled = await contents.executeJavaScriptInIsolatedWorld(999, [{ code: fillWebCredentialTargetScript(token, action === "fill-username" ? credential.username : credential.password, origins) }], true);
+  if (!filled) throw new Error("stale-input");
+  view.loginNotice = "";
+  sendWebViewState(view);
 }
 
 let desktopWebZoomTargetId = "";
@@ -528,16 +549,24 @@ function configureDesktopWebPage(
     mainWindow.webContents.send("viron:native-view-pointer-down");
     sendToAgentChat("viron:native-view-pointer-down");
   });
-  nativeView.webContents.on("context-menu", (_event, params) => {
+  nativeView.webContents.on("dom-ready", () => {
+    void nativeView.webContents.executeJavaScriptInIsolatedWorld(999, [{ code: installWebCredentialContextListenerScript() }]).catch(() => undefined);
+  });
+  nativeView.webContents.on("context-menu", async (_event, params) => {
     if (!mainWindow || mainWindow.isDestroyed() || nativeView.webContents.isDestroyed()) return;
+    const token = randomUUID();
+    const origins = [new URL(view.entryUrl).origin, ...view.loginConfig.allowedOrigins];
+    const available = !view.login && params.isEditable && await nativeView.webContents.executeJavaScriptInIsolatedWorld(999, [{ code: captureWebCredentialTargetScript(token, params.x, params.y, origins, true) }], true).catch(() => false);
+    if (!mainWindow || mainWindow.isDestroyed() || nativeView.webContents.isDestroyed() || view.closing) return;
     const groups = desktopWebContextMenuGroups({
       linkUrl: params.linkURL,
       isEditable: params.isEditable,
       hasSelection: Boolean(params.selectionText),
+      credentialFillAvailable: Boolean(available),
     });
     const template = groups.flatMap((group, index) => [
       ...(index > 0 ? [{ type: "separator" as const }] : []),
-      ...group.map((action) => desktopWebContextMenuItem(view, nativeView.webContents, params, action)),
+      ...group.map((action) => desktopWebContextMenuItem(view, nativeView.webContents, params, action, available ? token : undefined)),
     ]);
     const extensionItems = desktopWebExtensionContextMenuItems(view.partition, nativeView.webContents, params);
     if (extensionItems.length) {
@@ -721,11 +750,11 @@ function fillDirectDesktopPage(view: ManagedDesktopWebView, page: ManagedDesktop
   page.autofillMessage = "";
   view.loginNotice = "";
   const contents = page.view.webContents;
-  const current = () => !view.closing && desktopWebViews.get(view.id) === view && view.pages.get(page.id) === page && view.loginConfig.mode === "direct";
+  const current = () => !view.closing && desktopWebViews.get(view.id) === view && view.pages.get(page.id) === page && !view.login;
   page.directAutofill = new DirectWebAutofill({
     browser: { destroyed: () => !current() || contents.isDestroyed(), loading: () => contents.isLoading(), evaluate: (source) => contents.executeJavaScriptInIsolatedWorld(999, [{ code: source }], true) },
     entryUrl: view.entryUrl, config: view.loginConfig, username: view.username, password: view.password,
-    changed: (message) => { if (current()) { view.loginNotice = message; sendWebViewState(view); } },
+    changed: (message) => { if (current()) { view.loginNotice = message === DIRECT_WEB_FILL_MESSAGE ? "" : message; sendWebViewState(view); } },
   });
   view.password = "";
   sendWebViewState(view);
@@ -750,6 +779,7 @@ function startProtectedDesktopLogin(view: ManagedDesktopWebView): void {
     session: view.partition, url: view.entryUrl, username: view.username, password: view.password,
     prepare: () => preparation,
     config: view.loginConfig, bounds: view.bounds,
+    manualFallback: () => { if (current()) void browseDesktopWebWithoutAutofill(view).catch(() => undefined); },
     changed: () => {
       if (!current()) return;
       sendWebViewState(view);
@@ -820,7 +850,6 @@ export function browseDesktopWebWithoutAutofill(view: ManagedDesktopWebView): Pr
   if (pending) return pending;
   const login = view.login;
   if (!login || view.closing) return Promise.resolve();
-  const message = login.state.phase === "failed" ? login.state.message : "自动登录已停止";
   const attempt = randomUUID();
   view.loginAttempt = attempt;
   const current = () => !view.closing && desktopWebViews.get(view.id) === view && view.loginAttempt === attempt;
@@ -842,7 +871,7 @@ export function browseDesktopWebWithoutAutofill(view: ManagedDesktopWebView): Pr
       if (!current()) { page.view.dispose(); return; }
       view.password = "";
       view.login = null;
-      view.loginNotice = `${message}。网页已打开，当前页面未填入托管密码。`;
+      view.loginNotice = "";
       page.loadingUrl = view.entryUrl;
       activateDesktopWebPage(view, page.id);
       void page.view.webContents.loadURL(view.entryUrl).catch(() => {
@@ -1214,7 +1243,7 @@ export async function handleDesktopWebViewAction(id: string, action: { type: str
     const credential = await latestDesktopWebCredential(managed.credentialId);
     const active = managed.pages.get(managed.activePageId);
     applyDesktopWebCredential(managed, credential);
-    if (managed.loginConfig.mode === "direct" && active && !managed.login) fillDirectDesktopPage(managed, active);
+    if (active && !managed.login) fillDirectDesktopPage(managed, active);
     else await startConfiguredDesktopLogin(managed);
     return webViewState(managed);
   }

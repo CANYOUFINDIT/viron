@@ -11,7 +11,7 @@ watch(() => props.message, () => { dismissed.value = false; });
 <template>
   <div v-if="message && !dismissed" class="web-login-notice" role="status">
     <span>{{ message }}</span>
-    <button type="button" @click="$emit('retry')">{{ $t(mode === 'direct' ? '重新填充' : '重试自动登录') }}</button>
+    <button type="button" @click="$emit('retry')">{{ $t('重新填充') }}</button>
     <button type="button" class="web-login-notice__close" :aria-label="$t('关闭提示')" @click="dismissed = true"><X :size="14" /></button>
   </div>
 </template>

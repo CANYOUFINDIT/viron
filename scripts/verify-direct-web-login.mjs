@@ -96,13 +96,17 @@ async function run() {
     credential.loginConfig.mode = "protected";
     credential.loginConfig.submitSelector = "#missing-submit";
     await reopenDesktopWebViews([view], credential);
-    await until(() => view.login?.state.kind === "page" && Boolean(view.login.state.image), "switch back to protected fallback");
+    await until(() => !view.login && view.pages.size === 1 && activeDesktopWebPage(view).view.webContents.getTitle() === "Custom", "switch back to normal manual page", 40_000);
     assert.equal(custom.isDestroyed(), true);
-    assert.equal(view.pages.size, 0);
-    assert.equal(view.partition.extensions.getAllExtensions().length, 0);
-    assert.equal(await view.login.window.webContents.executeJavaScript("getComputedStyle(beta).visibility"), "hidden");
+    assert.equal(view.pages.size, 1);
+    assert.equal(view.partition.extensions.getAllExtensions().length, 1);
+    const manual = activeDesktopWebPage(view).view.webContents;
+    await until(() => manual.executeJavaScript("Boolean(document.querySelector('#beta'))"), "normal manual fields");
+    assert.equal(await manual.executeJavaScript("beta.value"), "");
+    assert.equal(await manual.executeJavaScript("beta.readOnly"), false);
+    assert.equal(view.loginNotice, "");
     assert.equal(JSON.stringify(await owner.webContents.executeJavaScript("states")).includes("fixture-password"), false);
-    console.log("Native direct login passed: delayed form, agreement, editable password, active extension, custom selectors, no refill after navigation and switch back to protected login.");
+    console.log("Native direct login passed: delayed form, agreement, editable password, active extension, custom selectors, no refill after navigation and switch back to normal manual login.");
   } finally {
     view.closing = true; destroyDesktopWebPages(view); desktopWebViews.delete(view.id); owner.destroy();
     target.closeAllConnections(); await new Promise((resolveClose) => target.close(() => resolveClose()));

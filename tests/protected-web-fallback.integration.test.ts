@@ -1,6 +1,5 @@
 import { createServer } from "node:http";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import WebSocket from "ws";
@@ -10,7 +9,7 @@ import type { AppConfig } from "../src/server/config.js";
 import { ensureAdmin, openDatabase } from "../src/server/database.js";
 import type { PublicWebAccountView } from "../src/server/web-browser/view-manager.js";
 
-type Message = { type: string; view?: PublicWebAccountView; data?: string; message?: string };
+type Message = { requestId?: number; token?: string; pageId?: string; type: string; view?: PublicWebAccountView; data?: string; message?: string };
 async function until(predicate: () => boolean, timeout = 12_000) {
   const deadline = Date.now() + timeout;
   while (!predicate()) {
@@ -39,6 +38,9 @@ async function fixture(mode: string, check: (value: {
       response.end(`<title>Business</title><main ${homeLoads === 1 ? 'id="success"' : ''}>Authenticated business</main><button onclick="location.href='/clicked'" style="position:fixed;left:20px;top:20px;width:200px;height:50px">Continue</button>`); return;
     }
     entryLoads++;
+    if (mode === "agreement") {
+      response.end('<title>Login fixture</title><form method="post"><input id="alpha" name="username"><input id="beta" name="password" type="password"><label><input id="agree" type="checkbox" required>Accept terms</label><button>Login</button></form>'); return;
+    }
     if (mode.startsWith("slow")) {
       const form = '<form method="post"><input name="username" autocomplete="username"><input name="password" type="password"><button type="submit">Login</button></form>';
       response.end(`<title>Nacos</title>${mode === "slow-splash" ? '<main>Loading console...</main>' : ''}<script>setTimeout(()=>document.body.innerHTML=${JSON.stringify(form)},3500)</script>`); return;
@@ -59,7 +61,8 @@ async function fixture(mode: string, check: (value: {
   });
   await new Promise<void>((resolve) => target.listen(0, "127.0.0.1", resolve));
   const origin = `http://127.0.0.1:${(target.address() as { port: number }).port}`;
-  const directory = mkdtempSync(join(tmpdir(), "viron-browsing-fallback-"));
+  mkdirSync("private/browser-tests", { recursive: true });
+  const directory = mkdtempSync(join(process.cwd(), "private/browser-tests/fallback-"));
   // The bundled browser avoids a system Chrome updater inheriting its stdio
   // and delaying persistent-context shutdown during the real 30-second timeout.
   const executable = chromium.executablePath();
@@ -72,7 +75,7 @@ async function fixture(mode: string, check: (value: {
     const signedIn = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { username: config.adminUsername, password: config.adminPassword } });
     const cookies = { envman_session: signedIn.cookies.find((item) => item.name === "envman_session")!.value };
     const environment = await app.inject({ method: "POST", url: "/api/v1/environments", cookies, payload: { name: "Browsing fallback" } });
-    const entry = await app.inject({ method: "POST", url: `/api/v1/environments/${environment.json().id}/web-entries`, cookies, payload: { name: "Fixture", url: origin + (mode.startsWith("slow") ? "/nacos/" : "/"), loginConfig: ["invalid", "manual", "moving", "settings"].includes(mode) ? { usernameSelector: "[broken(" } : mode === "timeout" ? { usernameSelector: "#missing-user", passwordSelector: "#missing-password" } : mode === "business" ? { successSelector: "#success" } : {} } });
+    const entry = await app.inject({ method: "POST", url: `/api/v1/environments/${environment.json().id}/web-entries`, cookies, payload: { name: "Fixture", url: origin + (mode.startsWith("slow") ? "/nacos/" : "/"), loginConfig: ["invalid", "manual", "moving", "settings", "readonly", "permanent-readonly"].includes(mode) ? { usernameSelector: "[broken(" } : mode === "timeout" ? { usernameSelector: "#missing-user", passwordSelector: "#missing-password" } : mode === "business" ? { successSelector: "#success" } : {} } });
     expect(entry.statusCode).toBe(201);
     const credential = await app.inject({ method: "POST", url: `/api/v1/web-entries/${entry.json().id}/credentials`, cookies, payload: { username: "fixture-user", password: "fixture-password" } });
     const opened = await app.inject({ method: "POST", url: `/api/v1/web-credentials/${credential.json().id}/view`, cookies, payload: { width: 900, height: 650 } });
@@ -96,166 +99,159 @@ async function fixture(mode: string, check: (value: {
   }
 }
 
-describe.skipIf(process.env.VIRON_WEB_BROWSER_TEST !== "1")("web browsing survives automatic-login failures", () => {
-  it.each(["ambiguous", "invalid", "rejected"])("retains an interactive protected fallback after %s and can still open an unfilled normal page", async (mode) => {
+let requestId = 0;
+async function normalPage(wire: Message[], context: BrowserContext): Promise<Page> {
+  await until(() => wire.some((message) => message.view?.protectedLogin === null && message.view.title === "Login fixture"), 36_000);
+  const page = context.pages()[0];
+  await page.waitForLoadState();
+  expect(wire.some((message) => message.view?.protectedLogin?.kind === "page")).toBe(false);
+  expect(wire.filter((message) => message.view?.protectedLogin === null).at(-1)?.view?.loginNotice).toBe("");
+  return page;
+}
+async function target(socket: WebSocket, wire: Message[], x: number, y: number) {
+  const view = wire.filter((message) => message.view?.protectedLogin === null).at(-1)!.view!;
+  const id = ++requestId;
+  socket.send(JSON.stringify({ type: "credential-context", requestId: id, pageId: view.activePageId, x, y }));
+  await until(() => wire.some((message) => message.type === "credential-context" && message.requestId === id));
+  const response = wire.find((message) => message.type === "credential-context" && message.requestId === id)!;
+  expect(response.token).toBeTruthy();
+  return { token: response.token, pageId: response.pageId };
+}
+function click(socket: WebSocket, x: number, y: number) {
+  socket.send(JSON.stringify({ type: "mouse", action: "down", x, y, button: "left" }));
+  socket.send(JSON.stringify({ type: "mouse", action: "up", x, y, button: "left" }));
+}
+
+describe.skipIf(process.env.VIRON_WEB_BROWSER_TEST !== "1")("normal Web page manual credential filling", () => {
+  it.each(["ambiguous", "invalid", "rejected"])("opens a normal page automatically after %s", async (mode) => {
     await fixture(mode, async ({ socket, wire, context, auth, origin, posts }) => {
-      await until(() => wire.some((message) => message.view?.protectedLogin?.kind === "page"));
-      expect(auth.isClosed()).toBe(false);
-      if (mode !== "rejected") {
-        expect(await auth.locator('input[type="password"]').getAttribute("readonly")).not.toBeNull();
-        expect(await auth.locator('input[type="password"]').evaluate((node) => getComputedStyle(node).visibility)).toBe("hidden");
-      }
-      expect(wire.some((message) => message.type === "frame")).toBe(false);
-      socket.send(JSON.stringify({ type: "browse" }));
-      await until(() => wire.some((message) => message.view?.protectedLogin === null && message.view.title === "Login fixture"));
+      const page = await normalPage(wire, context);
       expect(auth.isClosed()).toBe(true);
-      const page = context.pages()[0];
       expect(await page.locator('input[type="password"]').inputValue()).toBe("");
       expect(await page.evaluate(() => [localStorage.getItem("unverified-password"), sessionStorage.getItem("unverified-password")])).toEqual([null, null]);
       expect((await context.cookies()).some((cookie) => cookie.name === "unverified-password")).toBe(false);
-      expect(wire.some((message) => message.view?.loginNotice.includes("未填入托管密码"))).toBe(true);
       expect(wire.some((message) => message.type === "login-complete")).toBe(false);
       expect(posts()).toBe(mode === "rejected" ? 1 : 0);
-      socket.send(JSON.stringify({ type: "mouse", action: "down", x: 40, y: 270, button: "left" }));
-      socket.send(JSON.stringify({ type: "mouse", action: "up", x: 40, y: 270, button: "left" }));
+      click(socket, 40, 270);
       await until(() => wire.some((message) => message.view?.title === "Clicked"));
       socket.send(JSON.stringify({ type: "navigate", url: origin + "/" }));
-      await until(() => page.url() === origin + "/" && !page.isClosed());
+      await until(() => page.url() === origin + "/");
       await page.waitForLoadState();
-      socket.send(JSON.stringify({ type: "reload" }));
-      await until(() => wire.some((message) => message.type === "frame"));
       expect(await page.locator('input[type="password"]').inputValue()).toBe("");
-    });
-  }, 20_000);
-
-  it("can stop an unfinished initial page load without waiting for its timeout", async () => {
-    await fixture("cancel", async ({ socket, wire, auth, posts, loads }) => {
-      await until(() => socket.readyState === WebSocket.OPEN && loads() === 1);
-      const started = Date.now();
-      socket.send(JSON.stringify({ type: "browse" })); socket.send(JSON.stringify({ type: "browse" }));
-      await until(() => wire.some((message) => message.view?.protectedLogin === null && message.view.title === "Login fixture"));
-      expect(Date.now() - started).toBeLessThan(5000); expect(auth.isClosed()).toBe(true); expect(posts()).toBe(0);
-    });
-  }, 20_000);
-
-  it("keeps an authenticated fresh business page usable when its success marker is absent", async () => {
-    await fixture("business", async ({ socket, wire, auth, posts }) => {
-      const started = Date.now();
-      await until(() => wire.some((message) => message.view?.protectedLogin === null && message.view.title === "Business"));
-      expect(Date.now() - started).toBeLessThan(5000); expect(auth.isClosed()).toBe(true); expect(posts()).toBe(1);
-      socket.send(JSON.stringify({ type: "mouse", action: "down", x: 40, y: 40, button: "left" }));
-      socket.send(JSON.stringify({ type: "mouse", action: "up", x: 40, y: 40, button: "left" }));
-      await until(() => wire.some((message) => message.view?.title === "Clicked" && message.view.protectedLogin === null));
-      expect(wire.some((message) => message.type === "login-complete")).toBe(false);
-    });
-  }, 20_000);
-
-  it("keeps a timed-out form interactive and allows leaving it without mandatory retry", async () => {
-    await fixture("timeout", async ({ socket, wire, auth, posts }) => {
-      await until(() => wire.some((message) => message.view?.protectedLogin?.kind === "page"), 36_000);
-      expect(auth.isClosed()).toBe(false);
-      socket.send(JSON.stringify({ type: "browse" }));
-      await until(() => wire.some((message) => message.view?.protectedLogin === null && message.view.title === "Login fixture"));
-      expect(auth.isClosed()).toBe(true); expect(posts()).toBe(0);
-      expect(wire.some((message) => message.view?.loginNotice.includes("未填入托管密码"))).toBe(true);
     });
   }, 45_000);
 
-  it("fills unrecognized fields by identity, freezes the secret, and completes a real login through the fallback", async () => {
-    await fixture("manual", async ({ socket, wire, auth, posts }) => {
-      await until(() => wire.some((message) => message.view?.protectedLogin?.kind === "page"));
-      const revision = () => wire.filter((message) => message.view?.protectedLogin?.kind === "page").at(-1)!.view!.protectedLogin!.revision;
-      const token = (y: number) => wire.filter((message) => message.view?.protectedLogin?.kind === "page").at(-1)!.view!.protectedLogin!.targets!.find((item) => y >= item.y && y < item.y + item.height)!.token;
-      expect(await auth.evaluate("typeof globalThis.__vironLogin")).toBe("undefined");
-      const stale = revision() + "-stale";
-      socket.send(JSON.stringify({ type: "login-input", input: { type: "fill-password", targetToken: "invalid-target", revision: stale } }));
-      await new Promise((resolve) => setTimeout(resolve, 200));
-      expect(await auth.locator("#beta").inputValue()).toBe("");
-      socket.send(JSON.stringify({ type: "login-input", input: { type: "fill-username", targetToken: token(80), revision: revision() } }));
-      await until(() => wire.some((message) => message.type === "login-input-result"));
-      await expect.poll(() => auth.locator("#alpha").inputValue()).toBe("fixture-user");
-      socket.send(JSON.stringify({ type: "login-input", input: { type: "fill-password", targetToken: token(140), revision: revision() } }));
-      await expect.poll(() => auth.locator("#beta").inputValue()).toBe("fixture-password");
-      expect(await auth.locator("#beta").getAttribute("readonly")).not.toBeNull();
-      await auth.locator("#beta").evaluate((node) => { (node as HTMLInputElement).type = "text"; node.style.visibility = "visible"; });
-      await expect.poll(() => auth.locator("#beta").evaluate((node) => getComputedStyle(node).visibility)).toBe("hidden");
-      socket.send(JSON.stringify({ type: "login-input", input: { type: "click", x: 40, y: 210, revision: revision() } }));
+  it("can cancel an unfinished load and open the normal page", async () => {
+    await fixture("cancel", async ({ socket, wire, context, auth, posts, loads }) => {
+      await until(() => socket.readyState === WebSocket.OPEN && loads() === 1);
+      socket.send(JSON.stringify({ type: "browse" })); socket.send(JSON.stringify({ type: "browse" }));
+      await normalPage(wire, context);
+      expect(auth.isClosed()).toBe(true); expect(posts()).toBe(0);
+    });
+  }, 20_000);
+
+  it("keeps an authenticated business page usable without its success marker", async () => {
+    await fixture("business", async ({ socket, wire, auth, posts }) => {
       await until(() => wire.some((message) => message.view?.protectedLogin === null && message.view.title === "Business"));
       expect(auth.isClosed()).toBe(true); expect(posts()).toBe(1);
+      click(socket, 40, 40);
+      await until(() => wire.some((message) => message.view?.title === "Clicked"));
       expect(wire.some((message) => message.type === "login-complete")).toBe(false);
     });
   }, 20_000);
 
-  it.each(["slow-empty", "slow-splash"])("retains a delayed SPA on /nacos/ without a login title: %s", async (mode) => {
-    await fixture(mode, async ({ socket, wire, auth, posts }) => {
-      await auth.waitForLoadState(); await new Promise((resolve) => setTimeout(resolve, 2200));
-      expect(auth.isClosed()).toBe(false); expect(posts()).toBe(0);
-      expect(wire.some((message) => message.type === "login-complete")).toBe(false);
-      if (mode === "slow-splash") {
-        await expect.poll(() => auth.locator('input[type=password]').inputValue(), { timeout: 6000 }).toBe("fixture-password");
-        expect(await auth.locator('input[type=password]').getAttribute("readonly")).not.toBeNull();
-        const state = () => wire.filter((message) => message.view?.protectedLogin?.kind === "page").at(-1)!.view!.protectedLogin!;
-        await until(() => Boolean(state()?.image));
-        const box = (await auth.locator('button').boundingBox())!;
-        socket.send(JSON.stringify({ type: "login-input", input: { type: "click", revision: state().revision, x: box.x + 5, y: box.y + 5 } }));
-      }
-      await until(() => wire.some((message) => message.view?.protectedLogin === null && message.view.title === "Business"));
-      expect(auth.isClosed()).toBe(true); expect(posts()).toBe(1);
+  it("opens the normal page after automatic login times out", async () => {
+    await fixture("timeout", async ({ wire, context, auth, posts }) => {
+      await normalPage(wire, context);
+      expect(auth.isClosed()).toBe(true); expect(posts()).toBe(0);
+    });
+  }, 45_000);
+
+  it("fills only the selected inputs and waits for the user to submit", async () => {
+    await fixture("manual", async ({ socket, wire, context, auth, posts, loads }) => {
+      const page = await normalPage(wire, context);
+      const loadCount = loads();
+      socket.send(JSON.stringify({ type: "fill-username", ...await target(socket, wire, 40, 80) }));
+      await expect.poll(() => page.locator("#alpha").inputValue()).toBe("fixture-user");
+      expect(await page.locator("#beta").inputValue()).toBe("");
+      socket.send(JSON.stringify({ type: "fill-password", ...await target(socket, wire, 40, 140) }));
+      await expect.poll(() => page.locator("#beta").inputValue()).toBe("fixture-password");
+      expect(await page.locator("#beta").getAttribute("readonly")).toBeNull();
+      expect(await page.locator("#beta").evaluate((node) => getComputedStyle(node).visibility)).toBe("visible");
+      expect(posts()).toBe(0); expect(loads()).toBe(loadCount); expect(auth.isClosed()).toBe(true);
+      await page.locator("#alpha").fill("edited-user");
+      click(socket, 40, 210);
+      await until(() => wire.some((message) => message.view?.title === "Business"));
+      expect(posts()).toBe(1);
     });
   }, 20_000);
 
-  it.each(["readonly", "permanent-readonly"])("retains %s fields without destroying the fallback", async (mode) => {
-    await fixture(mode, async ({ socket, wire, auth, posts }) => {
-      await until(() => wire.some((message) => message.view?.protectedLogin?.kind === "page"));
-      const state = () => wire.filter((message) => message.view?.protectedLogin?.kind === "page").at(-1)!.view!.protectedLogin!;
-      const fill = (type: string, y: number) => socket.send(JSON.stringify({ type: "login-input", requestId: "fill-" + y, input: { type, revision: state().revision, targetToken: state().targets!.find((item) => y >= item.y && y < item.y + item.height)!.token } }));
-      expect(await auth.locator("#beta").inputValue()).toBe(""); fill("fill-password", 140);
+  it.each(["slow-empty", "slow-splash"])("waits for the delayed SPA form and logs in on its first attempt: %s", async (mode) => {
+    await fixture(mode, async ({ wire, auth, posts, loads }) => {
+      await until(() => wire.some((message) => message.view?.protectedLogin === null && message.view.title === "Business"));
+      expect(auth.isClosed()).toBe(true); expect(posts()).toBe(1); expect(loads()).toBe(1);
+    });
+  }, 20_000);
+
+  it("opens agreements on the normal page and fills both fields in place without resetting user choices", async () => {
+    await fixture("agreement", async ({ socket, wire, context, auth, posts, loads }) => {
+      const page = await normalPage(wire, context);
+      expect(auth.isClosed()).toBe(true);
+      await page.locator("#agree").check();
+      const count = loads();
+      socket.send(JSON.stringify({ type: "refill" }));
+      await expect.poll(() => page.locator("#beta").inputValue()).toBe("fixture-password");
+      expect(await page.locator("#alpha").inputValue()).toBe("fixture-user");
+      expect(await page.locator("#agree").isChecked()).toBe(true);
+      expect(loads()).toBe(count); expect(posts()).toBe(0);
+      await page.locator("button").click();
+      await until(() => wire.some((message) => message.view?.title === "Business"));
+      expect(posts()).toBe(1);
+    });
+  }, 20_000);
+
+  it.each(["readonly", "permanent-readonly"])("respects %s fields", async (mode) => {
+    await fixture(mode, async ({ socket, wire, context, posts }) => {
+      const page = await normalPage(wire, context);
+      socket.send(JSON.stringify({ type: "fill-password", ...await target(socket, wire, 40, 140) }));
       if (mode === "permanent-readonly") {
-        await until(() => wire.some((message) => message.type === "login-input-result"));
-        expect(await auth.locator("#beta").inputValue()).toBe("");
-        expect(auth.isClosed()).toBe(false); expect(state().phase).toBe("interactive"); expect(posts()).toBe(0);
+        await until(() => wire.some((message) => message.type === "error"));
+        expect(await page.locator("#beta").inputValue()).toBe("");
       } else {
-        await expect.poll(() => auth.locator("#beta").inputValue()).toBe("fixture-password"); fill("fill-username", 80);
-        await expect.poll(() => auth.locator("#alpha").inputValue()).toBe("fixture-user");
-        socket.send(JSON.stringify({ type: "login-input", input: { type: "click", revision: state().revision, x: 40, y: 210 } }));
-        await until(() => wire.some((message) => message.view?.protectedLogin === null && message.view.title === "Business"));
+        await expect.poll(() => page.locator("#beta").inputValue()).toBe("fixture-password");
+        socket.send(JSON.stringify({ type: "fill-username", ...await target(socket, wire, 40, 80) }));
+        await expect.poll(() => page.locator("#alpha").inputValue()).toBe("fixture-user");
+        expect(posts()).toBe(0);
+        click(socket, 40, 210);
+        await until(() => wire.some((message) => message.view?.title === "Business"));
         expect(posts()).toBe(1);
       }
     });
   }, 20_000);
 
-  it("keeps moving pages visible and fills the selected node after it moves, but rejects a replacement", async () => {
-    await fixture("moving", async ({ socket, wire, auth }) => {
-      await until(() => wire.some((message) => message.view?.protectedLogin?.targets?.length === 2));
-      const state = () => wire.filter((message) => message.view?.protectedLogin?.kind === "page").at(-1)!.view!.protectedLogin!;
-      const selected = state().targets!.find((item) => item.y > 100)!.token, revision = state().revision;
-      await auth.evaluate(() => { document.querySelector<HTMLElement>("#beta")!.style.left = "300px"; });
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      expect(state().revision).toBe(revision); expect(state().image).not.toBe("");
-      socket.send(JSON.stringify({ type: "login-input", input: { type: "fill-password", targetToken: selected, revision } }));
-      await expect.poll(() => auth.locator("#beta").inputValue()).toBe("fixture-password");
-      await auth.evaluate(() => { document.querySelector("#beta")!.outerHTML = '<input id="beta" style="position:fixed;left:300px;top:120px;width:220px;height:40px">'; });
-      const count = wire.filter((message) => message.type === "login-input-result").length;
-      socket.send(JSON.stringify({ type: "login-input", input: { type: "fill-password", targetToken: selected, revision } }));
-      await until(() => wire.filter((message) => message.type === "login-input-result").length > count);
-      expect(await auth.locator("#beta").inputValue()).toBe(""); expect(auth.isClosed()).toBe(false);
+  it("fills a moved input by identity and rejects a replacement", async () => {
+    await fixture("moving", async ({ socket, wire, context }) => {
+      const page = await normalPage(wire, context);
+      const selected = await target(socket, wire, 40, 140);
+      await page.evaluate(() => { document.querySelector<HTMLElement>("#beta")!.style.left = "300px"; });
+      socket.send(JSON.stringify({ type: "fill-password", ...selected }));
+      await expect.poll(() => page.locator("#beta").inputValue()).toBe("fixture-password");
+      const replaced = await target(socket, wire, 320, 140);
+      await page.evaluate(() => { document.querySelector("#beta")!.outerHTML = '<input id="beta">'; });
+      socket.send(JSON.stringify({ type: "fill-password", ...replaced }));
+      await until(() => wire.some((message) => message.type === "error"));
+      expect(await page.locator("#beta").inputValue()).toBe("");
     });
   }, 20_000);
 
-  it("does not inject the managed password into a new settings document after assisted login", async () => {
-    await fixture("settings", async ({ socket, wire, auth, origin }) => {
-      await until(() => wire.some((message) => message.view?.protectedLogin?.targets?.length === 2));
-      const state = () => wire.filter((message) => message.view?.protectedLogin?.kind === "page").at(-1)!.view!.protectedLogin!;
-      const oldToken = state().targets!.find((item) => item.y > 100)!.token;
-      socket.send(JSON.stringify({ type: "login-input", input: { type: "fill-password", targetToken: oldToken, revision: state().revision } }));
-      await expect.poll(() => auth.locator("#beta").inputValue()).toBe("fixture-password");
-      await auth.goto(origin + "/settings/security");
-      await until(() => state().targets?.some((item) => item.token !== oldToken) === true);
-      await new Promise((resolve) => setTimeout(resolve, 600));
-      expect(await auth.locator('input[type=password]').inputValue()).toBe(""); expect(auth.isClosed()).toBe(false);
-      socket.send(JSON.stringify({ type: "login-input", input: { type: "fill-password", targetToken: oldToken, revision: state().revision } }));
-      await new Promise((resolve) => setTimeout(resolve, 200));
-      expect(await auth.locator('input[type=password]').inputValue()).toBe("");
+  it("never replays a selected target after navigating into settings", async () => {
+    await fixture("settings", async ({ socket, wire, context, origin }) => {
+      const page = await normalPage(wire, context);
+      const selected = await target(socket, wire, 40, 140);
+      await page.goto(origin + "/settings/security");
+      socket.send(JSON.stringify({ type: "fill-password", ...selected }));
+      await until(() => wire.some((message) => message.type === "error"));
+      expect(await page.locator('input[type=password]').inputValue()).toBe("");
     });
   }, 20_000);
 });

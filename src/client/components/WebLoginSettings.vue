@@ -10,7 +10,7 @@ const fields = [
   ["interactionSelector", "验证区域选择器", '#verification'],
 ] as const;
 const modes = [
-  { value: "protected", label: "安全自动登录（默认）", description: "后台自动登录，失败后自动回退到受保护的密码填充和右键填充。使用者无法通过登录页面查看托管密码。" },
+  { value: "protected", label: "自动登录（默认）", description: "后台尝试自动登录；需要手动操作时打开正常网页，可右键输入框填入用户名或密码，再自行点击登录。" },
   { value: "direct", label: "直接填充（允许查看密码）", description: "在可操作的登录页填入用户名和密码，由使用者完成协议、验证码并提交登录。密码可以通过页面、开发者工具或浏览器插件查看，请仅用于允许共享密码的入口。" },
 ] as const;
 </script>
@@ -29,7 +29,7 @@ const modes = [
     <el-form-item v-for="[key, label, placeholder] in fields.filter(([key]) => modelValue.mode === 'protected' || key === 'usernameSelector' || key === 'passwordSelector')" :key="key" :label="$t(label)">
       <el-input v-model="modelValue[key]" :placeholder="placeholder" />
     </el-form-item>
-    <p v-if="modelValue.mode === 'protected'" class="login-settings__hint">验证区域必须只包含验证控件，不能包含账号、密码或 iframe。建议配置成功标记，确认登录后再打开业务页面。</p>
+    <p v-if="modelValue.mode === 'protected'" class="login-settings__hint">建议配置成功标记，确认登录后再打开业务页面。需要协议确认或验证码时，将打开正常网页供手动操作。</p>
     <el-form-item label="允许登录域名（每行一个 Origin）">
       <el-input :model-value="originsText" type="textarea" :rows="2" placeholder="https://login.example.com" @update:model-value="emit('update:originsText', $event)" />
     </el-form-item>

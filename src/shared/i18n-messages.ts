@@ -4252,7 +4252,10 @@ const generatedEnMessages: Record<string, string> = {
 
 const enOverrides: Record<string, string> = {
   "登录方式": "Login method",
-  "安全自动登录（默认）": "Protected automatic login (default)",
+  "自动登录（默认）": "Automatic login (default)",
+  "填入用户名": "Fill username",
+  "填入密码": "Fill password",
+  "后台尝试自动登录；需要手动操作时打开正常网页，可右键输入框填入用户名或密码，再自行点击登录。": "Try automatic login in the background. When manual input is needed, open the normal webpage and use the input context menu to fill the username or password, then click Log in.",
   "直接填充（允许查看密码）": "Direct fill (password can be viewed)",
   "后台自动登录，失败后自动回退到受保护的密码填充和右键填充。使用者无法通过登录页面查看托管密码。": "Log in in the background, with protected autofill and context-menu fill as fallbacks. Users cannot view the managed password through the login page.",
   "在可操作的登录页填入用户名和密码，由使用者完成协议、验证码并提交登录。密码可以通过页面、开发者工具或浏览器插件查看，请仅用于允许共享密码的入口。": "Fill an interactive login page. Users complete agreements or verification and submit the form. The password can be viewed through the page, developer tools or browser extensions. Use only where password sharing is allowed.",

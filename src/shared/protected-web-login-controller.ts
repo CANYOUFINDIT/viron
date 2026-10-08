@@ -71,7 +71,7 @@ export class ProtectedLoginController {
   private assistedScope: { document: string; url: string; navigation: number } | undefined;
   constructor(private options: {
     browser: ProtectedLoginBrowser; url: string; username: string; password: string; config?: WebLoginConfig;
-    prepare?: () => Promise<void>; changed: () => void; completed: (result: ProtectedLoginResult) => Promise<void>;
+    prepare?: () => Promise<void>; manualFallback?: () => void; changed: () => void; completed: (result: ProtectedLoginResult) => Promise<void>;
   }) {
     this.config = parseWebLoginConfig(options.config);
     this.origins = new Set([new URL(options.url).origin, ...this.config.allowedOrigins]);
@@ -155,6 +155,7 @@ export class ProtectedLoginController {
     this.options.changed();
   }
   private assist(message: string) {
+    if (this.options.manualFallback) { this.options.manualFallback(); return; }
     if (!this.assisted && this.installedDocument) this.assistedScope = { document: this.installedDocument, url: this.browser.url(), navigation: this.navigationVersion };
     this.assisted = true;
     this.progressAt = Date.now();
@@ -210,7 +211,16 @@ export class ProtectedLoginController {
       if (!alreadyReleased && !result.released && !await this.evaluate<boolean>("globalThis.__vironLogin.secretReleased()")) this.credentialReleased = false;
       // An unrecognized page can be an SPA splash, not a cached session. Keep
       // the protected document available instead of abandoning login detection.
-      if (result.status === "anonymous" && !this.assisted) { this.assist("未识别到登录表单，请在受保护页面中继续操作"); return; }
+      if (result.status === "anonymous" && !this.assisted) {
+        // A visible input needs manual help; a splash may still mount its form.
+        const hasInputs = await this.evaluate<boolean>(`Array.from(document.querySelectorAll('input')).some(input => {
+          const rect = input.getBoundingClientRect(), style = getComputedStyle(input);
+          return !input.disabled && ["text", "email", "password", "search", "tel", "url"].includes(input.type)
+            && rect.width > 2 && rect.height > 2 && style.display !== "none" && style.visibility !== "hidden";
+        })`);
+        if (hasInputs) this.assist("未识别到登录表单，请手动填入登录信息");
+        return;
+      }
       if (result.status === "anonymous" && this.assisted && (!this.credentialReleased || sameAssistedScope)) result.status = "interactive";
       if (result.released) this.submittedUrl ||= url;
       if (result.status !== "waiting") this.progressAt = Date.now();
@@ -229,6 +239,7 @@ export class ProtectedLoginController {
       } else if (result.status === "rejected") {
         this.assist("登录未通过，请检查页面提示后继续操作；系统已停止自动提交"); return;
       } else if (result.status === "interactive" && result.region) {
+        if (this.options.manualFallback) { this.options.manualFallback(); return; }
         stage = "verification";
         const before = result.region;
         const image = await contents.capture(before);

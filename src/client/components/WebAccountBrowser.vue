@@ -83,6 +83,20 @@ const view = ref<BrowserView | null>(null);
 const address = ref(props.entryUrl);
 const status = ref<"idle" | "starting" | "connecting" | "connected" | "disconnected">("idle");
 const errorMessage = ref("");
+const credentialMenu = ref<{ token: string; pageId: string; x: number; y: number } | null>(null);
+let credentialRequest = 0;
+let credentialPosition: { x: number; y: number; pageId: string; url: string } | null = null;
+function closeCredentialMenu() { credentialMenu.value = null; credentialPosition = null; credentialRequest++; }
+function dismissCredentialMenu(event: Event) {
+  if (event.type === "keydown" && (event as KeyboardEvent).key !== "Escape") return;
+  if (event.type === "pointerdown" && (event.target as Element | null)?.closest?.(".web-credential-menu")) return;
+  closeCredentialMenu();
+}
+function fillCredential(type: "fill-username" | "fill-password") {
+  const menu = credentialMenu.value;
+  closeCredentialMenu();
+  if (menu) send({ type, token: menu.token, pageId: menu.pageId });
+}
 const pageTabs = computed<BrowserPage[]>(() => view.value?.pages ?? []);
 const activePageId = computed(() => view.value?.activePageId ?? "");
 let socket: ServiceSocket | null = null;
@@ -130,6 +144,7 @@ function send(message: Record<string, unknown>) {
 }
 
 function syncView(next: BrowserView) {
+  if (next.protectedLogin || next.activePageId !== view.value?.activePageId || next.url !== view.value?.url) closeCredentialMenu();
   view.value = next;
   if (next.protectedLogin) frame.value = "";
   address.value = next.url === "about:blank" ? "" : next.url;
@@ -237,6 +252,8 @@ function handleMessage(event: MessageEvent) {
     const message = JSON.parse(String(event.data)) as {
       type: string;
       requestId?: number;
+      token?: string;
+      pageId?: string;
       data?: string;
       view?: BrowserView;
       message?: string;
@@ -246,7 +263,11 @@ function handleMessage(event: MessageEvent) {
       dialogType?: string;
       defaultValue?: string;
     };
-    if (message.type === "login-input-result" && message.requestId !== undefined) {
+    if (message.type === "credential-context") {
+      if (message.requestId === credentialRequest && message.token && credentialPosition && message.pageId === view.value?.activePageId && credentialPosition.url === view.value?.url && !view.value?.protectedLogin) {
+        credentialMenu.value = { token: message.token, pageId: message.pageId!, x: credentialPosition.x, y: credentialPosition.y };
+      }
+    } else if (message.type === "login-input-result" && message.requestId !== undefined) {
       const pending = pendingLoginInputs.get(message.requestId);
       if (pending) {
         pendingLoginInputs.delete(message.requestId); window.clearTimeout(pending.timer);
@@ -355,6 +376,8 @@ function handleMouseMove(event: MouseEvent) {
 }
 
 function handleMouseButton(event: MouseEvent, action: "down" | "up") {
+  if (event.button === 2) return;
+  closeCredentialMenu();
   const historyDirection = historyNavigationFromMouseButton(event.button);
   if (historyDirection) {
     if (action === "up") applyHistoryNavigationCommand(historyDirection);
@@ -369,13 +392,16 @@ function handleMouseButton(event: MouseEvent, action: "down" | "up") {
 
 function handleContextMenu(event: MouseEvent) {
   event.preventDefault();
+  closeCredentialMenu();
+  if (!view.value || view.value.protectedLogin) return;
   const position = pointerPosition(event);
   if (!position) return;
-  send({ type: "mouse", action: "down", button: "right", clickCount: 1, ...position });
-  send({ type: "mouse", action: "up", button: "right", clickCount: 1, ...position });
+  credentialPosition = { ...position, pageId: view.value.activePageId, url: view.value.url };
+  send({ type: "credential-context", requestId: credentialRequest, pageId: view.value.activePageId, ...position });
 }
 
 function handleWheel(event: WheelEvent) {
+  closeCredentialMenu();
   event.preventDefault();
   event.stopPropagation();
   const next = applyHistoryNavigationWheel(event, performance.now(), { ignoreBlockedTargets: true });
@@ -383,6 +409,7 @@ function handleWheel(event: WheelEvent) {
 }
 
 function handleKeydown(event: KeyboardEvent) {
+  closeCredentialMenu();
   if (event.isComposing) return;
   const printable = event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey;
   if (printable) return;
@@ -480,6 +507,8 @@ function reorderPages(orderedPageIds: string[]) {
 }
 
 onMounted(() => {
+  document.addEventListener("pointerdown", dismissCredentialMenu);
+  document.addEventListener("keydown", dismissCredentialMenu);
   resizeObserver = new ResizeObserver(resize);
   if (surface.value) resizeObserver.observe(surface.value);
   if (props.autoConnect) void connect("entry", Boolean(props.preloadConnect));
@@ -511,6 +540,8 @@ watch(
 );
 
 onBeforeUnmount(() => {
+  document.removeEventListener("pointerdown", dismissCredentialMenu);
+  document.removeEventListener("keydown", dismissCredentialMenu);
   if (preloading.value) void releasePreloadedView();
   else connectRequestVersion += 1;
   intentionalClose = true;
@@ -555,7 +586,7 @@ onBeforeUnmount(() => {
       </form>
       <div class="web-browser-tools">
         <button type="button" :aria-label="$t('新建空白标签页')" :title="$t('新建空白标签页')" @click="createBlankPage"><Plus :size="15" /></button>
-        <button type="button" :aria-label="$t(view?.loginMode === 'direct' ? '填充用户名和密码' : '重新后台登录')" :title="$t(view?.loginMode === 'direct' ? '填充用户名和密码' : '重新后台登录')" :disabled="!view" @click="send({ type: 'refill' })"><KeyRound :size="15" /></button>
+        <button type="button" :aria-label="$t('填充用户名和密码')" :title="$t('填充用户名和密码')" :disabled="!view" @click="closeCredentialMenu(); send({ type: 'refill' })"><KeyRound :size="15" /></button>
         <button type="button" :aria-label="$t('重新登录')" :title="$t('清除登录状态并重新登录')" :disabled="!view" @click="resetLogin"><RotateCcw :size="15" /></button>
         <button v-if="focused !== undefined" type="button" :aria-label="focused ? $t('退出沉浸模式') : $t('进入沉浸模式')" :title="focused ? $t('退出沉浸模式') : $t('进入沉浸模式')" @click="emit('focusChange', !focused)"><Minimize2 v-if="focused" :size="15" /><Maximize2 v-else :size="15" /></button>
         <a v-if="!desktopApp" :href="externalHref" target="_blank" rel="noopener noreferrer" :aria-label="$t('在浏览器新标签页打开')" :title="$t('在浏览器新标签页打开')"><ExternalLink :size="15" /></a>
@@ -574,6 +605,7 @@ onBeforeUnmount(() => {
     >
       <ProtectedWebLogin v-if="view?.protectedLogin" :state="view.protectedLogin" :send="sendLoginInput" @retry="send({ type: 'refill' })" @browse="send({ type: 'browse' })" />
       <img v-else-if="frame" :src="frame" :alt="$t('{0} 的页面画面', [username])" draggable="false" />
+
       <div v-else-if="status === 'idle' || preloading" class="web-browser-loading web-browser-idle" :title="$t('双击空白处访问页面')" @pointerdown.stop @mousedown.stop @dblclick="visitPage">
         <div class="web-browser-idle__icon"><Globe2 :size="24" /></div>
         <strong>{{ $t('准备访问此页面') }}</strong>
@@ -585,6 +617,10 @@ onBeforeUnmount(() => {
         <strong>{{ status === 'disconnected' ? $t('页面暂时不可用') : $t('正在启动账号页面') }}</strong>
         <span>{{ errorMessage || $t('首次打开需要启动独立 Chrome 内核') }}</span>
         <button v-if="status === 'disconnected'" type="button" @click="connect()">{{ $t('重新连接') }}</button>
+      </div>
+      <div v-if="credentialMenu" class="web-credential-menu" role="menu" :style="{ left: `${Math.max(0, Math.min(credentialMenu.x, (surface?.clientWidth ?? 180) - 180))}px`, top: `${Math.max(0, Math.min(credentialMenu.y, (surface?.clientHeight ?? 80) - 80))}px` }" @mousedown.stop @mouseup.stop @mousemove.stop @contextmenu.prevent.stop>
+        <button type="button" role="menuitem" @click="fillCredential('fill-username')">{{ $t('填入用户名') }}</button>
+        <button type="button" role="menuitem" @click="fillCredential('fill-password')">{{ $t('填入密码') }}</button>
       </div>
       <textarea
         ref="keyboardProxy"
@@ -598,3 +634,9 @@ onBeforeUnmount(() => {
     </div>
   </section>
 </template>
+
+<style scoped>
+.web-credential-menu { position: absolute; z-index: 5; width: 180px; padding: 4px; border: 1px solid var(--ink-100); border-radius: 6px; background: var(--surface, #fff); box-shadow: 0 4px 16px #0002; }
+.web-credential-menu button { display: block; width: 100%; border: 0; padding: 9px 12px; text-align: left; background: transparent; color: var(--ink-800); cursor: pointer; }
+.web-credential-menu button:hover { background: var(--ink-50); }
+</style>

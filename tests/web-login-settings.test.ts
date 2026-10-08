@@ -14,7 +14,7 @@ describe("Web login administrator settings", () => {
     const wrapper = mount(WebLoginSettings, { props: { modelValue: config, stepsText: "", originsText: "" }, global });
     expect(wrapper.get("summary").text()).toBe("高级配置");
     expect((wrapper.get('input[value="protected"]').element as HTMLInputElement).checked).toBe(true);
-    expect(wrapper.text()).toContain("自动回退"); expect(wrapper.text()).toContain("登录成功标记");
+    expect(wrapper.text()).toContain("打开正常网页"); expect(wrapper.text()).toContain("登录成功标记");
     await wrapper.get('input[value="direct"]').setValue(true);
     expect(config.mode).toBe("direct"); expect(wrapper.text()).toContain("开发者工具或浏览器插件查看");
     expect(wrapper.text()).toContain("用户名选择器"); expect(wrapper.text()).toContain("密码选择器");

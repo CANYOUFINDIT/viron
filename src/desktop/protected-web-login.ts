@@ -8,7 +8,7 @@ export class ProtectedWebLogin extends ProtectedLoginController {
   private window: BrowserWindow;
   constructor(options: {
     session: Session; url: string; username: string; password: string; config?: WebLoginConfig;
-    bounds: Rectangle; prepare?: () => Promise<void>; changed: () => void; completed: (result: ProtectedLoginResult) => Promise<void>;
+    bounds: Rectangle; prepare?: () => Promise<void>; manualFallback?: () => void; changed: () => void; completed: (result: ProtectedLoginResult) => Promise<void>;
   }) {
     const window = new BrowserWindow({ show: false, width: Math.max(800, options.bounds.width), height: Math.max(600, options.bounds.height),
       webPreferences: { session: options.session, contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true, devTools: false, backgroundThrottling: false } });
