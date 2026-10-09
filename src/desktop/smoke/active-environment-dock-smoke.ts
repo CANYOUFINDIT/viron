@@ -330,17 +330,22 @@ export async function runDesktopActiveEnvironmentDockSmoke(): Promise<{
       return true;
     })()`);
     const cursor = electronScreen.getCursorScreenPoint();
-    const workArea = electronScreen.getDisplayNearestPoint(cursor).workArea;
-    const hoverWidth = Math.min(expandedSize.width, workArea.width);
-    const hoverHeight = Math.min(expandedSize.height, workArea.height);
+    const display = electronScreen.getDisplayNearestPoint(cursor);
+    const workArea = display.workArea;
+    // The cursor can be on the menu bar or Dock, outside the usable work area.
+    // This smoke window must contain the actual native cursor in either case.
+    const screenBounds = display.bounds;
+    const hoverWidth = Math.min(expandedSize.width, screenBounds.width);
+    const hoverHeight = Math.min(expandedSize.height, screenBounds.height);
     const hoverBounds = {
-      x: Math.min(Math.max(workArea.x, cursor.x - Math.round(hoverWidth / 2)), workArea.x + workArea.width - hoverWidth),
-      y: Math.min(Math.max(workArea.y, cursor.y - Math.round(hoverHeight / 2)), workArea.y + workArea.height - hoverHeight),
+      x: Math.min(Math.max(screenBounds.x, cursor.x - Math.round(hoverWidth / 2)), screenBounds.x + screenBounds.width - hoverWidth),
+      y: Math.min(Math.max(screenBounds.y, cursor.y - Math.round(hoverHeight / 2)), screenBounds.y + screenBounds.height - hoverHeight),
       width: hoverWidth,
       height: hoverHeight,
     };
     stopActiveEnvironmentDockPointerTracking();
     activeEnvironmentDockWindow!.setBounds(hoverBounds, false);
+    const nativeHoverBounds = activeEnvironmentDockWindow!.getBounds();
     scheduleActiveEnvironmentDockPointerTracking();
     await new Promise((resolve) => setTimeout(resolve, ACTIVE_ENVIRONMENT_DOCK_COLLAPSE_DELAY_MS + 180));
     const pointerInsideActions = await mainWindow.webContents.executeJavaScript("window.__activeEnvironmentDockNativeHoverActions") as string[];
@@ -361,6 +366,15 @@ export async function runDesktopActiveEnvironmentDockSmoke(): Promise<{
     })()`);
     const nativePointerTrackingStable = !pointerInsideActions.includes("collapse")
       && pointerOutsideActions.filter((type) => type === "collapse").length === 1;
+    if (!nativePointerTrackingStable) {
+      process.stderr.write(`VIRON_DESKTOP_SMOKE_DIAGNOSTIC native-pointer-tracking ${JSON.stringify({
+        cursor,
+        hoverBounds,
+        nativeHoverBounds,
+        pointerInsideActions,
+        pointerOutsideActions,
+      })}\n`);
+    }
     await updateLayoutFromRenderer(expandedState);
     await mainWindow.webContents.executeJavaScript(`(() => {
       window.__activeEnvironmentDockProgrammaticMoveActions = [];
