@@ -54,16 +54,17 @@ export async function loadSession(): Promise<boolean> {
       const state = await desktopState();
       if (!state?.endpoint && !state?.recentEndpoint) {
         clearSession();
+        session.loaded = true;
         return false;
       }
       if (!state?.endpoint && state?.recentEndpoint) await selectDesktopEndpoint(state.recentEndpoint);
     }
     applyAuth(await api<AuthResponse>("/api/v1/auth/me"));
-  } catch {
+  } catch (error) {
+    if (!isAuthenticationRequiredError(error)) throw error;
     clearSession();
-  } finally {
-    session.loaded = true;
   }
+  session.loaded = true;
   return Boolean(session.user);
 }
 

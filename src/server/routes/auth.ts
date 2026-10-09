@@ -179,7 +179,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     return reply.code(201).send(await authResponse(app, user));
   });
 
-  app.post("/api/v1/auth/login", async (request, reply) => {
+  app.post("/api/v1/auth/login", { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (request, reply) => {
     const body = parseBody(loginSchema, request.body, reply);
     if (!body) return;
 

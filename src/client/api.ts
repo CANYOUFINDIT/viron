@@ -9,6 +9,7 @@ export class ApiError extends Error {
     message: string,
     public status: number,
     public code?: string,
+    public retryAfterMs?: number,
   ) {
     super(message);
   }
@@ -41,7 +42,31 @@ export function isAuthenticationRequiredError(error: unknown): boolean {
   return error instanceof ApiError && isAuthenticationRequired(error.status, error.code);
 }
 
-async function requestApi<T>(path: string, init: RequestInit = {}): Promise<T> {
+function retryAfterMilliseconds(value: string | null): number | undefined {
+  if (!value?.trim()) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.max(1000, Math.ceil(seconds * 1000));
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? Math.max(1000, date - Date.now()) : undefined;
+}
+
+function waitForRetry(delay: number, signal?: AbortSignal | null): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
+    const abort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+      reject(signal?.reason);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", abort);
+      resolve();
+    }, delay);
+    signal?.addEventListener("abort", abort, { once: true });
+  });
+}
+
+async function requestApiOnce<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set("Accept-Language", currentLocale());
   if (init.body && !(init.body instanceof FormData)) headers.set("Content-Type", "application/json");
@@ -55,7 +80,7 @@ async function requestApi<T>(path: string, init: RequestInit = {}): Promise<T> {
       const message = body.message ? localizeMessage(body.message) : tr("请求失败（{{0}}）", [response.status]);
       if (body.error === "USER_CONNECTION_LIMIT") dispatchConnectionLimit(message);
       notifyAuthenticationRequired(response.status, body.error);
-      throw new ApiError(message, response.status, body.error);
+      throw new ApiError(message, response.status, body.error, retryAfterMilliseconds(new Headers(response.headers).get("retry-after")));
     }
     if (response.status === 204 || !response.body) return undefined as T;
     return JSON.parse(response.body) as T;
@@ -71,13 +96,26 @@ async function requestApi<T>(path: string, init: RequestInit = {}): Promise<T> {
     const message = body.message ? localizeMessage(body.message) : tr("请求失败（{{0}}）", [response.status]);
     if (body.error === "USER_CONNECTION_LIMIT") dispatchConnectionLimit(message);
     notifyAuthenticationRequired(response.status, body.error);
-    throw new ApiError(message, response.status, body.error);
+    throw new ApiError(message, response.status, body.error, retryAfterMilliseconds(response.headers.get("retry-after")));
   }
 
   if (response.status === 204) return undefined as T;
   const text = await response.text();
   recordConnectionQualityTraffic("download", connectionQualityByteLength(text));
   return JSON.parse(text) as T;
+}
+
+async function requestApi<T>(path: string, init: RequestInit = {}): Promise<T> {
+  try {
+    return await requestApiOnce<T>(path, init);
+  } catch (error) {
+    // Retry a read only once, honoring the server's cooldown and cancellation.
+    // Mutations stay explicit so a retry cannot repeat a user operation.
+    if (!(error instanceof ApiError) || error.status !== 429 || requestMethod(init) !== "GET" || init.body
+      || error.retryAfterMs === undefined || error.retryAfterMs > 60_000) throw error;
+    await waitForRetry(error.retryAfterMs, init.signal);
+    return requestApiOnce<T>(path, init);
+  }
 }
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {

@@ -4,7 +4,6 @@ import { fileURLToPath } from "node:url";
 import cookie from "@fastify/cookie";
 import helmet from "@fastify/helmet";
 import multipart from "@fastify/multipart";
-import rateLimit from "@fastify/rate-limit";
 import fastifyStatic from "@fastify/static";
 import websocket from "@fastify/websocket";
 import Fastify from "fastify";
@@ -69,6 +68,7 @@ import { interruptStaleServiceOperations } from "./service-operations.js";
 import { startAccessExpirySweep } from "./access-expiry.js";
 import { enterAuditSourceForRequest } from "./audit.js";
 import { MonitorInstallTaskManager } from "./monitor-install-task-manager.js";
+import { registerApiRateLimit } from "./api-rate-limit.js";
 
 export interface BuildAppOptions {
   config: AppConfig;
@@ -118,11 +118,9 @@ export async function buildApp(options: BuildAppOptions) {
       : false,
     strictTransportSecurity: options.config.cookieSecure ? undefined : false,
   });
-  await app.register(rateLimit, { global: false });
-  const apiRateLimit = app.rateLimit({ max: 300, timeWindow: "1 minute" });
-  app.addHook("preHandler", async (request, reply) => {
+  await registerApiRateLimit(app);
+  app.addHook("preHandler", async (request) => {
     enterAuditSourceForRequest(request);
-    if (request.url.startsWith("/api/")) await apiRateLimit.call(app, request, reply);
   });
   app.addHook("onSend", async (request, reply, payload) => {
     if (typeof payload !== "string" || !reply.getHeader("content-type")?.toString().includes("application/json")) return payload;

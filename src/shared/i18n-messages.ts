@@ -1,5 +1,6 @@
 // Generated from the canonical Chinese product copy. Keep keys stable and edit English values in enOverrides when refining wording.
 const generatedEnMessages: Record<string, string> = {
+  "请求过于频繁，请在 {{0}} 秒后重试": "Too many requests. Please try again in {{0}} seconds.",
   "\n\n请求失败：{{0}}": "\n\nRequest failed: {{0}}",
   "\n\n已停止。": "\n\nStopped.",
   "\r\n\u001b[31m[Viron] 收到无法识别的终端控制消息\u001b[0m": "\r\n[31m[Viron] Received unrecognized terminal control message [0m",
