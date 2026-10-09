@@ -7,6 +7,7 @@ const releaseScriptUrl = new URL("../scripts/package-release.sh", import.meta.ur
 const versionScriptUrl = new URL("../scripts/sync-release-version.mjs", import.meta.url);
 const desktopPackageUrl = new URL("../scripts/desktop-package.mjs", import.meta.url);
 const windowsPackageUrl = new URL("../scripts/package-windows.mjs", import.meta.url);
+const macosPackageUrl = new URL("../scripts/package-macos.mjs", import.meta.url);
 const dockerfileUrl = new URL("../Dockerfile", import.meta.url);
 const fullComposeUrl = new URL("../docker-compose.full.yml", import.meta.url);
 const liteComposeUrl = new URL("../docker-compose.lite.yml", import.meta.url);
@@ -17,15 +18,21 @@ describe("release packaging", () => {
 
     for (const command of [
       "package-macos.mjs --arch=arm64",
-      "package-macos.mjs --arch=x64",
       "package-windows.mjs --arch=ia32",
-      "package-windows.mjs --arch=x64",
-      "package-windows.mjs --arch=arm64",
       "build_server_bundle amd64",
       "build_server_bundle arm64",
     ]) {
       expect(source).toContain(command);
     }
+    expect(source.match(/^node scripts\/package-(?:macos|windows)\.mjs --arch=.+$/gm)).toEqual([
+      "node scripts/package-macos.mjs --arch=arm64",
+      "node scripts/package-windows.mjs --arch=ia32",
+    ]);
+    const artifacts = source.match(/expected_artifacts=\([\s\S]*?\n\)/)?.[0] ?? "";
+    expect(artifacts.match(/Viron-\$VERSION-[^"\n]+/g)).toEqual([
+      "Viron-$VERSION-macos-arm64-self-signed.dmg",
+      "Viron-$VERSION-windows-x86-unsigned-setup.exe",
+    ]);
     for (const image of ["viron-server-lite", "viron-server-full", "viron-script-runner"]) {
       expect(source).toContain(image);
     }
@@ -35,6 +42,33 @@ describe("release packaging", () => {
     expect(source.indexOf("ensure-package-dependencies.mjs")).toBeLessThan(source.indexOf("npm test"));
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
     expect(packageJson.scripts.test).toContain("ensure-electron.mjs");
+  });
+
+  it("exposes only the supported desktop targets through npm scripts", () => {
+    const { scripts } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+    expect(scripts["package:macos:arm64"]).toBe("bash scripts/package-macos.sh --arch=arm64");
+    expect(scripts["package:windows:x86"]).toBe("node scripts/package-windows.mjs --arch=ia32");
+    expect(scripts["package:windows:all"]).toBe("npm run package:windows:x86");
+    expect(scripts["package:desktop:requested"]).toBe("npm run package:macos:arm64 && npm run package:windows:x86");
+    for (const removed of ["package:macos:intel", "package:windows:x64", "package:windows:arm64"]) {
+      expect(scripts[removed]).toBeUndefined();
+    }
+    const macosWrapper = readFileSync(new URL("../scripts/package-macos.sh", import.meta.url), "utf8");
+    expect(macosWrapper).not.toContain("--arch=x64");
+    expect(macosWrapper).toContain("exec node scripts/package-macos.mjs --arch=arm64");
+  });
+
+  it.each([
+    [macosPackageUrl, "x64", "macOS App 只支持 Apple Silicon arm64"],
+    [macosPackageUrl, "universal", "macOS App 只支持 Apple Silicon arm64"],
+    [windowsPackageUrl, "x64", "Windows App 只支持 x86（32 位 ia32）"],
+    [windowsPackageUrl, "arm64", "Windows App 只支持 x86（32 位 ia32）"],
+    [windowsPackageUrl, "unknown", "Windows App 只支持 x86（32 位 ia32）"],
+  ] as const)("rejects unsupported explicit package targets (%s %s)", (script, arch, message) => {
+    const result = spawnSync(process.execPath, [script.pathname, `--arch=${arch}`], { encoding: "utf8", timeout: 5_000 });
+    expect(result.error).toBeUndefined();
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(message);
   });
 
   it("persists Docker build caches and supports explicit refreshes", () => {

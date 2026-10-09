@@ -8,13 +8,8 @@ import { createAppIconPng } from "./app-icon.mjs";
 import { assertPackagedDesktopRuntime, buildDesktop, electronVersion, packageJson, root, stageDesktopApplication } from "./desktop-package.mjs";
 
 const requestedArch = process.argv.find((argument) => argument.startsWith("--arch="))?.slice("--arch=".length) ?? "ia32";
-const architectures = {
-  ia32: { builder: Arch.ia32, label: "x86", executablePattern: /PE32 executable.*Intel 80386/i },
-  x64: { builder: Arch.x64, label: "x64", executablePattern: /PE32\+ executable.*x86-64/i },
-  arm64: { builder: Arch.arm64, label: "arm64", executablePattern: /PE32\+ executable.*Aarch64/i },
-};
-const architecture = architectures[requestedArch];
-if (!architecture) throw new Error("Windows App 架构只支持 ia32、x64 或 arm64");
+if (requestedArch !== "ia32") throw new Error("Windows App 只支持 x86（32 位 ia32）");
+const architecture = { builder: Arch.ia32, label: "x86", executablePattern: /PE32 executable.*Intel 80386/i };
 const nsisInstallerPattern = /PE32 executable.*Intel 80386.*Nullsoft Installer/i;
 
 const outputDir = join(root, "dist", "windows", requestedArch);

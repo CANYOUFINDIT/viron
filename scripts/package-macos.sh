@@ -10,15 +10,10 @@ fi
 
 cd "$ROOT_DIR"
 
-node scripts/ensure-package-dependencies.mjs
-
-if [[ "${1:-}" == "--all" ]]; then
-  if [[ "$#" -ne 1 ]]; then
-    echo "--all 不能与其他参数一起使用。" >&2
-    exit 1
-  fi
-  node scripts/package-macos.mjs --arch=arm64
-  node scripts/package-macos.mjs --arch=x64
-else
-  exec node scripts/package-macos.mjs "$@"
+if [[ "$#" -gt 1 ]] || [[ "$#" -eq 1 && "$1" != "--arch=arm64" && "$1" != "--all" ]]; then
+  echo "macOS App 只支持 Apple Silicon arm64；可省略参数，或使用 --arch=arm64 / --all。" >&2
+  exit 1
 fi
+
+node scripts/ensure-package-dependencies.mjs
+exec node scripts/package-macos.mjs --arch=arm64

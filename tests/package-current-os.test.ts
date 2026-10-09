@@ -1,32 +1,41 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
-import { currentDesktopPackageCommand } from "../scripts/package-current-os.mjs";
+import { describe, expect, it, vi } from "vitest";
+import { currentDesktopPackageCommand, packageCurrentOs } from "../scripts/package-current-os.mjs";
 
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
 describe("current OS desktop packaging", () => {
-  it("maps the current machine to the matching desktop installer script", () => {
+  it("packages Apple Silicon macOS and always targets x86 on Intel/AMD Windows", () => {
     expect(currentDesktopPackageCommand("darwin", "arm64")).toEqual({
       command: "bash",
       args: ["scripts/package-macos.sh", "--arch=arm64"],
     });
-    expect(currentDesktopPackageCommand("darwin", "x64")).toEqual({
-      command: "bash",
-      args: ["scripts/package-macos.sh", "--arch=x64"],
-    });
     expect(currentDesktopPackageCommand("win32", "x64")).toEqual({
       command: process.execPath,
-      args: ["scripts/package-windows.mjs", "--arch=x64"],
-    });
-    expect(currentDesktopPackageCommand("win32", "arm64")).toEqual({
-      command: process.execPath,
-      args: ["scripts/package-windows.mjs", "--arch=arm64"],
+      args: ["scripts/package-windows.mjs", "--arch=ia32"],
     });
     expect(currentDesktopPackageCommand("win32", "ia32")).toEqual({
       command: process.execPath,
       args: ["scripts/package-windows.mjs", "--arch=ia32"],
     });
-    expect(currentDesktopPackageCommand("linux", "x64")).toBeNull();
+  });
+
+  it.each([
+    ["darwin", "x64"],
+    ["darwin", "ia32"],
+    ["win32", "arm64"],
+    ["win32", "unknown"],
+    ["linux", "x64"],
+    ["linux", "arm64"],
+  ])("rejects unsupported build machines (%s %s) without starting a build", (platform, arch) => {
+    expect(currentDesktopPackageCommand(platform, arch)).toBeNull();
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      expect(packageCurrentOs(platform, arch)).toBe(1);
+      expect(stderr).toHaveBeenCalledWith(expect.stringContaining("Apple Silicon macOS arm64 和 Windows x86"));
+    } finally {
+      stderr.mockRestore();
+    }
   });
 
   it("exposes an npm script for agents to package the current OS after each task", () => {

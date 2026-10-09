@@ -127,7 +127,7 @@ docker compose -f docker-compose.lite.yml up -d --build
 
 生产环境请保持 `ALLOW_WEAK_PASSWORDS=false`。直接使用 HTTP 时保持 `COOKIE_SECURE=false`；放在 HTTPS 反向代理后面时设为 `true`。元数据库默认使用 `DATA_DIR` 下的 SQLite；也可以改为已有的 MySQL 8+ / MariaDB 10.6+。
 
-桌面客户端支持 macOS 12+（Apple Silicon / Intel）和 Windows（x86 / x64 / arm64）。更完整的部署、迁移、备份和客户端安装说明见 [使用手册](./docs/USER-GUIDE.md)。
+桌面客户端仅提供 macOS 12+ Apple Silicon（`arm64`）和 Windows 32 位 x86（`ia32`）安装包。分别使用 `npm run package:macos:arm64` 和 `npm run package:windows:x86` 构建；`npm run package:desktop:requested` 构建这两种客户端。更完整的部署、迁移、备份和客户端安装说明见 [使用手册](./docs/USER-GUIDE.md)。
 
 ## 本地开发
 

@@ -115,7 +115,7 @@ docker compose -f docker-compose.lite.yml up -d --build
 
 Keep `ALLOW_WEAK_PASSWORDS=false` in production. Leave `COOKIE_SECURE=false` for plain HTTP; set it to `true` behind an HTTPS reverse proxy. Metadata defaults to SQLite under `DATA_DIR`, or you can point it at MySQL 8+ / MariaDB 10.6+.
 
-Desktop clients support macOS 12+ (Apple Silicon and Intel) and Windows (x86 / x64 / arm64). Deployment, migration, backup, and installer details are in the [user guide](./docs/USER-GUIDE.md).
+Desktop installers are provided only for macOS 12+ on Apple Silicon (`arm64`) and 32-bit Windows x86 (`ia32`). Build them with `npm run package:macos:arm64` and `npm run package:windows:x86`, or build both with `npm run package:desktop:requested`. Deployment, migration, backup, and installer details are in the [user guide](./docs/USER-GUIDE.md).
 
 ## Local development
 

@@ -10,8 +10,8 @@ import { assertPackagedDesktopRuntime, buildDesktop, electronVersion, packageJso
 import { pkcs12ExportArgs, resolveOpenSslCommand, supportsPkcs12Legacy } from "./macos-openssl.mjs";
 
 const requestedArch = process.argv.find((argument) => argument.startsWith("--arch="))?.slice("--arch=".length);
-const arch = requestedArch ?? (process.arch === "arm64" ? "arm64" : "x64");
-if (arch !== "arm64" && arch !== "x64") throw new Error("macOS App 架构只支持 arm64 或 x64");
+const arch = requestedArch ?? "arm64";
+if (arch !== "arm64") throw new Error("macOS App 只支持 Apple Silicon arm64");
 const minimumMacosVersion = "12.0.0";
 const compatibilityTargetMacosVersion = "12.7.6";
 const outputDir = join(root, "dist", "macos");
@@ -156,7 +156,7 @@ function verifyPackagedCompatibility(appPath) {
   const localNetworkUsage = run("plutil", ["-extract", "NSLocalNetworkUsageDescription", "raw", infoPlist], { capture: true }).trim();
   if (!localNetworkUsage) throw new Error("App 必须声明 macOS 本地网络访问用途");
 
-  const expectedArchitecture = arch === "x64" ? "x86_64" : "arm64";
+  const expectedArchitecture = "arm64";
   const candidateOutput = run("find", [
     appPath,
     "-type", "f",
@@ -431,7 +431,7 @@ function compileMcpLauncher(appPath) {
   const output = join(appPath, "Contents", "MacOS", "viron-mcp");
   run("xcrun", [
     "clang",
-    "-arch", arch === "x64" ? "x86_64" : "arm64",
+    "-arch", "arm64",
     `-mmacosx-version-min=${minimumMacosVersion}`,
     "-Os",
     "-Wall",

@@ -9,8 +9,8 @@ usage() {
 Usage: ./scripts/package-release.sh [--refresh-docker-cache] [version]
 
 Build all supported Viron release artifacts:
-  - macOS arm64 and x64 DMGs
-  - Windows x86, x64, and arm64 NSIS installers
+  - Apple Silicon macOS arm64 DMG
+  - Windows x86 (32-bit ia32) NSIS installer
   - linux/amd64 and linux/arm64 offline bundles, each containing
     viron-server-lite, viron-server-full, and viron-script-runner
 
@@ -120,14 +120,11 @@ npm run build
 
 mkdir -p "$RELEASE_DIR"
 
-echo "正在构建 macOS arm64 与 x64 安装包..."
+echo "正在构建 Apple Silicon macOS arm64 安装包..."
 node scripts/package-macos.mjs --arch=arm64
-node scripts/package-macos.mjs --arch=x64
 
-echo "正在构建 Windows x86、x64 与 arm64 安装包..."
+echo "正在构建 Windows x86（32 位）安装包..."
 node scripts/package-windows.mjs --arch=ia32
-node scripts/package-windows.mjs --arch=x64
-node scripts/package-windows.mjs --arch=arm64
 
 verify_bundle_tags() {
   local bundle_path="$1"
@@ -223,10 +220,7 @@ expected_artifacts=(
   "$RELEASE_DIR/viron-server-$VERSION-linux-amd64.tar.gz"
   "$RELEASE_DIR/viron-server-$VERSION-linux-arm64.tar.gz"
   "$RELEASE_DIR/Viron-$VERSION-macos-arm64-self-signed.dmg"
-  "$RELEASE_DIR/Viron-$VERSION-macos-x64-self-signed.dmg"
   "$RELEASE_DIR/Viron-$VERSION-windows-x86-unsigned-setup.exe"
-  "$RELEASE_DIR/Viron-$VERSION-windows-x64-unsigned-setup.exe"
-  "$RELEASE_DIR/Viron-$VERSION-windows-arm64-unsigned-setup.exe"
 )
 
 for artifact in "${expected_artifacts[@]}"; do
@@ -253,22 +247,19 @@ for artifact in "$RELEASE_DIR"/Viron-*-macos-*-self-signed.dmg \
 done
 
 find "$ROOT_DIR/dist/macos" -mindepth 1 -maxdepth 1 -type d \
-  ! -name Viron-darwin-arm64 ! -name Viron-darwin-x64 -exec rm -rf {} +
+  ! -name Viron-darwin-arm64 -exec rm -rf {} +
 find "$ROOT_DIR/dist/windows" -mindepth 1 -maxdepth 1 -type d \
-  ! -name ia32 ! -name x64 ! -name arm64 -exec rm -rf {} +
+  ! -name ia32 -exec rm -rf {} +
 
 cat > "$RELEASE_DIR/README.md" <<EOF
 # Viron $VERSION 发布产物
 
-本次发布提供 \`linux/amd64\`、\`linux/arm64\` 服务镜像离线包和全平台桌面客户端安装包：
+本次发布提供 \`linux/amd64\`、\`linux/arm64\` 服务镜像离线包，以及 Apple Silicon macOS 和 Windows x86 桌面客户端安装包：
 
 - \`viron-server-$VERSION-linux-amd64.tar.gz\`：包含 Lite、Full 与 Script Runner 的 Linux AMD64 Docker 镜像。
 - \`viron-server-$VERSION-linux-arm64.tar.gz\`：包含 Lite、Full 与 Script Runner 的 Linux ARM64 Docker 镜像。
 - \`Viron-$VERSION-macos-arm64-self-signed.dmg\`：macOS 12+、Apple Silicon \`arm64\` 的自签名安装盘。
-- \`Viron-$VERSION-macos-x64-self-signed.dmg\`：macOS 12+、Intel \`x64\` 的自签名安装盘。
 - \`Viron-$VERSION-windows-x86-unsigned-setup.exe\`：Windows Intel/AMD 32 位 \`x86\` 的未签名 NSIS 安装包。
-- \`Viron-$VERSION-windows-x64-unsigned-setup.exe\`：Windows Intel/AMD 64 位 \`x64\` 的未签名 NSIS 安装包。
-- \`Viron-$VERSION-windows-arm64-unsigned-setup.exe\`：Windows ARM64 的未签名 NSIS 安装包。
 - \`SHA256SUMS\`：全部发布产物的 SHA-256 完整性校验。
 
 每个服务离线包都包含同版本的 \`viron-server-lite:$VERSION\`、\`viron-server-full:$VERSION\` 和 \`viron-script-runner:$VERSION\`。只应在匹配 CPU 架构的 Linux 主机上加载对应离线包。
@@ -280,11 +271,11 @@ cd Viron 项目根目录
 shasum -a 256 -c release/SHA256SUMS
 \`\`\`
 
-Web 手工下载与 App 登录前自动更新共同扫描 \`DATA_DIR/installers/\`。把需要发布的当前版本客户端安装包复制到该目录即可；macOS arm64/x64 与 Windows x86/x64/arm64 都会同时进入 Web 清单和自动更新，无需配置独立安装包路径。
+Web 手工下载与 App 登录前自动更新共同扫描 \`DATA_DIR/installers/\`。把需要发布的当前版本客户端安装包复制到该目录即可；macOS arm64 与 Windows x86 都会同时进入 Web 清单和自动更新，无需配置独立安装包路径。
 
 服务只发布文件名版本与当前产品版本一致、平台和架构可识别、位于目录根层且非空的普通 \`.dmg/.exe\` 文件。其他版本或无法识别的文件可以保留，但不会作为当前版本下发；目录内容变化在下次请求时生效，无需重启服务。
 
-macOS DMG 使用 \`Viron Local Development\` 自签名证书与 Hardened Runtime，适合受控内部分发，但没有 Apple 公证。Windows 安装包未签名，可能触发 SmartScreen；macOS 构建机完成各 Windows 目标架构、NSIS 格式和包内运行文件检查，不替代真实 Windows 上的跨版本覆盖安装与启动验收。
+macOS DMG 使用 \`Viron Local Development\` 自签名证书与 Hardened Runtime，适合受控内部分发，但没有 Apple 公证。Windows 安装包未签名，可能触发 SmartScreen；macOS 构建机完成 Windows x86 架构、NSIS 格式和包内运行文件检查，不替代真实 Windows 上的跨版本覆盖安装与启动验收。
 EOF
 
 checksum_file="$RELEASE_DIR/SHA256SUMS"
