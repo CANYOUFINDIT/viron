@@ -42,7 +42,7 @@ async function run() {
   await app.whenReady();
   const { setMainWindow } = await import("../dist/desktop/window-host.js");
   const { configureBrowserGuestHost } = await import("../dist/desktop/browser-guest-host.js");
-  const { desktopWebViews, browseDesktopWebWithoutAutofill, activeDesktopWebPage, handleDesktopWebViewAction, destroyDesktopWebPages } = await import("../dist/desktop/web-view-runtime.js");
+  const { desktopWebViews, browseDesktopWebWithoutAutofill, activeDesktopWebPage, handleDesktopWebViewAction, destroyDesktopWebPages, prefetchDesktopWebCredential } = await import("../dist/desktop/web-view-runtime.js");
   const { ProtectedWebLogin } = await import("../dist/desktop/protected-web-login.js");
   const { defaultWebLoginConfig } = await import("../dist/shared/protected-web-login.js");
   const owner = setMainWindow(new BrowserWindow({ show: false, width: 1000, height: 800, webPreferences: { webviewTag: true, nodeIntegration: true, contextIsolation: false, sandbox: false } }));
@@ -60,18 +60,55 @@ async function run() {
   await new Promise(resolve => target.listen(0, "127.0.0.1", resolve));
   const origin = `http://127.0.0.1:${target.address().port}`;
   const { setActiveEndpoint } = await import("../dist/desktop/endpoint-context.js");
-  const { desktopDeviceAuthorizationContext } = await import("../dist/desktop/desktop-runtime-context.js");
+  const { desktopDeviceAuthorizationContext, initializeDesktopRuntimeContext } = await import("../dist/desktop/desktop-runtime-context.js");
+  const { localWebCredential } = await import("../dist/desktop/execution-router.js");
+  const { WebCredentialCache } = await import("../dist/desktop/web-credential-cache.js");
+  let closedExecutions = 0;
+  const closeExecution = async () => { closedExecutions++; };
+  initializeDesktopRuntimeContext({ ssh: { closeAllSessions: closeExecution }, sftp: { closeAll: closeExecution },
+    database: { closeAll: closeExecution }, redis: { closeAll: closeExecution }, log: { closeAll: closeExecution },
+    databaseOperation: { closeAll: closeExecution }, connectionInspection: {} });
   const { createDeviceIdentity } = await import("../dist/desktop/device-identity.js");
   const identity = createDeviceIdentity();
   const auth = { user: { id: "fixture-user-id", username: "fixture-user" }, workspace: { type: "personal", id: "fixture-workspace" } };
   const endpoint = "https://endpoint.example.test";
   const authorization = { auth, identity, endpoint };
   const views = [];
+  const { writeDeviceFile, identityKey } = await import("../dist/desktop/device-session.js");
+  const { DesktopSecretStorage } = await import("../dist/desktop/secret-storage.js");
+  const key = identityKey(endpoint, auth.user.id);
+  writeDeviceFile({ identities: { [key]: { deviceId: identity.deviceId, keyId: identity.keyId, publicKey: identity.publicKey,
+    encryptedPrivateKey: new DesktopSecretStorage(directory).encrypt(identity.privateKey, `device-private-key:${key}`) } } });
+  let envelopeRequests = 0, deviceChecks = 0;
+  let registered = true, revoked = false, registrationRequests = 0;
+  const requestIds = [];
+  const challengeProof = "fixture-device-proof";
+  const fillTimings = [];
   setActiveEndpoint({ endpoint, protocolVersion: 1, capabilities: {}, partition: { fetch: async (url, options) => {
-    const id = new URL(url).pathname.split("/").at(-2);
+    const path = new URL(url).pathname;
+    if (path === "/api/v1/auth/me") return new Response(JSON.stringify(auth));
+    if (path === "/api/v1/desktop/devices/registration-challenges") {
+      registrationRequests++;
+      return new Response(JSON.stringify({ challengeId: "fixture-challenge", keyId: identity.keyId,
+        encryptedChallenge: publicEncrypt({ key: identity.publicKey, oaepHash: "sha256" }, Buffer.from(challengeProof)).toString("base64url") }));
+    }
+    if (path === "/api/v1/desktop/devices/registration-challenges/fixture-challenge/complete") {
+      registrationRequests++; assert.equal(JSON.parse(options.body).proof, Buffer.from(challengeProof).toString("base64url")); registered = true;
+      return new Response("{}");
+    }
+    if (/\/desktop\/devices\//.test(path)) {
+      deviceChecks++;
+      return registered ? new Response(JSON.stringify({ keyId: identity.keyId, status: "active" }))
+        : new Response(JSON.stringify({ error: "DEVICE_NOT_FOUND" }), { status: 404 });
+    }
+    envelopeRequests++;
+    const request = JSON.parse(options.body); requestIds.push(request.requestId);
+    if (!registered) return new Response(JSON.stringify({ error: "DEVICE_NOT_FOUND" }), { status: 404 });
+    if (revoked) return new Response(JSON.stringify({ error: "DEVICE_REVOKED" }), { status: 403 });
+    await new Promise(resolve => setTimeout(resolve, 500));
+    const id = path.split("/").at(-2);
     const view = views.find(item => item.credentialId === id);
     assert.ok(view);
-    const request = JSON.parse(options.body);
     const credential = { credentialId: id, entryId: view.entryId, entryUrl: view.entryUrl, username: "fixture-user", password: "fixture-password", customFields: {}, credentialUpdatedAt: new Date().toISOString(), loginConfig: { ...defaultWebLoginConfig(), usernameSelector: "#alpha", passwordSelector: "#beta" } };
     const claims = { version: 1, algorithm: "RSA-OAEP-256+A256GCM", keyId: identity.keyId, deviceId: identity.deviceId,
       requestId: request.requestId, userId: auth.user.id, workspaceType: auth.workspace.type, workspaceId: auth.workspace.id, credentialId: id,
@@ -93,7 +130,11 @@ async function run() {
     try { await until(() => menu.some(item => item.label === label), "native input context menu"); }
     catch (error) { throw new Error(`${error.message}: ${JSON.stringify(coordinates)}`); }
     assert.ok(menu.some(item => item.label === "填入用户名")); assert.ok(menu.some(item => item.label === "填入密码"));
-    desktopDeviceAuthorizationContext.run(authorization, () => menu.find(item => item.label === label).click());
+    const started = performance.now();
+    menu.find(item => item.label === label).click();
+    const input = y < 100 ? "alpha" : "beta", value = y < 100 ? "fixture-user" : "fixture-password";
+    await until(() => contents.executeJavaScript(`${input}.value === ${JSON.stringify(value)}`), "cached native fill");
+    fillTimings.push(Math.round(performance.now() - started));
   }
 
   try {
@@ -123,6 +164,11 @@ async function run() {
       const contents = activeDesktopWebPage(view).view.webContents;
       if (path === "/manual") {
         assert.equal(login.state.image, "");
+        // DOM-ready preload and an explicit preload must share one pending lookup.
+        const requestCount = envelopeRequests;
+        await prefetchDesktopWebCredential(view);
+        const warmedCount = envelopeRequests;
+        assert.ok(warmedCount - requestCount <= 1);
         contents.setZoomFactor(1.25);
         await contents.executeJavaScript("document.documentElement.getBoundingClientRect().width");
         await rightFill(contents, 80, "填入用户名");
@@ -132,11 +178,15 @@ async function run() {
         await until(() => contents.executeJavaScript("beta.value === 'fixture-password'"), "native password fill");
         assert.deepEqual(await contents.executeJavaScript("({readonly:beta.readOnly,visibility:getComputedStyle(beta).visibility})"), { readonly: false, visibility: "visible" });
         assert.equal(posts, 0);
+        assert.equal(envelopeRequests, warmedCount, "Both menu commands use one prepared credential");
+        assert.equal(deviceChecks, 0, "Envelope authorization replaces the extra device GET");
+        assert.ok(fillTimings.every(value => value < 200), `Cached clicks: ${fillTimings}`);
         contents.setZoomFactor(1);
         const pageId = view.activePageId, documentTime = await contents.executeJavaScript("performance.timeOrigin");
         await contents.executeJavaScript("alpha.value='';beta.value=''");
         await desktopDeviceAuthorizationContext.run(authorization, () => handleDesktopWebViewAction(view.id, { type: "refill" }));
         await until(() => contents.executeJavaScript("alpha.value === 'fixture-user' && beta.value === 'fixture-password'"), "native active fill");
+        assert.equal(envelopeRequests, warmedCount, "Active fill reuses the same prepared credential");
         assert.equal(view.activePageId, pageId); assert.equal(await contents.executeJavaScript("performance.timeOrigin"), documentTime); assert.equal(posts, 0);
         contents.sendInputEvent({ type: "mouseDown", x: 40, y: 210, button: "left", clickCount: 1 });
         contents.sendInputEvent({ type: "mouseUp", x: 40, y: 210, button: "left", clickCount: 1 });
@@ -160,6 +210,23 @@ async function run() {
     }
     assert.equal(posts, 1);
     assert.ok(!(await owner.webContents.executeJavaScript("JSON.stringify(states)")).includes("fixture-password"));
+    console.log(`VIRON_WEB_FILL_CACHE_OK: injected_api_delay=500ms, cached_clicks=${fillTimings.join(",")}ms, device_checks=${deviceChecks}`);
+    registered = false;
+    const beforeRegistration = envelopeRequests;
+    const latest = await localWebCredential(views.at(-1).credentialId);
+    assert.equal(latest.credential.password, "fixture-password");
+    assert.equal(envelopeRequests - beforeRegistration, 2);
+    assert.equal(registrationRequests, 2); assert.equal(deviceChecks, 1);
+    assert.notEqual(requestIds.at(-1), requestIds.at(-2), "Registration retry requires a new request nonce");
+    let afterRevocationLoads = 0;
+    const cache = new WebCredentialCache({ current: () => true, load: async () => { afterRevocationLoads++; return latest; } });
+    try {
+      cache.seed(latest.credential, Date.parse(latest.expiresAt)); revoked = true;
+      await assert.rejects(localWebCredential(views.at(-1).credentialId), error => error.code === "DEVICE_REVOKED");
+      await cache.get(); assert.equal(afterRevocationLoads, 1, "Authorization failure clears prepared credentials");
+      assert.equal(closedExecutions, 6, "Device revocation preserves closing all local executions");
+    } finally { cache.dispose(); }
+    console.log("VIRON_WEB_CREDENTIAL_AUTH_OK: missing-device registration retry with a fresh nonce, authorization failure invalidation passed.");
     console.log("VIRON_PROTECTED_BROWSING_OK: normal fallback page, native input context menus, editable targeted fills, active fill without reload or submit, user login, cancelled loads and normal navigation passed.");
   } finally {
     for (const view of views) { view.closing = true; view.login?.dispose(); destroyDesktopWebPages(view); desktopWebViews.delete(view.id); }

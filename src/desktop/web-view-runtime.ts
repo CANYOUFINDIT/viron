@@ -22,6 +22,7 @@ import {
   type DesktopWebContextMenuAction,
 } from "./web-page-policy.js";
 import { normalizeWebAddress } from "../shared/web-address.js";
+import { WebCredentialCache } from "./web-credential-cache.js";
 import { reorderMap } from "../shared/tab-order.js";
 import { ProtectedWebLogin } from "./protected-web-login.js";
 import { verifyProtectedBusinessPage } from "./protected-web-login-business.js";
@@ -88,7 +89,6 @@ import {
   forgetDesktopWebLastUrl,
   forgetDesktopWebZoom,
   inspectDesktopWebElement,
-  latestDesktopWebCredential,
   notifyWebView,
   rememberDesktopWebLastUrl,
   restoreDesktopWebPageZoom,
@@ -101,6 +101,38 @@ import {
 
 export { activeDesktopWebPage, desktopWebViews, inspectDesktopWebElement, webViewBounds, webViewState };
 const closingProfiles = new WeakMap<Session, Promise<void>>();
+const fillCredentialCaches = new WeakMap<ManagedDesktopWebView, { endpoint: typeof activeEndpoint; cache: WebCredentialCache }>();
+
+async function freshDesktopWebCredential(credentialId: string) {
+  const result = await localWebCredential(credentialId);
+  if (!supportedDesktopWebUrl(result.credential.entryUrl)) throw new Error(tr("Web 入口地址只支持 HTTP 或 HTTPS"));
+  return result;
+}
+
+function fillCredentialCache(view: ManagedDesktopWebView): WebCredentialCache {
+  const existing = fillCredentialCaches.get(view);
+  if (existing?.endpoint === activeEndpoint) return existing.cache;
+  existing?.cache.dispose();
+  const endpoint = activeEndpoint;
+  const cache = new WebCredentialCache({
+    current: () => !view.closing && desktopWebViews.get(view.id) === view && activeEndpoint === endpoint,
+    load: () => freshDesktopWebCredential(view.credentialId),
+  });
+  fillCredentialCaches.set(view, { endpoint, cache });
+  return cache;
+}
+
+function invalidateFillCredential(view: ManagedDesktopWebView): void { fillCredentialCaches.get(view)?.cache.invalidate(); }
+
+/** Prepare a normal page's fill commands without putting network work on its menu click. */
+export async function prefetchDesktopWebCredential(view: ManagedDesktopWebView): Promise<void> {
+  if (view.closing || view.login || desktopWebViews.get(view.id) !== view) return;
+  const page = view.pages.get(view.activePageId);
+  if (!page || page.view.webContents.isDestroyed()) return;
+  const url = page.view.webContents.getURL();
+  if (!supportedDesktopWebUrl(url) || ![view.entryOrigin, ...view.loginConfig.allowedOrigins].includes(new URL(url).origin)) return;
+  await fillCredentialCache(view).get();
+}
 
 export interface DesktopWebViewBounds {
   x: number;
@@ -279,6 +311,7 @@ export function activateDesktopWebPage(view: ManagedDesktopWebView, pageId: stri
     return;
   }
   view.activePageId = pageId;
+  void prefetchDesktopWebCredential(view).catch(() => undefined);
   selectExtensionTab(page.view.webContents);
   touchDesktopWebView(view);
   layoutDesktopWebViewPages(view, true);
@@ -388,7 +421,7 @@ async function fillDesktopWebCredentialTarget(view: ManagedDesktopWebView, conte
   const page = activeDesktopWebPage(view);
   if (!page || page.view.webContents !== contents || view.login) return;
   page.directAutofill?.dispose();
-  const credential = await latestDesktopWebCredential(view.credentialId);
+  const credential = await fillCredentialCache(view).get();
   if (view.closing || desktopWebViews.get(view.id) !== view || activeDesktopWebPage(view) !== page || contents.isDestroyed() || view.login) return;
   const origins = [new URL(credential.entryUrl).origin, ...(credential.loginConfig?.allowedOrigins ?? [])];
   const filled = await contents.executeJavaScriptInIsolatedWorld(999, [{ code: fillWebCredentialTargetScript(token, action === "fill-username" ? credential.username : credential.password, origins, action === "fill-password" && view.loginConfig.mode === "locked") }], true);
@@ -551,6 +584,7 @@ function configureDesktopWebPage(
   });
   nativeView.webContents.on("dom-ready", () => {
     void nativeView.webContents.executeJavaScriptInIsolatedWorld(999, [{ code: installWebCredentialContextListenerScript() }]).catch(() => undefined);
+    void prefetchDesktopWebCredential(view).catch(() => undefined);
   });
   nativeView.webContents.on("context-menu", async (_event, params) => {
     if (!mainWindow || mainWindow.isDestroyed() || nativeView.webContents.isDestroyed()) return;
@@ -558,6 +592,7 @@ function configureDesktopWebPage(
     const origins = [new URL(view.entryUrl).origin, ...view.loginConfig.allowedOrigins];
     const available = !view.login && params.isEditable && await nativeView.webContents.executeJavaScriptInIsolatedWorld(999, [{ code: captureWebCredentialTargetScript(token, params.x, params.y, origins, true) }], true).catch(() => false);
     if (!mainWindow || mainWindow.isDestroyed() || nativeView.webContents.isDestroyed() || view.closing) return;
+    if (available) void prefetchDesktopWebCredential(view).catch(() => undefined);
     const groups = desktopWebContextMenuGroups({
       linkUrl: params.linkURL,
       isEditable: params.isEditable,
@@ -895,9 +930,10 @@ export function browseDesktopWebWithoutAutofill(view: ManagedDesktopWebView): Pr
   return transition;
 }
 
-export async function reopenDesktopWebViews(views: ManagedDesktopWebView[], credential: DesktopWebCredential): Promise<void> {
+export async function reopenDesktopWebViews(views: ManagedDesktopWebView[], credential: DesktopWebCredential, expiresAt?: number): Promise<void> {
   for (const view of views) {
     if (view.closing || desktopWebViews.get(view.id) !== view) continue;
+    fillCredentialCache(view).seed(credential, expiresAt);
     applyDesktopWebCredential(view, credential);
     await startConfiguredDesktopLogin(view);
   }
@@ -906,9 +942,11 @@ export async function reopenDesktopWebViews(views: ManagedDesktopWebView[], cred
 export async function refreshDesktopWebViews(views: ManagedDesktopWebView[], reopen: boolean): Promise<void> {
   const first = views[0];
   if (!first) return;
-  const credential = await latestDesktopWebCredential(first.credentialId);
-  if (reopen) await reopenDesktopWebViews(views, credential);
+  for (const view of views) invalidateFillCredential(view);
+  const { credential, expiresAt } = await freshDesktopWebCredential(first.credentialId);
+  if (reopen) await reopenDesktopWebViews(views, credential, Date.parse(expiresAt));
   else for (const view of views) {
+    fillCredentialCache(view).seed(credential, Date.parse(expiresAt));
     applyDesktopWebCredential(view, credential);
     if (view.login) await startConfiguredDesktopLogin(view);
     else {
@@ -922,17 +960,18 @@ export async function refreshDesktopWebViews(views: ManagedDesktopWebView[], reo
 export async function resetDesktopWebViews(views: ManagedDesktopWebView[]): Promise<void> {
   const first = views[0];
   if (!first) return;
-  const credential = await latestDesktopWebCredential(first.credentialId);
+  for (const view of views) invalidateFillCredential(view);
+  const { credential, expiresAt } = await freshDesktopWebCredential(first.credentialId);
   forgetDesktopWebLastUrl(first.lastUrlKey);
   for (const view of views) view.lastUrl = "";
   for (const view of views) { view.login?.dispose(); destroyDesktopWebPages(view); }
   try {
     await clearDesktopWebSession(first.partition);
   } catch (error) {
-    await reopenDesktopWebViews(views, credential);
+    await reopenDesktopWebViews(views, credential, Date.parse(expiresAt));
     throw error;
   }
-  await reopenDesktopWebViews(views, credential);
+  await reopenDesktopWebViews(views, credential, Date.parse(expiresAt));
   for (const view of views) notifyWebView(view, "info", tr("已清除本机登录状态，正在重新打开登录页"));
 }
 
@@ -952,7 +991,7 @@ export async function openDesktopWebView(
   const existing = [...desktopWebViews.values()].find((view) => view.credentialId === credentialId && !view.closing);
   if (existing) return webViewState(existing);
   if (desktopWebViews.size >= 8) throw new Error(tr("本机最多同时打开 8 个账号页面，请先关闭一个页面"));
-  const { auth, credential } = await localWebCredential(credentialId);
+  const { auth, credential, expiresAt } = await localWebCredential(credentialId);
   if (!supportedDesktopWebUrl(credential.entryUrl)) throw new Error(tr("Web 入口地址只支持 HTTP 或 HTTPS"));
   const endpoint = activeEndpoint?.endpoint;
   if (!endpoint) throw new Error(tr("请先验证 Viron Endpoint"));
@@ -1014,6 +1053,7 @@ export async function openDesktopWebView(
   };
   try {
     desktopWebViews.set(id, managed);
+    fillCredentialCache(managed).seed(credential, Date.parse(expiresAt));
     trackDesktopWebPartition(webPartition);
     webPartition.on("will-download", managed.downloadListener);
     trackDesktopRuntime({
@@ -1198,6 +1238,8 @@ export async function closeDesktopWebView(id: string, reason = tr("用户主动�
   managed.closedReason = reason;
   sendWebViewState(managed);
   managed.closing = true;
+  fillCredentialCaches.get(managed)?.cache.dispose();
+  fillCredentialCaches.delete(managed);
   const login = managed.login;
   login?.dispose();
   managed.login = null;
@@ -1226,6 +1268,7 @@ export async function closeDesktopWebView(id: string, reason = tr("用户主动�
 
 export async function closeAllDesktopWebViews(): Promise<void> {
   const views = [...desktopWebViews.values()];
+  for (const view of views) invalidateFillCredential(view);
   await Promise.all(views.map((view) => closeDesktopWebView(view.id)));
   pendingCredentialRequests.clear();
 }
@@ -1250,7 +1293,8 @@ export async function handleDesktopWebViewAction(id: string, action: { type: str
     return webViewState(managed);
   }
   if (action.type === "refill") {
-    const credential = await latestDesktopWebCredential(managed.credentialId);
+    const credential = await fillCredentialCache(managed).get();
+    if (managed.closing || desktopWebViews.get(id) !== managed) throw new Error(tr("本机账号页面不存在或已经关闭"));
     const active = managed.pages.get(managed.activePageId);
     applyDesktopWebCredential(managed, credential);
     if (active && !managed.login) fillDirectDesktopPage(managed, active);
@@ -1359,6 +1403,7 @@ export async function desktopWebMutationContext(path: string, method: string): P
 
 export async function reconcileDesktopWebMutation(context: DesktopWebMutationContext | null, method: string, response: Response): Promise<void> {
   if (!response.ok || !context) return;
+  for (const view of desktopWebViews.values()) if (context.credentialIds.includes(view.credentialId)) invalidateFillCredential(view);
   for (const credentialId of context.credentialIds) {
     const lastUrlKey = desktopWebLastUrlKey(context.endpoint, context.userId, credentialId);
     const activeViews = [...desktopWebViews.values()].filter((view) => view.credentialId === credentialId);

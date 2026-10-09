@@ -50,6 +50,7 @@ import {
 import { DesktopApiError, endpointJson } from "./http-proxy.js";
 import { translate as tr } from "./i18n.js";
 import { mainWindow } from "./window-host.js";
+import { clearWebCredentialCaches } from "./web-credential-cache.js";
 
 interface ManagedServiceSocket {
   id: string;
@@ -220,7 +221,7 @@ export async function ensureDeviceRegistration(identity: DeviceIdentity): Promis
   });
 }
 
-export async function currentDeviceAuthorization(): Promise<{
+export async function currentDeviceAuthorization(options: { verifyRegistration?: boolean } = {}): Promise<{
   auth: DesktopAuthContext;
   identity: DeviceIdentity;
   endpoint: string;
@@ -240,7 +241,7 @@ export async function currentDeviceAuthorization(): Promise<{
     throw error;
   }
   try {
-    await ensureDeviceRegistration(identity);
+    if (options.verifyRegistration !== false) await ensureDeviceRegistration(identity);
   } catch (error) {
     if ((error instanceof DesktopApiError && [401, 403].includes(error.status)) || /设备已被撤销/.test(error instanceof Error ? error.message : String(error))) {
       await closeDesktopExecution(tr("本机设备授权已失效"));
@@ -253,32 +254,51 @@ export async function currentDeviceAuthorization(): Promise<{
 export async function localWebCredential(credentialId: string): Promise<{
   auth: DesktopAuthContext;
   credential: DesktopWebCredential;
+  expiresAt: string;
 }> {
   if (currentExecutionMode() === "server"
     && activeEndpoint?.capabilities.serverForwarding.enabled
     && activeEndpoint.capabilities.serverForwarding.web) {
     throw new Error(tr("当前 Web 账号使用服务端转发"));
   }
-  const { auth, identity, endpoint } = await currentDeviceAuthorization();
-  const requestId = randomUUID();
-  pendingCredentialRequests.add(requestId);
+  // The envelope endpoint checks device status and resource access itself.
+  // Register on its DEVICE_NOT_FOUND response instead of checking every fill.
+  const { auth, identity, endpoint } = await currentDeviceAuthorization({ verifyRegistration: false });
+  const requestCredential = async () => {
+    if (activeEndpoint?.endpoint !== endpoint) throw new Error(tr("Endpoint 已切换"));
+    const requestId = randomUUID();
+    pendingCredentialRequests.add(requestId);
+    try {
+      const envelope = await endpointJson<CredentialEnvelope>(`/api/v1/desktop/web-credentials/${credentialId}/envelope`, {
+        method: "POST",
+        body: { deviceId: identity.deviceId, requestId, endpoint, auditSource: desktopAuditSourceContext.getStore() ?? "manual" },
+      });
+      if (!pendingCredentialRequests.has(requestId) || activeEndpoint?.endpoint !== endpoint) throw new Error(tr("凭据请求已经结束"));
+      const opened = openCredentialEnvelope(identity, envelope, {
+        requestId,
+        userId: auth.user.id,
+        workspaceType: auth.workspace.type,
+        workspaceId: auth.workspace.id,
+        credentialId,
+        endpoint,
+      });
+      return { auth, credential: opened.credential, expiresAt: opened.claims.expiresAt };
+    } finally {
+      pendingCredentialRequests.delete(requestId);
+    }
+  };
   try {
-    const envelope = await endpointJson<CredentialEnvelope>(`/api/v1/desktop/web-credentials/${credentialId}/envelope`, {
-      method: "POST",
-      body: { deviceId: identity.deviceId, requestId, endpoint, auditSource: desktopAuditSourceContext.getStore() ?? "manual" },
-    });
-    if (!pendingCredentialRequests.has(requestId)) throw new Error(tr("凭据请求已经结束"));
-    const opened = openCredentialEnvelope(identity, envelope, {
-      requestId,
-      userId: auth.user.id,
-      workspaceType: auth.workspace.type,
-      workspaceId: auth.workspace.id,
-      credentialId,
-      endpoint,
-    });
-    return { auth, credential: opened.credential };
-  } finally {
-    pendingCredentialRequests.delete(requestId);
+    try { return await requestCredential(); }
+    catch (error) {
+      if (!(error instanceof DesktopApiError && error.status === 404 && error.code === "DEVICE_NOT_FOUND") || activeEndpoint?.endpoint !== endpoint) throw error;
+      await ensureDeviceRegistration(identity);
+      return await requestCredential();
+    }
+  } catch (error) {
+    const deviceRevoked = (error instanceof DesktopApiError && error.code === "DEVICE_REVOKED") || /设备已被撤销/.test(error instanceof Error ? error.message : String(error));
+    if (deviceRevoked || (error instanceof DesktopApiError && [401, 403].includes(error.status))) clearWebCredentialCaches();
+    if (deviceRevoked || (error instanceof DesktopApiError && error.status === 401)) await closeDesktopExecution(tr("本机设备授权已失效"));
+    throw error;
   }
 }
 
@@ -484,6 +504,7 @@ export async function touchDesktopRedisRequest(path: string): Promise<void> {
 }
 
 export async function closeDesktopExecution(reason: string): Promise<void> {
+  clearWebCredentialCaches();
   assertDesktopRuntimeContextInitialized();
   desktopAgentRuntime?.stopAll(reason);
   await Promise.all([

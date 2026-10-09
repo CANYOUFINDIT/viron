@@ -3,6 +3,7 @@ import type { Session } from "electron";
 import type { DesktopExecutionMode } from "../shared/execution-mode.js";
 import type { ProductCapabilities } from "./endpoint.js";
 import { readState, writeState } from "./app-state.js";
+import { clearWebCredentialCaches } from "./web-credential-cache.js";
 
 export interface ActiveEndpoint {
   endpoint: string;
@@ -14,6 +15,7 @@ export interface ActiveEndpoint {
 export let activeEndpoint: ActiveEndpoint | null = null;
 
 export function setActiveEndpoint(next: ActiveEndpoint | null): void {
+  clearWebCredentialCaches();
   activeEndpoint = next;
 }
 

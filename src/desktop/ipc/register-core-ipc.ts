@@ -108,6 +108,7 @@ import {
   closeDesktopWebView,
   handleDesktopWebViewAction,
   layoutDesktopWebViewPages,
+  prefetchDesktopWebCredential,
   localWebView,
   noteDesktopWebZoomTarget,
   openDesktopWebView,
@@ -578,7 +579,9 @@ export function registerDesktopCoreIpc(desktopUpdater: DesktopUpdater): void {
   ipcMain.handle("viron:web-view:visible", (event, id: string, visible: boolean) => {
     trustedSender(event);
     const view = localWebView(id);
+    const becameVisible = visible && !view.visible;
     view.visible = Boolean(visible);
+    if (becameVisible) void prefetchDesktopWebCredential(view).catch(() => undefined);
     layoutDesktopWebViewPages(view);
     return webViewState(view);
   });
