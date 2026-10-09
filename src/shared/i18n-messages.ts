@@ -4251,6 +4251,9 @@ const generatedEnMessages: Record<string, string> = {
 };
 
 const enOverrides: Record<string, string> = {
+  "填充并锁定密码": "Fill and lock password",
+  "直接填入登录信息并锁住密码框，限制页面明文显示、修改和复制。此模式禁用浏览器扩展和开发者工具，由使用者完成协议、验证码并提交登录。": "Fill login details and lock the password field to restrict plaintext display, editing and copying. Browser extensions and developer tools are disabled in this mode. Users complete any agreement or verification and submit the login.",
+  "锁定密码模式禁用浏览器扩展": "Browser extensions are disabled in password lock mode",
   "登录方式": "Login method",
   "自动登录（默认）": "Automatic login (default)",
   "填入用户名": "Fill username",

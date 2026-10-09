@@ -15,6 +15,10 @@ describe("Web login administrator settings", () => {
     expect(wrapper.get("summary").text()).toBe("高级配置");
     expect((wrapper.get('input[value="protected"]').element as HTMLInputElement).checked).toBe(true);
     expect(wrapper.text()).toContain("打开正常网页"); expect(wrapper.text()).toContain("登录成功标记");
+    await wrapper.get('input[value="locked"]').setValue(true);
+    expect(config.mode).toBe("locked"); expect(wrapper.text()).toContain("填充并锁定密码");
+    expect(wrapper.text()).toContain("禁用浏览器扩展和开发者工具");
+    expect(wrapper.text()).not.toContain("登录成功标记"); expect(wrapper.text()).toContain("密码选择器");
     await wrapper.get('input[value="direct"]').setValue(true);
     expect(config.mode).toBe("direct"); expect(wrapper.text()).toContain("开发者工具或浏览器插件查看");
     expect(wrapper.text()).toContain("用户名选择器"); expect(wrapper.text()).toContain("密码选择器");

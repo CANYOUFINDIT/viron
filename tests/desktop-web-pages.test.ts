@@ -75,6 +75,12 @@ describe("desktop Web pages", () => {
     expect(desktopWebPartitionName("https://viron.example.com", "user-a", "credential-b")).not.toBe(base);
   });
 
+  it("removes inspection from a locked view while keeping normal page actions", () => {
+    const groups = desktopWebContextMenuGroups({ linkUrl: "", isEditable: true, hasSelection: false, credentialFillAvailable: true, inspectAllowed: false }).flat();
+    expect(groups).not.toContain("inspect");
+    expect(groups).toContain("fill-password"); expect(groups).toContain("reload");
+  });
+
   it("isolates the last URL cache by Endpoint, user, and credential", () => {
     const base = desktopWebLastUrlKey("https://viron.example.com", "user-a", "credential-a");
     expect(base).toMatch(/^[0-9a-f]{64}$/);

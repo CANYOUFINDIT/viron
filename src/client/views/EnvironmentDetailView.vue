@@ -809,7 +809,7 @@ async function saveEntry() {
         tags: entryForm.tags.split(/[,，]/).map((item) => item.trim()).filter(Boolean),
         loginConfig: parseWebLoginConfig({ ...entryForm.loginConfig,
           allowedOrigins: entryForm.originsText.split(/\n/).map((item) => item.trim()).filter(Boolean),
-          steps: entryForm.loginConfig.mode === "direct" ? entryForm.loginConfig.steps : entryForm.stepsText.trim() ? JSON.parse(entryForm.stepsText) : [],
+          steps: entryForm.loginConfig.mode !== "protected" ? entryForm.loginConfig.steps : entryForm.stepsText.trim() ? JSON.parse(entryForm.stepsText) : [],
         }),
       }),
     });

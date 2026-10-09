@@ -5,7 +5,7 @@ export interface WebLoginStep {
   origin?: string;
   value?: string;
 }
-export type WebLoginMode = "protected" | "direct";
+export type WebLoginMode = "protected" | "locked" | "direct";
 export interface WebLoginConfig {
   mode: WebLoginMode;
   usernameSelector: string;
@@ -49,7 +49,7 @@ export function parseWebLoginConfig(value: unknown): WebLoginConfig {
   const input = value as Record<string, unknown>;
   const result = defaultWebLoginConfig();
   if (input.mode !== undefined) {
-    if (input.mode !== "protected" && input.mode !== "direct") throw new Error("登录方式无效");
+    if (input.mode !== "protected" && input.mode !== "locked" && input.mode !== "direct") throw new Error("登录方式无效");
     result.mode = input.mode;
   }
   for (const name of ["usernameSelector", "passwordSelector", "submitSelector", "successSelector", "interactionSelector"] as const) {

@@ -1,3 +1,5 @@
+import { webPasswordLockSource } from "./web-password-lock.js";
+
 export interface WebCredentialAutofillField {
   index: number;
   type: string;
@@ -34,6 +36,7 @@ export interface WebCredentialAutofillScriptOptions {
   password: string;
   previousSignature: string;
   autoSubmit: boolean;
+  lockPassword?: boolean;
   usernameSelector?: string;
   passwordSelector?: string;
   /** Checked inside the target document before any credentials are written. */
@@ -284,14 +287,15 @@ export function buildWebCredentialAutofillScript(
   const selectorSource = selectWebCredentialAutofillFields.toString();
   return `(() => {
     const bytes = Uint8Array.from(atob(${JSON.stringify(payload)}), (character) => character.charCodeAt(0));
-    const { username, password, previousSignature, autoSubmit, messages, usernameSelector, passwordSelector, scope } = JSON.parse(new TextDecoder().decode(bytes));
+    const { username, password, previousSignature, autoSubmit, lockPassword, messages, usernameSelector, passwordSelector, scope } = JSON.parse(new TextDecoder().decode(bytes));
     if (scope && (location.href !== scope.href || performance.timeOrigin !== scope.timeOrigin || !scope.allowedOrigins.includes(location.origin))) return { status: "skipped", signature: "", message: messages.noReliableForm };
     const __name = (target) => target;
+    const passwordLocks = lockPassword ? (${webPasswordLockSource()})() : null;
     const selectFields = ${selectorSource};
     const visible = (element) => {
       const style = window.getComputedStyle(element);
       const rect = element.getBoundingClientRect();
-      return !element.disabled && !element.readOnly && style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity || 1) > 0.05 && rect.width > 2 && rect.height > 2;
+      return !element.disabled && (!element.readOnly || passwordLocks?.has(element)) && style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity || 1) > 0.05 && rect.width > 2 && rect.height > 2;
     };
     const allInputs = [...document.querySelectorAll("input")];
     const inputs = allInputs.filter(visible);
@@ -371,7 +375,7 @@ export function buildWebCredentialAutofillScript(
     const usernameInput = selection.usernameIndex === null ? null : inputs[selection.usernameIndex];
     const passwordInput = selection.passwordIndex === null ? null : inputs[selection.passwordIndex];
     if (usernameInput) setValue(usernameInput, username);
-    if (passwordInput) setValue(passwordInput, password);
+    if (passwordInput) { setValue(passwordInput, password); passwordLocks?.lock(passwordInput, password); }
     const finalSignature = signatureOf(describe());
     const target = passwordInput ?? usernameInput;
     const form = target?.form ?? null;

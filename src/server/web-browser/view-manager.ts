@@ -883,7 +883,7 @@ export class WebAccountViewManager {
           const credential = await this.app.db.prepare("SELECT username, password_ciphertext FROM web_credentials WHERE id = ?").get(view.credentialId) as { username: string; password_ciphertext: string } | undefined;
           if (!credential || view.closed || view.protectedLogin || view.pages.get(view.activePageId) !== item) break;
           const value = message.type === "fill-username" ? credential.username : this.app.secrets.decrypt(credential.password_ciphertext);
-          const filled = await this.evaluateCredentialFill<boolean>(page, fillWebCredentialTargetScript(message.token, value, [new URL(view.entryUrl).origin, ...view.loginConfig.allowedOrigins]));
+          const filled = await this.evaluateCredentialFill<boolean>(page, fillWebCredentialTargetScript(message.token, value, [new URL(view.entryUrl).origin, ...view.loginConfig.allowedOrigins], message.type === "fill-password" && view.loginConfig.mode === "locked"));
           if (!filled) throw new Error("输入框已变化，请重新右键选择输入框");
           view.loginNotice = "";
           this.broadcastState(view);
@@ -1018,7 +1018,7 @@ export class WebAccountViewManager {
 
   private startConfiguredLogin(view: ManagedWebView, preferredUrl = "", preservePages = false): Promise<void> {
     for (const page of view.pages.values()) page.directAutofill?.dispose();
-    const preparation = view.loginConfig.mode === "direct"
+    const preparation = view.loginConfig.mode !== "protected"
       ? this.prepareDirectLogin(view, preferredUrl, preservePages)
       : this.prepareProtectedLogin(view, preferredUrl, preservePages);
     view.loginPreparation = preparation;
@@ -1068,7 +1068,7 @@ export class WebAccountViewManager {
     view.username = credential.username;
     view.loginNotice = "";
     item.directAutofill = new DirectWebAutofill({
-      browser: { destroyed: () => !current(), loading: () => item.loading, evaluate: (source) => item.page.evaluate(source) },
+      browser: { destroyed: () => !current(), loading: () => item.loading, evaluate: (source) => view.loginConfig.mode === "locked" ? this.evaluateCredentialFill(item.page, source) : item.page.evaluate(source) },
       entryUrl: view.entryUrl, config: view.loginConfig, username: credential.username, password: this.app.secrets.decrypt(credential.password_ciphertext),
       changed: (message) => { if (current()) { view.loginNotice = message === DIRECT_WEB_FILL_MESSAGE ? "" : message; this.broadcastState(view); } },
     });

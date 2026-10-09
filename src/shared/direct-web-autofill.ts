@@ -75,7 +75,7 @@ export class DirectWebAutofill {
       if (this.disposed) return;
       if (live.href !== this.scope.href || live.timeOrigin !== this.scope.timeOrigin) { this.dispose(); return; }
       const result = await browser.evaluate<WebCredentialAutofillResult>(buildWebCredentialAutofillScript({
-        username: this.username, password: this.password, previousSignature: "", autoSubmit: false,
+        username: this.username, password: this.password, previousSignature: "", autoSubmit: false, lockPassword: config.mode === "locked",
         usernameSelector: config.usernameSelector, passwordSelector: config.passwordSelector,
         scope: { ...this.scope, allowedOrigins: this.origins },
         messages: { duplicate: DIRECT_WEB_FILL_MESSAGE, filled: DIRECT_WEB_FILL_MESSAGE, filledAndSubmitted: DIRECT_WEB_FILL_MESSAGE,

@@ -391,7 +391,7 @@ async function fillDesktopWebCredentialTarget(view: ManagedDesktopWebView, conte
   const credential = await latestDesktopWebCredential(view.credentialId);
   if (view.closing || desktopWebViews.get(view.id) !== view || activeDesktopWebPage(view) !== page || contents.isDestroyed() || view.login) return;
   const origins = [new URL(credential.entryUrl).origin, ...(credential.loginConfig?.allowedOrigins ?? [])];
-  const filled = await contents.executeJavaScriptInIsolatedWorld(999, [{ code: fillWebCredentialTargetScript(token, action === "fill-username" ? credential.username : credential.password, origins) }], true);
+  const filled = await contents.executeJavaScriptInIsolatedWorld(999, [{ code: fillWebCredentialTargetScript(token, action === "fill-username" ? credential.username : credential.password, origins, action === "fill-password" && view.loginConfig.mode === "locked") }], true);
   if (!filled) throw new Error("stale-input");
   view.loginNotice = "";
   sendWebViewState(view);
@@ -495,7 +495,7 @@ export async function createDesktopWebPage(
   const generation = view.pageGeneration;
   view.pendingPages += 1;
   const guest = await createBrowserGuest(mainWindow.webContents, view.partition, view.partitionName,
-    view.id, id, view.bounds, desktopWebPreferences(view.partition)).finally(() => {
+    view.id, id, view.bounds, { ...desktopWebPreferences(view.partition), devTools: view.loginConfig.mode !== "locked" }).finally(() => {
       if (generation === view.pageGeneration) view.pendingPages -= 1;
     });
   if (view.closing || desktopWebViews.get(view.id) !== view || generation !== view.pageGeneration) {
@@ -563,12 +563,13 @@ function configureDesktopWebPage(
       isEditable: params.isEditable,
       hasSelection: Boolean(params.selectionText),
       credentialFillAvailable: Boolean(available),
+      inspectAllowed: view.loginConfig.mode !== "locked",
     });
     const template = groups.flatMap((group, index) => [
       ...(index > 0 ? [{ type: "separator" as const }] : []),
       ...group.map((action) => desktopWebContextMenuItem(view, nativeView.webContents, params, action, available ? token : undefined)),
     ]);
-    const extensionItems = desktopWebExtensionContextMenuItems(view.partition, nativeView.webContents, params);
+    const extensionItems = view.loginConfig.mode === "locked" ? [] : desktopWebExtensionContextMenuItems(view.partition, nativeView.webContents, params);
     if (extensionItems.length) {
       if (template.length) template.push({ type: "separator" });
       template.push(...extensionItems);
@@ -576,7 +577,7 @@ function configureDesktopWebPage(
     Menu.buildFromTemplate(template).popup({ window: pageWindow ?? mainWindow });
   });
   nativeView.webContents.on("before-input-event", (event, input) => {
-    if (handleExtensionShortcut(nativeView.webContents, input)) { event.preventDefault(); return; }
+    if (view.loginConfig.mode !== "locked" && handleExtensionShortcut(nativeView.webContents, input)) { event.preventDefault(); return; }
     if (input.type === "keyDown") {
       const command = pageZoomCommandFromKey({
         key: input.key,
@@ -627,7 +628,7 @@ function configureDesktopWebPage(
     return {
       action: "allow",
       outlivesOpener: true,
-      overrideBrowserWindowOptions: { webPreferences: desktopWebPreferences(view.partition) },
+      overrideBrowserWindowOptions: { webPreferences: { ...desktopWebPreferences(view.partition), devTools: view.loginConfig.mode !== "locked" } },
       createWindow: (options) => {
         // Preserve window.opener and script-created about:blank documents in a
         // real page popup. App chrome is never moved into this document.
@@ -713,7 +714,7 @@ function registerBusinessExtensions(view: ManagedDesktopWebView): void {
 }
 
 async function startConfiguredDesktopLogin(view: ManagedDesktopWebView): Promise<void> {
-  if (view.loginConfig.mode !== "direct") { startProtectedDesktopLogin(view); return; }
+  if (view.loginConfig.mode === "protected") { startProtectedDesktopLogin(view); return; }
   const previous = view.login;
   previous?.dispose();
   const attempt = randomUUID();
@@ -725,17 +726,22 @@ async function startConfiguredDesktopLogin(view: ManagedDesktopWebView): Promise
   await view.loginPreparation;
   await previous?.settled();
   if (!current()) return;
-  await resumeDesktopWebSessionExtensions(view.partition);
+  closeDesktopWebExtensionPopup();
+  closeExtensionBrowser(view.partition);
+  if (view.loginConfig.mode === "locked") await suspendDesktopWebSessionExtensions(view.partition);
+  else await resumeDesktopWebSessionExtensions(view.partition);
   if (!current()) return;
-  // Direct fill is an explicit administrator policy: this is a normal guest,
-  // with ordinary editing, developer tools and the account's installed extensions.
-  enableDesktopWebSessionExtensions(view.partition, view.lastUrlKey);
-  await loadDesktopWebExtensions(view.partition, view.lastUrlKey);
+  // Both fill modes use an interactive guest. Locked mode keeps extensions
+  // suspended and developer tools disabled for the account's entire view.
+  if (view.loginConfig.mode !== "locked") {
+    enableDesktopWebSessionExtensions(view.partition, view.lastUrlKey);
+    await loadDesktopWebExtensions(view.partition, view.lastUrlKey);
+  }
   if (!current()) return;
   const page = await createDesktopWebPage(view, true);
   if (!current()) { page.view.dispose(); return; }
   view.login = null;
-  registerBusinessExtensions(view);
+  if (view.loginConfig.mode !== "locked") registerBusinessExtensions(view);
   page.loadingUrl = view.entryUrl;
   activateDesktopWebPage(view, page.id);
   const navigation = page.view.webContents.loadURL(view.entryUrl);
@@ -1019,8 +1025,12 @@ export async function openDesktopWebView(
     if (initialPage === "entry") await startConfiguredDesktopLogin(managed);
     else {
       managed.password = "";
-      registerBusinessExtensions(managed);
-      await loadDesktopWebExtensions(managed.partition, lastUrlKey);
+      if (managed.loginConfig.mode === "locked") await suspendDesktopWebSessionExtensions(managed.partition);
+      else {
+        await resumeDesktopWebSessionExtensions(managed.partition);
+        registerBusinessExtensions(managed);
+        await loadDesktopWebExtensions(managed.partition, lastUrlKey);
+      }
       const entryPage = await createDesktopWebPage(managed, false);
       entryPage.protectedEntry = true;
       entryPage.pendingUrl = credential.entryUrl;

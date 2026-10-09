@@ -270,6 +270,7 @@ export function desktopWebPreferences(partition: Session): Electron.WebPreferenc
 
 export function inspectDesktopWebElement(webContents: Electron.WebContents, x: number, y: number): void {
   if (webContents.isDestroyed()) return;
+  if ([...desktopWebViews.values()].some((view) => view.loginConfig.mode === "locked" && [...view.pages.values()].some((page) => page.view.webContents === webContents))) return;
   webContents.openDevTools({ mode: "detach", title: tr("Viron 网页检查器") });
   webContents.inspectElement(x, y);
 }

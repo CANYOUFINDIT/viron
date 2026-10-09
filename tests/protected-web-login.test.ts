@@ -18,9 +18,10 @@ function fixture(interactionSelector = "#challenge", uuidAvailable = true) {
 }
 
 describe("protected Web login", () => {
-  it("defaults legacy entries to protected login and only accepts an explicit direct policy", () => {
+  it("defaults legacy entries to protected login and accepts explicit fill policies", () => {
     expect(parseWebLoginConfig({ usernameSelector: "#user" }).mode).toBe("protected");
     expect(parseWebLoginConfig({ mode: "direct" }).mode).toBe("direct");
+    expect(parseWebLoginConfig({ mode: "locked" }).mode).toBe("locked");
     expect(() => parseWebLoginConfig({ mode: "unsafe" })).toThrow("登录方式无效");
     expect(() => parseWebLoginConfig({ mode: null })).toThrow("登录方式无效");
   });

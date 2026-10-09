@@ -85,7 +85,7 @@ const chromeExtensions = ref<DesktopChromeExtensionInfo[]>([]);
 const chromeScanning = ref(false);
 const extensionPanel = ref<"installed" | "chrome">("installed");
 const extensionMenu = ref("");
-const pinnedExtensions = computed(() => extensions.value.filter((extension) => extension.pinned && extension.enabled && extension.loaded));
+const pinnedExtensions = computed(() => state.value?.loginMode === "locked" ? [] : extensions.value.filter((extension) => extension.pinned && extension.enabled && extension.loaded));
 const previewFrame = ref("");
 const pageTabs = computed(() => state.value?.pages ?? []);
 const activePageId = computed(() => state.value?.activePageId ?? "");
@@ -158,6 +158,7 @@ function applyState(next: DesktopWebViewState) {
   if (!started.value && !state.value) return;
   if (state.value?.id && state.value.id !== next.id) return;
   state.value = next;
+  if (next.loginMode === "locked") extensionsOpen.value = false;
   address.value = next.url === "about:blank" ? "" : next.url;
   if (next.closedReason) startError.value = next.closedReason;
   if (next.error && next.error !== lastPageError) ElMessage.error(next.error);
@@ -316,7 +317,7 @@ async function resetLogin() {
 }
 
 async function openExtensions() {
-  if (!state.value) return;
+  if (!state.value || state.value.loginMode === "locked") return;
   extensionPanel.value = "installed";
   extensionMenu.value = "";
   extensionsLoading.value = true;
@@ -355,7 +356,7 @@ function toggleImmersiveFromMenu() {
 
 async function toggleExtensions() {
   if (extensionsOpen.value) { extensionsOpen.value = false; return; }
-  if (!state.value?.id || props.preview) return;
+  if (!state.value?.id || state.value.loginMode === "locked" || props.preview) return;
   pageMenuOpen.value = false;
   extensionsOpen.value = true;
   await openExtensions();
@@ -768,7 +769,7 @@ onBeforeUnmount(() => {
         </button>
         <el-popover v-model:visible="extensionsOpen" placement="bottom-end" trigger="manual" popper-class="desktop-web-extension-list-popper" :width="320" :offset="8">
           <template #reference>
-            <button ref="extensionsButton" type="button" :aria-label="$t('本地拓展')" :title="$t('本地拓展')" :disabled="!state || Boolean(state.closedReason)" @click="toggleExtensions"><Puzzle :size="15" /></button>
+            <button ref="extensionsButton" type="button" :aria-label="$t('本地拓展')" :title="$t(state?.loginMode === 'locked' ? '锁定密码模式禁用浏览器扩展' : '本地拓展')" :disabled="!state || Boolean(state.closedReason) || state.loginMode === 'locked'" @click="toggleExtensions"><Puzzle :size="15" /></button>
           </template>
           <div class="desktop-web-extensions">
             <div class="desktop-web-extensions__heading">

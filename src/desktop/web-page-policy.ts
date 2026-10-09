@@ -24,6 +24,7 @@ export interface DesktopWebContextMenuContext {
   isEditable: boolean;
   hasSelection: boolean;
   credentialFillAvailable?: boolean;
+  inspectAllowed?: boolean;
 }
 
 export function desktopWebPartitionName(endpoint: string, userId: string, credentialId: string): string {
@@ -90,7 +91,8 @@ export function desktopWebContextMenuGroups(context: DesktopWebContextMenuContex
   } else if (context.hasSelection) {
     groups.push(["copy"]);
   }
-  groups.push(["back", "forward", "reload"], ["inspect"]);
+  groups.push(["back", "forward", "reload"]);
+  if (context.inspectAllowed !== false) groups.push(["inspect"]);
   return groups;
 }
 

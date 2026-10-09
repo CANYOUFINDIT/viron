@@ -11,6 +11,7 @@ const fields = [
 ] as const;
 const modes = [
   { value: "protected", label: "自动登录（默认）", description: "后台尝试自动登录；需要手动操作时打开正常网页，可右键输入框填入用户名或密码，再自行点击登录。" },
+  { value: "locked", label: "填充并锁定密码", description: "直接填入登录信息并锁住密码框，限制页面明文显示、修改和复制。此模式禁用浏览器扩展和开发者工具，由使用者完成协议、验证码并提交登录。" },
   { value: "direct", label: "直接填充（允许查看密码）", description: "在可操作的登录页填入用户名和密码，由使用者完成协议、验证码并提交登录。密码可以通过页面、开发者工具或浏览器插件查看，请仅用于允许共享密码的入口。" },
 ] as const;
 </script>
