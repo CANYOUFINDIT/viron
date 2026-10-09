@@ -10,7 +10,7 @@ import type { EnvmanDatabase } from "../src/server/database.js";
 import { monitoringTestConfig, runMonitoringContractSuite } from "./helpers/monitoring-harness.js";
 import { loadMonitorHostEventCalendar, loadPlatformEventCalendar, loadPlatformEvents } from "../src/server/monitor-event-calendar.js";
 import Fastify from "fastify";
-import { storeMetricSamples } from "../src/server/monitor-metric-storage.js";
+import { accountStorage, lockStorageBudget, storeMetricSamples } from "../src/server/monitor-metric-storage.js";
 import { readMetricSamples } from "../src/server/monitor-metric-reader.js";
 import { cleanupMetricStorage, migrateLegacyMetricBatch, rollupMetricBatch } from "../src/server/monitor-storage-maintenance.js";
 
@@ -81,6 +81,21 @@ afterAll(async () => {
 });
 
 describe("monitoring MariaDB equivalence", () => {
+  mysqlIt("serializes concurrent storage accounting without upgrading shared duplicate-key locks", async () => {
+    const database = db!;
+    await database.prepare("INSERT OR IGNORE INTO monitor_storage_state (state_key, value_json) VALUES ('budget', '{}')").run();
+    const before = await database.prepare("SELECT used_bytes FROM monitor_storage_state WHERE state_key = 'budget'").get<{ used_bytes: number }>();
+    await Promise.all(Array.from({ length: 8 }, async () => {
+      for (let round = 0; round < 10; round++) {
+        await database.transaction(async () => {
+          await lockStorageBudget(database);
+          await accountStorage(database, 1);
+        })();
+      }
+    }));
+    expect(await database.prepare("SELECT used_bytes FROM monitor_storage_state WHERE state_key = 'budget'").get())
+      .toEqual({ used_bytes: Number(before?.used_bytes ?? 0) + 80 });
+  });
   mysqlIt("stores and reads idempotent weighted numeric rollups with source precision and metadata", async () => {
     const config = monitoringTestConfig(directory, { host: externalHost || "127.0.0.1", port, database: "viron_monitor" });
     const database = await openDatabase(config), app = Fastify({ logger: false }); app.decorate("db", database); app.decorate("config", config);

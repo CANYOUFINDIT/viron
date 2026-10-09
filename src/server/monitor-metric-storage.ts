@@ -75,9 +75,10 @@ export function metricValues(point: MetricObject, last = false): MetricObject {
   return value;
 }
 export async function lockStorageBudget(db: EnvmanDatabase): Promise<{ used_bytes: number; diagnostic_bytes: number }> {
-  await db.prepare("INSERT OR IGNORE INTO monitor_storage_state (state_key, value_json) VALUES ('budget', '{}')").run();
-  // Lock the same accounting row before every writer and cleaner, including separate server processes.
-  await db.prepare("UPDATE monitor_storage_state SET updated_ms = updated_ms WHERE state_key = 'budget'").run();
+  // A duplicate-key upsert takes the exclusive lock immediately. INSERT IGNORE
+  // followed by UPDATE makes concurrent MySQL writers upgrade shared locks and deadlock.
+  await db.prepare(`INSERT INTO monitor_storage_state (state_key, value_json) VALUES ('budget', '{}')
+    ON CONFLICT(state_key) DO UPDATE SET updated_ms = updated_ms`).run();
   return (await db.prepare("SELECT used_bytes, diagnostic_bytes FROM monitor_storage_state WHERE state_key = 'budget'").get()) as { used_bytes: number; diagnostic_bytes: number };
 }
 export async function accountStorage(db: EnvmanDatabase, bytes: number, diagnosticBytes = 0): Promise<void> {
