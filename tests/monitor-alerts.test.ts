@@ -311,7 +311,7 @@ describe("monitor alerts", () => {
       });
       const connectionId = connection.json().id as string;
       const agentId = "f8b148e8-eaa3-45d4-a8d0-839d4a8a0ab3";
-      const now = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+      const now = new Date(Date.now() - 40 * 60 * 1000).toISOString();
       await app.db.prepare(`
         INSERT INTO monitor_hosts (
           ssh_connection_id, agent_id, agent_version, protocol_version, status, last_sequence,
@@ -340,7 +340,7 @@ describe("monitor alerts", () => {
 
       const check = (seconds: number, available: boolean) => evaluateMonitorHostAvailability(app, {
         connectionId,
-        checkedAt: new Date(Date.parse(now) + seconds * 1000).toISOString(),
+        checkedAt: new Date(Date.parse(now) + (seconds + 1800) * 1000).toISOString(),
         available,
         status: available ? "ready" : "error",
         reason: available ? "healthy" : "pull_failed",
@@ -349,6 +349,11 @@ describe("monitor alerts", () => {
         sampleResolutionSeconds: 30,
       });
 
+      // Reproduce the reported false alert: SSH fails twice while the last
+      // successfully collected sample is still within its freshness window.
+      await check(-1770, false);
+      await check(-1740, false);
+      expect((await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies })).json().items).toHaveLength(0);
       await check(30, false);
       expect((await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies })).json().items).toHaveLength(0);
       await Promise.all(Array.from({ length: 20 }, () => check(60, false)));

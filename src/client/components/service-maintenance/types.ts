@@ -1,6 +1,7 @@
 import type { Component } from "vue";
 import type { CandidateStatus, MonitorCandidate, Provider } from "../../service-candidate-tree";
 import type { MonitorAlertSettings } from "../../../shared/monitor-alerts";
+import type { MonitoringProbeState } from "../../../shared/monitoring";
 
 export type HostFocusMetric = "cpu" | "memory" | "disk" | "network" | "load" | "io" | "pressure" | "swap" | "uptime" | "temperature";
 
@@ -54,6 +55,7 @@ export interface ScriptActionExecution {
 }
 
 export interface HostSnapshot {
+    resolutionSeconds?: number;
     hostname: string;
     collectorUser?: string;
     operatingSystem?: string;
@@ -108,6 +110,7 @@ export interface MonitorHost {
     connectionAvailable: boolean;
     monitorStatus: "ready" | "missing" | "error" | "unknown";
     monitorOffline: boolean;
+    probeState?: MonitoringProbeState;
     agentId: string;
     agentVersion: string;
     monitorUpdateAvailable: boolean;
@@ -232,6 +235,7 @@ export interface DiscoveryHostSummary {
     host: string;
     connectionAvailable: boolean;
     monitorStatus: MonitorHost["monitorStatus"];
+    probeState?: MonitorHost["probeState"];
     candidateCount: number;
 }
 
@@ -281,4 +285,3 @@ export interface MaintenancePanelEmit {
   (event: "open-log", logId: string): void;
   (event: "open-ssh", connectionId: string): void;
 }
-

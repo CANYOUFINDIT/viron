@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
+import { monitoringProbeState } from "../shared/monitoring.js";
 import { getWorkspaceAccess } from "./access-control.js";
 import {
   SERVICE_DEPLOYMENTS_MAX_BYTES,
@@ -72,7 +73,8 @@ export async function loadServiceDeploymentsPayload(
       WHERE l.environment_id = ? ORDER BY l.updated_at DESC
     `).all(environmentId) as Promise<Record<string, unknown>[]>,
     app.db.prepare(`
-      SELECT c.id, c.name, c.host, c.source_deleted, h.status AS monitor_status, h.latest_candidates_json
+      SELECT c.id, c.name, c.host, c.source_deleted, h.status AS monitor_status, h.latest_candidates_json,
+        h.agent_id, h.agent_version, h.install_managed, h.installed_at, h.last_collected_at, h.latest_host_json
       FROM ssh_connections c
       JOIN ssh_connection_environments ce ON ce.connection_id = c.id
       LEFT JOIN monitor_hosts h ON h.ssh_connection_id = c.id
@@ -214,6 +216,15 @@ export async function loadServiceDeploymentsPayload(
         host: row.host,
         connectionAvailable: !Boolean(row.source_deleted),
         monitorStatus: row.monitor_status ?? "unknown",
+        probeState: monitoringProbeState({
+          status: row.monitor_status,
+          agentId: row.agent_id,
+          agentVersion: row.agent_version,
+          installManaged: Boolean(row.install_managed),
+          installedAt: row.installed_at,
+          lastCollectedAt: row.last_collected_at,
+          sampleResolutionSeconds: parseJson<{ resolutionSeconds?: number } | null>(row.latest_host_json, null)?.resolutionSeconds,
+        }),
         candidateCount: parseJson<unknown[]>(row.latest_candidates_json, []).length,
       })),
     },

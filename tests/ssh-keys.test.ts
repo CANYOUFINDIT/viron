@@ -162,8 +162,11 @@ describe("workspace SSH key management", () => {
         },
       });
       expect(connection.statusCode, connection.body).toBe(201);
-      const connected = await connectSsh(app, connection.json().id);
+      const connected = await connectSsh(app, connection.json().id, { connectTimeoutSeconds: 45 });
       connected.close();
+      const monitorRetry = await connectSsh(app, connection.json().id, { connectTimeoutSeconds: 60 });
+      expect(monitorRetry.transportReused).toBe(true);
+      monitorRetry.close();
       const batch = await app.inject({
         method: "POST",
         url: `/api/v1/mcp/ssh-connections/${connection.json().id}/commands`,

@@ -3,6 +3,9 @@ import { z } from "zod";
 import { executeSshCommand } from "./ssh/command.js";
 import { monitorCommand, monitorCommandNotFound } from "./monitor-command.js";
 import { evaluateMonitorHostAvailability, evaluateRecentMonitorAlerts } from "./monitor-alerts.js";
+import { monitorSampleIsFresh } from "../shared/monitoring.js";
+
+export { monitorSampleIsFresh } from "../shared/monitoring.js";
 
 const candidateSchema = z.object({
   provider: z.enum(["systemd", "docker", "podman", "supervisor", "kubernetes", "process"]),
@@ -84,6 +87,7 @@ const processSchema = z.object({
 
 const hostSchema = z.object({
   hostname: z.string(),
+  resolutionSeconds: z.number().int().positive().optional(),
   metricsVersion: z.number().int().nonnegative().default(1),
   diskCollectionStatus: z.enum(["complete", "partial", "failed"]).optional(),
   collectorUser: z.string().max(255).optional(),
@@ -204,14 +208,6 @@ const monitorPullCatchUpMaxBatches = 40;
 const monitorSampleRetentionMs = 30 * 24 * 60 * 60 * 1000;
 const monitorTransactionAttempts = 3;
 
-export function monitorSampleIsFresh(checkedAt: string, collectedAt: string | null | undefined, resolutionSeconds: number): boolean {
-  const checkedAtMillis = Date.parse(checkedAt);
-  const collectedAtMillis = Date.parse(collectedAt ?? "");
-  if (!Number.isFinite(checkedAtMillis) || !Number.isFinite(collectedAtMillis)) return false;
-  const normalizedResolution = Number.isFinite(resolutionSeconds) && resolutionSeconds > 0 ? resolutionSeconds : 30;
-  return checkedAtMillis - collectedAtMillis <= Math.max(30 * 60, normalizedResolution * 3) * 1000;
-}
-
 export async function serializeMonitorAgentWork<T>(
   app: FastifyInstance,
   agentId: string,
@@ -268,10 +264,20 @@ async function executeMonitorPull(app: FastifyInstance, connectionId: string, af
     preferredPullLimits.set(app, appLimits);
   }
   let limit = appLimits.get(connectionId) ?? monitorPullLimit;
-  let result = await executeSshCommand(app, connectionId, monitorPullCommand(after, collect, limit), { timeoutMs: 120_000, maxBytes: monitorPullMaxBytes });
+  const pull = async (command: string) => {
+    try {
+      return await executeSshCommand(app, connectionId, command, { connectTimeoutSeconds: 45, timeoutMs: 120_000, maxBytes: monitorPullMaxBytes });
+    } catch (error) {
+      // Retry only a failed handshake: no remote command has started yet.
+      if (!(error instanceof Error) || !/Timed out while waiting for handshake/i.test(error.message)) throw error;
+      await new Promise<void>((resolve) => setTimeout(resolve, 500));
+      return executeSshCommand(app, connectionId, command, { connectTimeoutSeconds: 60, timeoutMs: 120_000, maxBytes: monitorPullMaxBytes });
+    }
+  };
+  let result = await pull(monitorPullCommand(after, collect, limit));
   while (result.truncated && limit > 1) {
     limit = Math.max(1, Math.floor(limit / 2));
-    result = await executeSshCommand(app, connectionId, monitorPullCommand(after, false, limit), { timeoutMs: 120_000, maxBytes: monitorPullMaxBytes });
+    result = await pull(monitorPullCommand(after, false, limit));
   }
   if (result.truncated) throw new Error("viron-monitor 单条数据超过 16 MiB，请检查目标机是否存在异常数量的服务候选");
   appLimits.set(connectionId, limit);
@@ -614,10 +620,12 @@ async function performMonitorHostSync(app: FastifyInstance, connectionId: string
     `).get(response.agentId, cursor.workspaceType, cursor.workspaceId) as
       | { latest_host_json: string; latest_candidates_json: string; latest_kubernetes_configs_json: string; last_collected_at: string | null }
       | undefined;
-    const latestHost = latestSample?.payload.host ?? (previous ? parseStoredHost(previous.latest_host_json) : null);
+    const latestHost = latestSample
+      ? { ...latestSample.payload.host, resolutionSeconds: latestSample.resolutionSeconds }
+      : (previous ? parseStoredHost(previous.latest_host_json) : null);
     const latestCandidates = latestSample?.payload.candidates ?? (previous ? parseStoredCandidates(previous.latest_candidates_json) : []);
     const latestKubernetesConfigs = latestSample?.payload.kubernetesConfigs ?? (previous ? parseStoredKubernetesConfigs(previous.latest_kubernetes_configs_json) : []);
-    const latestCollectedAt = latestSample?.payload.collectedAt ?? previous?.last_collected_at ?? null;
+    const latestCollectedAt = latestSample?.collectedAt ?? previous?.last_collected_at ?? null;
     const canonicalConnectionId = await canonicalMonitorConnection(
       app,
       response.agentId,
@@ -727,7 +735,7 @@ async function performMonitorHostSync(app: FastifyInstance, connectionId: string
 
     try {
       const collectedAt = latestSample?.collectedAt ?? latestCollectedAt;
-      const resolutionSeconds = Number(latestSample?.resolutionSeconds ?? 30);
+      const resolutionSeconds = Number(latestSample?.resolutionSeconds ?? latestHost?.resolutionSeconds ?? 30);
       const available = monitorSampleIsFresh(now, collectedAt, resolutionSeconds);
       await evaluateMonitorHostAvailability(app, {
         connectionId,
@@ -784,7 +792,8 @@ export function selectMonitorPollCandidates(
     if (!row.status) return true;
     const attemptedAt = Date.parse(row.status === "ready" ? row.last_pulled_at ?? "" : row.updated_at ?? "");
     if (!Number.isFinite(attemptedAt)) return true;
-    return attemptedAt <= (row.status === "ready" ? readyCutoff : retryCutoff);
+    const knownProbe = Boolean(row.agent_id) && row.status !== "missing";
+    return attemptedAt <= (row.status === "ready" || knownProbe ? readyCutoff : retryCutoff);
   });
   const grouped = new Map<string, MonitorPollCandidate>();
   for (const row of due) {
@@ -794,7 +803,7 @@ export function selectMonitorPollCandidates(
     const current = grouped.get(key);
     if (!current || Number(row.install_managed ?? 0) > Number(current.install_managed ?? 0)) grouped.set(key, row);
   }
-  return [...grouped.values()];
+  return [...grouped.values()].sort((left, right) => Number(Boolean(right.agent_id)) - Number(Boolean(left.agent_id)));
 }
 
 export async function pollMonitorHostsOnce(app: FastifyInstance, shouldStop: () => boolean = () => false): Promise<void> {
@@ -809,16 +818,21 @@ export async function pollMonitorHostsOnce(app: FastifyInstance, shouldStop: () 
       AND EXISTS (SELECT 1 FROM ssh_connection_environments ce WHERE ce.connection_id = c.id)
     ORDER BY COALESCE(h.last_pulled_at, ''), COALESCE(h.updated_at, ''), c.created_at
   `).all() as MonitorPollCandidate[];
-  const rows = selectMonitorPollCandidates(candidates, now, app.config.monitorPullIntervalSeconds ?? 60);
-  for (let index = 0; index < rows.length; index += 4) {
-    if (shouldStop()) break;
-    await Promise.all(rows.slice(index, index + 4).map(async (row) => {
-      try {
-        await syncMonitorHost(app, row.ssh_connection_id, false);
-      } catch (error) {
-        app.log.warn({ err: error, connectionId: row.ssh_connection_id }, "scheduled viron-monitor pull failed");
-      }
-    }));
+  const due = selectMonitorPollCandidates(candidates, now, app.config.monitorPullIntervalSeconds ?? 60);
+  // Bound discovery so hundreds of slow, unmonitored connections cannot hold up
+  // the next refresh of hosts that already have telemetry.
+  const phases = [due.filter((row) => row.agent_id), due.filter((row) => !row.agent_id).slice(0, 4)];
+  for (const rows of phases) {
+    for (let index = 0; index < rows.length; index += 4) {
+      if (shouldStop()) return;
+      await Promise.all(rows.slice(index, index + 4).map(async (row) => {
+        try {
+          await syncMonitorHost(app, row.ssh_connection_id, false);
+        } catch (error) {
+          app.log.warn({ err: error, connectionId: row.ssh_connection_id }, "scheduled viron-monitor pull failed");
+        }
+      }));
+    }
   }
 }
 

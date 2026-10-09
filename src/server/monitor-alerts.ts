@@ -15,6 +15,7 @@ import {
 } from "../shared/monitor-alerts.js";
 import { DEFAULT_TLS_WARN_DAYS, TLS_WARN_DAYS, tlsDaysRemaining } from "../shared/tls-certificates.js";
 import type { MonitorCandidate, MonitorHostSnapshot } from "./service-monitor.js";
+import { monitorSampleIsFresh } from "../shared/monitoring.js";
 
 interface MonitorAlertSettingsRow {
   enabled: number | string;
@@ -752,6 +753,27 @@ export async function evaluateMonitorHostAvailability(
   if (!row?.agent_id) return;
 
   const missing = input.status === "missing" || row.status === "missing";
+  let available = input.available;
+  let collectedAt = input.lastCollectedAt ?? row.last_collected_at ?? null;
+  let resolutionSeconds = input.sampleResolutionSeconds ?? null;
+  if (!missing && input.reason === "pull_failed") {
+    // Another SSH connection to this agent may have just received valid data.
+    // A failed transport cannot override that evidence of ongoing collection.
+    const latest = await app.db.prepare(`
+      SELECT h.last_collected_at, h.latest_host_json
+      FROM monitor_hosts h JOIN ssh_connections c ON c.id = h.ssh_connection_id
+      WHERE h.agent_id = ? AND c.workspace_type = ? AND c.workspace_id = ?
+      ORDER BY COALESCE(h.last_collected_at, '') DESC LIMIT 1
+    `).get(row.agent_id, row.workspace_type, row.workspace_id) as { last_collected_at: string | null; latest_host_json: string } | undefined;
+    if (latest?.last_collected_at && (!collectedAt || Date.parse(latest.last_collected_at) >= Date.parse(collectedAt))) {
+      collectedAt = latest.last_collected_at;
+      try {
+        const host = JSON.parse(latest.latest_host_json) as { resolutionSeconds?: number } | null;
+        resolutionSeconds = host?.resolutionSeconds ?? resolutionSeconds;
+      } catch { /* Use the check's resolution for legacy snapshots. */ }
+    }
+    available = monitorSampleIsFresh(input.checkedAt, collectedAt, resolutionSeconds ?? 30);
+  }
   const environments = await monitoredEnvironments(app, row.agent_id, row.workspace_type, row.workspace_id);
   const hostname = input.hostname?.trim() || storedHostname(row.latest_host_json);
   for (const environment of environments) {
@@ -767,16 +789,16 @@ export async function evaluateMonitorHostAvailability(
       targetName: hostname || environment.connectionName,
       connectionName: environment.connectionName,
       serviceName: "",
-      breached: !missing && !input.available,
+      breached: !missing && !available,
       suppressed: missing,
       details: {
-        available: missing ? false : input.available,
+        available: missing ? false : available,
         status: missing ? "missing" : input.status,
         reason: missing ? "monitor_missing" : input.reason,
         ...(missing ? { ignored: true } : {}),
         lastError: input.error?.slice(0, 500) ?? "",
-        lastCollectedAt: input.lastCollectedAt ?? row.last_collected_at ?? null,
-        sampleResolutionSeconds: input.sampleResolutionSeconds ?? null,
+        lastCollectedAt: collectedAt,
+        sampleResolutionSeconds: resolutionSeconds,
       },
     };
     await applyObservations(app, environment, [observation], input.checkedAt, new Set());

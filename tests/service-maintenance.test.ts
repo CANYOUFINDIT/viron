@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { Server } from "ssh2";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../src/server/app.js";
 import type { AppConfig } from "../src/server/config.js";
 import { ensureAdmin, openDatabase } from "../src/server/database.js";
@@ -19,6 +19,7 @@ import { operationHeaders, waitForOperation } from "./helpers/service-operations
 const directories: string[] = [];
 
 afterEach(() => {
+  vi.useRealTimers();
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
@@ -319,6 +320,7 @@ describe("service maintenance", () => {
   });
 
   it("suppresses offline alerts for absent probes, resets failures, and reconciles legacy alerts on startup", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
     const directory = mkdtempSync(join(tmpdir(), "viron-maintenance-offline-alert-test-"));
     directories.push(directory);
     const ssh = await startSshServer();
@@ -347,7 +349,12 @@ describe("service maintenance", () => {
         },
       });
       const connectionId = connection.json().id as string;
-      const refresh = () => app.inject({ method: "POST", url: `/api/v1/environments/${environmentId}/monitor-hosts/${connectionId}/refresh`, cookies });
+      const refresh = () => {
+        vi.setSystemTime(Date.now() + 1000);
+        return app.inject({ method: "POST", url: `/api/v1/environments/${environmentId}/monitor-hosts/${connectionId}/refresh`, cookies });
+      };
+      const ageSamples = () => app.db.prepare("UPDATE monitor_hosts SET last_collected_at = ? WHERE ssh_connection_id = ?")
+        .run(new Date(Date.now() - 31 * 60_000).toISOString(), connectionId);
       expect((await refresh()).statusCode).toBe(200);
       expect((await app.inject({
         method: "PUT",
@@ -384,6 +391,7 @@ describe("service maintenance", () => {
       // A missing check must discard a failure accumulated before uninstalling.
       ssh.state.monitorExitCode = 0;
       await refresh();
+      await ageSamples();
       ssh.state.monitorExitCode = 1;
       await refresh();
       ssh.state.monitorInstalled = false;
@@ -393,6 +401,7 @@ describe("service maintenance", () => {
       ssh.state.monitorInstalled = true;
       ssh.state.monitorExitCode = 0;
       await refresh();
+      await ageSamples();
       ssh.state.monitorExitCode = 1;
       await refresh();
       expect((await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies })).json().items).toHaveLength(0);
@@ -417,6 +426,7 @@ describe("service maintenance", () => {
       ssh.state.monitorInstalled = true;
       ssh.state.monitorExitCode = 0;
       await refresh();
+      await ageSamples();
       ssh.state.monitorExitCode = 1;
       await refresh();
       await refresh();
@@ -437,6 +447,7 @@ describe("service maintenance", () => {
         .run(newAlertId, environmentId);
       await app.db.prepare("UPDATE monitor_hosts SET status = 'missing' WHERE ssh_connection_id = ?").run(connectionId);
       await app.close();
+      vi.setSystemTime(Date.now() + 1000);
       app = await buildApp({ config, db: await openDatabase(config), logger: false });
       listed = (await app.inject({ method: "GET", url: "/api/v1/monitor-alerts", cookies })).json();
       expect(listed.items.find((item: { id: string }) => item.id === newAlertId)).toMatchObject({ status: "recovered", notificationPhase: null, details: { reason: "monitor_missing", ignored: true } });

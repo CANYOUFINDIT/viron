@@ -26,9 +26,9 @@ export async function executeSshCommand(
   app: FastifyInstance,
   connectionId: string,
   command: string,
-  options: { timeoutMs?: number; maxBytes?: number; signal?: AbortSignal; endStdin?: boolean } = {},
+  options: { connectTimeoutSeconds?: number; timeoutMs?: number; maxBytes?: number; signal?: AbortSignal; endStdin?: boolean } = {},
 ): Promise<SshCommandResult> {
-  const connected = await connectSsh(app, connectionId);
+  const connected = await connectSsh(app, connectionId, { connectTimeoutSeconds: options.connectTimeoutSeconds });
   try {
     return await executeSshCommandOnConnection(connected, command, options);
   } finally {

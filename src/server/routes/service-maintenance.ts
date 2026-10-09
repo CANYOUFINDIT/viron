@@ -6,6 +6,7 @@ import { writeAudit } from "../audit.js";
 import { isUniqueConstraintError } from "../database-errors.js";
 import { quotePosixShellArg } from "../../shared/environment-log.js";
 import { hasExactIds } from "../../shared/tab-order.js";
+import { monitoringProbeState } from "../../shared/monitoring.js";
 import { syncMonitorHost } from "../service-monitor.js";
 import { monitorCommand, monitorCommandNotFound } from "../monitor-command.js";
 import { executeSshCommand, executeSshScript } from "../ssh/command.js";
@@ -512,6 +513,15 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
       const snapshot = parseHostSnapshot(row?.latest_host_json);
       const installManaged = Boolean(row?.install_managed);
       const monitorStatus = (row?.status as "ready" | "missing" | "error" | "unknown" | undefined) ?? "unknown";
+      const probeState = monitoringProbeState({
+        status: monitorStatus,
+        agentId: row?.agent_id,
+        agentVersion: row?.agent_version,
+        installManaged,
+        installedAt: row?.installed_at,
+        lastCollectedAt: row?.last_collected_at,
+        sampleResolutionSeconds: Number(snapshot?.resolutionSeconds ?? 30),
+      });
       return {
         item: {
           sshConnectionId: connection.id,
@@ -520,7 +530,8 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
           port: Number(row?.port ?? 0),
           username: String(row?.username ?? connection.username ?? ""),
           monitorStatus,
-          monitorOffline: monitorStatus === "error",
+          probeState,
+          monitorOffline: probeState === "offline",
           agentId: String(row?.agent_id ?? ""),
           agentVersion: String(row?.agent_version ?? ""),
           monitorUpdateAvailable: monitorUpdateAvailable(row?.agent_version, snapshot, installManaged),

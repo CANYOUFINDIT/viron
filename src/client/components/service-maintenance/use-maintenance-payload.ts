@@ -7,6 +7,7 @@ import { createLatestDataLoader } from "../../latest-data-loader";
 import { candidateKey, providerLabel, type CandidateStatus, type MonitorCandidate, type Provider } from "../../service-candidate-tree";
 import { normalizeMaintenanceScriptActions } from "../../service-maintenance-payload";
 import { reorderIds, sameOrder } from "../../../shared/tab-order";
+import { monitoringProbeState } from "../../../shared/monitoring";
 import { defaultMonitorAlertSettings, defaultMonitoredDiskTypes, visibleMonitorDisks, type MonitorAlertSettings, } from "../../../shared/monitor-alerts";
 
 import type { MaintenanceWorkspace, HostWorkspaceTab, HostFocusMetric, MaintenanceDirectory, DirectoryMoveDirection, ScriptActionIcon, DirectoryDropTarget, ScriptAction, ScriptActionExecutionResult, ScriptActionExecution, HostSnapshot, KubernetesConfigDiscovery, MonitorHost, MonitorInstallPreflight, MonitorInstallTaskStatus, MonitorInstallTaskPhase, MonitorInstallTask, Deployment, ServiceItem, EnvironmentLog, MaintenancePayload, MaintenanceDeploymentResponse, MaintenanceServiceResponse, MaintenancePayloadResponse, MaintenanceCounts, MaintenancePanelProps, MaintenancePanelEmit } from "./types";
@@ -154,7 +155,8 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
                   username: previous?.username ?? "",
                   connectionAvailable: row.connectionAvailable,
                   monitorStatus: row.monitorStatus,
-                  monitorOffline: row.monitorStatus === "error",
+                  probeState: row.probeState,
+                  monitorOffline: row.probeState === "offline",
                   agentId: previous?.agentId ?? "",
                   agentVersion: previous?.agentVersion ?? "",
                   monitorUpdateAvailable: previous?.monitorUpdateAvailable ?? false,
@@ -408,8 +410,21 @@ export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<M
   }
 
   function hostPresence(host: MonitorHost) {
-      if (host.monitorOffline)
+      const state = host.probeState ?? monitoringProbeState({
+          status: host.monitorStatus,
+          agentId: host.agentId,
+          agentVersion: host.agentVersion,
+          installManaged: host.installManaged,
+          installedAt: host.installedAt,
+          lastCollectedAt: host.lastCollectedAt,
+          sampleResolutionSeconds: host.snapshot?.resolutionSeconds,
+      });
+      if (state === "offline")
           return { key: "offline", label: tr("离线") };
+      if (state === "unreachable")
+          return { key: "error", label: tr("连接异常") };
+      if (state === "stale")
+          return { key: "error", label: tr("采集中断") };
       if (host.monitorStatus === "ready")
           return { key: "online", label: tr("在线") };
       if (host.monitorStatus === "missing")

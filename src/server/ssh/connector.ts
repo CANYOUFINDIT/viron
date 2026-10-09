@@ -169,10 +169,25 @@ async function createConnectedSsh(connection: SshConnectionRecord, jumps: SshCon
   }
 }
 
-export async function connectSsh(app: FastifyInstance, connectionId: string): Promise<ConnectedSsh> {
-  const connection = await loadSshConnection(app, connectionId);
-  const jumps = await loadJumpChain(app, connection);
-  const key = `${connection.id}\0${connectionFingerprint(connection, jumps)}`;
+export async function connectSsh(app: FastifyInstance, connectionId: string, options: { connectTimeoutSeconds?: number } = {}): Promise<ConnectedSsh> {
+  const loadedConnection = await loadSshConnection(app, connectionId);
+  const loadedJumps = await loadJumpChain(app, loadedConnection);
+  const withTimeout = (connection: SshConnectionRecord): SshConnectionRecord => {
+    if (!Number.isFinite(options.connectTimeoutSeconds) || !options.connectTimeoutSeconds || options.connectTimeoutSeconds <= 0) return connection;
+    return {
+      ...connection,
+      options: {
+        ...connection.options,
+        // A caller may allow more time, while preserving a longer saved timeout.
+        connectTimeoutSeconds: Math.max(connection.options.connectTimeoutSeconds ?? 15, Math.min(120, options.connectTimeoutSeconds)),
+      },
+    };
+  };
+  const connection = withTimeout(loadedConnection);
+  const jumps = loadedJumps.map(withTimeout);
+  // Handshake patience does not change the identity of an authenticated session.
+  // Reuse a connection established by either a monitor retry or an interactive command.
+  const key = `${loadedConnection.id}\0${connectionFingerprint(loadedConnection, loadedJumps)}`;
   const lease = await sshPool(app).acquire(key, async () => {
     const connected = await createConnectedSsh(connection, jumps);
     const resource: PooledSsh = { connected, usable: true };

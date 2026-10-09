@@ -185,7 +185,7 @@ function formatFreshness(value: string | null | undefined) {
 }
 
 function collectionLabel(host: MonitoringHostCard) {
-  if (["missing", "unreachable", "unchecked"].includes(effectiveProbeState(host))) return tr("尚无监控数据");
+  if (["missing", "unchecked"].includes(effectiveProbeState(host)) || !host.lastCollectedAt) return tr("尚无监控数据");
   const freshness = formatFreshness(host.lastCollectedAt);
   return freshness === "—" ? tr("尚无采集时间") : tr("{{0}} 前采集", [freshness]);
 }
@@ -207,7 +207,7 @@ function activeAlertCount(alerts: MonitoringAlertCounts) {
 function bottleneck(host: MonitoringHostCard, _state: MonitoringHostPriorityState, alerts: MonitoringAlertCounts) {
   const probeState = effectiveProbeState(host);
   if (probeState === "offline") return tr("已安装探针当前无法连接");
-  if (probeState === "unreachable") return tr("SSH 连接失败，无法确认是否安装探针");
+  if (probeState === "unreachable") return host.probeInstalled ? tr("连接异常") : tr("SSH 连接失败，无法确认是否安装探针");
   if (probeState === "missing") return tr("已通过 SSH 确认未安装探针");
   if (probeState === "unchecked") return tr("尚未执行探针检测");
   if ((host.diskUsedPercent ?? 0) >= 90 && host.worstDisk?.path) return `${host.worstDisk.path} ${formatPercent(host.diskUsedPercent)}`;

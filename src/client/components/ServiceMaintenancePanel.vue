@@ -512,7 +512,7 @@ onBeforeUnmount(() => {
         <div class="monitor-alert-rule-list" :class="{ 'is-disabled': !alertSettingsForm.enabled }">
           <article class="is-switch-rule">
             <el-checkbox v-model="alertSettingsForm.hostOfflineEnabled">{{ $t('宿主机离线') }}</el-checkbox>
-            <span>{{ $t('连续两次无法拉取监控数据，或采集数据持续未更新时告警') }}</span>
+            <span>{{ $t('最近采集已超过有效窗口，且连续两次无法取得有效监控数据时告警') }}</span>
           </article>
           <article>
             <el-checkbox v-model="alertSettingsForm.cpuEnabled">CPU</el-checkbox>

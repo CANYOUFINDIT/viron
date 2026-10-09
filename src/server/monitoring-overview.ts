@@ -181,7 +181,7 @@ export async function loadMonitoringOverview(
     const status = String(row.status ?? "unknown");
     const collectedAt = row.last_collected_at ? String(row.last_collected_at) : null;
     const resolution = finiteMetric(snapshot.resolutionSeconds) ?? 30;
-    const stale = status === "ready" && isMonitorStale(collectedAt, resolution);
+    const stale = isMonitorStale(collectedAt, resolution);
     const probeState = monitoringProbeState({
       status,
       agentId: row.agent_id,
@@ -189,11 +189,13 @@ export async function loadMonitoringOverview(
       installManaged: Boolean(row.install_managed),
       installedAt: row.installed_at,
       lastCollectedAt: collectedAt,
+      sampleResolutionSeconds: resolution,
       stale,
     });
     const offline = probeState === "offline";
     const missing = probeState === "missing";
-    const probeInstalled = ["online", "offline", "stale"].includes(probeState);
+    const probeInstalled = ["online", "offline", "stale"].includes(probeState)
+      || (probeState === "unreachable" && Boolean(row.agent_id || row.agent_version || row.install_managed || row.installed_at || collectedAt));
     return {
       sshConnectionId: row.ssh_connection_id,
       connectionName: row.connection_name,

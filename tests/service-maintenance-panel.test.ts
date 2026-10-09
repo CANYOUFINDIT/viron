@@ -36,6 +36,49 @@ function stubControl() {
 }
 
 describe("service maintenance panel split", () => {
+  it("shows fresh probes with failed SSH pulls as connection faults instead of offline hosts", async () => {
+    const host = {
+      sshConnectionId: "ssh-1", connectionName: "monitor-node", host: "127.0.0.1",
+      connectionAvailable: true, monitorStatus: "error", probeState: "unreachable",
+      monitorOffline: false, agentId: "agent-1", agentVersion: "0.1.9",
+      snapshot: { hostname: "monitor-node", cpuCount: 4, cpuUsedPercent: 10, memoryUsedPercent: 50, memoryTotalBytes: 1000, memoryUsedBytes: 500, uptimeSeconds: 3600, load1: 1, load5: 1, load15: 1, disks: [], temperatures: [] },
+      candidates: [], kubernetesConfigs: [], lastError: "Timed out while waiting for handshake",
+      lastCollectedAt: new Date().toISOString(), lastPulledAt: new Date().toISOString(),
+    };
+    mockedApi.mockImplementation(async (path: string) => {
+      if (String(path).endsWith("/service-deployments")) return {
+        canConfigure: false, canOperate: false, services: [], logs: [],
+        discovery: { hosts: [{ ...host, candidateCount: 0 }] },
+      };
+      if (String(path).endsWith("/candidates")) return { item: host };
+      return { item: { enabled: false }, items: [] };
+    });
+    const wrapper = mount(ServiceMaintenancePanel, {
+      props: { environmentId: "env-1", focusHostId: "ssh-1" },
+      global: {
+        plugins: [i18nPlugin],
+        directives: { loading: () => {} },
+        stubs: {
+          "el-button": stubControl(),
+          "el-dialog": { template: "<div></div>" },
+          "el-dropdown": { template: "<div><slot /></div>" },
+          "el-dropdown-menu": true, "el-dropdown-item": true,
+          "el-form": true, "el-form-item": true, "el-input": true,
+          "el-select": true, "el-option": true, "el-switch": true,
+          "el-checkbox": true, "el-checkbox-group": true,
+          "el-radio-group": true, "el-radio-button": true, "el-progress": true,
+          HostMonitorDashboard: true, HostEventCalendar: true, ServiceDiscoveryPanel: true,
+        },
+      },
+    });
+    try {
+      await flushPromises();
+      expect(wrapper.find(".host-index__row").text()).toMatch(/连接异常|Connection abnormality/);
+      expect(wrapper.text()).not.toMatch(/离线主机|Offline hosts/);
+      expect(wrapper.find(".host-observatory").text()).toContain("Timed out while waiting for handshake");
+    } finally { wrapper.unmount(); }
+  });
+
   it("does not keep TLS types or the unused certificate composable in the maintenance module", () => {
     expect(existsSync(new URL("../src/client/components/service-maintenance/use-tls-certificates.ts", import.meta.url))).toBe(false);
     const files = [

@@ -11,7 +11,7 @@ export const MONITORING_MAX_SERVICES = 100;
 export const MONITORING_MAX_POINTS = 480;
 export const MONITORING_MAX_SERVICE_DEPLOYMENTS = 50;
 export const MONITORING_TOP_PROCESSES = 5;
-export const MONITORING_STALE_CYCLES = 2;
+export const MONITORING_STALE_CYCLES = 3;
 export const MONITORING_DEFAULT_RESOLUTION_SECONDS = 30;
 export const MONITORING_MIN_STALE_SECONDS = 30 * 60;
 export const MONITORING_OVERVIEW_CACHE_MS = 5_000;
@@ -53,6 +53,7 @@ export interface MonitoringProbeEvidence {
   installManaged?: boolean;
   installedAt?: unknown;
   lastCollectedAt?: unknown;
+  sampleResolutionSeconds?: number;
   stale?: boolean;
 }
 
@@ -69,8 +70,18 @@ export function hasMonitoringProbeEvidence(host: MonitoringProbeEvidence): boole
 export function monitoringProbeState(host: MonitoringProbeEvidence): MonitoringProbeState {
   const status = String(host.status ?? "unknown");
   if (status === "missing") return "missing";
-  if (status === "error") return hasMonitoringProbeEvidence(host) ? "offline" : "unreachable";
-  if (status === "ready") return host.stale ? "stale" : "online";
+  if (status === "error") {
+    const fresh = monitorSampleIsFresh(
+      new Date().toISOString(),
+      String(host.lastCollectedAt ?? ""),
+      host.sampleResolutionSeconds ?? MONITORING_DEFAULT_RESOLUTION_SECONDS,
+    );
+    return hasMonitoringProbeEvidence(host) && !fresh ? "offline" : "unreachable";
+  }
+  if (status === "ready") {
+    const stale = host.stale ?? isMonitorStale(String(host.lastCollectedAt ?? ""), host.sampleResolutionSeconds);
+    return stale ? "stale" : "online";
+  }
   return "unchecked";
 }
 
@@ -139,12 +150,22 @@ export function hostPriorityState(
   return "healthy";
 }
 
+function monitorStaleWindowMs(resolutionSeconds: number): number {
+  const resolution = Number.isFinite(resolutionSeconds) && resolutionSeconds > 0 ? resolutionSeconds : MONITORING_DEFAULT_RESOLUTION_SECONDS;
+  return Math.max(MONITORING_MIN_STALE_SECONDS, MONITORING_STALE_CYCLES * resolution) * 1000;
+}
+
+export function monitorSampleIsFresh(checkedAt: string, collectedAt: string | null | undefined, resolutionSeconds = MONITORING_DEFAULT_RESOLUTION_SECONDS): boolean {
+  const checked = Date.parse(checkedAt);
+  const collected = Date.parse(collectedAt ?? "");
+  return Number.isFinite(checked) && Number.isFinite(collected) && checked - collected <= monitorStaleWindowMs(resolutionSeconds);
+}
+
 export function isMonitorStale(lastCollectedAt: string | null | undefined, resolutionSeconds = MONITORING_DEFAULT_RESOLUTION_SECONDS, now = Date.now()): boolean {
   if (!lastCollectedAt) return false;
   const collected = Date.parse(lastCollectedAt);
   if (!Number.isFinite(collected)) return false;
-  const cycleMs = Math.max(1, resolutionSeconds) * 1000;
-  return now - collected > Math.max(MONITORING_MIN_STALE_SECONDS * 1000, MONITORING_STALE_CYCLES * cycleMs);
+  return now - collected > monitorStaleWindowMs(resolutionSeconds);
 }
 
 export function timeBucketMs(range: MonitoringRange): number {

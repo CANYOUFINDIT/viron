@@ -54,6 +54,7 @@ describe("monitoring severity ranking", () => {
     expect(monitoringProbeState({ status: "missing" })).toBe("missing");
     expect(monitoringProbeState({ status: "error" })).toBe("unreachable");
     expect(monitoringProbeState({ status: "error", agentId: "agent-1", lastCollectedAt: "2026-08-30T16:00:00.000Z" })).toBe("offline");
+    expect(monitoringProbeState({ status: "error", agentId: "agent-1", lastCollectedAt: new Date().toISOString() })).toBe("unreachable");
     expect(monitoringProbeState({ status: "ready", stale: true, agentId: "agent-1" })).toBe("stale");
     expect(monitoringProbeState({ status: "ready", agentId: "agent-1" })).toBe("online");
     expect(monitoringProbeState({ status: "unknown" })).toBe("unchecked");
@@ -107,11 +108,12 @@ describe("isMonitorStale helper", () => {
   it("scales stale threshold when cycle time exceeds 30 minutes", () => {
     const now = Date.parse("2026-08-30T16:30:00.000Z");
     const ninetyMinAgo = "2026-08-30T15:00:00.000Z";
-    const twoHoursOneMinAgo = "2026-08-30T14:29:00.000Z";
+    const threeHoursOneMinAgo = "2026-08-30T13:29:00.000Z";
 
-    // 1 hour resolution -> 2 cycles = 2 hours (> 30 min)
+    // Match the availability alert's three-cycle window.
     expect(isMonitorStale(ninetyMinAgo, 3600, now)).toBe(false);
-    expect(isMonitorStale(twoHoursOneMinAgo, 3600, now)).toBe(true);
+    expect(isMonitorStale("2026-08-30T14:29:00.000Z", 3600, now)).toBe(false);
+    expect(isMonitorStale(threeHoursOneMinAgo, 3600, now)).toBe(true);
   });
 
   it("handles empty or invalid timestamp inputs safely", () => {
@@ -182,7 +184,7 @@ describe("monitoring overview and service timeseries", () => {
           latest_host_json, latest_candidates_json, latest_kubernetes_configs_json, last_error,
           last_collected_at, last_pulled_at, install_managed, updated_at
         ) VALUES (?, ?, '0.1.6', 1, 'error', 1, ?, '[]', '[]', 'offline', ?, ?, 1, ?)
-      `).run(offline.json().id, randomUUID(), JSON.stringify({ cpuUsedPercent: 1, memoryUsedPercent: 1, disks: [{ path: "/", usedPercent: 1 }], resolutionSeconds: 30 }), now, now, now);
+      `).run(offline.json().id, randomUUID(), JSON.stringify({ cpuUsedPercent: 1, memoryUsedPercent: 1, disks: [{ path: "/", usedPercent: 1 }], resolutionSeconds: 30 }), new Date(Date.now() - 31 * 60_000).toISOString(), now, now);
       await db.prepare(`
         INSERT INTO monitor_hosts (
           ssh_connection_id, agent_id, agent_version, protocol_version, status, last_sequence,

@@ -4575,7 +4575,7 @@ const enOverrides: Record<string, string> = {
   "监控告警设置": "Monitor Alert Settings",
   "启用当前环境的监控告警": "Enable monitor alerts for this environment",
   "连续两次采集达到条件后触发，连续两次恢复正常后解除。": "Trigger after two consecutive matching samples and recover after two consecutive healthy samples.",
-  "连续两次无法拉取监控数据，或采集数据持续未更新时告警": "Alert after two consecutive pull failures or when collected data remains stale",
+  "最近采集已超过有效窗口，且连续两次无法取得有效监控数据时告警": "Alert when the latest sample is outside its freshness window and valid monitoring data is unavailable in two consecutive checks",
   "使用率达到": "Usage reaches",
   "任一挂载点达到": "Any mount reaches",
   "最高温度达到": "Maximum temperature reaches",
