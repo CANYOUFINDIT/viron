@@ -1,17 +1,17 @@
-# Viron 0.1.8 发布产物
+# Viron 0.1.9 发布产物
 
 本次发布提供 `linux/amd64`、`linux/arm64` 服务镜像离线包和全平台桌面客户端安装包：
 
-- `viron-server-0.1.8-linux-amd64.tar.gz`：包含 Lite、Full 与 Script Runner 的 Linux AMD64 Docker 镜像。
-- `viron-server-0.1.8-linux-arm64.tar.gz`：包含 Lite、Full 与 Script Runner 的 Linux ARM64 Docker 镜像。
-- `Viron-0.1.8-macos-arm64-self-signed.dmg`：macOS 12+、Apple Silicon `arm64` 的自签名安装盘。
-- `Viron-0.1.8-macos-x64-self-signed.dmg`：macOS 12+、Intel `x64` 的自签名安装盘。
-- `Viron-0.1.8-windows-x86-unsigned-setup.exe`：Windows Intel/AMD 32 位 `x86` 的未签名 NSIS 安装包。
-- `Viron-0.1.8-windows-x64-unsigned-setup.exe`：Windows Intel/AMD 64 位 `x64` 的未签名 NSIS 安装包。
-- `Viron-0.1.8-windows-arm64-unsigned-setup.exe`：Windows ARM64 的未签名 NSIS 安装包。
+- `viron-server-0.1.9-linux-amd64.tar.gz`：包含 Lite、Full 与 Script Runner 的 Linux AMD64 Docker 镜像。
+- `viron-server-0.1.9-linux-arm64.tar.gz`：包含 Lite、Full 与 Script Runner 的 Linux ARM64 Docker 镜像。
+- `Viron-0.1.9-macos-arm64-self-signed.dmg`：macOS 12+、Apple Silicon `arm64` 的自签名安装盘。
+- `Viron-0.1.9-macos-x64-self-signed.dmg`：macOS 12+、Intel `x64` 的自签名安装盘。
+- `Viron-0.1.9-windows-x86-unsigned-setup.exe`：Windows Intel/AMD 32 位 `x86` 的未签名 NSIS 安装包。
+- `Viron-0.1.9-windows-x64-unsigned-setup.exe`：Windows Intel/AMD 64 位 `x64` 的未签名 NSIS 安装包。
+- `Viron-0.1.9-windows-arm64-unsigned-setup.exe`：Windows ARM64 的未签名 NSIS 安装包。
 - `SHA256SUMS`：全部发布产物的 SHA-256 完整性校验。
 
-每个服务离线包都包含同版本的 `viron-server-lite:0.1.8`、`viron-server-full:0.1.8` 和 `viron-script-runner:0.1.8`。只应在匹配 CPU 架构的 Linux 主机上加载对应离线包。
+每个服务离线包都包含同版本的 `viron-server-lite:0.1.9`、`viron-server-full:0.1.9` 和 `viron-script-runner:0.1.9`。只应在匹配 CPU 架构的 Linux 主机上加载对应离线包。
 
 校验：
 
