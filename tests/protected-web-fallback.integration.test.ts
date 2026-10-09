@@ -25,6 +25,9 @@ async function fixture(mode: string, check: (value: {
   let posts = 0, homeLoads = 0, entryLoads = 0;
   const pending = new Set<NodeJS.Timeout>();
   const target = createServer((request, response) => {
+    // Native browser caching also restores favicon loading. Count document
+    // visits, not the browser's automatic icon request, when checking retries.
+    if (request.url === "/favicon.ico") { response.writeHead(204); response.end(); return; }
     response.setHeader("Content-Type", "text/html; charset=utf-8");
     if (request.method === "POST") {
       posts++;

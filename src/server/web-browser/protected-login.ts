@@ -2,11 +2,14 @@ import type { BrowserContext, CDPSession, Page } from "playwright-core";
 import { ProtectedLoginController, type ProtectedLoginResult } from "../../shared/protected-web-login-controller.js";
 import { protectedLoginBusinessPageScript } from "../../shared/protected-web-login-dom.js";
 import type { WebLoginConfig } from "../../shared/protected-web-login.js";
+import type { PublicWebAssetCache } from "../../shared/public-web-asset-cache.js";
+import { configureServerWebRequests } from "./public-web-assets.js";
 
 /** Credentials are evaluated in a CDP isolated world of an undisclosed auth page. */
 export async function createServerProtectedLogin(options: {
   context: BrowserContext; url: string; username: string; password: string; config: WebLoginConfig;
   manualFallback?: () => void; changed: () => void; completed: (result: ProtectedLoginResult) => Promise<void>;
+  assets?: PublicWebAssetCache;
 }): Promise<ProtectedLoginController> {
   const page = await options.context.newPage();
   const cdp = await options.context.newCDPSession(page);
@@ -24,7 +27,7 @@ export async function createServerProtectedLogin(options: {
   const preparation = new Promise<void>((resolve) => { prepared = resolve; });
   let pressed = false;
   const login = new ProtectedLoginController({ ...options, prepare: () => preparation, browser: {
-    load: async (url) => { loading = true; try { await page.goto(url, { waitUntil: "load", timeout: 30_000 }); } finally { loading = false; } },
+    load: async (url) => { loading = true; try { await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 }); } finally { loading = false; } },
     url: () => page.url(), loading: () => loading, destroyed: () => closed || page.isClosed(), evaluate,
     capture: async ({ x, y, width, height }) => `data:image/png;base64,${(await page.screenshot({ clip: { x, y, width, height }, timeout: 3000 })).toString("base64")}`,
     mouse: async (type, x, y) => { if (type === "mouseDown") pressed = true; if (type === "mouseUp") pressed = false; await cdp.send("Input.dispatchMouseEvent", { type: type === "mouseDown" ? "mousePressed" : type === "mouseUp" ? "mouseReleased" : "mouseMoved", x, y, button: "left", buttons: pressed ? 1 : 0, clickCount: type === "mouseMove" ? 0 : 1 }); },
@@ -45,18 +48,16 @@ export async function createServerProtectedLogin(options: {
     destroy: () => { closed = true; closing = page.close().catch(() => undefined); return closing; },
   } });
   const allowed = new Set([new URL(options.url).origin, ...options.config.allowedOrigins]);
-  await page.route("**/*", async (route) => {
-    const request = route.request();
-    if (request.isNavigationRequest() && request.frame() === page.mainFrame() && !allowed.has(new URL(request.url()).origin)) {
-      await route.abort(); login.fail("登录跳转到了未授权的域名，请检查入口配置");
-    } else await route.continue();
-  });
   await cdp.send("Page.enable");
   const mainFrameId = (await cdp.send("Page.getFrameTree")).frameTree.frame.id;
+  await configureServerWebRequests(cdp, { assets: options.assets, mainFrameId, allowedOrigins: allowed,
+    denied: () => login.fail("登录跳转到了未授权的域名，请检查入口配置"),
+  });
   cdp.on("Page.frameStartedLoading", ({ frameId }) => { if (frameId === mainFrameId) { loading = true; login.pageLoadingChanged(true); } });
   cdp.on("Page.frameStoppedLoading", ({ frameId }) => { if (frameId === mainFrameId) { loading = false; login.pageLoadingChanged(false); } });
   cdp.on("Page.frameNavigated", ({ frame }) => { if (!frame.parentId) login.navigationStarted(); });
   cdp.on("Page.navigatedWithinDocument", ({ frameId }) => { if (frameId === mainFrameId) login.navigationStarted(true); });
+  page.on("domcontentloaded", () => { loading = false; login.pageLoadingChanged(false); });
   page.on("load", () => { loading = false; login.pageLoadingChanged(false); });
   page.on("popup", (popup) => { void popup.close(); login.fail("登录需要新窗口，请调整入口的登录流程后重试"); });
   page.on("dialog", (dialog) => { void dialog.dismiss(); login.fail("登录页面使用浏览器原生对话框，请调整入口的登录流程后重试"); });

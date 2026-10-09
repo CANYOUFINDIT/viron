@@ -26,6 +26,8 @@ import type { ProtectedLoginController } from "../../shared/protected-web-login-
 import { DirectWebAutofill, DIRECT_WEB_FILL_MESSAGE } from "../../shared/direct-web-autofill.js";
 import { captureWebCredentialTargetScript, fillWebCredentialTargetScript } from "../../shared/web-credential-context-fill.js";
 import { createServerProtectedLogin, verifyServerBusinessPage } from "./protected-login.js";
+import { PublicWebAssetCache } from "../../shared/public-web-asset-cache.js";
+import { configureServerWebRequests } from "./public-web-assets.js";
 import type { AuthenticatedUser } from "../access-control.js";
 
 interface ViewTicket {
@@ -201,6 +203,7 @@ export class WebAccountViewManager {
   private readonly downloads = new Map<string, DownloadArtifact>();
   private readonly profilesRoot: string;
   private readonly downloadsRoot: string;
+  private readonly publicAssets = new Map<string, PublicWebAssetCache>();
   private readonly cleanupTimer: NodeJS.Timeout;
 
   constructor(private readonly app: FastifyInstance) {
@@ -692,11 +695,13 @@ export class WebAccountViewManager {
   }
 
   private async registerNewPage(view: ManagedWebView, page: Page, activate: boolean): Promise<void> {
+    await configureServerWebRequests(await view.context.newCDPSession(page), { assets: this.publicAssetCache(view) });
     const id = randomUUID();
     const item: ManagedPage = { id, page, title: "新页面", url: page.url(), pendingUrl: "", loading: false };
     view.pages.set(id, item);
     view.pageIds.set(page, id);
     page.on("domcontentloaded", () => {
+      item.loading = false;
       void this.syncPage(view, page);
     });
     page.on("load", () => {
@@ -1050,7 +1055,7 @@ export class WebAccountViewManager {
     item.loading = true;
     this.broadcastState(view);
     // Present the normal browser immediately; loading/fill never blocks interaction.
-    void page.goto(url, { waitUntil: "load", timeout: 30_000 }).then(async () => {
+    void page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 }).then(async () => {
       if (current()) await this.fillDirectPage(view, item);
     }).catch(() => {
       if (current()) { item.loading = false; view.loginNotice = "网页加载失败，请检查地址或网络后刷新"; this.broadcastState(view); }
@@ -1099,6 +1104,7 @@ export class WebAccountViewManager {
     view.username = credential.username;
     const login = await createServerProtectedLogin({
       context: view.context, url: view.entryUrl, username: credential.username, password: this.app.secrets.decrypt(credential.password_ciphertext), config: view.loginConfig,
+      assets: this.publicAssetCache(view),
       manualFallback: () => { if (current()) void this.browseWithoutAutofill(view).catch(() => undefined); },
       changed: () => {
         if (!current() || !view.login) return;
@@ -1113,13 +1119,14 @@ export class WebAccountViewManager {
           // Destroyed auth page and verified storage precede this fresh document.
           page = await view.context.newPage();
           const cdp = await view.context.newCDPSession(page);
+          await configureServerWebRequests(cdp, { assets: this.publicAssetCache(view) });
           let storageScript: string | undefined;
           if (Object.keys(sessionStorage).length) {
             const result = await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `if(location.origin===${JSON.stringify(new URL(url).origin)}) for(const [key,value] of Object.entries(${JSON.stringify(sessionStorage)})) sessionStorage.setItem(key,value);` });
             storageScript = result.identifier;
           }
           const target = preferredUrl && !/\/(?:log-?in|sign-?in|auth)(?:[/?#]|$)/i.test(new URL(preferredUrl).pathname + new URL(preferredUrl).hash) ? preferredUrl : url;
-          await page.goto(target, { waitUntil: "load", timeout: 30_000 });
+          await page.goto(target, { waitUntil: "domcontentloaded", timeout: 30_000 });
           if (!current()) { await page.close(); return; }
           if (view.protectedLogin) Object.assign(view.protectedLogin, { pageLoading: false, message: "业务网页已加载，正在确认登录状态" });
           this.broadcastState(view);
@@ -1341,6 +1348,16 @@ export class WebAccountViewManager {
     return executionScope
       ? join(this.profilesRoot, ownerId, `desktop-${executionScope}`, credentialId)
       : join(this.profilesRoot, ownerId, credentialId);
+  }
+
+  private publicAssetCache(view: ManagedWebView): PublicWebAssetCache {
+    const scope = `${view.ownerId}:${view.executionScope ?? "web"}`;
+    let cache = this.publicAssets.get(scope);
+    if (!cache) {
+      cache = new PublicWebAssetCache(join(this.app.config.dataDir, "public-web-assets", view.ownerId, view.executionScope ?? "web"));
+      this.publicAssets.set(scope, cache);
+    }
+    return cache;
   }
 
   private downloadPath(ownerId: string, credentialId: string, executionScope: string | null): string {

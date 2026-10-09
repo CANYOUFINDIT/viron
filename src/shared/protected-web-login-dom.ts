@@ -10,7 +10,7 @@ function businessPageStatus(successSelector = "") {
     const rect = element.getBoundingClientRect(), style = getComputedStyle(element);
     return rect.width > 2 && rect.height > 2 && style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity || 1) > 0;
   };
-  if (!document.body || document.readyState !== "complete") return "waiting";
+  if (!document.body || document.readyState === "loading") return "waiting";
   const fields = [...document.querySelectorAll<HTMLInputElement>("input")].filter(visible);
   if (fields.some((node) => node.type === "password" || /username|current-password/.test(node.autocomplete)
     || /username|用户名|账号|帐号|password|密码/i.test([node.name, node.id, node.placeholder].join(" ")))) return "login";
@@ -322,6 +322,9 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
       const pass = config.passwordSelector ? one(config.passwordSelector) : detected.password;
       const visiblePasswords = inputs().filter((node) => node.type === "password" || credentials.has(node));
       const pendingVerification = inputs().some((node) => node.autocomplete === "one-time-code" || /otp|captcha|verification|验证码|动态口令/i.test([node.id, node.name, node.placeholder].join(" ")));
+      // A cached session no longer has the configured login inputs. Check its
+      // explicit success marker before waiting for those missing selectors.
+      if (config.successSelector && !visiblePasswords.length && pageStatus(config.successSelector) === "ready") return { status: "success", released: passwordReleased };
       if (previouslySubmitted && !visiblePasswords.length && pageStatus(config.successSelector) === "ready" && (config.successSelector || location.href !== submittedUrl || String(performance.timeOrigin) !== submittedDocument) && !pendingVerification && !(config.interactionSelector && one(config.interactionSelector))) return { status: "success" };
       if (passwordSubmitted && !filled && visiblePasswords.length) return { status: "rejected" };
       if ((config.usernameSelector && !user) || (config.passwordSelector && !pass)) return { status: "waiting", released: passwordReleased };
@@ -365,7 +368,6 @@ function installLoginGuard(config: WebLoginConfig, username: string, password: s
       // A rendered but unrecognized page still needs protected assistance; the
       // controller must not infer a cached session from a missing login form.
       if (pageStatus() === "ready" && !config.usernameSelector && !config.passwordSelector && !config.successSelector) return { status: "anonymous" };
-      if (config.successSelector && pageStatus(config.successSelector) === "ready" && !visiblePasswords.length) return { status: "success" };
       return { status: "waiting" };
     }
     function authorize(revisionValue: string, x?: number, y?: number, keyboard = false) {

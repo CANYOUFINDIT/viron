@@ -25,6 +25,8 @@ import { normalizeWebAddress } from "../shared/web-address.js";
 import { WebCredentialCache } from "./web-credential-cache.js";
 import { reorderMap } from "../shared/tab-order.js";
 import { ProtectedWebLogin } from "./protected-web-login.js";
+import { installDesktopPublicWebAssets, configureDesktopPublicWebAssets } from "./public-web-assets.js";
+import { evaluateWebIsolated, loadWebDocument, webDocumentLoading } from "./web-document.js";
 import { verifyProtectedBusinessPage } from "./protected-web-login-business.js";
 import { DirectWebAutofill, DIRECT_WEB_FILL_MESSAGE } from "../shared/direct-web-autofill.js";
 import { captureWebCredentialTargetScript, fillWebCredentialTargetScript, installWebCredentialContextListenerScript } from "../shared/web-credential-context-fill.js";
@@ -424,7 +426,7 @@ async function fillDesktopWebCredentialTarget(view: ManagedDesktopWebView, conte
   const credential = await fillCredentialCache(view).get();
   if (view.closing || desktopWebViews.get(view.id) !== view || activeDesktopWebPage(view) !== page || contents.isDestroyed() || view.login) return;
   const origins = [new URL(credential.entryUrl).origin, ...(credential.loginConfig?.allowedOrigins ?? [])];
-  const filled = await contents.executeJavaScriptInIsolatedWorld(999, [{ code: fillWebCredentialTargetScript(token, action === "fill-username" ? credential.username : credential.password, origins, action === "fill-password" && view.loginConfig.mode === "locked") }], true);
+  const filled = await evaluateWebIsolated<boolean>(contents, fillWebCredentialTargetScript(token, action === "fill-username" ? credential.username : credential.password, origins, action === "fill-password" && view.loginConfig.mode === "locked"), "viron-credential-fill");
   if (!filled) throw new Error("stale-input");
   view.loginNotice = "";
   sendWebViewState(view);
@@ -535,6 +537,7 @@ export async function createDesktopWebPage(
     guest.dispose();
     throw new Error(tr("本机账号页面不存在或已经关闭"));
   }
+  await configureDesktopPublicWebAssets(guest.webContents);
   return configureDesktopWebPage(view, allowAutofill, guest, id);
 }
 
@@ -583,14 +586,14 @@ function configureDesktopWebPage(
     sendToAgentChat("viron:native-view-pointer-down");
   });
   nativeView.webContents.on("dom-ready", () => {
-    void nativeView.webContents.executeJavaScriptInIsolatedWorld(999, [{ code: installWebCredentialContextListenerScript() }]).catch(() => undefined);
+    void evaluateWebIsolated(nativeView.webContents, installWebCredentialContextListenerScript(), "viron-credential-fill").catch(() => undefined);
     void prefetchDesktopWebCredential(view).catch(() => undefined);
   });
   nativeView.webContents.on("context-menu", async (_event, params) => {
     if (!mainWindow || mainWindow.isDestroyed() || nativeView.webContents.isDestroyed()) return;
     const token = randomUUID();
     const origins = [new URL(view.entryUrl).origin, ...view.loginConfig.allowedOrigins];
-    const available = !view.login && params.isEditable && await nativeView.webContents.executeJavaScriptInIsolatedWorld(999, [{ code: captureWebCredentialTargetScript(token, params.x, params.y, origins, true) }], true).catch(() => false);
+    const available = !view.login && params.isEditable && await evaluateWebIsolated<boolean>(nativeView.webContents, captureWebCredentialTargetScript(token, params.x, params.y, origins, true), "viron-credential-fill").catch(() => false);
     if (!mainWindow || mainWindow.isDestroyed() || nativeView.webContents.isDestroyed() || view.closing) return;
     if (available) void prefetchDesktopWebCredential(view).catch(() => undefined);
     const groups = desktopWebContextMenuGroups({
@@ -793,7 +796,7 @@ function fillDirectDesktopPage(view: ManagedDesktopWebView, page: ManagedDesktop
   const contents = page.view.webContents;
   const current = () => !view.closing && desktopWebViews.get(view.id) === view && view.pages.get(page.id) === page && !view.login;
   page.directAutofill = new DirectWebAutofill({
-    browser: { destroyed: () => !current() || contents.isDestroyed(), loading: () => contents.isLoading(), evaluate: (source) => contents.executeJavaScriptInIsolatedWorld(999, [{ code: source }], true) },
+    browser: { destroyed: () => !current() || contents.isDestroyed(), loading: () => webDocumentLoading(contents), evaluate: (source) => evaluateWebIsolated(contents, source, "viron-credential-fill") },
     entryUrl: view.entryUrl, config: view.loginConfig, username: view.username, password: view.password,
     changed: (message) => { if (current()) { view.loginNotice = message === DIRECT_WEB_FILL_MESSAGE ? "" : message; sendWebViewState(view); } },
   });
@@ -839,8 +842,9 @@ function startProtectedDesktopLogin(view: ManagedDesktopWebView): void {
         if (!current()) { page.view.dispose(); return; }
         const contents = page.view.webContents;
         let storageScriptId: string | undefined;
+        const debuggerAttached = contents.debugger.isAttached();
         if (Object.keys(sessionStorage).length) {
-          contents.debugger.attach("1.3");
+          if (!debuggerAttached) contents.debugger.attach("1.3");
           const result = await contents.debugger.sendCommand("Page.addScriptToEvaluateOnNewDocument", {
             source: `if (location.origin === ${JSON.stringify(new URL(url).origin)}) { for (const [key, value] of Object.entries(${JSON.stringify(sessionStorage)})) sessionStorage.setItem(key, value); }`,
           });
@@ -848,13 +852,13 @@ function startProtectedDesktopLogin(view: ManagedDesktopWebView): void {
         }
         if (!current()) return;
         const target = view.lastUrl && !/\/(?:log-?in|sign-?in|auth)(?:[/?#]|$)/i.test(new URL(view.lastUrl).pathname + new URL(view.lastUrl).hash) ? view.lastUrl : url;
-        await contents.loadURL(target);
+        await loadWebDocument(contents, target);
         if (!current()) return;
         if (view.login) Object.assign(view.login.state, { pageLoading: false, message: "业务网页已加载，正在确认登录状态" });
         sendWebViewState(view);
         if (storageScriptId) {
           await contents.debugger.sendCommand("Page.removeScriptToEvaluateOnNewDocument", { identifier: storageScriptId });
-          contents.debugger.detach();
+          if (!debuggerAttached) contents.debugger.detach();
         }
         if (!current()) return;
         view.login = null;
@@ -999,6 +1003,7 @@ export async function openDesktopWebView(
   const id = randomUUID();
   const partitionName = desktopWebPartitionName(endpoint, auth.user.id, credential.credentialId);
   const webPartition = session.fromPartition(partitionName);
+  installDesktopPublicWebAssets(webPartition, endpoint, auth.user.id);
   try { await closingProfiles.get(webPartition); }
   catch (error) { await releaseDesktopRuntimeReservation(registrationId); throw error; }
   const concurrent = [...desktopWebViews.values()].find((view) => view.partition === webPartition && !view.closing);
@@ -1212,8 +1217,9 @@ export async function uploadDesktopWebCredential(credentialId: string, filenameV
   const filename = basename(filenameValue.replaceAll("\0", "")) || "upload";
   const path = join(directory, filename);
   await writeFile(path, data, { mode: 0o600, flag: "wx" });
+  const debuggerAttached = page.debugger.isAttached();
   try {
-    page.debugger.attach("1.3");
+    if (!debuggerAttached) page.debugger.attach("1.3");
     const document = await page.debugger.sendCommand("DOM.getDocument") as { root: { nodeId: number } };
     const input = await page.debugger.sendCommand("DOM.querySelector", {
       nodeId: document.root.nodeId,
@@ -1224,7 +1230,7 @@ export async function uploadDesktopWebCredential(credentialId: string, filenameV
     touchDesktopWebView(managed);
     return { ok: true, filename, view: webViewState(managed) };
   } finally {
-    if (page.debugger.isAttached()) page.debugger.detach();
+    if (!debuggerAttached && page.debugger.isAttached()) page.debugger.detach();
     const timer = setTimeout(() => { void rm(directory, { recursive: true, force: true }); }, 30_000);
     timer.unref();
   }

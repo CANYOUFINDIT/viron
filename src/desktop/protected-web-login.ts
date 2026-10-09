@@ -1,6 +1,8 @@
 import { BrowserWindow, type Rectangle, type Session } from "electron";
 import { ProtectedLoginController, type ProtectedLoginResult } from "../shared/protected-web-login-controller.js";
 import type { WebLoginConfig } from "../shared/protected-web-login.js";
+import { configureDesktopPublicWebAssets } from "./public-web-assets.js";
+import { evaluateWebIsolated, loadWebDocument } from "./web-document.js";
 export type { ProtectedLoginResult } from "../shared/protected-web-login-controller.js";
 
 /** Electron owns the hidden authentication document; the shared controller owns its flow. */
@@ -14,10 +16,11 @@ export class ProtectedWebLogin extends ProtectedLoginController {
       webPreferences: { session: options.session, contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true, devTools: false, backgroundThrottling: false } });
     const contents = window.webContents;
     let pressed = false;
+    let documentLoading = true;
     super({ ...options, browser: {
-      load: async (url) => { await contents.loadURL(url); }, url: () => contents.getURL(),
-      loading: () => contents.isLoadingMainFrame(), destroyed: () => contents.isDestroyed(),
-      evaluate: async <T>(code: string) => await contents.executeJavaScriptInIsolatedWorld(997, [{ code }], true) as T,
+      load: async (url) => { await configureDesktopPublicWebAssets(contents); await loadWebDocument(contents, url); }, url: () => contents.getURL(),
+      loading: () => documentLoading, destroyed: () => contents.isDestroyed(),
+      evaluate: <T>(code: string) => evaluateWebIsolated<T>(contents, code, "viron-protected-login"),
       capture: async (region) => { const image = await contents.capturePage(region, { stayHidden: true }); return image.isEmpty() ? "" : image.toDataURL(); },
       mouse: async (type, x, y) => {
         if (type === "mouseDown") pressed = true;
@@ -35,9 +38,10 @@ export class ProtectedWebLogin extends ProtectedLoginController {
     contents.setWindowOpenHandler(() => { this.fail("登录需要新窗口，请调整入口的登录流程后重试"); return { action: "deny" }; });
     contents.on("will-navigate", (event, url) => { if (!allowed(url)) { event.preventDefault(); this.fail("登录跳转到了未授权的域名，请检查入口配置"); } });
     contents.on("will-redirect", (event, url) => { if (!allowed(url)) { event.preventDefault(); this.fail("登录跳转到了未授权的域名，请检查入口配置"); } });
-    contents.on("did-start-navigation", (_event, _url, inPlace, mainFrame) => { if (mainFrame) this.navigationStarted(inPlace); });
-    contents.on("did-start-loading", () => this.pageLoadingChanged(true));
-    contents.on("did-stop-loading", () => this.pageLoadingChanged(false));
+    contents.on("did-start-navigation", (_event, _url, inPlace, mainFrame) => { if (mainFrame) { if (!inPlace) documentLoading = true; this.navigationStarted(inPlace); } });
+    contents.on("did-start-loading", () => { if (documentLoading) this.pageLoadingChanged(true); });
+    contents.on("dom-ready", () => { documentLoading = false; this.pageLoadingChanged(false); });
+    contents.on("did-stop-loading", () => { documentLoading = false; this.pageLoadingChanged(false); });
     contents.on("certificate-error", (event, _url, _error, _certificate, callback) => { event.preventDefault(); callback(false); this.fail("登录站点的 HTTPS 证书校验失败，请先修复证书"); });
     contents.on("render-process-gone", () => this.fail("后台登录页面已退出，请重试"));
     options.session.setPermissionCheckHandler(() => false);

@@ -26,6 +26,7 @@ import {
 import { resolveWebViewBounds } from "./web-view-bounds.js";
 import { registerDesktopWebExtensionWorkerMenus } from "./web-extension-context-menus.js";
 import { installedWebExtensions } from "./web-extension-catalog.js";
+import { installDesktopPublicWebAssets } from "./public-web-assets.js";
 import type {
   DesktopWebViewBounds,
   DesktopWebViewState,
@@ -154,6 +155,7 @@ export function changeDesktopWebPageZoom(view: ManagedDesktopWebView, page: Mana
 
 export function desktopWebSession(endpoint: string, userId: string, credentialId: string): Session {
   const webPartition = session.fromPartition(desktopWebPartitionName(endpoint, userId, credentialId));
+  installDesktopPublicWebAssets(webPartition, endpoint, userId);
   enableDesktopWebSessionExtensions(webPartition, desktopWebLastUrlKey(endpoint, userId, credentialId));
   webPartition.setPermissionCheckHandler(() => false);
   webPartition.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));

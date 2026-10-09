@@ -3,9 +3,9 @@ import { Window } from "happy-dom";
 import { defaultWebLoginConfig, parseWebLoginConfig } from "../src/shared/protected-web-login.js";
 import { protectedLoginBusinessPageScript, protectedLoginInstallScript } from "../src/shared/protected-web-login-dom.js";
 
-function fixture(interactionSelector = "#challenge", uuidAvailable = true) {
+function fixture(interactionSelector = "#challenge", uuidAvailable = true, readyState = "complete") {
   const window = new Window({ url: "https://console.example.com/login" });
-  Object.defineProperty(window.document, "readyState", { get: () => "complete" });
+  Object.defineProperty(window.document, "readyState", { get: () => readyState });
   if (!uuidAvailable) Object.defineProperty(window.crypto, "randomUUID", { value: undefined });
   window.document.body.innerHTML = `<form><input id="username" autocomplete="username"><input id="password" type="password"><div id="challenge"><input id="otp" autocomplete="one-time-code"><button type="button">Refresh</button></div><button type="submit">Login</button></form>`;
   for (const element of window.document.querySelectorAll("*")) {
@@ -254,6 +254,16 @@ describe("protected Web login", () => {
       { action: "click", selector: "#login" },
       { action: "success", selector: "#home" },
     ] }, "fixture-user", "fixture-password", "cached-document"));
+    const guard = window.eval("globalThis.__vironLogin");
+    expect(guard.tick(0, false, "").status).toBe("success");
+    expect(guard.secretReleased()).toBe(false);
+  });
+  it("recognizes a ready cached session even when configured login inputs are absent", () => {
+    const { window } = fixture("", true, "interactive");
+    window.document.body.innerHTML = '<main id="home">Already signed in</main>';
+    window.document.querySelector("#home")!.getBoundingClientRect = () => ({ x: 10, y: 10, top: 10, left: 10, bottom: 110, right: 210, width: 200, height: 100, toJSON() {} });
+    window.eval("delete globalThis.__vironLogin");
+    window.eval(protectedLoginInstallScript({ ...defaultWebLoginConfig(), usernameSelector: "#username", passwordSelector: "#password", successSelector: "#home" }, "fixture-user", "fixture-password", "cached-ready-document"));
     const guard = window.eval("globalThis.__vironLogin");
     expect(guard.tick(0, false, "").status).toBe("success");
     expect(guard.secretReleased()).toBe(false);

@@ -121,6 +121,7 @@ export class ProtectedLoginController {
     this.state.message = loading ? "正在加载登录网页" : "网页已加载，正在识别登录表单";
     if (!loading) this.progressAt = Date.now();
     this.options.changed();
+    if (!loading) this.schedule();
   }
   navigationStarted(inPlace = false): void {
     if (this.disposed || this.state.phase === "failed") return;

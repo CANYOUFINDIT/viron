@@ -159,13 +159,14 @@ export async function runDesktopWebSmoke(credentialId: string, username: string,
     const uploadPage = activeDesktopWebPage(managed).view.webContents;
     await uploadPage.loadURL(`${managed.entryOrigin}/upload`);
     await waitForDesktopWebTitle(managed, "Upload fixture");
-    uploadPage.debugger.attach("1.3");
+    const debuggerAttached = uploadPage.debugger.isAttached();
+    if (!debuggerAttached) uploadPage.debugger.attach("1.3");
     try {
       const document = await uploadPage.debugger.sendCommand("DOM.getDocument") as { root: { nodeId: number } };
       const input = await uploadPage.debugger.sendCommand("DOM.querySelector", { nodeId: document.root.nodeId, selector: "input[type=file]" }) as { nodeId: number };
       await uploadPage.debugger.sendCommand("DOM.setFileInputFiles", { nodeId: input.nodeId, files: [uploadPath] });
     } finally {
-      uploadPage.debugger.detach();
+      if (!debuggerAttached) uploadPage.debugger.detach();
     }
     await waitForDesktopWebTitle(managed, `Selected ${basename(uploadPath)}`);
     uploadSelected = true;
