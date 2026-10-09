@@ -20,10 +20,12 @@ import {
 import { PRODUCT_VERSION } from "../product-info.js";
 import { parseBody } from "../validation.js";
 import { requireAdmin } from "./auth.js";
+import { apiRateLimitSettingsSchema } from "../api-rate-limit-settings.js";
 
 const settingsSchema = z.object({
   auditRetentionDays: z.number().int().min(1).max(3650),
   monitorPullIntervalSeconds: z.number().int().min(10).max(3600).optional(),
+  apiRateLimit: apiRateLimitSettingsSchema.optional(),
 });
 
 const migrationExportSchema = z.object({
@@ -119,6 +121,7 @@ export async function registerSettingsRoutes(app: FastifyInstance): Promise<void
       userConnectionLimit: app.activeConnections.limit,
       auditRetentionDays: app.config.auditRetentionDays,
       monitorPullIntervalSeconds: app.config.monitorPullIntervalSeconds ?? 60,
+      apiRateLimit: app.config.apiRateLimit,
       databaseMode: app.db.dialect === "mysql" ? "MySQL / MariaDB" : "SQLite WAL",
       dataDir: "/data",
     },
@@ -128,20 +131,26 @@ export async function registerSettingsRoutes(app: FastifyInstance): Promise<void
     if (!requirePlatformAdmin(request, reply)) return;
     const body = parseBody(settingsSchema, request.body, reply);
     if (!body) return;
-    app.config.auditRetentionDays = body.auditRetentionDays;
-    app.config.monitorPullIntervalSeconds = body.monitorPullIntervalSeconds ?? app.config.monitorPullIntervalSeconds ?? 60;
+    const next = {
+      auditRetentionDays: body.auditRetentionDays,
+      monitorPullIntervalSeconds: body.monitorPullIntervalSeconds ?? app.config.monitorPullIntervalSeconds ?? 60,
+      apiRateLimit: body.apiRateLimit ?? app.config.apiRateLimit!,
+    };
+    const previousRateLimit = app.config.apiRateLimit;
     const now = new Date().toISOString();
     const upsert = app.db.prepare("INSERT INTO settings (`key`, value_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(`key`) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at");
-    await upsert.run("auditRetentionDays", JSON.stringify(body.auditRetentionDays), now);
-    await upsert.run("monitorPullIntervalSeconds", JSON.stringify(app.config.monitorPullIntervalSeconds), now);
-    await writeAudit(app.db, {
-      action: "settings.updated",
-      resourceType: "settings",
-      summary: "更新平台设置",
-      details: { ...body, monitorPullIntervalSeconds: app.config.monitorPullIntervalSeconds },
-      request,
-    });
-    return { ok: true };
+    await app.db.transaction(async () => {
+      for (const [key, value] of Object.entries(next)) await upsert.run(key, JSON.stringify(value), now);
+      await writeAudit(app.db, {
+        action: "settings.updated",
+        resourceType: "settings",
+        summary: "更新平台设置",
+        details: { ...next, ...(body.apiRateLimit ? { previousApiRateLimit: previousRateLimit } : {}) },
+        request,
+      });
+    })();
+    Object.assign(app.config, next);
+    return { ok: true, item: next };
   });
 
   app.post("/api/v1/platform-exports", async (request, reply) => {

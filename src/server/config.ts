@@ -3,6 +3,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PRODUCT_VERSION } from "./product-info.js";
+import type { ApiRateLimitSettings } from "../shared/api-rate-limit-settings.js";
 
 export interface AppConfig {
   nodeEnv: "development" | "test" | "production";
@@ -29,6 +30,7 @@ export interface AppConfig {
   userConnectionLimit?: number;
   auditRetentionDays: number;
   monitorPullIntervalSeconds?: number;
+  apiRateLimit?: ApiRateLimitSettings;
   serverEdition?: "source" | "lite" | "full";
   webClientEnabled?: boolean;
   mcpEnabled?: boolean;

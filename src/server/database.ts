@@ -10,6 +10,7 @@ import { passwordPolicyError } from "./password-policy.js";
 import { refreshPendingExistingConnections } from "./connection-existing.js";
 import { migrateSslAssets } from "./ssl-asset-migration.js";
 import { backfillAccessGovernance } from "./access-governance-events.js";
+import { apiRateLimitSettingsSchema } from "./api-rate-limit-settings.js";
 
 export type { EnvmanDatabase } from "./database-client.js";
 
@@ -233,9 +234,16 @@ export async function openDatabase(config: AppConfig): Promise<EnvmanDatabase> {
 }
 
 export async function loadSavedSettings(db: EnvmanDatabase, config: AppConfig): Promise<void> {
-  const savedSettings = await db.prepare("SELECT `key`, value_json FROM settings WHERE `key` IN ('auditRetentionDays', 'monitorPullIntervalSeconds')").all() as Array<{ key: string; value_json: string }>;
+  const savedSettings = await db.prepare("SELECT `key`, value_json FROM settings WHERE `key` IN ('auditRetentionDays', 'monitorPullIntervalSeconds', 'apiRateLimit')").all() as Array<{ key: string; value_json: string }>;
   for (const setting of savedSettings) {
-    const value = Number(JSON.parse(setting.value_json));
+    let parsed: unknown;
+    try { parsed = JSON.parse(setting.value_json); } catch { continue; }
+    if (setting.key === "apiRateLimit") {
+      const result = apiRateLimitSettingsSchema.safeParse(parsed);
+      if (result.success) config.apiRateLimit = result.data;
+      continue;
+    }
+    const value = Number(parsed);
     if (!Number.isInteger(value) || value <= 0) continue;
     if (setting.key === "auditRetentionDays") config.auditRetentionDays = value;
     if (setting.key === "monitorPullIntervalSeconds" && value >= 10 && value <= 3600) config.monitorPullIntervalSeconds = value;

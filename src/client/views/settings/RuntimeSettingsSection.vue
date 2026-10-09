@@ -2,6 +2,7 @@
 import { useSettingsContext } from "./context";
 import { Save, Settings2 } from "@lucide/vue";
 import TipIcon from "../../components/TipIcon.vue";
+import RateLimitSettings from "./RateLimitSettings.vue";
 
 const { saveSettings, saving, settings } = useSettingsContext();
 </script>
@@ -15,6 +16,7 @@ const { saveSettings, saving, settings } = useSettingsContext();
             <el-form-item :label="$t('宿主机监控采集频率')"><el-input-number v-model="settings.monitorPullIntervalSeconds" :min="10" :max="3600" :step="10" /><em>{{ $t('秒 · 10–3600') }}</em></el-form-item>
             <el-form-item :label="$t('操作审计、终端录像与 SQL 历史保留')"><el-input-number v-model="settings.auditRetentionDays" :min="1" :max="3650" /><em>{{ $t('天') }}</em></el-form-item>
           </el-form>
+          <RateLimitSettings v-model="settings.apiRateLimit" :saving="saving" />
           <footer><el-button type="primary" :loading="saving" @click="saveSettings"><Save :size="15" />{{ $t('保存策略') }}</el-button></footer>
         </section>
 </template>

@@ -53,6 +53,7 @@ import type { AgentApiProtocol, AgentApprovalMode, AgentEntryMode, AgentExecutio
 import type { DesktopMcpStatus, McpApprovalMode, ServerMcpStatus } from "../../../shared/mcp-settings";
 
 import type { SettingsSection } from "./types";
+import { defaultApiRateLimitSettings } from "../../../shared/api-rate-limit-settings";
 
 export function useSettingsController() {
   const route = useRoute();
@@ -92,7 +93,7 @@ export function useSettingsController() {
   const desktop = isDesktopApp();
   const shortcutPlatform = /Macintosh|Mac OS X/.test(navigator.userAgent) ? "darwin" : "win32";
   const activeSection = ref<SettingsSection>("profile");
-  const settings = reactive({ connectionIdleMinutes: 30, userConnectionLimit: 30, auditRetentionDays: 30, monitorPullIntervalSeconds: 60, databaseMode: "SQLite WAL", dataDir: "/data" });
+  const settings = reactive({ connectionIdleMinutes: 30, userConnectionLimit: 30, auditRetentionDays: 30, monitorPullIntervalSeconds: 60, apiRateLimit: defaultApiRateLimitSettings(), databaseMode: "SQLite WAL", dataDir: "/data" });
   const agentSettings = reactive<AgentSettingsPublic>({ configured: false, endpoint: "", protocol: "openai", model: "", apiKeyStored: false, approvalMode: "always", executionPresentation: "conversation", updatedAt: null });
   const agentDraft = reactive<{
     endpoint: string;
@@ -250,10 +251,10 @@ export function useSettingsController() {
 
   async function load() {
     loading.value = true;
+    void loadMcpStatus();
     try {
       const tasks: Promise<unknown>[] = [
         api<{ item: typeof settings }>("/api/v1/settings").then((response) => Object.assign(settings, response.item)),
-        loadMcpStatus(),
       ];
       if (desktop) tasks.push(
         desktopState(),
@@ -623,15 +624,18 @@ export function useSettingsController() {
   }
 
   async function saveSettings() {
+    if (saving.value) return;
     saving.value = true;
     try {
-      await api("/api/v1/settings", {
+      const response = await api<{ item?: { apiRateLimit?: typeof settings.apiRateLimit } }>("/api/v1/settings", {
         method: "PUT",
         body: JSON.stringify({
           auditRetentionDays: settings.auditRetentionDays,
           monitorPullIntervalSeconds: settings.monitorPullIntervalSeconds,
+          apiRateLimit: settings.apiRateLimit,
         }),
       });
+      if (response.item?.apiRateLimit) settings.apiRateLimit = response.item.apiRateLimit;
       ElMessage.success(tr("运行策略已保存"));
     } catch (error) {
       ElMessage.error(error instanceof Error ? error.message : tr("保存运行策略失败"));
