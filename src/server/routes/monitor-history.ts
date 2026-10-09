@@ -1,3 +1,5 @@
+import { historicalMetricAgents, readMetricSamples } from "../monitor-metric-reader.js";
+import { MONITORING_RANGES } from "../../shared/monitoring.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import {
@@ -13,7 +15,7 @@ import { monitorAlertSettingsForEnvironment } from "../monitor-alerts.js";
 import { requireAdmin } from "./auth.js";
 
 const historyQuerySchema = z.object({
-  range: z.enum(["1h", "6h", "24h", "7d", "30d"]).default("6h"),
+  range: z.enum(MONITORING_RANGES).default("6h"),
 });
 
 const rangeMilliseconds = {
@@ -22,6 +24,8 @@ const rangeMilliseconds = {
   "24h": 24 * 60 * 60 * 1000,
   "7d": 7 * 24 * 60 * 60 * 1000,
   "30d": 30 * 24 * 60 * 60 * 1000,
+  "90d": 90 * 24 * 60 * 60 * 1000,
+  "180d": 180 * 24 * 60 * 60 * 1000,
 } as const;
 
 interface StoredSampleKeyRow {
@@ -159,6 +163,7 @@ function parseSample(
     resolutionSeconds: Number(payload.resolutionSeconds ?? row.resolution_seconds),
     sampleCount: Number(payload.sampleCount ?? 1),
     breakBefore: false,
+    statistics: objectValue(payload.statistics),
     host: {
       metricsVersion: finiteNumber(host.metricsVersion) ?? 1,
       cpuCount: finiteNumber(host.cpuCount),
@@ -280,6 +285,7 @@ export async function registerMonitorHistoryRoutes(app: FastifyInstance): Promis
       const agentIds = [...new Set([
         ...(connection.agent_id ? [connection.agent_id] : []),
         ...historicalAgents.map((row) => row.agent_id),
+        ...await historicalMetricAgents(app, connectionId),
       ])];
       const now = new Date();
       const from = new Date(now.getTime() - rangeMilliseconds[query.data.range]);
@@ -292,7 +298,10 @@ export async function registerMonitorHistoryRoutes(app: FastifyInstance): Promis
 
       const placeholders = agentIds.map(() => "?").join(",");
       const bounds = [from.toISOString(), now.toISOString()];
-      const scopeClause = "ssh_connection_id IN (SELECT id FROM ssh_connections WHERE workspace_type = ? AND workspace_id = ?)";
+      const scopeClause = `ssh_connection_id IN (SELECT id FROM ssh_connections WHERE workspace_type = ? AND workspace_id = ?)
+        AND NOT EXISTS (SELECT 1 FROM monitor_metric_ingest mi JOIN monitor_metric_streams mt ON mt.id = mi.stream_id
+          JOIN ssh_connections mc ON mc.id = monitor_samples.ssh_connection_id AND mc.workspace_type = mt.workspace_type AND mc.workspace_id = mt.workspace_id
+          WHERE mi.sequence_end = monitor_samples.sequence_end AND mt.agent_id = monitor_samples.agent_id)`;
       const scopeParameters = [connection.workspace_type, connection.workspace_id];
       const countRow = await app.db.prepare(`
         SELECT COUNT(*) AS sample_count FROM (
@@ -302,7 +311,7 @@ export async function registerMonitorHistoryRoutes(app: FastifyInstance): Promis
           GROUP BY agent_id, sequence_end
         ) unique_samples
       `).get(...agentIds, ...bounds, ...scopeParameters) as { sample_count: number | string };
-      const sourceSampleCount = Number(countRow.sample_count);
+      let sourceSampleCount = Number(countRow.sample_count);
       const maximumPoints = MONITORING_MAX_POINTS;
       const stride = Math.max(1, Math.ceil(sourceSampleCount / maximumPoints));
       const sampleKeySql = `
@@ -329,7 +338,7 @@ export async function registerMonitorHistoryRoutes(app: FastifyInstance): Promis
         SELECT agent_id, sequence_end, MIN(started_at) AS started_at, MAX(ended_at) AS ended_at, MAX(reason) AS reason
         FROM monitor_sequence_gaps
         WHERE agent_id IN (${placeholders}) AND ended_at >= ? AND started_at <= ?
-          AND ${scopeClause}
+          AND ssh_connection_id IN (SELECT id FROM ssh_connections WHERE workspace_type = ? AND workspace_id = ?)
         GROUP BY agent_id, sequence_end
         ORDER BY ended_at
       `).all(...agentIds, ...bounds, ...scopeParameters) as StoredGapRow[];
@@ -427,6 +436,12 @@ export async function registerMonitorHistoryRoutes(app: FastifyInstance): Promis
           ORDER BY collected_at, received_at
         `).all(...selectedKeyParams, ...scopeParameters) as StoredSampleRow[];
       }
+      const numeric = await readMetricSamples(app, { workspaceType: connection.workspace_type, workspaceId: connection.workspace_id,
+        agentIds, connectionId, range: query.data.range, from: from.getTime(), to: now.getTime(), deploymentTargets: new Set(targets.keys()) });
+      sourceSampleCount += numeric.sourceSampleCount;
+      selectedRows.push(...numeric.rows);
+      gaps.push(...numeric.gaps.map(gap => ({ agent_id: connection.agent_id ?? agentIds[0]!, sequence_end: 0,
+        started_at: gap.startedAt, ended_at: gap.endedAt, reason: gap.reason })));
       const rowsByKey = new Map(selectedRows.map((row) => [`${row.agent_id}:${row.sequence_end}`, row]));
       const rows = [...rowsByKey.values()].sort((left, right) => left.collected_at.localeCompare(right.collected_at));
       const deploymentMetricsBySample = new Map<string, StoredDeploymentMetric[]>();
@@ -440,7 +455,7 @@ export async function registerMonitorHistoryRoutes(app: FastifyInstance): Promis
       const parsed = rows.map((row) => parseSample(
         row,
         targets,
-        storedDeploymentMetrics === undefined ? undefined : deploymentMetricsBySample.get(`${row.agent_id}:${row.sequence_end}`) ?? [],
+        storedDeploymentMetrics === undefined || (row as StoredSampleRow & { normalized?: boolean }).normalized ? undefined : deploymentMetricsBySample.get(`${row.agent_id}:${row.sequence_end}`) ?? [],
       )).filter((point) => point !== null).map((point) => ({
         ...point,
         host: { ...point.host, disks: visibleMonitorDisks(point.host.disks, diskSettings) },
@@ -449,6 +464,18 @@ export async function registerMonitorHistoryRoutes(app: FastifyInstance): Promis
       const points = capSeriesPoints(marked, MONITORING_MAX_POINTS, (point) => point.breakBefore);
       const diagnostics = buildMonitorDiagnostics(points);
       const summary = summarizeMonitorPerformance(points);
+      for (const [key, metric] of [["cpu", "cpuUsedPercent"], ["memory", "memoryUsedPercent"]] as const) {
+        const statistics = points.map(point => objectValue(objectValue(point.statistics.host)[metric]));
+        const weighted = statistics.filter(stat => finiteNumber(stat.weight) !== null && Number(stat.weight) > 0);
+        if (weighted.length === points.length && weighted.length) {
+          summary[key].average = weighted.reduce((sum, stat) => sum + Number(stat.sum), 0) / weighted.reduce((sum, stat) => sum + Number(stat.weight), 0);
+          summary[key].maximum = Math.max(...weighted.map(stat => Number(stat.max)));
+          const latest = Number(weighted.at(-1)!.last);
+          summary[key].latest = latest;
+          const first = Number(weighted[0]!.last);
+          summary[key].changePercent = first ? (latest - first) / Math.abs(first) * 100 : null;
+        }
+      }
 
       return {
         range: query.data.range,

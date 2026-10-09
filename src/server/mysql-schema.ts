@@ -1,3 +1,5 @@
+import { monitorStorageSchema } from "./monitor-storage-schema.js";
+
 export const MYSQL_SCHEMA = `
 CREATE TABLE IF NOT EXISTS admin_users (
   id VARCHAR(64) PRIMARY KEY,
@@ -1407,4 +1409,4 @@ CREATE TABLE IF NOT EXISTS service_operation_locks (
   PRIMARY KEY (workspace_type, workspace_id, resource_key),
   CONSTRAINT service_operation_locks_operation_fk FOREIGN KEY (operation_id) REFERENCES service_operation_runs(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-`
+` + monitorStorageSchema("mysql");

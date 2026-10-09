@@ -1,4 +1,4 @@
-export const MONITORING_RANGES = ["1h", "6h", "24h", "7d", "30d"] as const;
+export const MONITORING_RANGES = ["1h", "6h", "24h", "7d", "30d", "90d", "180d"] as const;
 export type MonitoringRange = (typeof MONITORING_RANGES)[number];
 
 export const MONITORING_REFRESH_SECONDS = [15, 30, 60] as const;
@@ -22,6 +22,8 @@ export const rangeMilliseconds: Record<MonitoringRange, number> = {
   "24h": 24 * 60 * 60 * 1000,
   "7d": 7 * 24 * 60 * 60 * 1000,
   "30d": 30 * 24 * 60 * 60 * 1000,
+  "90d": 90 * 24 * 60 * 60 * 1000,
+  "180d": 180 * 24 * 60 * 60 * 1000,
 };
 
 export function finiteMetric(value: unknown): number | null {

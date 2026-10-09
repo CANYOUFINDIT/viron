@@ -439,7 +439,7 @@ describe("monitor installer", () => {
         cookies: context.cookies,
         payload: { installPath: "/opt/viron/monitor" },
       })).statusCode).toBe(200);
-      const historyBefore = await context.app.db.prepare("SELECT COUNT(*) AS count FROM monitor_samples WHERE ssh_connection_id = ?").get(context.connectionId) as { count: number | string };
+      const historyBefore = await context.app.db.prepare("SELECT COUNT(*) AS count FROM monitor_metric_points p JOIN monitor_metric_series s ON s.id = p.series_id JOIN monitor_metric_streams t ON t.id = s.stream_id WHERE t.ssh_connection_id = ?").get(context.connectionId) as { count: number | string };
       expect(Number(historyBefore.count)).toBeGreaterThan(0);
       await context.app.db.prepare(`
         UPDATE monitor_hosts SET install_path = '', install_architecture = '', install_managed = 0, installed_at = NULL
@@ -474,8 +474,11 @@ describe("monitor installer", () => {
         installed_at: null,
       });
       expect(host.last_collected_at).toEqual(expect.any(String));
-      const historyAfter = await context.app.db.prepare("SELECT COUNT(*) AS count FROM monitor_samples WHERE ssh_connection_id = ?").get(context.connectionId) as { count: number | string };
+      const historyAfter = await context.app.db.prepare("SELECT COUNT(*) AS count FROM monitor_metric_points p JOIN monitor_metric_series s ON s.id = p.series_id JOIN monitor_metric_streams t ON t.id = s.stream_id WHERE t.ssh_connection_id = ?").get(context.connectionId) as { count: number | string };
       expect(Number(historyAfter.count)).toBe(Number(historyBefore.count));
+      const history = await context.app.inject({ method: "GET", url: `${base}/history?range=1h`, cookies: context.cookies });
+      expect(history.statusCode, history.body).toBe(200);
+      expect(history.json().sourceSampleCount).toBeGreaterThan(0);
       const audit = await context.app.db.prepare("SELECT details_json FROM audit_events WHERE resource_id = ? AND action = 'monitor_host.uninstalled'").get(context.connectionId) as { details_json: string };
       expect(JSON.parse(audit.details_json)).toMatchObject({
         installPath: "/opt/viron/monitor",

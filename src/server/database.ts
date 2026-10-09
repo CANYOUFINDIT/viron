@@ -89,12 +89,14 @@ export async function openDatabase(config: AppConfig): Promise<EnvmanDatabase> {
     const monitorAlertHostHistoryIndex = await db.prepare("SHOW INDEX FROM `monitor_alerts` WHERE Key_name = 'monitor_alerts_host_history_idx'").get();
     if (!monitorAlertHostHistoryIndex) await db.exec("ALTER TABLE `monitor_alerts` ADD KEY `monitor_alerts_host_history_idx` (`environment_id`, `target_type`, `target_id`, `triggered_at`)");
     for (const [name, columns] of [
+      ["monitor_alerts_gc_idx", "`status`, `last_seen_at`, `id`"],
       ["monitor_alerts_calendar_trigger_idx", "`environment_id`, `triggered_at`, `status`, `recovered_at`, `peak_severity`, `severity`"],
       ["monitor_alerts_calendar_recovery_idx", "`environment_id`, `status`, `recovered_at`, `triggered_at`, `peak_severity`, `severity`"],
     ]) {
       const existing = await db.prepare("SHOW INDEX FROM `monitor_alerts` WHERE Key_name = ?").get(name);
       if (!existing) await db.exec(`ALTER TABLE \`monitor_alerts\` ADD KEY \`${name}\` (${columns}), ALGORITHM=INPLACE, LOCK=NONE`);
     }
+    if (!await db.prepare("SHOW INDEX FROM monitor_sequence_gaps WHERE Key_name = 'monitor_sequence_gaps_gc_idx'").get()) await db.exec("ALTER TABLE monitor_sequence_gaps ADD KEY monitor_sequence_gaps_gc_idx (ended_at), ALGORITHM=INPLACE, LOCK=NONE");
     await migrateMysqlKnowledgeSchema(db);
     await backfillInvitationAcceptances(db);
     await migrateSslAssets(db);
@@ -163,6 +165,8 @@ export async function openDatabase(config: AppConfig): Promise<EnvmanDatabase> {
   addColumnIfMissing(raw, "monitor_alert_user_states", "severity_notified", "TEXT");
   addColumnIfMissing(raw, "monitor_alert_user_states", "cleared_at", "TEXT");
   raw.prepare("UPDATE monitor_alerts SET last_seen_at = triggered_at WHERE last_seen_at = ''").run();
+  raw.exec("CREATE INDEX IF NOT EXISTS monitor_alerts_gc_idx ON monitor_alerts(status, last_seen_at, id)");
+  raw.exec("CREATE INDEX IF NOT EXISTS monitor_sequence_gaps_gc_idx ON monitor_sequence_gaps(ended_at)");
   raw.exec("CREATE INDEX IF NOT EXISTS monitor_alerts_host_history_idx ON monitor_alerts(environment_id, target_type, target_id, triggered_at DESC)");
   // Create after legacy rebuilds and severity migrations to preserve history.
   raw.exec(`

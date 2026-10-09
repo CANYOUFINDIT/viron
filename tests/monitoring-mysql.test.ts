@@ -9,6 +9,10 @@ import { ensureAdmin, openDatabase } from "../src/server/database.js";
 import type { EnvmanDatabase } from "../src/server/database.js";
 import { monitoringTestConfig, runMonitoringContractSuite } from "./helpers/monitoring-harness.js";
 import { loadMonitorHostEventCalendar, loadPlatformEventCalendar, loadPlatformEvents } from "../src/server/monitor-event-calendar.js";
+import Fastify from "fastify";
+import { storeMetricSamples } from "../src/server/monitor-metric-storage.js";
+import { readMetricSamples } from "../src/server/monitor-metric-reader.js";
+import { cleanupMetricStorage, migrateLegacyMetricBatch, rollupMetricBatch } from "../src/server/monitor-storage-maintenance.js";
 
 const enabled = process.env.VIRON_MONITOR_MYSQL_TEST === "1";
 const mysqlIt = enabled ? it : it.skip;
@@ -77,6 +81,27 @@ afterAll(async () => {
 });
 
 describe("monitoring MariaDB equivalence", () => {
+  mysqlIt("stores and reads idempotent weighted numeric rollups with source precision and metadata", async () => {
+    const config = monitoringTestConfig(directory, { host: externalHost || "127.0.0.1", port, database: "viron_monitor" });
+    const database = await openDatabase(config), app = Fastify({ logger: false }); app.decorate("db", database); app.decorate("config", config);
+    try {
+      const scope = { workspaceType: "personal", workspaceId: randomUUID(), agentId: randomUUID(), connectionId: randomUUID() };
+      const at = Math.floor((Date.now()-600000)/3600000)*3600000+60000;
+      await database.prepare(`INSERT INTO ssh_connections (id, name, host, port, username, credential_ciphertext, options_json, tags_json, workspace_type, workspace_id, created_at, updated_at)
+        VALUES (?, 'Numeric test', '127.0.0.1', 22, 'test', '', '{}', '[]', 'personal', ?, ?, ?)`)
+        .run(scope.connectionId, scope.workspaceId, new Date().toISOString(), new Date().toISOString());
+      const points = [10, 90].map((cpu, i) => ({ sequenceStart: i+1, sequenceEnd: i+1, collectedAt: new Date(at+i*30000).toISOString(), resolutionSeconds: 30,
+        payload: { sampleCount: 1, host: { hostname: "numeric", cpuCount: 4, cpuUsedPercent: cpu, memoryUsedPercent: 50, uptimeSeconds: 100+i, disks: [], temperatures: [] }, candidates: [] } }));
+      await database.transaction(() => storeMetricSamples(app, scope, points, new Set()))();
+      await database.transaction(() => storeMetricSamples(app, scope, points, new Set()))();
+      await rollupMetricBatch(app); await rollupMetricBatch(app);
+      const history = await readMetricSamples(app, { ...scope, agentIds: [scope.agentId], range: "7d", from: at-1000, to: Date.now() });
+      expect(history.sourceSampleCount).toBe(2);
+      expect(history.rows).toHaveLength(1);
+      expect(JSON.parse(history.rows[0]!.payload_json)).toMatchObject({ host: { cpuUsedPercent: 50 }, statistics: { host: { cpuUsedPercent: { min: 10, max: 90, weight: 60 } } } });
+      await cleanupMetricStorage(app);
+    } finally { await database.close(); await app.close(); }
+  });
   mysqlIt("matches SQLite contract for overview, buckets, first/last/gap, and truncated", async () => {
     expect(db).toBeDefined();
     const config = monitoringTestConfig(directory, { host: externalHost || "127.0.0.1", port, database: "viron_monitor" });

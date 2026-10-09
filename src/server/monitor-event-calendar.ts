@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { historicalMetricAgents } from "./monitor-metric-reader.js";
 import { loadMonitorAlertCalendarAggregates, monitorAlertRangeSql, type MonitorAlertSqlScope } from "./monitor-alert-query.js";
 import {
   MONITOR_ALERT_SEVERITIES,
@@ -220,6 +221,7 @@ async function resolveHostIdentity(app: FastifyInstance, environmentId: string, 
     agentIds: [...new Set([
       ...connections.flatMap((item) => item.agent_id ? [item.agent_id] : []),
       ...historicalAgents.map((item) => item.agent_id),
+      ...await historicalMetricAgents(app, connectionId),
     ])],
   };
 }
@@ -307,10 +309,16 @@ async function coverageIntervals(
     new Date(from - 24 * 60 * 60 * 1000).toISOString(),
     new Date(to + 24 * 60 * 60 * 1000).toISOString(),
   ) as StoredSampleCoverageRow[];
-  return rows.flatMap((row) => {
+  const numeric = await app.db.prepare(`SELECT p.coverage_json FROM monitor_metric_points p
+    JOIN monitor_metric_series s ON s.id = p.series_id JOIN monitor_metric_streams t ON t.id = s.stream_id
+    WHERE s.kind = 'host' AND p.at_ms >= ? AND p.at_ms <= ? AND t.ssh_connection_id IN (${placeholders})`)
+    .all<{ coverage_json: string }>(from - 86400_000, to + 86400_000, ...identity.connectionIds);
+  return [...numeric.flatMap(row => {
+    try { return (JSON.parse(row.coverage_json) as number[][]).map(([start, end]) => ({ start: start!, end: end! })); } catch { return []; }
+  }), ...rows.flatMap((row) => {
     const interval = monitorSampleCoverageInterval(row);
     return interval ? [interval] : [];
-  });
+  })];
 }
 
 export async function loadMonitorHostEventCalendar(

@@ -10,6 +10,28 @@ import (
 	"time"
 )
 
+func TestCompactionPreservesPeaksWeightsAndGapsAcrossRepeatedCompaction(t *testing.T) {
+	base := time.Now().Add(-24 * time.Hour).Truncate(time.Hour).UnixMilli()
+	rows := make([]compactedRow, 0)
+	for index, cpu := range []float64{10, 99, 20} {
+		at := base + int64(index+1)*30000
+		if index == 2 {
+			at += 60000
+		}
+		payload := CollectionSnapshot{CollectedAt: time.UnixMilli(at).UTC().Format(time.RFC3339Nano), ResolutionSeconds: 30, SampleCount: 1, Host: HostSnapshot{CPUUsedPercent: cpu}}
+		rows = append(rows, compactedRow{sequenceStart: int64(index + 1), sequenceEnd: int64(index + 1), collectedAtMillis: at, resolutionSeconds: 30, sampleCount: 1, payload: payload})
+	}
+	minute := aggregateRows(rows, 60)
+	hour := aggregateRows([]compactedRow{minute}, 3600)
+	stat := hour.payload.Statistics["host"]["cpuUsedPercent"]
+	if stat.Min != 10 || stat.Max != 99 || stat.Last != 20 || stat.Sum != 3870 || stat.Weight != 90 {
+		t.Fatalf("statistics lost after repeated compaction: %#v", stat)
+	}
+	if len(hour.payload.Coverage) != 2 {
+		t.Fatalf("internal gap was filled: %#v", hour.payload.Coverage)
+	}
+}
+
 func TestConfigureKubernetesWritesValidatedSelection(t *testing.T) {
 	directory := t.TempDir()
 	sourceID := strings.Repeat("a", 64)

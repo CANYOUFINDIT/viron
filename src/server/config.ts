@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PRODUCT_VERSION } from "./product-info.js";
 import type { ApiRateLimitSettings } from "../shared/api-rate-limit-settings.js";
+import { defaultMonitorStoragePolicy, type MonitorStoragePolicy } from "../shared/monitor-storage.js";
 
 export interface AppConfig {
   nodeEnv: "development" | "test" | "production";
@@ -30,6 +31,7 @@ export interface AppConfig {
   userConnectionLimit?: number;
   auditRetentionDays: number;
   monitorPullIntervalSeconds?: number;
+  monitorStoragePolicy?: Partial<MonitorStoragePolicy>;
   apiRateLimit?: ApiRateLimitSettings;
   serverEdition?: "source" | "lite" | "full";
   webClientEnabled?: boolean;
@@ -158,6 +160,12 @@ export function loadConfig(): AppConfig {
     userConnectionLimit: positiveInteger(process.env.USER_CONNECTION_LIMIT, 30),
     auditRetentionDays: positiveInteger(process.env.AUDIT_RETENTION_DAYS, 30),
     monitorPullIntervalSeconds: Math.min(3600, Math.max(10, positiveInteger(process.env.VIRON_MONITOR_PULL_INTERVAL_SECONDS, 60))),
+    monitorStoragePolicy: Object.fromEntries(Object.entries(defaultMonitorStoragePolicy).map(([key, fallback]) => {
+      const name = `VIRON_MONITOR_STORAGE_${key.replace(/[A-Z]/g, letter => `_${letter}`).toUpperCase()}`;
+      const raw = process.env[name];
+      if (raw !== undefined && (!Number.isSafeInteger(Number(raw)) || Number(raw) <= 0)) throw new Error(`${name} must be a positive integer.`);
+      return [key, positiveInteger(raw, fallback)];
+    })),
     serverEdition: edition,
     webClientEnabled: edition === "full" || (edition === "source" && booleanValue("WEB_CLIENT_ENABLED", true)),
     mcpEnabled: booleanValue("VIRON_MCP_ENABLED", false),

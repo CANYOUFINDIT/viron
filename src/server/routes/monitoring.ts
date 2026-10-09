@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { loadMonitoringOverview } from "../monitoring-overview.js";
+import { loadMonitorStorageStatus } from "../monitor-metric-storage.js";
 import { loadServiceTimeseries, MonitoringQueryError } from "../monitoring-timeseries.js";
 import {
   loadMonitorHostEventCalendar,
@@ -68,11 +69,22 @@ async function canAccessMonitorHost(app: FastifyInstance, request: FastifyReques
 }
 
 export async function registerMonitoringRoutes(app: FastifyInstance): Promise<void> {
+  app.get("/api/v1/monitoring/storage", { preHandler: requireAdmin }, async request => {
+    const [workspaceType, workspaceId] = workspaceParams(request);
+    const status = await loadMonitorStorageStatus(app, { workspaceType, workspaceId });
+    const access = await getWorkspaceAccess(app.db, request.admin!);
+    const administrator = request.admin!.isPlatformAdmin;
+    return { level: status.level, lastError: status.lastError, lastMaintenanceAt: status.lastMaintenanceAt,
+      ...(access.canManage ? { migrationPending: status.migrationPending, policy: status.policy } : {}),
+      ...(administrator ? { usedBytes: status.usedBytes, budgetBytes: status.budgetBytes, seriesCount: status.seriesCount } : {}) };
+  });
   app.get("/api/v1/monitoring/overview", { preHandler: requireAdmin }, async (request, reply) => {
     const query = overviewQuerySchema.safeParse(request.query);
     if (!query.success) return reply.code(400).send({ error: "INVALID_QUERY", message: "监控概览参数无效" });
     try {
-      return await loadMonitoringOverview(app, request, query.data);
+      const payload = await loadMonitoringOverview(app, request, query.data);
+      const status = await loadMonitorStorageStatus(app);
+      return { ...payload, storage: { level: status.level, lastError: status.lastError, lastMaintenanceAt: status.lastMaintenanceAt } };
     } catch (error) {
       if (error instanceof Error && (error as Error & { code?: string }).code === "ENVIRONMENT_NOT_FOUND") {
         return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });

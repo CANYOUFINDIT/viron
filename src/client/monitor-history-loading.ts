@@ -1,4 +1,4 @@
-export type MonitorHistoryRange = "1h" | "6h" | "24h" | "7d" | "30d";
+export type MonitorHistoryRange = "1h" | "6h" | "24h" | "7d" | "30d" | "90d" | "180d";
 
 export const QUICK_MONITOR_HISTORY_RANGE: MonitorHistoryRange = "1h";
 export const DEFAULT_MONITOR_HISTORY_RANGE: MonitorHistoryRange = QUICK_MONITOR_HISTORY_RANGE;

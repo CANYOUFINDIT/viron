@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
+import { readMetricSamples } from "./monitor-metric-reader.js";
 import {
   defaultMonitorAlertSettings,
   monitorAlertSeverityRank,
@@ -880,6 +881,10 @@ export async function evaluateRecentMonitorAlerts(
     ORDER BY collected_at DESC, sequence_end DESC
     LIMIT 8
   `).all(connection.ssh_connection_id, agentId) as Array<{ payload_json: string }>;
+  const numeric = await readMetricSamples(app, { workspaceType, workspaceId, agentIds: [agentId], connectionId: connection.ssh_connection_id,
+    range: "1h", from: Date.now() - 3600_000, to: Date.now() });
+  if (numeric.rows.length) rows.splice(0, rows.length, ...numeric.rows.slice(-8).reverse());
+  else if (await app.db.prepare("SELECT id FROM monitor_metric_streams WHERE workspace_type = ? AND workspace_id = ? AND agent_id = ?").get(workspaceType, workspaceId, agentId)) rows.length = 0;
   const samples: MonitorAlertSample[] = [];
   for (const row of rows.reverse()) {
     try {

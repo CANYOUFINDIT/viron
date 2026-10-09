@@ -127,13 +127,23 @@ type KubernetesConfigDiscovery struct {
 }
 
 type CollectionSnapshot struct {
-	CollectedAt       string                      `json:"collectedAt"`
-	ResolutionSeconds int                         `json:"resolutionSeconds"`
-	SampleCount       int                         `json:"sampleCount"`
-	Host              HostSnapshot                `json:"host"`
-	Candidates        []ServiceCandidate          `json:"candidates"`
-	KubernetesConfigs []KubernetesConfigDiscovery `json:"kubernetesConfigs"`
-	Errors            []string                    `json:"errors"`
+	CollectedAt       string                                `json:"collectedAt"`
+	ResolutionSeconds int                                   `json:"resolutionSeconds"`
+	SampleCount       int                                   `json:"sampleCount"`
+	Host              HostSnapshot                          `json:"host"`
+	Candidates        []ServiceCandidate                    `json:"candidates"`
+	KubernetesConfigs []KubernetesConfigDiscovery           `json:"kubernetesConfigs"`
+	Errors            []string                              `json:"errors"`
+	Statistics        map[string]map[string]MetricStatistic `json:"statistics,omitempty"`
+	Coverage          [][]int64                             `json:"coverage,omitempty"`
+}
+
+type MetricStatistic struct {
+	Sum    float64 `json:"sum"`
+	Min    float64 `json:"min"`
+	Max    float64 `json:"max"`
+	Last   float64 `json:"last"`
+	Weight float64 `json:"weight"`
 }
 
 type StoredSample struct {

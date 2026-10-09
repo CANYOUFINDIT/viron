@@ -22,6 +22,7 @@ import { session } from "../session";
 
 interface OverviewPayload {
   generatedAt: string;
+  storage?: { level: string; lastError: string | null; lastMaintenanceAt: string | null };
   truncated?: boolean;
   nextHostOffset?: number | null;
   partialFailures: string[];
@@ -56,6 +57,13 @@ const environments = ref<EnvironmentOption[]>([]);
 const overview = ref<OverviewPayload | null>(null);
 const lastUpdated = ref("");
 const error = ref("");
+const storageNotice = computed(() => {
+  const state = overview.value?.storage;
+  if (state?.lastError) return state.lastError;
+  return state?.level === "critical" ? tr("监控历史容量接近上限，新增序列受限")
+    : state?.level === "constrained" ? tr("监控存储容量紧张，已暂停普通诊断快照")
+      : state?.level === "warning" ? tr("监控存储容量使用率超过 70%") : "";
+});
 const hostsLoadingMore = ref(false);
 const eventRefreshKey = ref(0);
 let overviewAbort: AbortController | null = null;
@@ -350,6 +358,7 @@ const summary = computed(() => overview.value?.summary ?? {
       </button>
     </nav>
 
+    <p v-if="storageNotice" class="monitoring-banner-error" role="status">{{ storageNotice }}</p>
     <p v-if="error" class="monitoring-banner-error">{{ error }}</p>
 
     <main class="monitoring-content-stage">
@@ -380,6 +389,7 @@ const summary = computed(() => overview.value?.summary ?? {
       <NocScreen
         v-else-if="view === 'noc' && overview"
         :environment-id="environmentId"
+        :storage-notice="storageNotice"
         :generated-at="overview.generatedAt"
         :refresh-seconds="refreshSeconds"
         :summary="summary"

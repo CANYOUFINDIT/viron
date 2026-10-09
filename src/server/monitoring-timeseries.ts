@@ -1,3 +1,4 @@
+import { historicalMetricAgents, readMetricSamples } from "./monitor-metric-reader.js";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { canAccessEnvironment } from "./access-control.js";
 import {
@@ -26,9 +27,9 @@ export class MonitoringQueryError extends Error {
   }
 }
 
-function average(values: number[]): number | null {
+function average(values: Array<{ value: number; weight: number }>): number | null {
   if (!values.length) return null;
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
+  return values.reduce((sum, sample) => sum + sample.value * sample.weight, 0) / values.reduce((sum, sample) => sum + sample.weight, 0);
 }
 
 export async function loadServiceTimeseries(
@@ -66,11 +67,14 @@ export async function loadServiceTimeseries(
     };
   }
   const placeholders = connectionIds.map(() => "?").join(",");
+  const legacyFilter = `AND NOT EXISTS (SELECT 1 FROM monitor_metric_ingest mi JOIN monitor_metric_streams mt ON mt.id = mi.stream_id
+    JOIN ssh_connections mc ON mc.id = monitor_samples.ssh_connection_id AND mc.workspace_type = mt.workspace_type AND mc.workspace_id = mt.workspace_id
+    WHERE mi.sequence_end = monitor_samples.sequence_end AND mt.agent_id = monitor_samples.agent_id)`;
   const countRow = await app.db.prepare(`
     SELECT COUNT(*) AS sample_count FROM monitor_samples
-    WHERE ssh_connection_id IN (${placeholders}) AND collected_at >= ? AND collected_at <= ?
+    WHERE ssh_connection_id IN (${placeholders}) AND collected_at >= ? AND collected_at <= ? ${legacyFilter}
   `).get(...connectionIds, from, to) as { sample_count: number | string };
-  const sourceSampleCount = Number(countRow.sample_count);
+  let sourceSampleCount = Number(countRow.sample_count);
   const bucketMs = timeBucketMs(range);
   const bucketExpression = app.db.dialect === "mysql"
     ? "FLOOR(UNIX_TIMESTAMP(collected_at) * 1000 / ?)"
@@ -85,18 +89,28 @@ export async function loadServiceTimeseries(
         ROW_NUMBER() OVER (PARTITION BY ssh_connection_id ORDER BY collected_at) AS first_rank,
         ROW_NUMBER() OVER (PARTITION BY ssh_connection_id ORDER BY collected_at DESC) AS last_rank
       FROM monitor_samples
-      WHERE ssh_connection_id IN (${placeholders}) AND collected_at >= ? AND collected_at <= ?
+      WHERE ssh_connection_id IN (${placeholders}) AND collected_at >= ? AND collected_at <= ? ${legacyFilter}
     )
     SELECT ssh_connection_id, collected_at, payload_json
     FROM ranked_samples
     WHERE bucket_rank = 1 OR first_rank = 1 OR last_rank = 1
     ORDER BY collected_at
   `).all(bucketMs, ...connectionIds, from, to) as Array<{ ssh_connection_id: string; collected_at: string; payload_json: string }>;
+  const connections = await app.db.prepare(`SELECT c.id, c.workspace_type, c.workspace_id, h.agent_id FROM ssh_connections c LEFT JOIN monitor_hosts h ON h.ssh_connection_id = c.id WHERE c.id IN (${placeholders})`)
+    .all<{ id: string; workspace_type: string; workspace_id: string; agent_id: string | null }>(...connectionIds);
+  for (const connection of connections) {
+    const numeric = await readMetricSamples(app, { workspaceType: connection.workspace_type, workspaceId: connection.workspace_id,
+      agentIds: [...new Set([...(connection.agent_id ? [connection.agent_id] : []), ...await historicalMetricAgents(app, connection.id)])],
+      connectionId: connection.id, range, from: Date.parse(from), to: Date.parse(to), deploymentsOnly: true,
+      deploymentTargets: new Set(selected.filter(item => item.ssh_connection_id === connection.id).map(item => `${item.provider_type}:${item.external_id}`)) });
+    rows.push(...numeric.rows); sourceSampleCount += numeric.sourceSampleCount;
+  }
+  rows.sort((a, b) => a.collected_at.localeCompare(b.collected_at));
   const buckets = new Map<string, {
     at: string;
-    cpu: number[];
-    memory: number[];
-    deployments: Record<string, { cpu: number[]; memory: number[] }>;
+    cpu: Array<{ value: number; weight: number }>;
+    memory: Array<{ value: number; weight: number }>;
+    deployments: Record<string, { cpu: Array<{ value: number; weight: number }>; memory: Array<{ value: number; weight: number }>; cpuMin: number | null; cpuMax: number | null; memoryMax: number | null }>;
   }>();
   const deploymentByConnection = new Map<string, Array<{ id: string; provider: string; externalId: string }>>();
   for (const item of selected) {
@@ -115,14 +129,19 @@ export async function loadServiceTimeseries(
       const candidate = candidates.find((item) => String(item.provider ?? "") === target.provider && String(item.externalId ?? "") === target.externalId);
       const cpu = finiteMetric(candidate?.cpuUsedPercent);
       const memory = finiteMetric(candidate?.memoryBytes);
-      const series = bucket.deployments[target.id] ?? { cpu: [], memory: [] };
+      const statistics = payload.statistics as Record<string, Record<string, { weight: number; min: number; max: number }>> | undefined;
+      const stats = statistics?.[`deployment:${target.provider}:${target.externalId}`];
+      const series = bucket.deployments[target.id] ?? { cpu: [], memory: [], cpuMin: null, cpuMax: null, memoryMax: null };
       if (cpu !== null) {
-        series.cpu.push(cpu);
-        bucket.cpu.push(cpu);
+        const sample = { value: cpu, weight: Math.max(1, Number(stats?.cpuUsedPercent?.weight ?? payload.resolutionSeconds ?? 1)) };
+        series.cpu.push(sample); bucket.cpu.push(sample);
+        series.cpuMin = Math.min(series.cpuMin ?? Infinity, stats?.cpuUsedPercent?.min ?? cpu);
+        series.cpuMax = Math.max(series.cpuMax ?? -Infinity, stats?.cpuUsedPercent?.max ?? cpu);
       }
       if (memory !== null) {
-        series.memory.push(memory);
-        bucket.memory.push(memory);
+        const sample = { value: memory, weight: Math.max(1, Number(stats?.memoryBytes?.weight ?? payload.resolutionSeconds ?? 1)) };
+        series.memory.push(sample); bucket.memory.push(sample);
+        series.memoryMax = Math.max(series.memoryMax ?? -Infinity, stats?.memoryBytes?.max ?? memory);
       }
       bucket.deployments[target.id] = series;
     }
@@ -138,6 +157,9 @@ export async function loadServiceTimeseries(
     deployments: Object.fromEntries(Object.entries(bucket.deployments).map(([id, series]) => [id, {
       cpuUsedPercent: average(series.cpu),
       memoryBytes: average(series.memory),
+      cpuMin: series.cpuMin,
+      cpuMax: series.cpuMax,
+      memoryMax: series.memoryMax,
     }])),
   }));
   const points = capSeriesPoints(rawPoints, MONITORING_MAX_POINTS, (point) => point.breakBefore);

@@ -1,3 +1,4 @@
+import { startMonitorStorageMaintenance } from "./monitor-storage-maintenance.js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -186,6 +187,7 @@ export async function buildApp(options: BuildAppOptions) {
   await app.register(registerMcpRoutes);
   await app.connectionSourceScheduler.start();
   await reconcileMissingMonitorHostAlerts(app);
+  const stopMonitorStorageMaintenance = startMonitorStorageMaintenance(app);
   const stopMonitorHostPuller = startMonitorHostPuller(app);
   const stopTlsEndpointPuller = startTlsEndpointPuller(app);
   const stopAccessExpirySweep = startAccessExpirySweep(app);
@@ -208,6 +210,7 @@ export async function buildApp(options: BuildAppOptions) {
   app.addHook("onClose", async () => {
     stopAccessExpirySweep();
     await stopMonitorHostPuller();
+    await stopMonitorStorageMaintenance();
     await stopTlsEndpointPuller();
     await app.monitorInstallTasks.closeAll();
     await app.sshSessions.closeAll();

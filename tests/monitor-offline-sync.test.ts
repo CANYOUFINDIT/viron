@@ -79,6 +79,49 @@ async function fixture() {
 }
 
 describe("monitor transport failures and collection availability", () => {
+  it("commits each catch-up batch before pulling another and resets the cursor for a replacement agent", async () => {
+    const { app, db, connectionId } = await fixture();
+    try {
+      const agentId = randomUUID(), at = Date.now()-60000;
+      const first = response(agentId, new Date(at).toISOString()); first.hasMore = true; first.latestSequence = 2;
+      const second = response(agentId, new Date(at+30000).toISOString());
+      second.throughSequence = 2; second.latestSequence = 2; second.samples[0]!.sequenceStart = 2; second.samples[0]!.sequenceEnd = 2;
+      execute.mockResolvedValueOnce(commandResult(first)).mockImplementationOnce(async () => {
+        expect(await db.prepare("SELECT last_sequence FROM monitor_hosts WHERE ssh_connection_id = ?").get(connectionId)).toEqual({ last_sequence: 1 });
+        return commandResult(second);
+      });
+      await syncMonitorHost(app, connectionId, false);
+      expect(await db.prepare("SELECT last_sequence FROM monitor_hosts WHERE ssh_connection_id = ?").get(connectionId)).toEqual({ last_sequence: 2 });
+      await db.prepare("UPDATE monitor_hosts SET last_sequence = 10000 WHERE ssh_connection_id = ?").run(connectionId);
+      const replacement = response(randomUUID(), new Date().toISOString());
+      execute.mockResolvedValue(commandResult(replacement));
+      await syncMonitorHost(app, connectionId, false);
+      expect(await db.prepare("SELECT agent_id, last_sequence FROM monitor_hosts WHERE ssh_connection_id = ?").get(connectionId)).toEqual({ agent_id: replacement.agentId, last_sequence: 1 });
+    } finally { await app.close(); }
+  });
+  it("reports storage failure independently from a healthy probe and retains the committed cursor", async () => {
+    const { app, db, cookies, connectionId } = await fixture();
+    try {
+      const agent = randomUUID();
+      execute.mockResolvedValue(commandResult(response(agent, new Date().toISOString())));
+      await syncMonitorHost(app, connectionId, false);
+      const next = response(agent, new Date().toISOString()); next.throughSequence = 2; next.latestSequence = 2;
+      next.samples[0]!.sequenceStart = 2; next.samples[0]!.sequenceEnd = 2;
+      execute.mockResolvedValue(commandResult(next));
+      const prepare = db.prepare.bind(db), failure = vi.spyOn(db, "prepare").mockImplementation(sql => {
+        if (sql.includes("INSERT OR IGNORE INTO monitor_metric_points")) throw new Error("simulated storage failure");
+        return prepare(sql);
+      });
+      try { await expect(syncMonitorHost(app, connectionId, false)).rejects.toThrow("storage failure"); } finally { failure.mockRestore(); }
+      expect(await db.prepare("SELECT status, last_sequence FROM monitor_hosts WHERE ssh_connection_id = ?").get(connectionId)).toEqual({ status: "ready", last_sequence: 1 });
+      clearMonitoringOverviewCache();
+      const overview = (await app.inject({ method: "GET", url: "/api/v1/monitoring/overview", cookies })).json();
+      expect(overview.summary.hostOffline).toBe(0);
+      expect(overview.storage.lastError).toContain("写入失败");
+      await syncMonitorHost(app, connectionId, false);
+      expect((await app.inject({ method: "GET", url: "/api/v1/monitoring/storage", cookies })).json().lastError).toBeNull();
+    } finally { await app.close(); }
+  });
   it("retries a handshake once, preserves fresh telemetry, and reports a connection fault without an offline alert", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime("2026-10-09T06:00:00.000Z");

@@ -98,11 +98,12 @@ describe("monitor history", () => {
     ], now, 60);
     expect(candidates.map((row) => row.ssh_connection_id).sort()).toEqual(["organization", "personal"]);
 
-    const app = {} as Parameters<typeof serializeMonitorAgentWork>[0];
+    const app = { db: {} } as Parameters<typeof serializeMonitorAgentWork>[0];
+    const sibling = { db: app.db } as Parameters<typeof serializeMonitorAgentWork>[0];
     let active = 0;
     let maximumActive = 0;
     const order: string[] = [];
-    const run = (name: string) => serializeMonitorAgentWork(app, "agent-a", async () => {
+    const run = (name: string) => serializeMonitorAgentWork(name === "personal" ? app : sibling, "agent-a", async () => {
       active += 1;
       maximumActive = Math.max(maximumActive, active);
       order.push(`${name}:start`);
@@ -282,7 +283,7 @@ describe("monitor history", () => {
         url: `/api/v1/environments/${environmentId}/monitor-hosts/${duplicateConnectionId}/history?range=1h`,
         cookies,
       });
-      expect(history.statusCode).toBe(200);
+      expect(history.statusCode, history.body).toBe(200);
       expect(history.json()).toMatchObject({ sourceSampleCount: 3, sampledPointCount: 3 });
       expect(history.json().summary.cpu).toMatchObject({ average: 20, maximum: 30, latest: 30 });
       expect(history.json().diagnostics).toEqual([]);

@@ -606,6 +606,7 @@ func aggregateRows(rows []compactedRow, resolution int) compactedRow {
 	result.payload.ResolutionSeconds = resolution
 	result.payload.SampleCount = result.sampleCount
 	result.payload.CollectedAt = time.UnixMilli(result.collectedAtMillis).UTC().Format(time.RFC3339Nano)
+	result.payload.Statistics, result.payload.Coverage = aggregateMetricStatistics(rows)
 	return result
 }
 

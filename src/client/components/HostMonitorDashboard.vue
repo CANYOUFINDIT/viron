@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { MonitorMetricStatistic } from "../../shared/monitor-storage";
 import { Activity, CircleGauge, Clock3, Cpu, Gauge, HardDrive, MemoryStick, RefreshCw, Thermometer } from "@lucide/vue";
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import type {
@@ -60,6 +61,7 @@ interface HistoryPoint {
   breakBefore: boolean;
   resolutionSeconds: number;
   sampleCount: number;
+  statistics?: Record<string, Record<string, MonitorMetricStatistic>>;
   host: MonitorPerformanceHostSnapshot & {
     memoryTotalBytes: number | null;
     memoryUsedBytes: number | null;
@@ -146,6 +148,7 @@ let historyAbort: AbortController | null = null;
 const ranges: Array<{ value: HistoryRange; label: string }> = [
   { value: "1h", label: tr("1 小时") }, { value: "6h", label: tr("6 小时") }, { value: "24h", label: tr("24 小时") },
   { value: "7d", label: tr("7 天") }, { value: "30d", label: tr("30 天") },
+  { value: "90d", label: tr("90 天") }, { value: "180d", label: tr("180 天") },
 ];
 function rangeLabel(value: HistoryRange): string {
   return ranges.find((item) => item.value === value)?.label ?? value;
@@ -322,13 +325,18 @@ function processComposition(metric: ProcessMetric): ProcessComposition {
 const cpuComposition = computed(() => processComposition("cpu"));
 const memoryComposition = computed(() => processComposition("memory"));
 const ioComposition = computed(() => processComposition("io"));
+function peakSeries(metric: string, entity = "host"): MonitorChartSeries[] {
+  if (!points.value.some(point => Number(point.statistics?.[entity]?.[metric]?.max ?? 0) > Number(point.statistics?.[entity]?.[metric]?.sum ?? 0) / Number(point.statistics?.[entity]?.[metric]?.weight ?? 1))) return [];
+  return [series(`${metric}-peak`, tr("区间峰值"), "var(--color-warning)", point => point.statistics?.[entity]?.[metric]?.max ?? null)];
+}
 const cpuModeSeries = computed(() => [
+  ...peakSeries("cpuUsedPercent"),
   series("user", tr("用户态"), "#14b8a6", (point) => advancedMetric(point, (host) => host.cpuUserPercent)),
   series("system", tr("内核态"), "#3b82f6", (point) => advancedMetric(point, (host) => host.cpuSystemPercent)),
   series("iowait", "I/O Wait", "#f59e0b", (point) => advancedMetric(point, (host) => host.cpuIoWaitPercent)),
   series("steal", "Steal", "#ef4444", (point) => advancedMetric(point, (host) => host.cpuStealPercent)),
 ]);
-const memoryPercentSeries = computed(() => [series("memory", tr("内存利用率"), "#8b5cf6", (point) => point.host.memoryUsedPercent)]);
+const memoryPercentSeries = computed(() => [series("memory", tr("内存利用率"), "#8b5cf6", (point) => point.host.memoryUsedPercent), ...peakSeries("memoryUsedPercent")]);
 const loadSeries = computed(() => [
   series("load1", "Load 1", "#14b8a6", (point) => point.host.load1),
   series("load5", "Load 5", "#f59e0b", (point) => point.host.load5),
@@ -356,7 +364,7 @@ const pressureSeries = computed(() => [
   series("memory", tr("内存 PSI"), "#8b5cf6", (point) => advancedMetric(point, (host) => host.memoryPressure.someAvg10)),
   series("io", "I/O PSI", "#f59e0b", (point) => advancedMetric(point, (host) => host.ioPressure.someAvg10)),
 ]);
-const diskPercentSeries = computed(() => [series("disk-used", tr("已用空间"), "#3b82f6", (point) => diskAt(point)?.usedPercent)]);
+const diskPercentSeries = computed(() => [series("disk-used", tr("已用空间"), "#3b82f6", (point) => diskAt(point)?.usedPercent), ...peakSeries("usedPercent", `disk:${activeDisk.value.replace("\0", ":")}`)]);
 const diskCapacitySeries = computed(() => [
   series("used", tr("已用"), "#3b82f6", (point) => diskAt(point)?.usedBytes),
   series("free", tr("可用"), "#10b981", (point) => diskAt(point)?.freeBytes),

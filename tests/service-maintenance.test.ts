@@ -650,7 +650,7 @@ describe("service maintenance", () => {
       expect(restartedMonitor.statusCode).toBe(200);
       expect(restartedMonitor.json()).toMatchObject({ ok: true });
       expect(ssh.commands.some((command) => command.includes("systemctl restart viron-monitor"))).toBe(true);
-      expect(await app.db.prepare("SELECT COUNT(*) AS count FROM monitor_samples WHERE ssh_connection_id = ?").get(connectionId)).toEqual({ count: 1 });
+      expect(await app.db.prepare("SELECT COUNT(*) AS count FROM monitor_metric_ingest i JOIN monitor_metric_streams t ON t.id = i.stream_id WHERE t.ssh_connection_id = ?").get(connectionId)).toEqual({ count: 1 });
 
       expect((await app.inject({
         method: "PUT",

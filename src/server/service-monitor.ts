@@ -1,8 +1,10 @@
+import type { EnvmanDatabase } from "./database-client.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { executeSshCommand } from "./ssh/command.js";
 import { monitorCommand, monitorCommandNotFound } from "./monitor-command.js";
-import { evaluateMonitorHostAvailability, evaluateRecentMonitorAlerts } from "./monitor-alerts.js";
+import { evaluateMonitorHostAvailability, evaluateRecentMonitorAlerts, evaluateMonitorAlertSamples } from "./monitor-alerts.js";
+import { storeMetricSamples, managedMetricTargets, retainIncidentDiagnostics, recordMonitorStorageError } from "./monitor-metric-storage.js";
 import { monitorSampleIsFresh } from "../shared/monitoring.js";
 
 export { monitorSampleIsFresh } from "../shared/monitoring.js";
@@ -130,10 +132,13 @@ const hostSchema = z.object({
   topProcesses: z.preprocess((value) => value == null ? [] : value, z.array(processSchema).max(15)),
 });
 
+const statisticSchema = z.object({ sum: z.number().finite(), min: z.number().finite(), max: z.number().finite(), last: z.number().finite(), weight: z.number().finite().positive() });
 const snapshotSchema = z.object({
   collectedAt: z.string().datetime({ offset: true }),
   resolutionSeconds: z.number().int().positive(),
   sampleCount: z.number().int().positive(),
+  statistics: z.record(z.string().max(1100), z.record(z.string().max(64), statisticSchema)).optional(),
+  coverage: z.array(z.tuple([z.number().finite(), z.number().finite()])).max(2880).optional(),
   host: hostSchema,
   candidates: z.array(candidateSchema).max(10_000),
   kubernetesConfigs: z.preprocess(
@@ -198,14 +203,12 @@ export interface MonitorPollCandidate {
   updated_at: string | null;
 }
 
-const activeSyncs = new WeakMap<FastifyInstance, Map<string, Promise<MonitorSyncResult>>>();
-const monitorAgentWrites = new WeakMap<FastifyInstance, Map<string, Promise<void>>>();
-const preferredPullLimits = new WeakMap<FastifyInstance, Map<string, number>>();
-const monitorStorageNormalizations = new WeakMap<FastifyInstance, Promise<void>>();
+const activeSyncs = new WeakMap<EnvmanDatabase, Map<string, Promise<MonitorSyncResult>>>();
+const monitorAgentWrites = new WeakMap<EnvmanDatabase, Map<string, Promise<void>>>();
+const preferredPullLimits = new WeakMap<EnvmanDatabase, Map<string, number>>();
 const monitorPullLimit = 20;
-const monitorPullMaxBytes = 16 * 1024 * 1024;
+const monitorPullMaxBytes = 4 * 1024 * 1024;
 const monitorPullCatchUpMaxBatches = 40;
-const monitorSampleRetentionMs = 30 * 24 * 60 * 60 * 1000;
 const monitorTransactionAttempts = 3;
 
 export async function serializeMonitorAgentWork<T>(
@@ -213,10 +216,10 @@ export async function serializeMonitorAgentWork<T>(
   agentId: string,
   work: () => T | Promise<T>,
 ): Promise<T> {
-  let appWrites = monitorAgentWrites.get(app);
+  let appWrites = monitorAgentWrites.get(app.db);
   if (!appWrites) {
     appWrites = new Map();
-    monitorAgentWrites.set(app, appWrites);
+    monitorAgentWrites.set(app.db, appWrites);
   }
   const previous = appWrites.get(agentId) ?? Promise.resolve();
   let release!: () => void;
@@ -258,10 +261,10 @@ function monitorPullCommand(after: number, collect: boolean, limit: number): str
 }
 
 async function executeMonitorPull(app: FastifyInstance, connectionId: string, after: number, collect: boolean) {
-  let appLimits = preferredPullLimits.get(app);
+  let appLimits = preferredPullLimits.get(app.db);
   if (!appLimits) {
     appLimits = new Map();
-    preferredPullLimits.set(app, appLimits);
+    preferredPullLimits.set(app.db, appLimits);
   }
   let limit = appLimits.get(connectionId) ?? monitorPullLimit;
   const pull = async (command: string) => {
@@ -279,55 +282,9 @@ async function executeMonitorPull(app: FastifyInstance, connectionId: string, af
     limit = Math.max(1, Math.floor(limit / 2));
     result = await pull(monitorPullCommand(after, false, limit));
   }
-  if (result.truncated) throw new Error("viron-monitor 单条数据超过 16 MiB，请检查目标机是否存在异常数量的服务候选");
+  if (result.truncated) throw new Error("viron-monitor 单条数据超过 4 MiB，请检查目标机是否存在异常数量的服务候选");
   appLimits.set(connectionId, limit);
   return result;
-}
-
-async function continueMonitorPull(
-  app: FastifyInstance,
-  connectionId: string,
-  response: z.infer<typeof pullResponseSchema>,
-): Promise<z.infer<typeof pullResponseSchema>> {
-  let current = response;
-  for (let batch = 0; batch < monitorPullCatchUpMaxBatches && current.hasMore; batch += 1) {
-    if (current.samples.length >= 800) break;
-    const continued = await executeMonitorPull(app, connectionId, current.throughSequence, false);
-    if (continued.exitCode !== 0) break;
-    let more: z.infer<typeof pullResponseSchema>;
-    try {
-      more = parsePullOutput(continued.stdout.trim());
-    } catch {
-      break;
-    }
-    current = {
-      ...current,
-      latestSequence: more.latestSequence,
-      throughSequence: more.throughSequence,
-      hasMore: more.hasMore,
-      samples: [...current.samples, ...more.samples],
-      gaps: [...current.gaps, ...more.gaps],
-    };
-    if (!more.samples.length && !more.gaps.length) break;
-  }
-  return current;
-}
-
-async function pruneExpiredMonitorSamples(
-  app: FastifyInstance,
-  agentId: string,
-  workspaceType: string,
-  workspaceId: string,
-): Promise<void> {
-  const cutoff = new Date(Date.now() - monitorSampleRetentionMs).toISOString();
-  await app.db.prepare(`
-    DELETE FROM monitor_samples WHERE agent_id = ? AND collected_at < ?
-      AND ssh_connection_id IN (SELECT id FROM ssh_connections WHERE workspace_type = ? AND workspace_id = ?)
-  `).run(agentId, cutoff, workspaceType, workspaceId);
-  await app.db.prepare(`
-    DELETE FROM monitor_sequence_gaps WHERE agent_id = ? AND ended_at < ?
-      AND ssh_connection_id IN (SELECT id FROM ssh_connections WHERE workspace_type = ? AND workspace_id = ?)
-  `).run(agentId, cutoff, workspaceType, workspaceId);
 }
 
 function parsePullOutput(stdout: string) {
@@ -533,20 +490,23 @@ export async function deduplicateMonitorStorage(app: FastifyInstance): Promise<v
   }
 }
 
-async function ensureMonitorStorageNormalized(app: FastifyInstance): Promise<void> {
-  let normalization = monitorStorageNormalizations.get(app);
-  if (!normalization) {
-    normalization = deduplicateMonitorStorage(app).catch((error) => {
-      monitorStorageNormalizations.delete(app);
-      throw error;
-    });
-    monitorStorageNormalizations.set(app, normalization);
+async function storeMonitorGap(app: FastifyInstance, connectionId: string, agentId: string,
+  gap: { sequenceStart: number; sequenceEnd: number; startedAt: string; endedAt: string; reason: string }, now: string): Promise<void> {
+  const last = await app.db.prepare(`SELECT sequence_start, sequence_end, started_at, ended_at, reason FROM monitor_sequence_gaps
+    WHERE ssh_connection_id = ? AND agent_id = ? ORDER BY sequence_end DESC LIMIT 1`)
+    .get<{ sequence_start: number; sequence_end: number; started_at: string; ended_at: string; reason: string }>(connectionId, agentId);
+  if (last && last.reason === gap.reason && gap.sequenceEnd > Number(last.sequence_end)
+    && gap.sequenceStart <= Number(last.sequence_end) + 1 && Date.parse(gap.startedAt) <= Date.parse(last.ended_at) + 300_000) {
+    await app.db.prepare(`UPDATE monitor_sequence_gaps SET sequence_end = ?, ended_at = ?, received_at = ?
+      WHERE ssh_connection_id = ? AND agent_id = ? AND sequence_end = ?`)
+      .run(gap.sequenceEnd, gap.endedAt, now, connectionId, agentId, last.sequence_end);
+    return;
   }
-  await normalization;
+  await app.db.prepare(`INSERT OR IGNORE INTO monitor_sequence_gaps (ssh_connection_id, agent_id, sequence_start, sequence_end, started_at, ended_at, reason, received_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(connectionId, agentId, gap.sequenceStart, gap.sequenceEnd, gap.startedAt, gap.endedAt, gap.reason, now);
 }
 
 async function performMonitorHostSync(app: FastifyInstance, connectionId: string, collect: boolean): Promise<MonitorSyncResult> {
-  await ensureMonitorStorageNormalized(app);
   const cursor = await storedCursor(app, connectionId);
   let commandResult;
   try {
@@ -603,176 +563,194 @@ async function performMonitorHostSync(app: FastifyInstance, connectionId: string
     await markMonitorFailure(app, connectionId, "error", message);
     throw error;
   }
-  try {
-    response = await continueMonitorPull(app, connectionId, response);
-  } catch {
-    // Keep the samples already pulled if catch-up SSH fails.
-  }
-
-  return serializeMonitorAgentWork(app, response.agentId, async () => {
-    const now = new Date().toISOString();
-    const latestSample = response.samples.at(-1);
-    const previous = await app.db.prepare(`
-      SELECT latest_host_json, latest_candidates_json, latest_kubernetes_configs_json, last_collected_at
-      FROM monitor_hosts h JOIN ssh_connections c ON c.id = h.ssh_connection_id
-      WHERE h.agent_id = ? AND c.workspace_type = ? AND c.workspace_id = ?
-      ORDER BY COALESCE(last_collected_at, '') DESC LIMIT 1
-    `).get(response.agentId, cursor.workspaceType, cursor.workspaceId) as
-      | { latest_host_json: string; latest_candidates_json: string; latest_kubernetes_configs_json: string; last_collected_at: string | null }
-      | undefined;
-    const latestHost = latestSample
-      ? { ...latestSample.payload.host, resolutionSeconds: latestSample.resolutionSeconds }
-      : (previous ? parseStoredHost(previous.latest_host_json) : null);
-    const latestCandidates = latestSample?.payload.candidates ?? (previous ? parseStoredCandidates(previous.latest_candidates_json) : []);
-    const latestKubernetesConfigs = latestSample?.payload.kubernetesConfigs ?? (previous ? parseStoredKubernetesConfigs(previous.latest_kubernetes_configs_json) : []);
-    const latestCollectedAt = latestSample?.collectedAt ?? previous?.last_collected_at ?? null;
-    const canonicalConnectionId = await canonicalMonitorConnection(
-      app,
-      response.agentId,
-      connectionId,
-      cursor.workspaceType,
-      cursor.workspaceId,
-    );
-    const lastSequence = Math.max(cursor.agentId === response.agentId ? cursor.sequence : 0, response.throughSequence);
-
-    await runMonitorTransaction(app, async () => {
-      for (const sample of response.samples) {
-        await app.db.prepare(`
-          INSERT OR IGNORE INTO monitor_samples (
-            ssh_connection_id, agent_id, sequence_start, sequence_end, collected_at,
-            resolution_seconds, payload_json, received_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          canonicalConnectionId, response.agentId, sample.sequenceStart, sample.sequenceEnd, sample.collectedAt,
-          sample.resolutionSeconds, JSON.stringify(sample.payload), now,
-        );
-      }
-      for (const gap of response.gaps) {
-        await app.db.prepare(`
-          INSERT OR IGNORE INTO monitor_sequence_gaps (
-            ssh_connection_id, agent_id, sequence_start, sequence_end, started_at, ended_at, reason, received_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(canonicalConnectionId, response.agentId, gap.sequenceStart, gap.sequenceEnd, gap.startedAt, gap.endedAt, gap.reason, now);
-      }
-      await app.db.prepare(`
-        INSERT INTO monitor_hosts (
-          ssh_connection_id, agent_id, agent_version, protocol_version, status, last_sequence,
-          latest_host_json, latest_candidates_json, latest_kubernetes_configs_json,
-          last_error, last_collected_at, last_pulled_at, updated_at
-        ) VALUES (?, ?, ?, ?, 'ready', ?, ?, ?, ?, '', ?, ?, ?)
-        ON CONFLICT(ssh_connection_id) DO UPDATE SET
-          agent_id = excluded.agent_id,
-          agent_version = excluded.agent_version,
-          protocol_version = excluded.protocol_version,
-          status = excluded.status,
-          last_sequence = CASE WHEN monitor_hosts.last_sequence > excluded.last_sequence THEN monitor_hosts.last_sequence ELSE excluded.last_sequence END,
-          latest_host_json = excluded.latest_host_json,
-          latest_candidates_json = excluded.latest_candidates_json,
-          latest_kubernetes_configs_json = excluded.latest_kubernetes_configs_json,
-          last_error = excluded.last_error,
-          last_collected_at = excluded.last_collected_at,
-          last_pulled_at = excluded.last_pulled_at,
-          updated_at = excluded.updated_at
-      `).run(
-        connectionId, response.agentId, response.agentVersion, response.protocolVersion,
-        lastSequence,
-        JSON.stringify(latestHost), JSON.stringify(latestCandidates), JSON.stringify(latestKubernetesConfigs), latestCollectedAt, now, now,
-      );
-      const monitorConnections = await app.db.prepare(`
-        SELECT h.ssh_connection_id
+  let result: MonitorSyncResult | undefined;
+  for (let batch = 0; batch <= monitorPullCatchUpMaxBatches; batch += 1) {
+    result = await serializeMonitorAgentWork(app, response.agentId, async () => {
+      const now = new Date().toISOString();
+      const responseLatest = response.samples.reduce<typeof response.samples[number] | undefined>((latest, sample) => !latest || Date.parse(sample.collectedAt) > Date.parse(latest.collectedAt) ? sample : latest, undefined);
+      const previous = await app.db.prepare(`
+        SELECT latest_host_json, latest_candidates_json, latest_kubernetes_configs_json, last_collected_at
         FROM monitor_hosts h JOIN ssh_connections c ON c.id = h.ssh_connection_id
         WHERE h.agent_id = ? AND c.workspace_type = ? AND c.workspace_id = ?
-        ORDER BY h.ssh_connection_id
-      `).all(response.agentId, cursor.workspaceType, cursor.workspaceId) as Array<{ ssh_connection_id: string }>;
-      for (const monitorConnection of monitorConnections) {
-        await app.db.prepare(`
-          UPDATE monitor_hosts SET
-            agent_version = ?, protocol_version = ?, status = 'ready',
-            last_sequence = CASE WHEN last_sequence > ? THEN last_sequence ELSE ? END,
-            latest_host_json = ?, latest_candidates_json = ?, latest_kubernetes_configs_json = ?,
-            last_error = '', last_collected_at = ?, last_pulled_at = ?, updated_at = ?
-          WHERE ssh_connection_id = ? AND agent_id = ?
-        `).run(
-          response.agentVersion, response.protocolVersion, lastSequence, lastSequence,
-          JSON.stringify(latestHost), JSON.stringify(latestCandidates), JSON.stringify(latestKubernetesConfigs),
-          latestCollectedAt, now, now, monitorConnection.ssh_connection_id, response.agentId,
-        );
-      }
-
-      const deployments = await app.db.prepare(`
-        SELECT d.id, d.provider_type, d.external_id FROM service_deployments d
-        JOIN monitor_hosts h ON h.ssh_connection_id = d.ssh_connection_id
-        JOIN ssh_connections c ON c.id = h.ssh_connection_id
-        WHERE h.agent_id = ? AND c.workspace_type = ? AND c.workspace_id = ?
-      `).all(response.agentId, cursor.workspaceType, cursor.workspaceId) as Array<{ id: string; provider_type: string; external_id: string }>;
-      const candidateByTarget = new Map(latestCandidates.map((candidate) => [`${candidate.provider}:${candidate.externalId}`, candidate]));
-      for (const deployment of deployments) {
-        const candidate = candidateByTarget.get(`${deployment.provider_type}:${deployment.external_id}`);
-        await app.db.prepare(`
-          UPDATE service_deployments
-          SET status = ?, state_detail = ?, latest_metrics_json = ?, last_checked_at = ?, updated_at = ?
-          WHERE id = ?
-        `).run(
-          candidate?.status ?? "unknown",
-          candidate?.state ?? "not_found_in_latest_scan",
-          JSON.stringify(candidate ?? {}),
-          latestCollectedAt,
-          now,
-          deployment.id,
-        );
-      }
-    });
-
-    try {
-      await pruneExpiredMonitorSamples(app, response.agentId, cursor.workspaceType, cursor.workspaceId);
-    } catch (error) {
-      app.log.warn({ err: error, agentId: response.agentId }, "monitor sample retention prune failed");
-    }
-
-    void evaluateRecentMonitorAlerts(app, response.agentId, cursor.workspaceType, cursor.workspaceId).catch((error) => {
-      app.log.error({ err: error, agentId: response.agentId }, "monitor alert evaluation failed");
-    });
-
-    try {
-      const collectedAt = latestSample?.collectedAt ?? latestCollectedAt;
-      const resolutionSeconds = Number(latestSample?.resolutionSeconds ?? latestHost?.resolutionSeconds ?? 30);
-      const available = monitorSampleIsFresh(now, collectedAt, resolutionSeconds);
-      await evaluateMonitorHostAvailability(app, {
+        ORDER BY COALESCE(last_collected_at, '') DESC LIMIT 1
+      `).get(response.agentId, cursor.workspaceType, cursor.workspaceId) as
+        | { latest_host_json: string; latest_candidates_json: string; latest_kubernetes_configs_json: string; last_collected_at: string | null }
+        | undefined;
+      const latestSample = responseLatest && Date.parse(responseLatest.collectedAt) >= Date.parse(previous?.last_collected_at ?? "1970-01-01T00:00:00Z") ? responseLatest : undefined;
+      const latestHost = latestSample
+        ? { ...latestSample.payload.host, resolutionSeconds: latestSample.resolutionSeconds }
+        : (previous ? parseStoredHost(previous.latest_host_json) : null);
+      const latestCandidates = latestSample?.payload.candidates ?? (previous ? parseStoredCandidates(previous.latest_candidates_json) : []);
+      const latestKubernetesConfigs = latestSample?.payload.kubernetesConfigs ?? (previous ? parseStoredKubernetesConfigs(previous.latest_kubernetes_configs_json) : []);
+      const latestCollectedAt = latestSample?.collectedAt ?? previous?.last_collected_at ?? null;
+      const canonicalConnectionId = await canonicalMonitorConnection(
+        app,
+        response.agentId,
         connectionId,
-        checkedAt: now,
-        available,
-        status: "ready",
-        reason: available ? "healthy" : collectedAt ? "sample_stale" : "no_samples",
-        hostname: latestHost?.hostname,
-        lastCollectedAt: collectedAt,
-        sampleResolutionSeconds: Number.isFinite(resolutionSeconds) ? resolutionSeconds : null,
-      });
-    } catch (error) {
-      app.log.error({ err: error, agentId: response.agentId }, "monitor host availability evaluation failed");
-    }
+        cursor.workspaceType,
+        cursor.workspaceId,
+      );
+      const lastSequence = Math.max(cursor.agentId === response.agentId ? cursor.sequence : 0, response.throughSequence);
 
-    return {
-      status: "ready",
-      agentId: response.agentId,
-      agentVersion: response.agentVersion,
-      protocolVersion: response.protocolVersion,
-      lastSequence,
-      host: latestHost,
-      candidates: latestCandidates,
-      kubernetesConfigs: latestKubernetesConfigs,
-      lastCollectedAt: latestCollectedAt,
-      lastPulledAt: now,
-      error: "",
-      retainedOnHost: true,
-    };
-  });
+      await runMonitorTransaction(app, async () => {
+        const scope = { workspaceType: cursor.workspaceType, workspaceId: cursor.workspaceId, agentId: response.agentId, connectionId: canonicalConnectionId };
+        const stored = await storeMetricSamples(app, scope, response.samples, await managedMetricTargets(app, scope));
+        if (stored.limited || stored.overlap) {
+          const first = response.samples[0], last = response.samples.at(-1);
+          if (first && last) await storeMonitorGap(app, canonicalConnectionId, response.agentId, {
+            sequenceStart: first.sequenceStart, sequenceEnd: last.sequenceEnd,
+            startedAt: new Date(Date.parse(first.collectedAt) - first.resolutionSeconds * 1000).toISOString(), endedAt: last.collectedAt,
+            reason: stored.overlap ? 'probe_compaction_overlap' : 'storage_capacity',
+          }, now);
+        }
+        for (const gap of response.gaps) {
+          await storeMonitorGap(app, canonicalConnectionId, response.agentId, gap, now);
+        }
+        await app.db.prepare(`
+          INSERT INTO monitor_hosts (
+            ssh_connection_id, agent_id, agent_version, protocol_version, status, last_sequence,
+            latest_host_json, latest_candidates_json, latest_kubernetes_configs_json,
+            last_error, last_collected_at, last_pulled_at, updated_at
+          ) VALUES (?, ?, ?, ?, 'ready', ?, ?, ?, ?, '', ?, ?, ?)
+          ON CONFLICT(ssh_connection_id) DO UPDATE SET
+            last_sequence = CASE WHEN monitor_hosts.agent_id = excluded.agent_id AND monitor_hosts.last_sequence > excluded.last_sequence THEN monitor_hosts.last_sequence ELSE excluded.last_sequence END,
+            agent_id = excluded.agent_id,
+            agent_version = excluded.agent_version,
+            protocol_version = excluded.protocol_version,
+            status = excluded.status,
+            latest_host_json = excluded.latest_host_json,
+            latest_candidates_json = excluded.latest_candidates_json,
+            latest_kubernetes_configs_json = excluded.latest_kubernetes_configs_json,
+            last_error = excluded.last_error,
+            last_collected_at = excluded.last_collected_at,
+            last_pulled_at = excluded.last_pulled_at,
+            updated_at = excluded.updated_at
+        `).run(
+          connectionId, response.agentId, response.agentVersion, response.protocolVersion,
+          lastSequence,
+          JSON.stringify(latestHost), JSON.stringify(latestCandidates), JSON.stringify(latestKubernetesConfigs), latestCollectedAt, now, now,
+        );
+        const monitorConnections = await app.db.prepare(`
+          SELECT h.ssh_connection_id
+          FROM monitor_hosts h JOIN ssh_connections c ON c.id = h.ssh_connection_id
+          WHERE h.agent_id = ? AND c.workspace_type = ? AND c.workspace_id = ?
+          ORDER BY h.ssh_connection_id
+        `).all(response.agentId, cursor.workspaceType, cursor.workspaceId) as Array<{ ssh_connection_id: string }>;
+        for (const monitorConnection of monitorConnections) {
+          await app.db.prepare(`
+            UPDATE monitor_hosts SET
+              agent_version = ?, protocol_version = ?, status = 'ready',
+              last_sequence = CASE WHEN last_sequence > ? THEN last_sequence ELSE ? END,
+              latest_host_json = ?, latest_candidates_json = ?, latest_kubernetes_configs_json = ?,
+              last_error = '', last_collected_at = ?, last_pulled_at = ?, updated_at = ?
+            WHERE ssh_connection_id = ? AND agent_id = ?
+          `).run(
+            response.agentVersion, response.protocolVersion, lastSequence, lastSequence,
+            JSON.stringify(latestHost), JSON.stringify(latestCandidates), JSON.stringify(latestKubernetesConfigs),
+            latestCollectedAt, now, now, monitorConnection.ssh_connection_id, response.agentId,
+          );
+        }
+
+        const deployments = await app.db.prepare(`
+          SELECT d.id, d.provider_type, d.external_id FROM service_deployments d
+          JOIN monitor_hosts h ON h.ssh_connection_id = d.ssh_connection_id
+          JOIN ssh_connections c ON c.id = h.ssh_connection_id
+          WHERE h.agent_id = ? AND c.workspace_type = ? AND c.workspace_id = ?
+        `).all(response.agentId, cursor.workspaceType, cursor.workspaceId) as Array<{ id: string; provider_type: string; external_id: string }>;
+        const candidateByTarget = new Map(latestCandidates.map((candidate) => [`${candidate.provider}:${candidate.externalId}`, candidate]));
+        for (const deployment of deployments) {
+          const candidate = candidateByTarget.get(`${deployment.provider_type}:${deployment.external_id}`);
+          await app.db.prepare(`
+            UPDATE service_deployments
+            SET status = ?, state_detail = ?, latest_metrics_json = ?, last_checked_at = ?, updated_at = ?
+            WHERE id = ?
+          `).run(
+            candidate?.status ?? "unknown",
+            candidate?.state ?? "not_found_in_latest_scan",
+            JSON.stringify(candidate ?? {}),
+            latestCollectedAt,
+            now,
+            deployment.id,
+          );
+        }
+      }).catch(async error => {
+        recordMonitorStorageError(app, true);
+        // Keep a working probe's latest telemetry visible if historical storage fails.
+        // Its cursor remains unchanged so the same history batch can be retried.
+        try {
+          await app.db.prepare(`UPDATE monitor_hosts SET status = 'ready', latest_host_json = ?, latest_candidates_json = ?,
+            latest_kubernetes_configs_json = ?, last_collected_at = ?, last_pulled_at = ?, updated_at = ?, last_error = ''
+            WHERE agent_id = ? AND ssh_connection_id IN (SELECT id FROM ssh_connections WHERE workspace_type = ? AND workspace_id = ?)`)
+            .run(JSON.stringify(latestHost), JSON.stringify(latestCandidates), JSON.stringify(latestKubernetesConfigs), latestCollectedAt, now, now,
+              response.agentId, cursor.workspaceType, cursor.workspaceId);
+        } catch (latestError) { app.log.error({ err: latestError }, "monitor latest state could not be saved after history failure"); }
+        throw error;
+      });
+      recordMonitorStorageError(app, false);
+
+      try {
+        if (response.samples.length) await evaluateMonitorAlertSamples(app, {
+          agentId: response.agentId, workspaceType: cursor.workspaceType, workspaceId: cursor.workspaceId,
+          samples: response.samples.map(sample => ({ ...sample.payload, collectedAt: sample.collectedAt })),
+        });
+        else await evaluateRecentMonitorAlerts(app, response.agentId, cursor.workspaceType, cursor.workspaceId);
+        if (latestSample) await retainIncidentDiagnostics(app, { workspaceType: cursor.workspaceType, workspaceId: cursor.workspaceId,
+          agentId: response.agentId, connectionId: canonicalConnectionId }, Date.parse(latestSample.collectedAt));
+      } catch (error) {
+        app.log.error({ err: error, agentId: response.agentId }, "monitor alert evaluation failed");
+      }
+
+      try {
+        const collectedAt = latestCollectedAt;
+        const resolutionSeconds = Number(latestSample?.resolutionSeconds ?? latestHost?.resolutionSeconds ?? 30);
+        const available = monitorSampleIsFresh(now, collectedAt, resolutionSeconds);
+        await evaluateMonitorHostAvailability(app, {
+          connectionId,
+          checkedAt: now,
+          available,
+          status: "ready",
+          reason: available ? "healthy" : collectedAt ? "sample_stale" : "no_samples",
+          hostname: latestHost?.hostname,
+          lastCollectedAt: collectedAt,
+          sampleResolutionSeconds: Number.isFinite(resolutionSeconds) ? resolutionSeconds : null,
+        });
+      } catch (error) {
+        app.log.error({ err: error, agentId: response.agentId }, "monitor host availability evaluation failed");
+      }
+
+      return {
+        status: "ready",
+        agentId: response.agentId,
+        agentVersion: response.agentVersion,
+        protocolVersion: response.protocolVersion,
+        lastSequence,
+        host: latestHost,
+        candidates: latestCandidates,
+        kubernetesConfigs: latestKubernetesConfigs,
+        lastCollectedAt: latestCollectedAt,
+        lastPulledAt: now,
+        error: "",
+        retainedOnHost: true,
+      };
+    });
+    if (!response.hasMore || batch === monitorPullCatchUpMaxBatches) break;
+    const through = response.throughSequence;
+    try {
+      const continued = await executeMonitorPull(app, connectionId, through, false);
+      if (continued.exitCode !== 0) break;
+      const more = parsePullOutput(continued.stdout.trim());
+      if (more.agentId !== response.agentId || more.throughSequence <= through) break;
+      response = more;
+    } catch { break; } // Every earlier batch and cursor have already committed.
+  }
+  return result!;
 }
 
 export function syncMonitorHost(app: FastifyInstance, connectionId: string, collect = true): Promise<MonitorSyncResult> {
-  let appSyncs = activeSyncs.get(app);
+  let appSyncs = activeSyncs.get(app.db);
   if (!appSyncs) {
     appSyncs = new Map();
-    activeSyncs.set(app, appSyncs);
+    activeSyncs.set(app.db, appSyncs);
   }
   const existing = appSyncs.get(connectionId);
   if (existing) return existing;
@@ -807,7 +785,6 @@ export function selectMonitorPollCandidates(
 }
 
 export async function pollMonitorHostsOnce(app: FastifyInstance, shouldStop: () => boolean = () => false): Promise<void> {
-  await ensureMonitorStorageNormalized(app);
   const now = Date.now();
   const candidates = await app.db.prepare(`
     SELECT c.id AS ssh_connection_id, c.workspace_type, c.workspace_id,

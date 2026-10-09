@@ -27,6 +27,7 @@ import NocTelemetryOrbit from "./NocTelemetryOrbit.vue";
 const props = defineProps<{
   environmentId: string;
   generatedAt: string;
+  storageNotice?: string;
   refreshSeconds: number;
   summary: {
     hostTotal: number;
@@ -507,6 +508,7 @@ onBeforeUnmount(() => {
         <span>CPU {{ formatPercent(summary.avgCpuPercent, 1) }} AVG</span>
         <span>MEM {{ formatPercent(summary.avgMemoryPercent, 1) }} AVG</span>
         <span>DISK {{ summary.diskAlerts }} ALERTS</span>
+        <span v-if="storageNotice" role="status" class="noc-storage-warning">{{ storageNotice }}</span>
         <span>FRAME {{ generatedAt ? new Date(generatedAt).toLocaleString() : '—' }}</span>
       </footer>
     </section>
@@ -514,6 +516,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.noc-storage-warning { color: #f5b74c; }
 .noc-screen {
   --noc-unit: clamp(.85px, min(.0732vw, .13vh), 2.8px);
   --noc-bg: #040a10;
