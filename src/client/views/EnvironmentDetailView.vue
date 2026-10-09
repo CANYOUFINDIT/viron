@@ -700,6 +700,15 @@ function credentialSelected(id: string) {
   return paneCredentialIds.value[activeWebPane.value] === id;
 }
 
+function scrollCredentialTabs(event: WheelEvent) {
+  const list = event.currentTarget;
+  if (!(list instanceof HTMLElement) || list.scrollWidth <= list.clientWidth) return;
+  if (event.ctrlKey || event.shiftKey || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+  event.preventDefault();
+  const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? list.clientWidth : 1;
+  list.scrollLeft += event.deltaY * unit;
+}
+
 function setSplitMode(value: boolean) {
   splitMode.value = value;
   if (value) {
@@ -1100,7 +1109,7 @@ onBeforeUnmount(() => {
         <template v-if="selectedEntry">
           <section class="web-account-workspace">
             <aside class="web-account-list" :aria-label="$t('账号视角')">
-              <div class="web-account-list__items">
+              <div class="web-account-list__items" @wheel="scrollCredentialTabs">
                 <article
                   v-for="credential in credentials"
                   :key="credential.id"
