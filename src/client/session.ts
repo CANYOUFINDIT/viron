@@ -1,6 +1,6 @@
 import { reactive } from "vue";
 import { api, clearApiPrefetches, isAuthenticationRequiredError } from "./api";
-import { desktopState, isDesktopApp, selectDesktopEndpoint } from "./desktop";
+import { clearDesktopEndpoint, desktopState, isDesktopApp, selectDesktopEndpoint } from "./desktop";
 
 export interface PlatformUser {
   id: string;
@@ -95,6 +95,12 @@ export async function switchWorkspace(workspace: Workspace): Promise<void> {
 }
 
 export async function logout(): Promise<"logged-out" | "session-expired"> {
+  if (isDesktopApp()) {
+    await clearDesktopEndpoint();
+    clearSession();
+    session.loaded = true;
+    return "logged-out";
+  }
   let result: "logged-out" | "session-expired" = "logged-out";
   try {
     await api<void>("/api/v1/auth/logout", { method: "POST" });

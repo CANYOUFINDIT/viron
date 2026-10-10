@@ -1,5 +1,6 @@
 // Generated from the canonical Chinese product copy. Keep keys stable and edit English values in enOverrides when refining wording.
 const generatedEnMessages: Record<string, string> = {
+  "退出登录后可重新选择 Endpoint。": "Sign out to choose another Endpoint.",
   "请求限流": "Request limits",
   "启用通用请求限流": "Enable general request limits",
   "单用户业务请求": "Business requests per user",

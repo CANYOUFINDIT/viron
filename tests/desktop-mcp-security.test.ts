@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { desktopMcpOperationUrlAllowed, desktopMcpWorkspaceKey } from "../src/desktop/mcp-security.js";
 
 const desktopMain = readFileSync(new URL("../src/desktop/main.ts", import.meta.url), "utf8");
+const desktopEndpointLogout = readFileSync(new URL("../src/desktop/endpoint-logout.ts", import.meta.url), "utf8");
 // contract unchanged; implementation moved from src/desktop/main.ts
 const desktopExecutionIpc = readFileSync(new URL("../src/desktop/ipc/register-execution-ipc.ts", import.meta.url), "utf8");
 // contract unchanged; implementation moved from src/desktop/main.ts
@@ -31,7 +32,8 @@ describe("desktop MCP security", () => {
   it("closes pending Operations across mode, Endpoint, workspace, login, logout, clear, and quit boundaries", () => {
     expect(desktopMain).toContain('closeDesktopMcpOperations(),\n      closeAllDesktopWebViews(),\n      closeDesktopExecution(tr("App 连接模式已切换"))');
     expect(desktopMain).toContain('closeDesktopMcpOperations(),\n          closeAllDesktopWebViews(),\n          closeDesktopExecution(tr("Endpoint 已切换"))');
-    expect(desktopMain).toContain('await Promise.all([closeDesktopMcpOperations(), closeAllDesktopWebViews(), closeDesktopExecution(tr("Endpoint 已清除"))');
+    expect(desktopMain).toContain("await logoutDesktopEndpoint();");
+    expect(desktopEndpointLogout).toContain("closeDesktopMcpOperations(false)");
     expect(desktopExecutionIpc).toContain('await Promise.all([closeDesktopMcpOperations(), closeAllDesktopWebViews(), closeDesktopExecution(reason)])');
     expect(desktopMain).toContain('closeDesktopMcpOperations(false),\n    desktopMcpBroker?.close()');
   });

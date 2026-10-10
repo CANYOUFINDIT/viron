@@ -276,6 +276,11 @@ export async function selectDesktopEndpoint(endpoint: string): Promise<DesktopSt
   return result.state;
 }
 
+export async function clearDesktopEndpoint(): Promise<void> {
+  if (!window.vironDesktop) throw new Error(tr("当前不是 Viron 桌面 App"));
+  desktopAppState.value = await window.vironDesktop.clearEndpoint();
+}
+
 export async function setDesktopExecutionMode(mode: DesktopExecutionMode): Promise<DesktopState> {
   if (!window.vironDesktop) throw new Error(tr("当前不是 Viron 桌面 App"));
   const state = await window.vironDesktop.setExecutionMode(mode);

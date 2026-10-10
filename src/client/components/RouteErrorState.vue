@@ -1,13 +1,16 @@
 <script setup lang="ts">
-import { AlertTriangle, RefreshCw } from "@lucide/vue";
+import { AlertTriangle, LogOut, RefreshCw } from "@lucide/vue";
 
 defineProps<{
   title?: string;
   message?: string;
+  allowLogout?: boolean;
+  signingOut?: boolean;
 }>();
 
 defineEmits<{
   reload: [];
+  logout: [];
 }>();
 </script>
 
@@ -16,7 +19,11 @@ defineEmits<{
     <span class="route-error-state__icon"><AlertTriangle :size="26" /></span>
     <h2>{{ title || $t('页面加载失败') }}</h2>
     <p>{{ message || $t('请重新加载页面后再试。') }}</p>
-    <el-button type="primary" @click="$emit('reload')"><RefreshCw :size="15" />{{ $t('重新加载') }}</el-button>
+    <div class="route-error-state__actions">
+      <el-button type="primary" :disabled="signingOut" @click="$emit('reload')"><RefreshCw :size="15" />{{ $t('重新加载') }}</el-button>
+      <el-button v-if="allowLogout" :loading="signingOut" @click="$emit('logout')"><LogOut :size="15" />{{ $t('退出登录') }}</el-button>
+    </div>
+    <p v-if="allowLogout">{{ $t('退出登录后可重新选择 Endpoint。') }}</p>
   </section>
 </template>
 
@@ -29,6 +36,17 @@ defineEmits<{
   align-content: center;
   gap: 11px;
   text-align: center;
+}
+
+.route-error-state__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+
+.route-error-state__actions :deep(.el-button + .el-button) {
+  margin-left: 0;
 }
 
 .route-error-state__icon {

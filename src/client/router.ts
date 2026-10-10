@@ -59,7 +59,7 @@ onAuthenticationRequired(() => {
 });
 
 router.beforeEach(async (to) => {
-  if (!session.loaded) await loadSession();
+  if (!session.loaded && !(isDesktopApp() && to.name === "login")) await loadSession();
   if (!to.meta.public && !session.user) return { name: "login", query: { redirect: to.fullPath } };
   if (to.name === "login" && session.user) return { name: "monitoring" };
   if (to.meta.webOnly && isDesktopApp()) return { name: "overview" };

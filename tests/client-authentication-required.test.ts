@@ -112,4 +112,20 @@ describe("client authentication expiration", () => {
     expect(session.workspace).toBeNull();
     expect(session.workspaces).toEqual([]);
   });
+
+  it.each([true, false])("logs out locally on desktop with loaded=%s without calling the offline API", async (loaded) => {
+    seedSession();
+    session.loaded = loaded;
+    const request = vi.fn().mockRejectedValue(new Error("net::ERR_CONNECTION_REFUSED"));
+    const clearEndpoint = vi.fn().mockResolvedValue({ endpoint: null, recentEndpoint: "https://endpoint-a.example.test" });
+    vi.stubGlobal("window", { vironDesktop: { request, clearEndpoint } });
+
+    await expect(logout()).resolves.toBe("logged-out");
+    expect(clearEndpoint).toHaveBeenCalledOnce();
+    expect(request).not.toHaveBeenCalled();
+    expect(session.user).toBeNull();
+    expect(session.workspace).toBeNull();
+    expect(session.workspaces).toEqual([]);
+    expect(session.loaded).toBe(true);
+  });
 });

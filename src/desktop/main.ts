@@ -55,6 +55,7 @@ import {
 import {
   endpointSession,
 } from "./device-session.js";
+import { logoutDesktopEndpoint } from "./endpoint-logout.js";
 import { mainWindow, setMainWindow } from "./window-host.js";
 import { installApplicationMenu } from "./app-menu.js";
 import { trustedSender } from "./ipc-guards.js";
@@ -323,9 +324,8 @@ function registerIpc(): void {
 
   ipcMain.handle("viron:endpoint:clear", async (event) => {
     trustedSender(event);
-    await Promise.all([closeDesktopMcpOperations(), closeAllDesktopWebViews(), closeDesktopExecution(tr("Endpoint 已清除")), closeServerForwardingRuntime(tr("Endpoint 已清除"))]);
-    setActiveEndpoint(null);
-    return publicState();
+    await logoutDesktopEndpoint();
+    return publishDesktopAppState();
   });
 }
 
