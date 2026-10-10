@@ -1512,9 +1512,9 @@ button { color: inherit; }
 .ssh-command-history__item { min-width: 0; min-height: 56px; padding: 6px 8px 7px 10px; border-bottom: 1px solid #1f3033; display: grid; grid-template-columns: minmax(0, 1fr) 25px; align-items: start; gap: 3px; }
 .ssh-command-history__item:hover { background: #162629; }
 .ssh-command-history__command { min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; text-align: left; }
-.ssh-command-history__command code { display: block; min-width: 0; color: #cbd9d5; overflow-wrap: anywhere; white-space: pre-wrap; font-family: var(--font-mono); font-size: 10px; line-height: 1.5; }
+.ssh-command-history__command code { display: block; min-width: 0; color: #cbd9d5; overflow-wrap: anywhere; white-space: pre-wrap; font-family: var(--font-mono); font-size: 9px; line-height: 1.5; }
 .ssh-command-history__command:hover code { color: #72d8b5; }
-.ssh-command-history__meta { min-width: 0; grid-column: 1 / -1; grid-row: 2; align-self: end; margin-top: 1px; color: #5b716c; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; font-size: 9px; }
+.ssh-command-history__meta { min-width: 0; grid-column: 1 / -1; grid-row: 2; align-self: end; margin-top: 1px; color: #5b716c; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; font-size: 8px; }
 .ssh-command-history__meta > span, .ssh-command-history__meta time { min-width: 0; display: flex; align-items: center; gap: 3px; white-space: nowrap; }
 .ssh-command-history__cwd > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ssh-command-history__meta time { justify-self: end; justify-content: flex-end; text-align: right; font-variant-numeric: tabular-nums; }
