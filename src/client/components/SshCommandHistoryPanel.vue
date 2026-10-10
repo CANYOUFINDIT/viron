@@ -1,7 +1,7 @@
 <script setup lang="ts">import { currentLocale, translate as tr } from "../i18n";
 
 import { Clock3, History, LoaderCircle, MapPin, Star, Trash2, WandSparkles, X } from "@lucide/vue";
-import { ref } from "vue";
+import { onBeforeUnmount, onMounted, onUpdated, ref } from "vue";
 import type { SshCommandFavoriteEntry, SshCommandHistoryEntry } from "../ssh-command-history";
 import TipIcon from "./TipIcon.vue";
 
@@ -25,6 +25,29 @@ const emit = defineEmits<{
 }>();
 
 const activeTab = ref<"history" | "favorites">("history");
+const historyElement = ref<HTMLElement | null>(null);
+const overflowingFields = ref(new Set<string>());
+let resizeObserver: ResizeObserver | null = null;
+
+function updateTextOverflow(): void {
+  const fields = new Set<string>();
+  historyElement.value?.querySelectorAll<HTMLElement>("[data-overflow-field]").forEach((text) => {
+    if (text.scrollWidth > text.clientWidth || text.scrollHeight > text.clientHeight) {
+      fields.add(text.dataset.overflowField!);
+    }
+  });
+  if (fields.size !== overflowingFields.value.size || [...fields].some((field) => !overflowingFields.value.has(field))) {
+    overflowingFields.value = fields;
+  }
+}
+
+onMounted(() => {
+  updateTextOverflow();
+  resizeObserver = new ResizeObserver(updateTextOverflow);
+  if (historyElement.value) resizeObserver.observe(historyElement.value);
+});
+onUpdated(updateTextOverflow);
+onBeforeUnmount(() => resizeObserver?.disconnect());
 
 function favoriteFor(entry: SshCommandHistoryEntry): SshCommandFavoriteEntry | undefined {
   return props.favorites.find((favorite) => favorite.command === entry.command);
@@ -52,7 +75,7 @@ function formatTime(value: string): string {
 </script>
 
 <template>
-  <aside class="ssh-command-history" :aria-label="$t('SSH 命令历史')">
+  <aside ref="historyElement" class="ssh-command-history" :aria-label="$t('SSH 命令历史')">
     <header class="ssh-command-history__header">
       <div class="ssh-command-history__title">
         <span><History :size="16" /></span>
@@ -77,13 +100,17 @@ function formatTime(value: string): string {
     </div>
     <div v-else-if="activeTab === 'history'" class="ssh-command-history__list">
       <article v-for="entry in entries" :key="entry.id" class="ssh-command-history__item ssh-command-history__item--history">
-        <button type="button" class="ssh-command-history__command" :title="$t('填入命令：{0}', [entry.command])" @click="emit('use', entry)">
-          <code>{{ entry.command }}</code>
-        </button>
+        <el-tooltip :content="entry.command" :disabled="!overflowingFields.has(`history:${entry.id}:command`)" :trigger="['hover', 'focus']" :trigger-keys="[]" placement="left" :fallback-placements="['top', 'bottom', 'right']" :show-after="350" popper-class="ssh-command-history-tooltip">
+          <button type="button" class="ssh-command-history__command" :aria-label="$t('填入命令：{0}', [entry.command])" @click="emit('use', entry)">
+            <code :data-overflow-field="`history:${entry.id}:command`">{{ entry.command }}</code>
+          </button>
+        </el-tooltip>
         <button type="button" class="ssh-command-history__favorite" :class="{ 'is-active': favoriteFor(entry) }" :disabled="favoritesLoading" :aria-label="favoriteFor(entry) ? $t('取消收藏：{0}', [entry.command]) : $t('收藏命令：{0}', [entry.command])" :title="favoriteFor(entry) ? $t('取消收藏') : $t('收藏命令')" @click="toggleFavorite(entry)"><Star :size="13" :fill="favoriteFor(entry) ? 'currentColor' : 'none'" /></button>
         <button type="button" class="ssh-command-history__remove" :aria-label="$t('删除命令：{0}', [entry.command])" :title="$t('删除这条记录')" @click="emit('remove', entry)"><Trash2 :size="13" /></button>
         <span class="ssh-command-history__meta">
-          <span class="ssh-command-history__cwd" :title="entry.cwd"><MapPin :size="10" /><span>{{ entry.cwd }}</span></span>
+          <el-tooltip :content="entry.cwd" :disabled="!overflowingFields.has(`history:${entry.id}:cwd`)" :trigger="['hover', 'focus']" :trigger-keys="[]" placement="left" :fallback-placements="['top', 'bottom', 'right']" :show-after="350" popper-class="ssh-command-history-tooltip">
+            <span class="ssh-command-history__cwd" tabindex="0"><MapPin :size="10" /><span :data-overflow-field="`history:${entry.id}:cwd`">{{ entry.cwd }}</span></span>
+          </el-tooltip>
           <time :datetime="entry.createdAt" :title="new Date(entry.createdAt).toLocaleString($locale())"><Clock3 :size="10" />{{ formatTime(entry.createdAt) }}</time>
         </span>
       </article>
@@ -98,12 +125,16 @@ function formatTime(value: string): string {
     </div>
     <div v-else class="ssh-command-history__list">
       <article v-for="entry in favorites" :key="entry.id" class="ssh-command-history__item ssh-command-history__item--favorite">
-        <button type="button" class="ssh-command-history__command" :title="$t('双击填入命令：{0}', [entry.command])" @dblclick="emit('useFavorite', entry)" @keydown.enter="emit('useFavorite', entry)">
-          <code>{{ entry.command }}</code>
-        </button>
+        <el-tooltip :content="entry.command" :disabled="!overflowingFields.has(`favorites:${entry.id}:command`)" :trigger="['hover', 'focus']" :trigger-keys="[]" placement="left" :fallback-placements="['top', 'bottom', 'right']" :show-after="350" popper-class="ssh-command-history-tooltip">
+          <button type="button" class="ssh-command-history__command" :aria-label="$t('双击填入命令：{0}', [entry.command])" @dblclick="emit('useFavorite', entry)" @keydown.enter="emit('useFavorite', entry)">
+            <code :data-overflow-field="`favorites:${entry.id}:command`">{{ entry.command }}</code>
+          </button>
+        </el-tooltip>
         <button type="button" class="ssh-command-history__favorite is-active" :aria-label="$t('取消收藏：{0}', [entry.command])" :title="$t('取消收藏')" @click="emit('unfavorite', entry)"><Star :size="13" fill="currentColor" /></button>
         <span class="ssh-command-history__meta">
-          <span class="ssh-command-history__cwd" :title="entry.cwd"><MapPin :size="10" /><span>{{ entry.cwd || $t('路径未知') }}</span></span>
+          <el-tooltip :content="entry.cwd" :disabled="!overflowingFields.has(`favorites:${entry.id}:cwd`)" :trigger="['hover', 'focus']" :trigger-keys="[]" placement="left" :fallback-placements="['top', 'bottom', 'right']" :show-after="350" popper-class="ssh-command-history-tooltip">
+            <span class="ssh-command-history__cwd" tabindex="0"><MapPin :size="10" /><span :data-overflow-field="`favorites:${entry.id}:cwd`">{{ entry.cwd || $t('路径未知') }}</span></span>
+          </el-tooltip>
           <time :datetime="entry.updatedAt" :title="new Date(entry.updatedAt).toLocaleString($locale())"><Clock3 :size="10" />{{ formatTime(entry.updatedAt) }}</time>
         </span>
       </article>
@@ -122,7 +153,7 @@ function formatTime(value: string): string {
 </template>
 
 <style scoped>
-.ssh-command-history { inset: 8px 8px 8px auto; width: min(292px, calc(86% - 8px)); border: 1px solid #2b4043; border-radius: 8px; overflow: hidden; grid-template-rows: 45px 35px minmax(0, 1fr) 37px; }
+.ssh-command-history { inset: 8px 24px 8px auto; width: min(292px, calc(86% - 24px)); border: 1px solid #2b4043; border-radius: 8px; overflow: hidden; grid-template-rows: 45px 35px minmax(0, 1fr) 37px; }
 .ssh-command-history__tabs { padding: 4px 7px; border-bottom: 1px solid #26383b; background: #0d181a; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
 .ssh-command-history__tabs button { min-width: 0; height: 26px; padding: 0 6px; border: 0; border-radius: 5px; background: transparent; color: #667c77; display: flex; align-items: center; justify-content: center; gap: 4px; cursor: pointer; font-size: 10px; }
 .ssh-command-history__tabs button:hover { background: #18282b; color: #bdd0cb; }
@@ -137,4 +168,6 @@ function formatTime(value: string): string {
 .ssh-command-history__footer { justify-content: space-between; }
 .ssh-command-history__assist { min-width: 0; height: 25px; font-size: 10px; }
 .ssh-command-history__server-note { color: #6f8580; display: inline-flex; align-items: center; gap: 5px; }
+.ssh-command-history__cwd:focus-visible { outline: 2px solid #55bd9b; outline-offset: 1px; }
+:global(.ssh-command-history-tooltip) { box-sizing: border-box; max-width: min(480px, calc(100vw - 24px)); white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: 11px; line-height: 1.55; }
 </style>
