@@ -117,8 +117,9 @@ export function appendSshCommandHistory(
     createdAt: options.createdAt ?? new Date().toISOString(),
   };
   const current = readSshCommandHistory(storage, userId, connectionId);
-  if (current[0]?.command === command) return current;
-  const entries = [entry, ...current].slice(0, SSH_COMMAND_HISTORY_LIMIT);
+  const entries = current[0]?.command === command && current[0]?.cwd === entry.cwd
+    ? [{ ...current[0], createdAt: entry.createdAt }, ...current.slice(1)]
+    : [entry, ...current].slice(0, SSH_COMMAND_HISTORY_LIMIT);
   return writeSshCommandHistory(storage, userId, connectionId, entries) ? entries : current;
 }
 
@@ -189,15 +190,21 @@ export class TerminalCommandTracker {
   private buffer = "";
   private cursor = 0;
   private reliable = true;
+  private renderedSubmissionAllowed = true;
 
   reset(): void {
     this.buffer = "";
     this.cursor = 0;
     this.reliable = true;
+    this.renderedSubmissionAllowed = true;
   }
 
   snapshot(): TerminalCommandSnapshot {
     return { value: this.buffer, cursor: this.cursor, reliable: this.reliable };
+  }
+
+  canResolveRenderedSubmission(): boolean {
+    return !this.reliable && this.renderedSubmissionAllowed;
   }
 
   replace(command: string): void {
@@ -205,6 +212,7 @@ export class TerminalCommandTracker {
     this.buffer = command;
     this.cursor = command.length;
     this.reliable = true;
+    this.renderedSubmissionAllowed = true;
   }
 
   insert(command: string): void {
@@ -234,10 +242,14 @@ export class TerminalCommandTracker {
         const end = data.indexOf("\x1b[201~", index + 6);
         if (end < 0) {
           this.reliable = false;
+          this.renderedSubmissionAllowed = false;
           break;
         }
         const pasted = data.slice(index + 6, end);
-        if (/[\r\n]/.test(pasted)) this.reliable = false;
+        if (/[\r\n]/.test(pasted)) {
+          this.reliable = false;
+          this.renderedSubmissionAllowed = false;
+        }
         else this.insert(pasted);
         index = end + 6;
         continue;
@@ -265,7 +277,7 @@ export class TerminalCommandTracker {
       const character = data[index];
       if (character === "\r" || character === "\n") {
         if (!(character === "\n" && previousWasCarriageReturn) && this.reliable && this.buffer.trim()) {
-          submissions.push(this.buffer.trim());
+          submissions.push(this.buffer);
         }
         previousWasCarriageReturn = character === "\r";
         this.reset();

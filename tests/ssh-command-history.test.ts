@@ -75,10 +75,11 @@ describe("SSH command history storage", () => {
     expect(findSshCommandSuggestions(entries, "gti")).toEqual([]);
   });
 
-  it("skips consecutive duplicates and ranks prefix suggestions before text matches", () => {
+  it("refreshes consecutive duplicates and ranks prefix suggestions before text matches", () => {
     const storage = new MemoryStorage();
     appendSshCommandHistory(storage, "user", "connection", { id: "first", command: "git status", cwd: "/repo" });
-    appendSshCommandHistory(storage, "user", "connection", { id: "duplicate", command: "git status", cwd: "/other" });
+    appendSshCommandHistory(storage, "user", "connection", { id: "duplicate", command: "git status", cwd: "/repo", createdAt: "2026-10-10T00:00:00.000Z" });
+    expect(readSshCommandHistory(storage, "user", "connection")[0]).toMatchObject({ id: "first", createdAt: "2026-10-10T00:00:00.000Z" });
     appendSshCommandHistory(storage, "user", "connection", { id: "contains", command: "sudo git fetch", cwd: "/repo" });
     appendSshCommandHistory(storage, "user", "connection", { id: "prefix", command: "git fetch", cwd: "/repo" });
 
@@ -87,6 +88,16 @@ describe("SSH command history storage", () => {
     expect(findSshCommandSuggestions(entries, "git").map((entry) => entry.command)).toEqual(["git fetch", "git status", "sudo git fetch"]);
     expect(findSshCommandSuggestions([...entries, { ...entries[0], id: "same-command" }], "fetch")).toHaveLength(2);
     expect(findSshCommandSuggestions(entries, "")).toEqual([]);
+  });
+
+  it("records the same command separately when its working directory changes", () => {
+    const storage = new MemoryStorage();
+    appendSshCommandHistory(storage, "user", "connection", { command: "ls", cwd: "/srv" });
+    appendSshCommandHistory(storage, "user", "connection", { command: "ls", cwd: "/srv/app" });
+    expect(readSshCommandHistory(storage, "user", "connection").map(({ command, cwd }) => ({ command, cwd }))).toEqual([
+      { command: "ls", cwd: "/srv/app" },
+      { command: "ls", cwd: "/srv" },
+    ]);
   });
 
   it("stores the input suggestion switch per user and defaults to enabled", () => {
@@ -130,6 +141,7 @@ describe("terminal command tracking", () => {
     expect(tracker.consume("\r", true)).toEqual([]);
     tracker.consume("cat /et");
     tracker.consume("\t");
+    expect(tracker.canResolveRenderedSubmission()).toBe(true);
     expect(tracker.consume("\r")).toEqual([]);
     tracker.consume("pwd");
     expect(tracker.consume("\r")).toEqual(["pwd"]);
@@ -149,7 +161,16 @@ describe("terminal command tracking", () => {
     tracker.consume("\x1b[200~echo pasted\x1b[201~");
     expect(tracker.consume("\r")).toEqual(["echo pasted"]);
     tracker.consume("\x1b[200~echo one\necho two\x1b[201~");
+    expect(tracker.canResolveRenderedSubmission()).toBe(false);
     expect(tracker.consume("\r")).toEqual([]);
+  });
+
+  it("preserves leading spaces so submitted commands still pass through the privacy filter", () => {
+    const tracker = new TerminalCommandTracker();
+    tracker.consume(" echo hidden");
+    const [command] = tracker.consume("\r");
+    expect(command).toBe(" echo hidden");
+    expect(isSensitiveSshCommand(command)).toBe(true);
   });
 });
 

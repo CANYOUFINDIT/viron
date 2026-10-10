@@ -32,6 +32,7 @@ import {
 } from "../desktop";
 import { ServiceSocket } from "../service-socket";
 import { SshTerminalInputBuffer } from "../ssh-terminal-input-buffer";
+import { SshTerminalRenderedCommandTracker } from "../ssh-terminal-rendered-command";
 import { canPredictSshInput, SshEchoPredictor } from "../ssh-terminal-predict";
 import { shouldReconnectFromTerminalKey, type SshTerminalStatus } from "../ssh-terminal-reconnect";
 import { consoleUsesLightPalette, theme } from "../theme";
@@ -106,6 +107,8 @@ let pendingTransferEnd: { phase: "error" | "cancelled"; message: string } | null
 let intentionalClose = false;
 let osc7Disposable: { dispose: () => void } | null = null;
 let selectionChangeDisposable: { dispose: () => void } | null = null;
+let outputParsedDisposable: { dispose: () => void } | null = null;
+let renderedCommandTracker: SshTerminalRenderedCommandTracker | null = null;
 let outputDecoder = new TextDecoder();
 let outputTail = "";
 let currentDirectory = UNKNOWN_REMOTE_CWD;
@@ -406,11 +409,15 @@ function trackTerminalInput(data: string) {
     return;
   }
   const alternateBuffer = terminal?.buffer.active.type === "alternate";
+  const submitting = /^[\r\n]+$/.test(data);
+  if (submitting && !alternateBuffer && commandTracker.canResolveRenderedSubmission()) {
+    renderedCommandTracker?.submit(currentDirectory);
+  }
   const submissions = commandTracker.consume(data, alternateBuffer);
   for (const command of submissions) {
     emit("commandSubmitted", { command, cwd: currentDirectory });
   }
-  if (submissions.length) {
+  if (submissions.length || submitting) {
     acceptingCommandInput.value = false;
     currentCommandInput.value = "";
   } else {
@@ -928,6 +935,7 @@ async function connect(ticket: string) {
   if (!terminal) return;
   const generation = ++connectionGeneration;
   commandTracker.reset();
+  renderedCommandTracker?.reset();
   echoPredictor.reset();
   inputBuffer.reset();
   outputDecoder = new TextDecoder();
@@ -1006,6 +1014,16 @@ onMounted(async () => {
   fitAddon = new FitAddon();
   terminal.loadAddon(fitAddon);
   terminal.open(terminalElement.value!);
+  renderedCommandTracker = new SshTerminalRenderedCommandTracker(terminal);
+  outputParsedDisposable = terminal.onWriteParsed(() => {
+    const observed = renderedCommandTracker?.observe();
+    if (observed?.submission) emit("commandSubmitted", observed.submission);
+    if (observed?.prompt) {
+      const cwd = detectCwdFromPrompt(observed.prompt);
+      if (cwd) currentDirectory = cwd;
+      acceptingCommandInput.value = true;
+    }
+  });
   paintTerminalChrome();
   terminal.attachCustomKeyEventHandler(handleTerminalKeyEvent);
   selectionChangeDisposable = terminal.onSelectionChange(scheduleSelectionCopy);
@@ -1073,6 +1091,8 @@ onBeforeUnmount(() => {
   resizeObserver?.disconnect();
   osc7Disposable?.dispose();
   selectionChangeDisposable?.dispose();
+  outputParsedDisposable?.dispose();
+  renderedCommandTracker?.reset();
   unsubscribeDesktopEvents?.();
   if (desktopAttached || desktopAttaching) void detachDesktopSshSession(props.sessionId).catch(() => undefined);
   desktopAttached = false;
