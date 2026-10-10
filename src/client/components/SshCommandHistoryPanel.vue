@@ -79,13 +79,13 @@ function formatTime(value: string): string {
       <article v-for="entry in entries" :key="entry.id" class="ssh-command-history__item ssh-command-history__item--history">
         <button type="button" class="ssh-command-history__command" :title="$t('填入命令：{0}', [entry.command])" @click="emit('use', entry)">
           <code>{{ entry.command }}</code>
-          <span class="ssh-command-history__meta">
-            <span :title="entry.cwd"><MapPin :size="11" />{{ entry.cwd }}</span>
-            <time :datetime="entry.createdAt" :title="new Date(entry.createdAt).toLocaleString($locale())"><Clock3 :size="11" />{{ formatTime(entry.createdAt) }}</time>
-          </span>
         </button>
         <button type="button" class="ssh-command-history__favorite" :class="{ 'is-active': favoriteFor(entry) }" :disabled="favoritesLoading" :aria-label="favoriteFor(entry) ? $t('取消收藏：{0}', [entry.command]) : $t('收藏命令：{0}', [entry.command])" :title="favoriteFor(entry) ? $t('取消收藏') : $t('收藏命令')" @click="toggleFavorite(entry)"><Star :size="13" :fill="favoriteFor(entry) ? 'currentColor' : 'none'" /></button>
         <button type="button" class="ssh-command-history__remove" :aria-label="$t('删除命令：{0}', [entry.command])" :title="$t('删除这条记录')" @click="emit('remove', entry)"><Trash2 :size="13" /></button>
+        <span class="ssh-command-history__meta">
+          <span class="ssh-command-history__cwd" :title="entry.cwd"><MapPin :size="10" /><span>{{ entry.cwd }}</span></span>
+          <time :datetime="entry.createdAt" :title="new Date(entry.createdAt).toLocaleString($locale())"><Clock3 :size="10" />{{ formatTime(entry.createdAt) }}</time>
+        </span>
       </article>
     </div>
     <div v-else-if="favoritesLoading" class="ssh-command-history__empty">
@@ -100,12 +100,12 @@ function formatTime(value: string): string {
       <article v-for="entry in favorites" :key="entry.id" class="ssh-command-history__item ssh-command-history__item--favorite">
         <button type="button" class="ssh-command-history__command" :title="$t('双击填入命令：{0}', [entry.command])" @dblclick="emit('useFavorite', entry)" @keydown.enter="emit('useFavorite', entry)">
           <code>{{ entry.command }}</code>
-          <span class="ssh-command-history__meta">
-            <span :title="entry.cwd"><MapPin :size="11" />{{ entry.cwd || $t('路径未知') }}</span>
-            <time :datetime="entry.updatedAt" :title="new Date(entry.updatedAt).toLocaleString($locale())"><Clock3 :size="11" />{{ formatTime(entry.updatedAt) }}</time>
-          </span>
         </button>
         <button type="button" class="ssh-command-history__favorite is-active" :aria-label="$t('取消收藏：{0}', [entry.command])" :title="$t('取消收藏')" @click="emit('unfavorite', entry)"><Star :size="13" fill="currentColor" /></button>
+        <span class="ssh-command-history__meta">
+          <span class="ssh-command-history__cwd" :title="entry.cwd"><MapPin :size="10" /><span>{{ entry.cwd || $t('路径未知') }}</span></span>
+          <time :datetime="entry.updatedAt" :title="new Date(entry.updatedAt).toLocaleString($locale())"><Clock3 :size="10" />{{ formatTime(entry.updatedAt) }}</time>
+        </span>
       </article>
     </div>
 
