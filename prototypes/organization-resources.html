@@ -263,6 +263,7 @@ function createDefaultRoles(){return [
  {id:'role-03',name:'审计员',description:'查看组织授权、审批和台账，不执行资源操作。',enabled:true,permissions:['environment.catalog','authorization.view','approval.view','audit.view','audit.export']}
 ]}
 const ORG_SCOPE={kind:'organization',ids:['root'],includeChildren:true};
+const DEMO_DATA_VERSION=2;
 const SEED={version:10,
  teams:[{id:'root',name:'云舟科技',parent:null,description:'组织统一维护成员、角色、授权和审批。'},{id:'product',name:'产品研发',parent:'root',description:'负责业务研发与交付。'},{id:'orders',name:'订单研发',parent:'product',description:'订单服务研发团队。'},{id:'growth',name:'增长研发',parent:'product',description:'增长业务研发团队。'},{id:'platform',name:'平台运维',parent:'root',description:'负责基础设施与生产运维。'},{id:'data',name:'数据团队',parent:'root',description:'负责数据分析。'}],
  groups:[{id:'orders-group',name:'订单服务',color:'#178568'},{id:'growth-group',name:'增长平台',color:'#5278a0'},{id:'infra-group',name:'基础设施',color:'#a37a36'},{id:'data-group',name:'数据分析',color:'#6d8a62'}],
@@ -283,10 +284,12 @@ const SEED={version:10,
  ],featureGrants:[{id:'f-dev',name:'开发与测试资源功能',subjectType:'team',subject:'orders',scope:{kind:'environment',ids:['e2','e3']},features:{mcp:true,agent:true,webPlugins:true},enabled:true,reason:'仅开发与测试资源允许自动化和 Web 插件，与角色分配独立。'}],workflows:[],requests:[],events:[],invitations:[]
 };
 const defaultNode=(id,name,people)=>({id,name,kind:'approval',approvalType:'manual',approverKind:'member',approverIds:people,roleId:'',mode:'or',samePerson:'skip',commentRequired:true,allowTransfer:true,allowAddSign:true,allowRollback:true,ccIds:[]});
-function buildSeed(){const data=structuredClone(SEED);data.envs.forEach(e=>{
- ['web','ssh','database','redis'].forEach(cap=>{if(cap==='redis'&&e.id==='e7')return;const total=cap==='database'&&e.id==='e1'?2:1;for(let i=0;i<total;i++){
+function buildSeed(){const data=structuredClone(SEED);
+ data.envs.push({id:'demo-sandbox',name:'独立验证环境 · 演示',short:'DEMO / SANDBOX',group:null,team:'root',status:'active',description:'未分组环境，用于演示独立验证、资源授权和自动化协作。',demoSample:true});
+ data.envs.forEach(e=>{
+ ['web','ssh','database','redis'].forEach(cap=>{const total=cap==='database'&&e.id==='e1'?2:1;for(let i=0;i<total;i++){
  const suffix=e.short.toLowerCase().replace(/[^a-z0-9]+/g,'-');
- data.connections.push({id:e.id+':'+cap+'-'+(i+1),cap,name:cap==='ssh'?'应用主节点':cap==='database'?(i?'只读副本':'业务主库'):cap==='web'?'管理后台':'业务缓存',meta:cap==='web'?'https://'+suffix+'.example.com':suffix+(cap==='ssh'?'-app':'-'+cap)+'.example.com',envs:[e.id],account:cap==='ssh'?'deploy':cap==='database'?(i?'app_reader':'app_writer'):'已配置账号',groupPath:data.groups.find(g=>g.id===e.group)?.name+' / '+e.name.split(' · ').at(-1),engine:cap==='database'?'PostgreSQL':undefined,dependencyIds:cap==='ssh'?['key-orders']:cap==='web'?['cert-'+e.id]:[]});
+ data.connections.push({id:e.id+':'+cap+'-'+(i+1),cap,name:cap==='ssh'?'应用主节点':cap==='database'?(i?'只读副本':'业务主库'):cap==='web'?'管理后台':'业务缓存',meta:cap==='web'?'https://'+suffix+'.example.com':suffix+(cap==='ssh'?'-app':'-'+cap)+'.example.com',envs:[e.id],account:cap==='ssh'?'deploy':cap==='database'?(i?'app_reader':'app_writer'):'已配置账号',groupPath:(data.groups.find(g=>g.id===e.group)?.name||'未分组')+' / '+e.name.split(' · ').at(-1),engine:cap==='database'?'PostgreSQL':undefined,dependencyIds:cap==='ssh'?['key-orders']:cap==='web'?['cert-'+e.id]:[]});
  }});
  });
  data.connections.push({id:'ssh-shared-edge',cap:'ssh',groupPath:'共享基础设施',name:'统一出口网关',meta:'edge.example.com',envs:['e1','e5'],account:'ops',dependencyIds:['key-infra']},{id:'ssh-loose',cap:'ssh',groupPath:'办公网络',name:'办公跳板机',meta:'bastion.example.com',envs:[],account:'observer',dependencyIds:['key-infra']},{id:'db-loose',cap:'database',groupPath:'临时分析',engine:'PostgreSQL',name:'临时分析库',meta:'adhoc.example.com',envs:[],account:'app_reader',dependencyIds:[]});
@@ -305,7 +308,97 @@ function buildSeed(){const data=structuredClone(SEED);data.envs.forEach(e=>{
   dataGrant('d-ops','role-ops','生产运维资源',resources.filter(c=>c.envs.some(id=>['e1','e4','e5','e6'].includes(id))).map(c=>c.id),['e1','e4','e5','e6'])
  ];
  data.requests=[{id:'req-example',name:'独立分析库查询申请',user:'u8',kind:'data',roleId:'role-read',scope:{kind:'connection',ids:['db-loose']},targetIds:['db-loose'],reason:'为生产查询角色临时增加分析库查询资源，所有有效角色成员共享。',durationHours:2,status:'pending',workflow:structuredClone(data.workflows[0]),stage:0,approvals:{},history:[],created:new Date().toISOString()}];
- data.version=10;data.favoritesByUser={u1:['e3']};return data;
+ data.version=10;
+ return addDemoExamples(data);
+}
+function addDemoExamples(data){
+ const now=Date.now(),time=hours=>new Date(now+hours*3600000).toISOString();
+ const resources=[...data.connections,...data.resources],environmentIds=ids=>resources.filter(c=>c.envs.some(id=>ids.includes(id))).map(c=>c.id);
+ const sandboxIds=environmentIds(['demo-sandbox']);
+ data.connections.filter(c=>c.envs.includes('demo-sandbox')||c.id==='e7:redis-1').forEach(c=>{c.demoSample=true});
+ data.resources.filter(c=>c.envs.includes('demo-sandbox')).forEach(c=>{c.demoSample=true});
+ data.dependencies.filter(d=>d.id==='cert-demo-sandbox').forEach(d=>{d.demoSample=true});
+ const assignment=(id,name,subjectType,subject,roleId,extra={})=>({id,name,subjectType,subject,roleId,scope:structuredClone(ORG_SCOPE),enabled:true,reason:'示例：角色分配与资源范围分别维护。',demoSample:true,...extra});
+ const grant=(id,name,roleId,ids,extra={})=>({id,name,roleId,scope:{kind:'connection',ids},enabled:true,reason:'示例：角色成员共享资源范围，实际操作由角色权限决定。',demoSample:true,...extra});
+ const feature=(id,name,subjectType,subject,scope,features,extra={})=>({id,name,subjectType,subject,scope,features,enabled:true,reason:'示例：资源功能授权独立于角色操作权限。',demoSample:true,...extra});
+ data.roles.push({id:'demo-role-release',name:'临时发布协作',description:'发布窗口使用的角色示例，目前已停用；保留配置、资源范围和人员分配供查看。',enabled:false,permissions:['environment.catalog','web.view','ssh.view','ssh.use','ssh.upload','database.read','logs.view','maintenance.view','maintenance.control'],demoSample:true});
+ data.roleAssignments.push(
+  assignment('demo-assignment-data','数据团队查询角色','team','data','role-read'),
+  assignment('demo-assignment-audit-read','审计证据查询角色','user','u7','role-read'),
+  assignment('demo-assignment-release','测试发布窗口角色','user','u8','demo-role-release'),
+  assignment('demo-assignment-expired','已结束的研发支援','user','u4','role-ops',{startsAt:time(-96),expiresAt:time(-48)}),
+  assignment('demo-assignment-scheduled','下个值班窗口的生产运维','user','u2','role-ops',{startsAt:time(24),expiresAt:time(48)})
+ );
+ data.dataGrants.push(
+  grant('demo-data-new-resources','未分组环境与分析缓存','role-01',[...sandboxIds,'e7:redis-1'],{environmentIds:['demo-sandbox']}),
+  grant('demo-data-member','普通成员的文档范围示例','role-02',['knowledge-workspace'],{reason:'示例：仅配置文档范围；普通成员角色未配置文档操作，因此仍需申请相应角色权限才能使用。'}),
+  grant('demo-data-analysis','数据分析环境查询授权','role-read',environmentIds(['e7']),{environmentIds:['e7'],startsAt:time(-12),source:'request',requestId:'demo-request-audit-approved'}),
+  grant('demo-data-release','测试环境发布范围','demo-role-release',environmentIds(['e2']),{environmentIds:['e2']}),
+  grant('demo-data-limited','独立跳板机临时协作','role-dev',['ssh-loose'],{startsAt:time(-1),expiresAt:time(47)}),
+  grant('demo-data-expired','已结束的增长库查询','role-read',['e4:database-1'],{startsAt:time(-96),expiresAt:time(-48)}),
+  grant('demo-data-scheduled','待生效的验证环境协作','role-dev',sandboxIds,{environmentIds:['demo-sandbox'],startsAt:time(24),expiresAt:time(48)}),
+  grant('demo-data-disabled','已停用的共享网关维护','role-ops',['ssh-shared-edge'],{enabled:false})
+ );
+ data.featureGrants.push(
+  feature('demo-feature-org','组织验证与演示功能','team','root',{kind:'environment',ids:['e3','demo-sandbox']},{mcp:true,agent:true,webPlugins:true}),
+  feature('demo-feature-platform','平台值班辅助功能','team','platform',{kind:'environment',ids:['e5','e6']},{mcp:true,agent:true,webPlugins:false},{startsAt:time(-1),expiresAt:time(47)}),
+  feature('demo-feature-data','分析环境 MCP 查询','team','data',{kind:'environment',ids:['e7']},{mcp:true,agent:false,webPlugins:false}),
+  feature('demo-feature-growth','增长生产 MCP 辅助','team','growth',{kind:'environment',ids:['e4']},{mcp:true,agent:false,webPlugins:false}),
+  feature('demo-feature-log-approved','生产日志 MCP 临时分析','user','u1',{kind:'connection',ids:['e1:logs']},{mcp:true,agent:false,webPlugins:false},{source:'request',requestId:'demo-request-admin-approved',startsAt:time(-.25),expiresAt:time(1.75)}),
+  feature('demo-feature-scheduled','待生效的生产 Agent 值班','user','u1',{kind:'environment',ids:['e1']},{mcp:true,agent:true,webPlugins:false},{startsAt:time(24),expiresAt:time(48)}),
+  feature('demo-feature-expired','已结束的生产 Web 插件试用','user','u1',{kind:'environment',ids:['e1']},{mcp:false,agent:false,webPlugins:true},{startsAt:time(-96),expiresAt:time(-48)}),
+  feature('demo-feature-disabled','已停用的独立跳板机 Agent','user','u2',{kind:'connection',ids:['ssh-loose']},{mcp:false,agent:true,webPlugins:false},{enabled:false})
+ );
+ const request=({id,name,user,kind='data',roleId,scope,features,status='pending',stage=0,hours=2,created=-2,reason,grantIds=[]})=>{
+  const targetIds=scope.kind==='connection'?[...scope.ids]:environmentIds(scope.ids);
+  const flow=data.workflows.find(f=>f.scope.mode==='selected'&&targetIds.every(id=>f.scope.connectionIds.includes(id)))||data.workflows.find(f=>f.scope.mode==='all');
+  const workflow=structuredClone(flow),approvals={},history=[];
+  const completed=status==='approved'?workflow.nodes.length:stage;
+  workflow.nodes.slice(0,completed).forEach((node,index)=>{const actor=node.approverIds.find(id=>id!==user);approvals[node.id]=[actor];history.push({node:node.id,decision:'通过',actor:data.users.find(u=>u.id===actor)?.name||'系统',reason:index?'范围与有效期已确认。':'用途与资源范围符合本次演示。',time:time(created+(index+1)*.25)})});
+  if(status==='rejected')history.push({node:workflow.nodes[stage].id,decision:'拒绝',actor:data.users.find(u=>u.id===workflow.nodes[stage].approverIds.find(id=>id!==user))?.name,reason:'申请范围超过本次协作需要，请缩小资源范围后重新申请。',time:time(created+.5)});
+  if(status==='withdrawn')history.push({node:workflow.nodes[stage].id,decision:'撤回',actor:data.users.find(u=>u.id===user)?.name,reason:'验证任务已取消，撤回临时授权申请。',time:time(created+.5)});
+  return {id,name,user,kind,...(roleId?{roleId}:{}),scope,targetIds,...(features?{features}:{}),reason,durationHours:hours,status,workflow,stage:completed,approvals,history,created:time(created),grantIds,...(grantIds.length?(kind==='feature'?{featureGrantId:grantIds[0]}:{grantId:grantIds[0]}):{}),demoSample:true};
+ };
+ data.requests[0].demoSample=true;
+ data.requests.push(
+  request({id:'demo-request-admin-pending',name:'生产环境 Agent 值班申请',user:'u1',kind:'feature',scope:{kind:'environment',ids:['e1']},features:{mcp:true,agent:true,webPlugins:false},stage:1,hours:4,reason:'在本次生产值班窗口中使用 Agent 辅助定位故障；资源操作复核已通过，等待运维审核。'}),
+  request({id:'demo-request-admin-approved',name:'生产日志 MCP 分析申请',user:'u1',kind:'feature',scope:{kind:'connection',ids:['e1:logs']},features:{mcp:true,agent:false,webPlugins:false},status:'approved',created:-.75,grantIds:['demo-feature-log-approved'],reason:'通过 MCP 辅助检查订单服务日志，限时两小时。'}),
+  request({id:'demo-request-admin-rejected',name:'生产环境 Web 插件例外申请',user:'u1',kind:'feature',scope:{kind:'environment',ids:['e1']},features:{mcp:true,agent:true,webPlugins:true},status:'rejected',created:-24,hours:8,reason:'演示超出用途范围的申请及拒绝反馈。'}),
+  request({id:'demo-request-admin-withdrawn',name:'生产 SSH 临时 Agent 申请',user:'u1',kind:'feature',scope:{kind:'connection',ids:['e1:ssh-1']},features:{mcp:false,agent:true,webPlugins:false},status:'withdrawn',created:-12,reason:'验证任务已取消，保留撤回记录。'}),
+  request({id:'demo-request-dev-pending',name:'独立分析库开发查询申请',user:'u2',roleId:'role-dev',scope:{kind:'connection',ids:['db-loose']},reason:'为开发协作角色临时增加独立分析库，演示待初始管理员审批的数据授权。'}),
+  request({id:'demo-request-ops-pending',name:'增长生产数据库 MCP 申请',user:'u3',kind:'feature',scope:{kind:'connection',ids:['e4:database-1']},features:{mcp:true,agent:false,webPlugins:false},reason:'使用 MCP 辅助生产数据库巡检；已有生产运维角色与资源范围。'}),
+  request({id:'demo-request-engineer-rejected',name:'分析库临时协作申请',user:'u4',roleId:'role-dev',scope:{kind:'connection',ids:['db-loose']},status:'rejected',created:-24,hours:24,reason:'演示被拒绝的数据授权及重新申请入口。'}),
+  request({id:'demo-request-platform-pending',name:'共享基础设施 Agent 值班申请',user:'u5',kind:'feature',scope:{kind:'environment',ids:['e5']},features:{mcp:true,agent:true,webPlugins:false},reason:'延长下一轮平台值班的辅助操作功能，演示功能授权审批。'}),
+  request({id:'demo-request-analyst-pending',name:'临时分析库查询资源申请',user:'u6',roleId:'role-read',scope:{kind:'connection',ids:['db-loose']},reason:'为数据团队生产查询角色申请两小时的独立分析库查询范围。'}),
+  request({id:'demo-request-test-prod-pending',name:'生产 Web 入口 MCP 回归申请',user:'u8',kind:'feature',scope:{kind:'connection',ids:['e1:web-1']},features:{mcp:true,agent:false,webPlugins:false},reason:'在已有生产查询权限的基础上，申请两小时的 MCP 回归检查功能，等待资源操作复核。'}),
+  request({id:'demo-request-audit-approved',name:'数据分析环境审计查询申请',user:'u7',roleId:'role-read',scope:{kind:'environment',ids:['e7']},status:'approved',created:-12.25,hours:null,grantIds:['demo-data-analysis'],reason:'查询分析环境数据并整理审计证据，演示已通过申请与实际资源授权的关联。'})
+ );
+ data.events=[
+  {id:'demo-event-feature-approved',action:'功能授权生效',title:'生产日志 MCP 临时分析',actor:'陈序',detail:'生产复核与运维审核均已通过，授权从通过后起算两小时。',time:time(-.25),targets:['e1:logs']},
+  {id:'demo-event-feature-disabled',action:'停用功能授权',title:'独立跳板机 Agent',actor:'林澈',detail:'协作窗口结束，保留功能授权记录与停用状态。',time:time(-3),targets:['ssh-loose']},
+  {id:'demo-event-request-withdrawn',action:'撤回申请',title:'生产 SSH 临时 Agent 申请',actor:'林澈',detail:'验证任务已取消，由申请人撤回。',time:time(-11.5),targets:['e1:ssh-1']},
+  {id:'demo-event-data-approved',action:'数据授权生效',title:'数据分析环境查询授权',actor:'林澈',detail:'授权给生产查询角色，所有有效角色成员共享当前资源范围。',time:time(-12),targets:environmentIds(['e7'])},
+  {id:'demo-event-request-rejected',action:'拒绝申请',title:'生产环境 Web 插件例外申请',actor:'周遥',detail:'范围超出当前用途，申请人可以缩小范围后重新申请。',time:time(-23.5),targets:environmentIds(['e1'])},
+  {id:'demo-event-role-assigned',action:'分配角色',title:'数据团队查询角色',actor:'林澈',detail:'分配角色与连接资源授权分别维护，不自动扩展资源功能授权。',time:time(-25),targets:['e7']},
+  {id:'demo-event-flow',action:'维护审批流程',title:'订单生产审批',actor:'林澈',detail:'生产资源先操作复核，再运维审核；现有申请保留提交时快照。',time:time(-26),targets:environmentIds(['e1'])},
+  {id:'demo-event-environment',action:'创建环境',title:'独立验证环境 · 演示',actor:'林澈',detail:'新增未分组环境与 Web、SSH、数据库、Redis、日志、知识库和维护资源。',time:time(-48),targets:['demo-sandbox']}
+ ].map(e=>({...e,demoSample:true}));
+ data.favoritesByUser={u1:['e3','demo-sandbox'],u2:['e3'],u3:['e1'],u4:['e2','e4'],u5:['e5'],u6:['e7'],u7:['e7'],u8:['e2']};
+ data.demoDataVersion=DEMO_DATA_VERSION;
+ return data;
+}
+function upgradeDemoExamples(data){
+ if(data.demoDataVersion>=DEMO_DATA_VERSION)return;
+ const examples=buildSeed();
+ // Add each new example once. Preserve edits, decisions, removals, and existing IDs.
+ for(const key of ['envs','connections','resources','dependencies','roles','roleAssignments','dataGrants','featureGrants','requests','events']){
+  data[key]||=[];
+  const existing=new Set(data[key].map(item=>item.id));
+  data[key].push(...examples[key].filter(item=>item.demoSample&&!existing.has(item.id)));
+ }
+ data.favoritesByUser||={};
+ data.users.forEach(u=>{if(!Object.hasOwn(data.favoritesByUser,u.id))data.favoritesByUser[u.id]=examples.favoritesByUser[u.id]||[]});
+ data.demoDataVersion=DEMO_DATA_VERSION;
 }
 // Non-connection targets keep their own IDs; they share the grant/scope machinery.
 function seedResourceObjects(envs){return [
@@ -363,6 +456,7 @@ let db;try{const saved=JSON.parse(localStorage.getItem(STORAGE_KEY)||'null');con
 if(!Array.isArray(db.resources))db.resources=seedResourceObjects(db.envs);
 if(!Array.isArray(db.featureGrants))db.featureGrants=[];
 if(!db.favoritesByUser)db.favoritesByUser={u1:['e3']};
+upgradeDemoExamples(db);
 localStorage.setItem(STORAGE_KEY,JSON.stringify(db));
 const primaryResources=()=>[...db.connections,...db.resources];
 const state={page:'resources',team:'root',orgTab:'members',orgResourceKind:'environment',lens:'environment',credentialTab:'keys',selectedResources:{},collapsedResourceGroups:{},activeResourceGroup:null,search:'',persona:'u1',role:'role-01',reviewTab:'flows',mineTab:'grants',detail:null,workflowDraft:null,roleDraft:null,editingGrant:null,grantKind:'data',accessTab:'data',roleTab:'permissions',returnFocus:null,sidebar:false};
