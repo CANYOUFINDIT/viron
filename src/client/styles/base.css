@@ -1446,7 +1446,7 @@ button { color: inherit; }
 .ssh-terminal-pane .xterm .xterm-viewport { overflow: hidden !important; scrollbar-width: thin; scrollbar-color: #29423c transparent; }
 .ssh-terminal-pane .xterm .xterm-scrollable-element > .horizontal.scrollbar { display: none !important; }
 .ssh-command-suggestions {
-  --ssh-suggestions-glass: rgba(14, 29, 31, .58);
+  --ssh-suggestions-glass: rgba(14, 29, 31, .22);
   --ssh-suggestions-solid: #101f21;
   --ssh-suggestions-divider: rgba(151, 194, 180, .18);
   position: absolute;
@@ -1456,18 +1456,19 @@ button { color: inherit; }
   overflow-y: auto;
   border: 1px solid rgba(151, 194, 180, .32);
   border-radius: 10px;
-  background: linear-gradient(135deg, rgba(255, 255, 255, .1), rgba(255, 255, 255, .02) 45%, transparent 75%), var(--ssh-suggestions-glass);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14), inset 0 -1px 0 rgba(255, 255, 255, .04), 0 8px 24px rgba(0, 0, 0, .24);
+  background: linear-gradient(135deg, rgba(255, 255, 255, .05), rgba(255, 255, 255, .008) 45%, transparent 75%), var(--ssh-suggestions-glass);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14), inset 0 -1px 0 rgba(255, 255, 255, .04), 0 6px 18px rgba(0, 0, 0, .12);
   color: #dce8e4;
-  -webkit-backdrop-filter: blur(4px) saturate(135%);
-  backdrop-filter: blur(4px) saturate(135%);
+  text-shadow: 0 1px 2px rgba(8, 18, 20, .65);
+  -webkit-backdrop-filter: blur(1px) saturate(115%);
+  backdrop-filter: blur(1px) saturate(115%);
 }
-.ssh-command-suggestions header { position: sticky; top: 0; z-index: 1; min-height: 31px; padding: 0 9px; border-bottom: 1px solid var(--ssh-suggestions-divider); background: rgba(104, 176, 153, .1); display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.ssh-command-suggestions header { position: sticky; top: 0; z-index: 1; min-height: 31px; padding: 0 9px; border-bottom: 1px solid var(--ssh-suggestions-divider); background: rgba(104, 176, 153, .06); display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .ssh-command-suggestions header span { color: #67d0ae; font-size: 11px; font-weight: 800; }
 .ssh-command-suggestions header small { color: #9ab0a9; font-family: var(--font-mono); font-size: 10px; }
 .ssh-command-suggestion { min-height: 36px; border-bottom: 1px solid var(--ssh-suggestions-divider); color: #d4e3de; display: grid; grid-template-columns: minmax(0, 1fr) 30px; align-items: stretch; }
 .ssh-command-suggestion:last-child { border-bottom: 0; }
-.ssh-command-suggestion:hover, .ssh-command-suggestion.is-active { background: rgba(81, 188, 153, .2); color: #eff8f5; }
+.ssh-command-suggestion:hover, .ssh-command-suggestion.is-active { background: rgba(81, 188, 153, .12); color: #eff8f5; }
 .ssh-command-suggestion__main { min-width: 0; min-height: 36px; padding: 5px 5px 5px 9px; border: 0; background: transparent; color: inherit; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; cursor: pointer; text-align: left; }
 .ssh-command-suggestion__remove { width: 30px; min-height: 36px; padding: 0; border: 0; background: transparent; color: #9ab0a9; display: grid; place-items: center; cursor: pointer; }
 .ssh-command-suggestion__remove:hover, .ssh-command-suggestion__remove:focus-visible { background: rgba(156, 73, 69, .24); color: #ffa59e; }
@@ -1475,7 +1476,7 @@ button { color: inherit; }
 .ssh-command-suggestions code { min-width: 0; overflow: hidden; color: inherit; font-family: var(--font-mono); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .ssh-command-suggestion__main span { max-width: 110px; overflow: hidden; color: #9ab0a9; font-family: var(--font-mono); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 /* Keep command text readable when glass compositing is unavailable or reduced. */
-@supports not ((backdrop-filter: blur(4px)) or (-webkit-backdrop-filter: blur(4px))) {
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .ssh-command-suggestions { background: var(--ssh-suggestions-solid); }
 }
 @media (prefers-reduced-transparency: reduce) {
@@ -3075,21 +3076,22 @@ button { color: inherit; }
 :root.bright .terminal-cell-empty strong { color: #465a60; }
 :root.bright .ssh-terminal-pane .xterm .xterm-viewport { scrollbar-color: #b6c5c6 transparent; }
 :root.bright .ssh-command-suggestions {
-  --ssh-suggestions-glass: rgba(252, 253, 253, .54);
+  --ssh-suggestions-glass: rgba(252, 253, 253, .18);
   --ssh-suggestions-solid: #fcfdfd;
   --ssh-suggestions-divider: rgba(78, 120, 111, .18);
   border-color: rgba(78, 120, 111, .3);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .85), inset 0 -1px 0 rgba(255, 255, 255, .35), 0 8px 24px rgba(22, 40, 44, .12);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .85), inset 0 -1px 0 rgba(255, 255, 255, .35), 0 6px 18px rgba(22, 40, 44, .06);
   color: #24373c;
+  text-shadow: 0 1px 2px rgba(255, 255, 255, .9);
 }
-:root.bright .ssh-command-suggestions header { background: rgba(210, 233, 225, .26); }
+:root.bright .ssh-command-suggestions header { background: rgba(210, 233, 225, .1); }
 :root.bright .ssh-command-suggestions header span { color: #126f60; }
 :root.bright .ssh-command-suggestions header small,
 :root.bright .ssh-command-suggestion__main span,
 :root.bright .ssh-command-suggestion__remove { color: #526b70; }
 :root.bright .ssh-command-suggestion { color: #24373c; }
 :root.bright .ssh-command-suggestion:hover,
-:root.bright .ssh-command-suggestion.is-active { background: rgba(64, 160, 128, .16); color: #15272c; }
+:root.bright .ssh-command-suggestion.is-active { background: rgba(64, 160, 128, .08); color: #15272c; }
 :root.bright .ssh-command-suggestion__remove:hover,
 :root.bright .ssh-command-suggestion__remove:focus-visible { background: rgba(206, 115, 105, .18); color: #a4312c; }
 :root.bright .zmodem-transfer { border-color: #b8cfca; background: rgba(252, 253, 253, .98); box-shadow: 0 14px 36px rgba(22, 40, 44, .18); color: #24373c; }
