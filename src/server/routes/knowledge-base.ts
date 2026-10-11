@@ -683,7 +683,7 @@ function sendDownload(reply: FastifyReply, contentType: string, filename: string
   return reply.send(payload);
 }
 
-async function requireKnowledgeManager(app: FastifyInstance, request: FastifyRequest, reply: FastifyReply, node: KnowledgeNodeRow) {
+async function requireKnowledgeManager(request: FastifyRequest, reply: FastifyReply, node: KnowledgeNodeRow) {
   if (!nodeBelongsToWorkspace(node, request.admin!)) {
     void reply.code(404).send({ error: "NOT_FOUND", message: "知识库节点不存在" });
     return null;
@@ -992,7 +992,7 @@ export async function registerKnowledgeBaseRoutes(app: FastifyInstance): Promise
 
   app.get<{ Params: { id: string } }>("/api/v1/knowledge-nodes/:id/grants", async (request, reply) => {
     const node = await nodeById(app, request.params.id);
-    if (!node || !await requireKnowledgeManager(app, request, reply, node)) return;
+    if (!node || !await requireKnowledgeManager(request, reply, node)) return;
     const items = await app.db.prepare(`
       SELECT g.*, COALESCE(u.username, p.name) AS grantee_name
       FROM knowledge_node_grants g
@@ -1006,7 +1006,7 @@ export async function registerKnowledgeBaseRoutes(app: FastifyInstance): Promise
   app.post<{ Params: { id: string } }>("/api/v1/knowledge-nodes/:id/grants", async (request, reply) => {
     const node = await nodeById(app, request.params.id);
     if (!node) return reply.code(404).send({ error: "NOT_FOUND", message: "知识库节点不存在" });
-    const environment = await requireKnowledgeManager(app, request, reply, node);
+    const environment = await requireKnowledgeManager(request, reply, node);
     if (!environment) return;
     const body = parseBody(grantSchema, request.body, reply);
     if (!body) return;
@@ -1038,7 +1038,7 @@ export async function registerKnowledgeBaseRoutes(app: FastifyInstance): Promise
     `).get(request.params.id) as (Record<string, unknown> & { node_id: string; type: KnowledgeNodeType; name: string }) | undefined;
     if (!grant) return reply.code(404).send({ error: "NOT_FOUND", message: "授权不存在" });
     const node = await nodeById(app, grant.node_id);
-    if (!node || !await requireKnowledgeManager(app, request, reply, node)) return;
+    if (!node || !await requireKnowledgeManager(request, reply, node)) return;
     await app.db.transaction(async () => {
       const before = await readGrantSnapshot(app.db, String(grant.organization_id), request.params.id);
       await app.db.prepare("DELETE FROM knowledge_node_grants WHERE id = ?").run(request.params.id);

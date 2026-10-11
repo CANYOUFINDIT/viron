@@ -2,7 +2,6 @@ import { translate as tr } from "./i18n";
 import { shallowRef } from "vue";
 import {
   defaultShortcutBindings,
-  effectiveShortcutBindings,
   formatShortcutBinding,
   shortcutActionForInput,
   type ShortcutActionId,
@@ -80,8 +79,4 @@ export function onAppShortcut(handler: (action: ShortcutActionId) => void): () =
 
 export function onShortcutCaptureInput(handler: (input: ShortcutInput) => void): () => void {
   return window.vironDesktop?.onShortcutCaptureInput(handler) ?? (() => undefined);
-}
-
-export function effectiveLocalShortcutBindings(overrides: ShortcutOverrides): ShortcutBindings {
-  return effectiveShortcutBindings(overrides, platform);
 }

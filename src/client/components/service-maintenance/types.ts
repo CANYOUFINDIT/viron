@@ -1,4 +1,3 @@
-import type { Component } from "vue";
 import type { CandidateStatus, MonitorCandidate, Provider } from "../../service-candidate-tree";
 import type { MonitorAlertSettings } from "../../../shared/monitor-alerts";
 import type { MonitoringProbeState } from "../../../shared/monitoring";

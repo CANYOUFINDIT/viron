@@ -288,7 +288,7 @@ async function loadData() {
   }
 }
 
-function logDragTitle(log: EnvironmentLog) {
+function logDragTitle() {
   const action = props.executionEnabled ? tr("单击选择，双击开始查看") : tr("单击选择；本机日志执行尚未开放");
   return canSortLogs.value ? `${action} ${tr("拖动可调整顺序")}` : action;
 }
@@ -807,7 +807,7 @@ onBeforeUnmount(() => {
       <div v-if="logs.length" class="log-catalog__list">
         <el-dropdown v-for="log in logs" :key="log.id" class="workbench-connection-context-target" trigger="contextmenu" placement="bottom-start" popper-class="workbench-connection-menu-popper" @command="handleLogConnectionAction($event, log)">
           <article class="log-config-item" :class="{ 'is-active': selectedLogId === log.id, 'is-streaming': logStreamActive(log.id), 'is-dragging': draggingLogId === log.id, 'is-drop-before': logDropTarget?.id === log.id && !logDropTarget.after, 'is-drop-after': logDropTarget?.id === log.id && logDropTarget.after }" :draggable="canSortLogs" @dragstart="startLogDrag(log, $event)" @dragover="dragLogOver(log, $event)" @drop="dropLog(log, $event)" @dragend="endLogDrag">
-            <button class="log-config-item__main" type="button" :title="logDragTitle(log)" @click="selectLog(log.id)" @dblclick="startLog(log.id)" @keydown.enter.prevent="startLog(log.id)">
+            <button class="log-config-item__main" type="button" :title="logDragTitle()" @click="selectLog(log.id)" @dblclick="startLog(log.id)" @keydown.enter.prevent="startLog(log.id)">
               <span class="log-config-item__icon" :title="logStreamActive(log.id) ? $t('正在后台跟踪') : undefined"><FileText :size="17" /><i v-if="logStreamActive(log.id)"></i></span>
               <span class="log-config-item__copy">
                 <strong>{{ log.name }}</strong>

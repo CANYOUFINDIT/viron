@@ -4,14 +4,11 @@ import { computed, reactive, ref } from "vue";
 import { api } from "../../api";
 import { defaultMonitorAlertSettings, defaultMonitoredDiskTypes, MONITOR_DISK_TYPE_OPTIONS, monitorDiskKey, visibleMonitorDisks, type MonitorAlertSettings, } from "../../../shared/monitor-alerts";
 
-import type { MaintenancePanelProps, MaintenancePanelEmit } from "./types";
+import type { MaintenancePanelProps } from "./types";
 import { deferMaintenancePart, type MaintenanceContext } from "./context";
 
-export function useAlertSettings(ctx: MaintenanceContext, props: Readonly<MaintenancePanelProps>, emit: MaintenancePanelEmit) {
+export function useAlertSettings(ctx: MaintenanceContext, props: Readonly<MaintenancePanelProps>) {
   const $payload = deferMaintenancePart(ctx, "payload");
-  const $directory = deferMaintenancePart(ctx, "directory");
-  const $monitorInstall = deferMaintenancePart(ctx, "monitorInstall");
-  const $scriptActions = deferMaintenancePart(ctx, "scriptActions");
   const alertSettingsDialog = ref(false);
 
   const savingAlertSettings = ref(false);

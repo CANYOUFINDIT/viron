@@ -9,13 +9,8 @@ import { mainWindow } from "../window-host.js";
 import { registerNativeOverlayWindow } from "./native-window-stack.js";
 
 export let historyNavigationOverlay: BrowserWindow | null = null;
-let historyNavigationOverlayHideTimer: NodeJS.Timeout | null = null;
 
 export function hideDesktopHistoryNavigationOverlay(): void {
-  if (historyNavigationOverlayHideTimer) {
-    clearTimeout(historyNavigationOverlayHideTimer);
-    historyNavigationOverlayHideTimer = null;
-  }
   historyNavigationOverlay?.hide();
 }
 
@@ -23,11 +18,6 @@ export function closeDesktopHistoryNavigationOverlay(): void {
   hideDesktopHistoryNavigationOverlay();
   historyNavigationOverlay?.close();
   historyNavigationOverlay = null;
-}
-
-export function scheduleDesktopHistoryNavigationOverlayHide(callback: () => void, delayMs: number): void {
-  if (historyNavigationOverlayHideTimer) clearTimeout(historyNavigationOverlayHideTimer);
-  historyNavigationOverlayHideTimer = setTimeout(callback, delayMs);
 }
 
 export async function ensureHistoryNavigationOverlay(): Promise<BrowserWindow | null> {

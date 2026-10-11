@@ -6,12 +6,8 @@ import {
   CheckCircle2,
   CircleAlert,
   Flame,
-  Layers,
-  Sparkles,
-  TrendingUp,
 } from "@lucide/vue";
 import { computed } from "vue";
-import { translate as tr } from "../../i18n";
 import MonitorTimeSeriesChart from "../MonitorTimeSeriesChart.vue";
 
 export interface MonitoringServiceCard {

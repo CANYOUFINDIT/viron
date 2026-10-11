@@ -99,7 +99,7 @@ function sftpEntryKind(attributes: Stats): "file" | "directory" | "symlink" {
 
 async function removeSftpEntry(sftp: SFTPWrapper, path: string, attributes: Stats): Promise<void> {
   if (!attributes.isDirectory() || attributes.isSymbolicLink()) {
-    await sftpAction(sftp, (callback) => sftp.unlink(path, callback));
+    await sftpAction((callback) => sftp.unlink(path, callback));
     return;
   }
   for (const entry of await readDirectory(sftp, path)) {
@@ -107,7 +107,7 @@ async function removeSftpEntry(sftp: SFTPWrapper, path: string, attributes: Stat
     const childPath = posix.join(path, entry.filename);
     await removeSftpEntry(sftp, childPath, await lstat(sftp, childPath));
   }
-  await sftpAction(sftp, (callback) => sftp.rmdir(path, callback));
+  await sftpAction((callback) => sftp.rmdir(path, callback));
 }
 
 function stat(sftp: SFTPWrapper, path: string): Promise<Stats> {
@@ -119,7 +119,7 @@ function stat(sftp: SFTPWrapper, path: string): Promise<Stats> {
   });
 }
 
-function sftpAction(sftp: SFTPWrapper, action: (callback: (error?: Error | null) => void) => void): Promise<void> {
+function sftpAction(action: (callback: (error?: Error | null) => void) => void): Promise<void> {
   return new Promise((resolve, reject) => {
     action((error) => {
       if (error) reject(error);
@@ -300,7 +300,7 @@ export async function registerSftpRoutes(app: FastifyInstance): Promise<void> {
     if (!body) return;
     const path = remotePath(body.path);
     try {
-      await withSftp(app, request.params.id, (sftp) => sftpAction(sftp, (callback) => sftp.mkdir(path, callback)));
+      await withSftp(app, request.params.id, (sftp) => sftpAction((callback) => sftp.mkdir(path, callback)));
       await writeAudit(app.db, { action: "sftp.mkdir", resourceType: "ssh_connection", resourceId: request.params.id, summary: `创建远程目录 ${path}`, details: { path }, request });
       return reply.code(201).send({ path });
     } catch (error) {
@@ -314,7 +314,7 @@ export async function registerSftpRoutes(app: FastifyInstance): Promise<void> {
     const path = remotePath(body.path);
     const newPath = remotePath(body.newPath);
     try {
-      await withSftp(app, request.params.id, (sftp) => sftpAction(sftp, (callback) => sftp.rename(path, newPath, callback)));
+      await withSftp(app, request.params.id, (sftp) => sftpAction((callback) => sftp.rename(path, newPath, callback)));
       await writeAudit(app.db, { action: "sftp.rename", resourceType: "ssh_connection", resourceId: request.params.id, summary: `重命名远程文件 ${path}`, details: { path, newPath }, request });
       return { path: newPath };
     } catch (error) {
@@ -327,7 +327,7 @@ export async function registerSftpRoutes(app: FastifyInstance): Promise<void> {
     if (!body) return;
     const path = remotePath(body.path);
     try {
-      await withSftp(app, request.params.id, (sftp) => sftpAction(sftp, (callback) => sftp.chmod(path, body.mode, callback)));
+      await withSftp(app, request.params.id, (sftp) => sftpAction((callback) => sftp.chmod(path, body.mode, callback)));
       await writeAudit(app.db, { action: "sftp.chmod", resourceType: "ssh_connection", resourceId: request.params.id, summary: `修改远程权限 ${path}`, details: { path, mode: body.mode }, request });
       return { ok: true };
     } catch (error) {
@@ -344,10 +344,10 @@ export async function registerSftpRoutes(app: FastifyInstance): Promise<void> {
       const itemType = await withSftp(app, request.params.id, async (sftp) => {
         const attributes = await lstat(sftp, path);
         if (attributes.isDirectory()) {
-          await sftpAction(sftp, (callback) => sftp.rmdir(path, callback));
+          await sftpAction((callback) => sftp.rmdir(path, callback));
           return "directory";
         }
-        await sftpAction(sftp, (callback) => sftp.unlink(path, callback));
+        await sftpAction((callback) => sftp.unlink(path, callback));
         return "file";
       });
       await writeAudit(app.db, { action: "sftp.deleted", resourceType: "ssh_connection", resourceId: request.params.id, summary: `删除远程${itemType === "directory" ? "目录" : "文件"} ${path}`, details: { path, itemType }, request });
@@ -411,7 +411,7 @@ export async function registerSftpRoutes(app: FastifyInstance): Promise<void> {
           const targetPath = posix.join(targetDirectory, entry.relativePath);
           const existing = await existingStats(sftp, targetPath);
           if (!existing) {
-            await sftpAction(sftp, (callback) => sftp.mkdir(targetPath, callback));
+            await sftpAction((callback) => sftp.mkdir(targetPath, callback));
             continue;
           }
           if (existing.isDirectory() && !existing.isSymbolicLink()) continue;
@@ -420,7 +420,7 @@ export async function registerSftpRoutes(app: FastifyInstance): Promise<void> {
             continue;
           }
           await removeSftpEntry(sftp, targetPath, existing);
-          await sftpAction(sftp, (callback) => sftp.mkdir(targetPath, callback));
+          await sftpAction((callback) => sftp.mkdir(targetPath, callback));
         }
         return skipped;
       });

@@ -19,7 +19,7 @@ function definitions(): ColumnDefinition[] {
   return props.columns.map((column) => ({
     title: column.name,
     field: column.name,
-    ...tableGridColumnSize(column.name),
+    ...tableGridColumnSize(),
     headerSort: true,
     tooltip: true,
     formatter: (cell) => {

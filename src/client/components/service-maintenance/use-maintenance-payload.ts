@@ -1,24 +1,19 @@
 import { localizeMessage, translate as tr } from "../../i18n";
-import { Activity, ArrowDown, ArrowUp, BellRing, Box, Check, ChevronRight, CircleAlert, Clock3, Database, Download, EllipsisVertical, FileText, GripVertical, Hammer, Package, Pencil, Play, Plus, Power, RefreshCw, Rocket, RotateCw, ScanSearch, Server, Settings2, ShieldCheck, Square, Terminal, Trash2, Wrench, Zap, } from "@lucide/vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, reactive, ref, watch, type Component } from "vue";
-import { api, ApiError } from "../../api";
+import { computed, reactive, ref } from "vue";
+import { api } from "../../api";
 import { createLatestDataLoader } from "../../latest-data-loader";
-import { candidateKey, providerLabel, type CandidateStatus, type MonitorCandidate, type Provider } from "../../service-candidate-tree";
+import { candidateKey, providerLabel, type MonitorCandidate, type Provider } from "../../service-candidate-tree";
 import { normalizeMaintenanceScriptActions } from "../../service-maintenance-payload";
-import { reorderIds, sameOrder } from "../../../shared/tab-order";
 import { monitoringProbeState } from "../../../shared/monitoring";
-import { defaultMonitorAlertSettings, defaultMonitoredDiskTypes, visibleMonitorDisks, type MonitorAlertSettings, } from "../../../shared/monitor-alerts";
+import { defaultMonitorAlertSettings, defaultMonitoredDiskTypes, visibleMonitorDisks } from "../../../shared/monitor-alerts";
 
-import type { MaintenanceWorkspace, HostWorkspaceTab, HostFocusMetric, MaintenanceDirectory, DirectoryMoveDirection, ScriptActionIcon, DirectoryDropTarget, ScriptAction, ScriptActionExecutionResult, ScriptActionExecution, HostSnapshot, KubernetesConfigDiscovery, MonitorHost, MonitorInstallPreflight, MonitorInstallTaskStatus, MonitorInstallTaskPhase, MonitorInstallTask, Deployment, ServiceItem, EnvironmentLog, MaintenancePayload, MaintenanceDeploymentResponse, MaintenanceServiceResponse, MaintenancePayloadResponse, MaintenanceCounts, MaintenancePanelProps, MaintenancePanelEmit } from "./types";
+import type { MaintenanceWorkspace, HostWorkspaceTab, HostFocusMetric, KubernetesConfigDiscovery, MonitorHost, Deployment, ServiceItem, MaintenancePayload, MaintenancePayloadResponse, MaintenancePanelProps, MaintenancePanelEmit } from "./types";
 import { deferMaintenancePart, type MaintenanceContext } from "./context";
 import { useMaintenanceActions } from "./use-maintenance-actions";
 
 export function useMaintenancePayload(ctx: MaintenanceContext, props: Readonly<MaintenancePanelProps>, emit: MaintenancePanelEmit) {
   const $directory = deferMaintenancePart(ctx, "directory");
-  const $monitorInstall = deferMaintenancePart(ctx, "monitorInstall");
-  const $scriptActions = deferMaintenancePart(ctx, "scriptActions");
-  const $alertSettings = deferMaintenancePart(ctx, "alertSettings");
   const loading = ref(true);
 
   const saving = ref(false);

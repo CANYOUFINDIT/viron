@@ -16,7 +16,7 @@ import {
 describe("database table grid column sizing", () => {
   it("caps default column width so long cell text does not stretch the grid", () => {
     expect(tableGridColumnWidth("accelerator_ids")).toBeLessThanOrEqual(TABLE_GRID_MAX_INITIAL_COLUMN_WIDTH);
-    expect(tableGridColumnSize("accelerator_ids")).toEqual({
+    expect(tableGridColumnSize()).toEqual({
       minWidth: 72,
       maxInitialWidth: TABLE_GRID_MAX_INITIAL_COLUMN_WIDTH,
       resizable: true,
@@ -27,13 +27,13 @@ describe("database table grid column sizing", () => {
     expect(TABLE_GRID_LAYOUT).toBe("fitData");
     expect(tableGridColumnWidth("id")).toBeLessThanOrEqual(100);
     expect(tableGridColumnWidth("sync_error_code")).toBeLessThan(200);
-    expect(tableGridColumnSize("sync_total_versions").minWidth).toBe(72);
-    expect(tableGridColumnSize("sync_total_versions")).not.toHaveProperty("width");
+    expect(tableGridColumnSize().minWidth).toBe(72);
+    expect(tableGridColumnSize()).not.toHaveProperty("width");
   });
 
   it("preserves a user-resized width above the default cap", () => {
     expect(tableGridColumnWidth("accelerator_ids", 640)).toBe(640);
-    expect(tableGridColumnSize("accelerator_ids", 640)).toEqual({
+    expect(tableGridColumnSize(640)).toEqual({
       minWidth: 72,
       width: 640,
       resizable: true,

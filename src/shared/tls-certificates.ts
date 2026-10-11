@@ -304,15 +304,6 @@ export function hostnameMatchesCertificate(hostname: string, commonName: string,
   return names.some((name) => name === host || (name.startsWith("*.") && host.endsWith(name.slice(1)) && host.split(".").length === name.split(".").length));
 }
 
-export function tlsEndpointAttention(endpoint: Pick<TlsEndpoint, "sshConnectionId" | "probeStatus" | "daysRemaining" | "hostnameMatch">, warnDays = DEFAULT_TLS_WARN_DAYS): "expired" | "expiring" | "mismatch" | "unbound" | "failed" | null {
-  if (!endpoint.sshConnectionId) return "unbound";
-  if (endpoint.daysRemaining != null && endpoint.daysRemaining < 0) return "expired";
-  if (endpoint.daysRemaining != null && endpoint.daysRemaining <= warnDays) return "expiring";
-  if (endpoint.hostnameMatch === false) return "mismatch";
-  if (endpoint.probeStatus !== "ok" && endpoint.probeStatus !== "never" && endpoint.probeStatus !== "skipped") return "failed";
-  return null;
-}
-
 export function tlsEndpointIsStale(
   endpoint: Pick<TlsEndpoint, "observeEnabled" | "sshConnectionId" | "probeStatus" | "probedAt" | "lastSuccessAt" | "daysRemaining" | "certificateId">,
   warnDays = DEFAULT_TLS_WARN_DAYS,

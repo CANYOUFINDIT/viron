@@ -92,19 +92,11 @@ export function layoutDomOverlayView(name: string, bounds: Rectangle, order: num
   if (focus) entry.view.webContents.focus();
 }
 
-export function layoutSidebarOverlay(name: string, bounds: Rectangle): void {
-  layoutDomOverlayView(name, bounds, overlays.get(name)?.order ?? 0);
-}
-
 export function hideDomOverlayView(name: string): void {
   const entry = overlays.get(name);
   if (!entry) return;
   stopTracking(entry);
   if (!entry.view.webContents.isDestroyed()) entry.view.setVisible(false);
-}
-
-export function hideSidebarOverlay(name: string): void {
-  hideDomOverlayView(name);
 }
 
 export function closeDomOverlayView(name: string): void {
@@ -114,10 +106,6 @@ export function closeDomOverlayView(name: string): void {
   overlays.delete(name);
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.contentView.removeChildView(entry.view);
   if (!entry.view.webContents.isDestroyed()) entry.view.webContents.close();
-}
-
-export function closeSidebarOverlay(name: string): void {
-  closeDomOverlayView(name);
 }
 
 export function domOverlayView(name: string): WebContentsView | null {
@@ -159,8 +147,4 @@ export function raiseSidebarOverlays(): void {
 
 export function closeAllDomOverlayViews(): void {
   for (const name of [...overlays.keys()]) closeDomOverlayView(name);
-}
-
-export function closeAllSidebarOverlays(): void {
-  for (const name of [...overlays.keys()]) if (isSidebarDomOverlay(name)) closeDomOverlayView(name);
 }

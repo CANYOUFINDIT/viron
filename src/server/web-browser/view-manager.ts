@@ -228,7 +228,7 @@ export class WebAccountViewManager {
     const opened = await this.getOrCreate(user, credentialId, {
       width: clamp(width, MIN_WIDTH, MAX_WIDTH),
       height: clamp(height, MIN_HEIGHT, MAX_HEIGHT),
-    }, executionScope, initialPage, preload);
+    }, executionScope, initialPage);
     const view = opened.view;
     if (initialPage === "blank" && !opened.created) { await this.requireBusinessPage(view); await this.createBlankPage(view); }
     view.lastActivityAt = Date.now();
@@ -511,7 +511,6 @@ export class WebAccountViewManager {
     viewport: { width: number; height: number },
     executionScope: string | null,
     initialPage: InitialPageMode,
-    preload = false,
   ): Promise<{ view: ManagedWebView; created: boolean }> {
     const ownerId = user.id;
     const key = this.key(ownerId, credentialId, executionScope);
@@ -519,7 +518,7 @@ export class WebAccountViewManager {
     if (pending) {
       if (pending.cancelled) {
         await pending.promise.catch(() => undefined);
-        return this.getOrCreate(user, credentialId, viewport, executionScope, initialPage, preload);
+        return this.getOrCreate(user, credentialId, viewport, executionScope, initialPage);
       }
       const view = await pending.promise;
       await this.resize(view, viewport.width, viewport.height);
@@ -536,7 +535,7 @@ export class WebAccountViewManager {
       reason: "",
       runtimeId: "",
     };
-    const launch = this.launch(user, credentialId, viewport, executionScope, initialPage, preload, starting)
+    const launch = this.launch(user, credentialId, viewport, executionScope, initialPage, starting)
       .finally(() => {
         if (this.starting.get(key) === starting) this.starting.delete(key);
       });
@@ -551,7 +550,6 @@ export class WebAccountViewManager {
     viewport: { width: number; height: number },
     executionScope: string | null,
     initialPage: InitialPageMode,
-    preload: boolean,
     starting: StartingWebView,
   ): Promise<ManagedWebView> {
     const ownerId = user.id;

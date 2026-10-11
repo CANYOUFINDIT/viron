@@ -4,9 +4,6 @@ import type { ClientChannel } from "ssh2";
 import type { WebSocket } from "ws";
 import {
   buildSshLogTailCommand,
-  MAX_ENVIRONMENT_LOG_FILES,
-  MAX_ENVIRONMENT_LOG_LINES,
-  MIN_ENVIRONMENT_LOG_LINES,
   parseStoredLogFilePaths,
   quotePosixShellArg,
 } from "../../shared/environment-log.js";

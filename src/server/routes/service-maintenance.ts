@@ -396,7 +396,6 @@ function parseMetrics(value: unknown): Record<string, unknown> {
 
 async function executeDeploymentAction(
   app: FastifyInstance,
-  request: FastifyRequest,
   deployment: Record<string, unknown>,
   action: "start" | "stop" | "restart",
 ): Promise<import("../../shared/service-operations.js").ServiceOperationTargetResult> {
@@ -1532,7 +1531,7 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
         void runServiceOperation(app, started.operation.id, async (onProgress, helpers) => {
           let current = 0;
           const assigned = await mapWithConcurrency(deployments, SERVICE_OPERATION_CONCURRENCY, async (deployment) => {
-            const result = await executeDeploymentAction(app, request, deployment, body.action);
+            const result = await executeDeploymentAction(app, deployment, body.action);
             current += 1;
             await onProgress(current, deployments.length);
             return result;
@@ -1616,7 +1615,7 @@ export async function registerServiceMaintenanceRoutes(app: FastifyInstance): Pr
         });
         void runServiceOperation(app, started.operation.id, async (onProgress) => {
           await onProgress(0, 1);
-          const result = await executeDeploymentAction(app, request, deployment, body.action);
+          const result = await executeDeploymentAction(app, deployment, body.action);
           await onProgress(1, 1);
           try {
             await writeAudit(app.db, {

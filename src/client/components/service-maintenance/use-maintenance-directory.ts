@@ -1,22 +1,14 @@
-import { localizeMessage, translate as tr } from "../../i18n";
-import { Activity, ArrowDown, ArrowUp, BellRing, Box, Check, ChevronRight, CircleAlert, Clock3, Database, Download, EllipsisVertical, FileText, GripVertical, Hammer, Package, Pencil, Play, Plus, Power, RefreshCw, Rocket, RotateCw, ScanSearch, Server, Settings2, ShieldCheck, Square, Terminal, Trash2, Wrench, Zap, } from "@lucide/vue";
-import { ElMessage, ElMessageBox } from "element-plus";
-import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, reactive, ref, watch, type Component } from "vue";
-import { api, ApiError } from "../../api";
-import { createLatestDataLoader } from "../../latest-data-loader";
-import { candidateKey, providerLabel, type CandidateStatus, type MonitorCandidate, type Provider } from "../../service-candidate-tree";
-import { normalizeMaintenanceScriptActions } from "../../service-maintenance-payload";
+import { translate as tr } from "../../i18n";
+import { ElMessage } from "element-plus";
+import { computed, ref } from "vue";
+import { api } from "../../api";
 import { reorderIds, sameOrder } from "../../../shared/tab-order";
-import { defaultMonitorAlertSettings, monitorDiskKey, type MonitorAlertSettings, } from "../../../shared/monitor-alerts";
 
-import type { MaintenanceWorkspace, HostWorkspaceTab, MaintenanceDirectory, DirectoryMoveDirection, ScriptActionIcon, DirectoryDropTarget, ScriptAction, ScriptActionExecutionResult, ScriptActionExecution, HostSnapshot, KubernetesConfigDiscovery, MonitorHost, MonitorInstallPreflight, MonitorInstallTaskStatus, MonitorInstallTaskPhase, MonitorInstallTask, Deployment, ServiceItem, EnvironmentLog, MaintenancePayload, MaintenanceDeploymentResponse, MaintenanceServiceResponse, MaintenancePayloadResponse, MaintenanceCounts, MaintenancePanelProps, MaintenancePanelEmit } from "./types";
+import type { MaintenanceDirectory, DirectoryMoveDirection, DirectoryDropTarget, MaintenancePanelProps } from "./types";
 import { deferMaintenancePart, type MaintenanceContext } from "./context";
 
-export function useMaintenanceDirectory(ctx: MaintenanceContext, props: Readonly<MaintenancePanelProps>, emit: MaintenancePanelEmit) {
+export function useMaintenanceDirectory(ctx: MaintenanceContext, props: Readonly<MaintenancePanelProps>) {
   const $payload = deferMaintenancePart(ctx, "payload");
-  const $monitorInstall = deferMaintenancePart(ctx, "monitorInstall");
-  const $scriptActions = deferMaintenancePart(ctx, "scriptActions");
-  const $alertSettings = deferMaintenancePart(ctx, "alertSettings");
   const draggingDirectory = ref<{
       kind: MaintenanceDirectory;
       id: string;
@@ -185,4 +177,3 @@ export function useMaintenanceDirectory(ctx: MaintenanceContext, props: Readonly
     handleDirectoryMove,
   };
 }
-

@@ -8,12 +8,10 @@ import {
   desktopWebLastUrlKey,
   desktopWebPartitionName,
   restorableDesktopWebUrl,
-  supportedDesktopWebUrl,
 } from "./web-page-policy.js";
 import { defaultWebLoginConfig } from "../shared/protected-web-login.js";
 import { readState, writeState } from "./app-state.js";
 import type { DesktopWebCredential } from "./device-identity.js";
-import { localWebCredential } from "./execution-router.js";
 import { translate as tr } from "./i18n.js";
 import { mainWindow } from "./window-host.js";
 import {
@@ -219,7 +217,6 @@ export function webViewState(view: ManagedDesktopWebView): DesktopWebViewState {
   };
 }
 
-
 export function touchDesktopWebView(view: ManagedDesktopWebView): void {
   view.lastActivityAt = Date.now();
 }
@@ -254,7 +251,6 @@ export function activeDesktopWebPage(view: ManagedDesktopWebView): ManagedDeskto
   return page;
 }
 
-
 export function desktopWebPreferences(partition: Session): Electron.WebPreferences {
   return {
     session: partition,
@@ -277,7 +273,6 @@ export function inspectDesktopWebElement(webContents: Electron.WebContents, x: n
   webContents.inspectElement(x, y);
 }
 
-
 export async function clearDesktopWebSession(partition: Session): Promise<void> {
   await partition.closeAllConnections();
   // Reset websites while keeping extension preferences and first-install markers.
@@ -286,12 +281,6 @@ export async function clearDesktopWebSession(partition: Session): Promise<void> 
     ...installedWebExtensions().map((extension) => extension.extensionId),
   ])].map((id) => `chrome-extension://${id}`);
   await partition.clearData({ excludeOrigins });
-}
-
-export async function latestDesktopWebCredential(credentialId: string): Promise<DesktopWebCredential> {
-  const { credential } = await localWebCredential(credentialId);
-  if (!supportedDesktopWebUrl(credential.entryUrl)) throw new Error(tr("Web 入口地址只支持 HTTP 或 HTTPS"));
-  return credential;
 }
 
 export function applyDesktopWebCredential(view: ManagedDesktopWebView, credential: DesktopWebCredential): void {

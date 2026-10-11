@@ -7,7 +7,7 @@ export function monitorStorageSchema(dialect: "sqlite" | "mysql"): string {
   const text = mysql ? "LONGTEXT" : "TEXT";
   const name = (length: number) => mysql ? `VARCHAR(${length})` : "TEXT";
   const end = mysql ? " ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci" : "";
-  const index = (table: string, key: string, fields: string) => mysql ? `KEY ${key} (${fields})` : "";
+  const index = (key: string, fields: string) => mysql ? `KEY ${key} (${fields})` : "";
   const numeric = monitorMetricKeys.flatMap(key => monitorStatisticSuffixes.map(suffix => `${monitorMetricColumn(key)}_${suffix} ${mysql ? "DOUBLE" : "REAL"} NULL`)).join(",\n");
   const tables = `
 CREATE TABLE IF NOT EXISTS monitor_metric_streams (
@@ -45,9 +45,9 @@ CREATE TABLE IF NOT EXISTS monitor_metric_points (
   state_detail ${name(255)} NOT NULL DEFAULT '',
   ${numeric},
   UNIQUE(series_id, tier_seconds, at_ms, sequence_end),
-  ${mysql ? `${index("monitor_metric_points", "monitor_metric_points_gc_idx", "tier_seconds, at_ms, id")},
-  ${index("monitor_metric_points", "monitor_metric_points_pending_idx", "tier_seconds, rollup_done, id")},
-  ${index("monitor_metric_points", "monitor_metric_points_metadata_idx", "metadata_id")},` : ""}
+  ${mysql ? `${index("monitor_metric_points_gc_idx", "tier_seconds, at_ms, id")},
+  ${index("monitor_metric_points_pending_idx", "tier_seconds, rollup_done, id")},
+  ${index("monitor_metric_points_metadata_idx", "metadata_id")},` : ""}
   FOREIGN KEY(series_id) REFERENCES monitor_metric_series(id) ON DELETE CASCADE,
   FOREIGN KEY(metadata_id) REFERENCES monitor_metric_metadata(id)
 )${end};

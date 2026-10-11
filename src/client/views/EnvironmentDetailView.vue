@@ -5,7 +5,6 @@ import {
   BookOpen,
   Copy,
   Database,
-  ExternalLink,
   Eye,
   EyeOff,
   Globe2,
@@ -707,16 +706,6 @@ function scrollCredentialTabs(event: WheelEvent) {
   event.preventDefault();
   const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? list.clientWidth : 1;
   list.scrollLeft += event.deltaY * unit;
-}
-
-function setSplitMode(value: boolean) {
-  splitMode.value = value;
-  if (value) {
-    activeWebPane.value = 1;
-    syncWebPanes();
-  } else {
-    activeWebPane.value = 0;
-  }
 }
 
 function externalWebHref(entryId: string, credentialId: string) {

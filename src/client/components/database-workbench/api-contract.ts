@@ -6,9 +6,6 @@ import type { ShortcutActionId } from "../../../shared/keyboard-shortcuts";
 import type { AgentDatabaseReadResult, AgentWorkbenchExecutionRequest } from "../../../shared/agent";
 import type { SqlCompletionCatalog } from "../../sql-completion";
 import type { BrowserCategory, ConnectionGroupItem, DatabaseConnection, DatabaseObject, DatabaseSearchResult, DatabaseTreeTask, FavoriteItem, HistoryItem, NavigatorCategory, NavigatorCategoryKey, NavigatorObjectClipboard, ObjectCategory, ObjectCategoryDefinition, ObjectFavoriteItem, ObjectGroupItem, OrganizationGrant, OrganizationShareDetail, QueryJob, QueryResultSet, QueryTab, SavedQueryItem, SchemaItem, TableMaintenanceOperation, UtilityCategory, WorkbenchNavigatorTarget } from "./types";
-import type { DatabaseLayoutApi } from "./use-database-layout";
-import type { formatBytes, sqlIdentifier, textSize } from "./format";
-import type { shortcutLabel } from "../../keyboard-shortcuts";
 
 export interface DatabaseWorkbenchApi {
   "loading": Ref<boolean, boolean>;

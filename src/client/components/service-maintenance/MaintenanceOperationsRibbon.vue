@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { FileText, Plus, RefreshCw, Settings2, Zap } from "@lucide/vue";
+import { FileText, Plus, RefreshCw, Zap } from "@lucide/vue";
 
 const { m } = defineProps<{ m: Record<string, any> }>();
 const emit = defineEmits<{ "open-log": [id: string] }>();

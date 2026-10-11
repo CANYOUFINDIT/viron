@@ -107,13 +107,3 @@ export function capabilityDisabledReason(provider: string, action: string): stri
   if (provider === "kubernetes") return "当前 Kubernetes 目标不是可重启的结构化控制器";
   return "该节点不支持此操作";
 }
-
-export function hashServiceOperationRequest(body: unknown): string {
-  const stable = (value: unknown): string => {
-    if (value === null || typeof value !== "object") return JSON.stringify(value);
-    if (Array.isArray(value)) return `[${value.map((item) => stable(item)).join(",")}]`;
-    const keys = Object.keys(value as object).sort();
-    return `{${keys.map((key) => `${JSON.stringify(key)}:${stable((value as Record<string, unknown>)[key])}`).join(",")}}`;
-  };
-  return stable(body ?? {});
-}

@@ -1,6 +1,6 @@
 <script setup lang="ts">import { translate as tr } from "../i18n";
 
-import { Eye, FileCode2, Focus, Image, Layers3, LayoutGrid, Link2, MessageSquareText, Plus, RefreshCw, Save, Search, Shapes, Table2, Tag, Trash2, X } from "@lucide/vue";
+import { Eye, FileCode2, Focus, Image, Layers3, LayoutGrid, Link2, MessageSquareText, Plus, RefreshCw, Save, Search, Shapes, Table2, Tag, Trash2 } from "@lucide/vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { api } from "../api";

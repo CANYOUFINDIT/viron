@@ -21,7 +21,7 @@ function setup() {
   const loadHistory = vi.fn().mockRejectedValue(new Error("History unavailable"));
   ctx.artifacts = { loadHistory } as typeof ctx.artifacts;
   const scope = effectScope();
-  const queries = scope.run(() => useDatabaseQueryTabs(ctx, { active: true }, { fullPath: "/database" }, () => {}))!;
+  const queries = scope.run(() => useDatabaseQueryTabs(ctx, { active: true }, () => {}))!;
   ctx.queryTabs = queries;
   return { scope, queries, loadHistory, tab: queries.newTab("SELECT 1", "fixture") };
 }

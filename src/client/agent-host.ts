@@ -14,7 +14,6 @@ import { cancelAgentWorkbenchRequest, executeAgentWorkbenchRequest } from "./age
 export const agentHostState = reactive<AgentHostState>({ ...emptyAgentHostState });
 export const agentNativeOverlayActive = ref(false);
 
-let nativeOverlayRetainCount = 0;
 let navigateSettingsHandler: (() => Promise<void>) | null = null;
 
 export function isAgentChatOverlayRuntime(): boolean {
@@ -29,16 +28,8 @@ export function registerAgentHostNavigateSettings(handler: () => Promise<void>):
 }
 
 export function retainAgentNativeOverlay(): void {
-  nativeOverlayRetainCount += 1;
   agentNativeOverlayActive.value = true;
   void window.vironDesktop?.setAgentChatNativeOverlay?.(true);
-}
-
-export function releaseAgentNativeOverlay(): void {
-  nativeOverlayRetainCount = Math.max(0, nativeOverlayRetainCount - 1);
-  const active = nativeOverlayRetainCount > 0;
-  agentNativeOverlayActive.value = active;
-  void window.vironDesktop?.setAgentChatNativeOverlay?.(active);
 }
 
 export function applyAgentHostState(state: AgentHostState | null): void {

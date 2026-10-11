@@ -184,22 +184,6 @@ function formatFreshness(value: string | null | undefined) {
   return new Date(value).toLocaleTimeString();
 }
 
-function collectionLabel(host: MonitoringHostCard) {
-  if (["missing", "unchecked"].includes(effectiveProbeState(host)) || !host.lastCollectedAt) return tr("尚无监控数据");
-  const freshness = formatFreshness(host.lastCollectedAt);
-  return freshness === "—" ? tr("尚无采集时间") : tr("{{0}} 前采集", [freshness]);
-}
-
-function probeLabel(host: MonitoringHostCard) {
-  const state = effectiveProbeState(host);
-  if (state === "missing") return tr("已确认未安装探针");
-  if (state === "offline") return tr("已安装探针当前离线");
-  if (state === "unreachable") return tr("SSH 连接失败，探针状态待确认");
-  if (state === "stale") return tr("探针数据已中断");
-  if (state === "unchecked") return tr("尚未检测探针");
-  return host.agentVersion ? tr("探针 v{{0}} · 最近采集成功", [host.agentVersion]) : tr("最近采集成功");
-}
-
 function activeAlertCount(alerts: MonitoringAlertCounts) {
   return alerts.critical + alerts.major + alerts.warning;
 }

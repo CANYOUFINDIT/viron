@@ -11,7 +11,6 @@ import { defaultDataSyncOptions, defaultStructureSyncOptions, previewDatabaseSyn
 import { canAccessConnection, type AuthenticatedUser, type WorkspaceContext } from "../access-control.js";
 import { writeAudit } from "../audit.js";
 import { connectDatabase } from "../database-workbench/connector.js";
-import { executionScope } from "../execution-scope.js";
 import { parseBody } from "../validation.js";
 import { requireAdmin } from "./auth.js";
 

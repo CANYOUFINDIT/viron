@@ -224,17 +224,6 @@ function healthLabel(health: string) {
   return tr("未知");
 }
 
-function formatPercent(value: number | null) {
-  return value === null ? "—" : `${value.toFixed(0)}%`;
-}
-
-function formatBytes(value: number | null) {
-  if (value === null) return "—";
-  if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(1)}G`;
-  if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(0)}M`;
-  return `${(value / 1024).toFixed(0)}K`;
-}
-
 function serviceAlertText(service: MonitoringServiceCard) {
   if (!service.activeAlertCount) return "0";
   return service.activeAlertPeakSeverity

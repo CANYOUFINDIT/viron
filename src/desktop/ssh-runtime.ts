@@ -236,19 +236,6 @@ export async function closeDesktopSshConnectionPool(connectionId?: string): Prom
   await desktopSshPool.invalidate(connectionId ? (key) => key.startsWith(`${connectionId}\0`) : undefined);
 }
 
-export async function executeDesktopSshCommand(
-  credential: DesktopSshCredential,
-  command: string,
-  options: DesktopSshCommandOptions = {},
-): Promise<DesktopSshCommandResult> {
-  const connected = await connectDesktopSsh(credential);
-  try {
-    return await executeDesktopSshCommandOnConnection(connected, command, options);
-  } finally {
-    connected.close();
-  }
-}
-
 export async function executeDesktopSshCommandOnConnection(
   connected: ConnectedDesktopSsh,
   command: string,

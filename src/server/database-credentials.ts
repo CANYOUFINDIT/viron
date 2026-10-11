@@ -70,17 +70,6 @@ export function hydrateDatabaseOptions(
   return options;
 }
 
-export function databaseCredentialFlags(credential: DatabaseCredentialSecrets): Record<string, boolean> {
-  return {
-    hasPassword: Boolean(credential.password),
-    hasHttpTunnelAuth: Boolean(credential.httpTunnelUsername || credential.httpTunnelPassword),
-    hasTlsCa: Boolean(credential.tlsCa),
-    hasTlsCertificate: Boolean(credential.tlsCertificate),
-    hasTlsPrivateKey: Boolean(credential.tlsPrivateKey),
-    hasTlsPassphrase: Boolean(credential.tlsPassphrase),
-  };
-}
-
 export function decryptDatabaseCredential(app: FastifyInstance, ciphertext: string): DatabaseCredentialSecrets {
   try {
     return parseJsonRecord(app.secrets.decrypt(ciphertext)) as DatabaseCredentialSecrets;

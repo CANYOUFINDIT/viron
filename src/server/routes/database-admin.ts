@@ -4,7 +4,6 @@ import { z } from "zod";
 import { canAccessConnection } from "../access-control.js";
 import { writeAudit } from "../audit.js";
 import { connectDatabase, type DatabaseConnectionClient } from "../database-workbench/connector.js";
-import { executionScope } from "../execution-scope.js";
 import { parseBody } from "../validation.js";
 import { requireAdmin } from "./auth.js";
 

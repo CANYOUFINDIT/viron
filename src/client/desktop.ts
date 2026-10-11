@@ -14,7 +14,6 @@ import type {
   AgentChatRequest,
   AgentDatabaseContextInput,
   AgentDatabaseContextSnapshot,
-  AgentDatabaseReadResult,
   AgentConversation,
   AgentConversationListResult,
   AgentConversationSummary,
@@ -30,8 +29,8 @@ import type {
   AgentWorkbenchExecutionResponseInput,
 } from "../shared/agent";
 import type { AgentFloatingOverlayAction, AgentFloatingOverlayState } from "../shared/agent-floating-overlay";
-import type { ConnectionQualityOverlayAction, ConnectionQualityOverlayState } from "../shared/connection-quality";
-import type { ActiveEnvironmentDockAction, ActiveEnvironmentDockLayoutState, ActiveEnvironmentDockState } from "../shared/active-environment-dock";
+import type { ConnectionQualityOverlayState } from "../shared/connection-quality";
+import type { ActiveEnvironmentDockLayoutState } from "../shared/active-environment-dock";
 import { dispatchConnectionLimit } from "./connection-limit";
 import type { DesktopMcpStatus, McpApprovalMode } from "../shared/mcp-settings";
 import type { DesktopMonitorAlertNotification } from "../shared/monitor-alerts";
@@ -348,10 +347,6 @@ export function readDesktopAgentDatabaseContext(input: AgentDatabaseContextInput
   return desktopBridge().readAgentDatabaseContext(input);
 }
 
-export function executeDesktopAgentDatabaseRead(input: { connectionId: string; database: string; sql: string }): Promise<AgentDatabaseReadResult> {
-  return desktopBridge().executeAgentDatabaseRead(input);
-}
-
 export function recordDesktopAgentAction(input: { action: string; target: string; summary: string }): Promise<{ recorded: true }> {
   return desktopBridge().recordAgentAction(input);
 }
@@ -429,16 +424,6 @@ export function probeDesktopConnectionQualityTarget(targetId: string): Promise<n
   return desktopBridge().probeConnectionQualityTarget(targetId);
 }
 
-export function onDesktopConnectionQualityAction(listener: (action: ConnectionQualityOverlayAction) => void): () => void {
-  if (!window.vironDesktop) return () => undefined;
-  return window.vironDesktop.onConnectionQualityAction(listener);
-}
-
-export function updateDesktopActiveEnvironmentDock(state: ActiveEnvironmentDockState | null): Promise<void> {
-  if (!window.vironDesktop) return Promise.resolve();
-  return window.vironDesktop.updateActiveEnvironmentDock(state);
-}
-
 export function updateDesktopActiveEnvironmentDockLayout(layout: ActiveEnvironmentDockLayoutState): Promise<void> {
   if (!window.vironDesktop) return Promise.resolve();
   return window.vironDesktop.updateActiveEnvironmentDockLayout(layout);
@@ -446,11 +431,6 @@ export function updateDesktopActiveEnvironmentDockLayout(layout: ActiveEnvironme
 
 export function captureDesktopRendererPreview(bounds: DesktopWebViewBounds): Promise<string> {
   return desktopBridge().captureRendererPreview(bounds);
-}
-
-export function onDesktopActiveEnvironmentDockAction(listener: (action: ActiveEnvironmentDockAction) => void): () => void {
-  if (!window.vironDesktop) return () => undefined;
-  return window.vironDesktop.onActiveEnvironmentDockAction(listener);
 }
 
 export function onDesktopNativeViewPointerDown(listener: () => void): () => void {
@@ -557,10 +537,6 @@ function desktopBridge() {
 
 export function readDesktopClipboardText(): Promise<string> {
   return desktopBridge().readClipboardText();
-}
-
-export function writeDesktopClipboardText(value: string): Promise<{ written: true }> {
-  return desktopBridge().writeClipboardText(value);
 }
 
 async function openingConnection<T>(request: Promise<T>): Promise<T> {

@@ -26,7 +26,6 @@ import {
   Search,
   Settings2,
   Square,
-  Table2,
   Trash2,
   Upload,
   X,
@@ -315,7 +314,7 @@ function definitions(): ColumnDefinition[] {
   const dataColumns: ColumnDefinition[] = [...columns.value].sort((left, right) => (positions.get(left.name) ?? Number.MAX_SAFE_INTEGER) - (positions.get(right.name) ?? Number.MAX_SAFE_INTEGER)).map((column) => ({
     title: `${column.name}${column.primary ? " 🔑" : ""}`,
     field: column.name,
-    ...tableGridColumnSize(column.name, columnWidths.value[column.name]),
+    ...tableGridColumnSize(columnWidths.value[column.name]),
     visible: !hiddenColumns.value.has(column.name),
     editor: canEdit.value && !column.autoIncrement ? "input" : undefined,
     headerSort: true,

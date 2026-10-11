@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import type { Connection, FieldPacket, ResultSetHeader } from "mysql2/promise";
+import type { FieldPacket, ResultSetHeader } from "mysql2/promise";
 import type { AuthenticatedUser, WorkspaceType } from "../access-control.js";
 import { writeAudit } from "../audit.js";
 import { normalizeCellColumns, serializeDatabaseRow } from "../../shared/database-cell-value.js";

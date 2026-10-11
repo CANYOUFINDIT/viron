@@ -1,6 +1,6 @@
 <script setup lang="ts">import { translate as tr } from "../i18n";
 
-import { BarChart3, Database, LayoutDashboard, Palette, Plus, RefreshCw, Save, Search, TableProperties, Trash2 } from "@lucide/vue";
+import { BarChart3, Database, LayoutDashboard, Palette, Plus, RefreshCw, Save, Search, Trash2 } from "@lucide/vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { computed, onMounted, ref, watch } from "vue";
 import { api } from "../api";

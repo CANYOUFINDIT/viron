@@ -133,7 +133,7 @@ export function attachHistoryNavigationTouchTracking(webContents: WebContents): 
   });
 }
 
-function scheduleDesktopHistoryNavigationIdle(time: number, view: HistoryNavigationSurfaceView): void {
+function scheduleDesktopHistoryNavigationIdle(time: number): void {
   if (historyNavigationTouchHeld) return;
   if (historyNavigationGestureTimer) clearTimeout(historyNavigationGestureTimer);
   historyNavigationGestureTimer = setTimeout(() => {
@@ -213,7 +213,7 @@ export function handleDesktopHistoryNavigationWheel(
     historyNavigationEdgeEligible = null;
     hideDesktopHistoryNavigationOverlay();
   }
-  else scheduleDesktopHistoryNavigationIdle(time, view);
+  else scheduleDesktopHistoryNavigationIdle(time);
 }
 
 export function handleDesktopHistoryNavigationMouse(

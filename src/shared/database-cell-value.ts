@@ -142,11 +142,3 @@ export function serializeDatabaseRow(row: unknown, columns: DatabaseCellColumn[]
     serializeDatabaseCellValue(value, byName.get(key)),
   ]));
 }
-
-export function deserializeDatabaseRecord(values: Record<string, unknown>, columns: DatabaseCellColumn[]): Record<string, unknown> {
-  const byName = new Map(columns.flatMap((column) => column.name ? [[column.name, column] as const] : []));
-  return Object.fromEntries(Object.entries(values).map(([key, value]) => [
-    key,
-    deserializeDatabaseCellValue(value, byName.get(key)),
-  ]));
-}

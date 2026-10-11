@@ -61,10 +61,6 @@ export function redisReply(value: unknown): RedisReply {
   return { type: "binary", value: redisBinaryValue(Buffer.from(JSON.stringify(value), "utf8")) };
 }
 
-export function redisBuffer(base64: string): Buffer {
-  return Buffer.from(base64, "base64");
-}
-
 export function redisResponseBytes(value: unknown): number {
   if (value === null || value === undefined) return 0;
   if (Buffer.isBuffer(value)) return value.length;

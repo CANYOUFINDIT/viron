@@ -1,22 +1,10 @@
 import { translate as tr } from "../../i18n";
-import { Activity, ChevronDown, CircleStop, ClipboardPaste, Code2, Database, History, Info, MessageSquareText, PanelRightClose, Pencil, Plus, Send, Settings, TerminalSquare, Trash2, X, } from "@lucide/vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { desktopAppState, desktopAgentSettings, createDesktopAgentSession, deleteDesktopAgentSession, getDesktopAgentSettings, getCurrentDesktopAgentSession, isDesktopApp, listDesktopAgentSessions, onDesktopAgentEvent, onDesktopAgentLauncherAction, onDesktopNativeViewPointerDown, readDesktopAgentSshContext, readDesktopAgentDatabaseContext, recordDesktopAgentAction, renameDesktopAgentSession, respondDesktopAgentWorkbenchExecution, respondDesktopAgentApproval, sendDesktopAgentChat, selectDesktopAgentSession, stopDesktopAgentChat, updateDesktopAgentLauncher, } from "../../desktop";
-import { agentHostState, applyAgentHostState, executeAgentHostWorkbench, isAgentChatOverlayRuntime, getDesktopAgentHost, focusDesktopAgentChat, onDesktopAgentChatPointerOutside, onDesktopAgentHostState, performAgentHostAction, setDesktopAgentChatIgnoreMouse, updateDesktopAgentChatChrome, } from "../../agent-host";
-import { onAppShortcut } from "../../keyboard-shortcuts";
-import { AGENT_FLOATING_BUTTON_SIZE, agentFloatingSnapEdge, clampAgentFloatingPosition, nearestAgentFloatingEdge, snapAgentFloatingPosition, type AgentFloatingEdge, type AgentFloatingPosition, type AgentFloatingViewport, } from "../../agent-floating-position";
-import { agentFloatingOverlayLayout } from "../../agent-floating-overlay";
-import { agentQuickBubblesFromMessages, latestAgentQuickBubbleId, shouldStartFreshAgentConversation } from "../../agent-quick-history";
-import { agentSceneName } from "../../agent-context-card-display";
-import { renderAgentMarkdown } from "../../agent-markdown";
-import { agentToolActivity, type AgentToolActivity } from "../../agent-tool-activity";
-import { agentDatabaseReadResult, agentDatabaseSqlSuggestion, agentSshCommandSuggestion, agentSshDiagnosticResult, agentSshScriptSuggestion, agentVironToolApprovalSuggestion } from "../../../shared/agent";
-import type { AgentChatMessage, AgentContextCard, AgentConversationSummary, AgentDatabaseReadResult, AgentDatabaseSqlSuggestion, AgentEntryMode, AgentSshCommandSuggestion, AgentSshDiagnosticResult, AgentSshScriptSuggestion, AgentStreamEvent, AgentTurnUsage, AgentVironToolApprovalSuggestion } from "../../../shared/agent";
-import type { AgentFloatingOverlayAction } from "../../../shared/agent-floating-overlay";
-import AgentQuickSurface from "../AgentQuickSurface.vue";
-import AgentTurnStats from "../AgentTurnStats.vue";
-import type { AgentOverlayDragState, AgentSshSuggestionState, AgentDatabaseSuggestionState, AgentSshScriptSuggestionState, AgentVironApprovalState } from "./types";
+import { ref } from "vue";
+import { createDesktopAgentSession, deleteDesktopAgentSession, getDesktopAgentSettings, getCurrentDesktopAgentSession, listDesktopAgentSessions, renameDesktopAgentSession, selectDesktopAgentSession } from "../../desktop";
+import { agentHostState } from "../../agent-host";
+import { shouldStartFreshAgentConversation } from "../../agent-quick-history";
+import type { AgentChatMessage, AgentConversationSummary } from "../../../shared/agent";
 import { deferAgentFloatingPart, type AgentFloatingContext } from "./context";
 
 export function useAgentSessions(ctx: AgentFloatingContext) {

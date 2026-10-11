@@ -7,7 +7,6 @@ export type { ProtectedLoginResult } from "../shared/protected-web-login-control
 
 /** Electron owns the hidden authentication document; the shared controller owns its flow. */
 export class ProtectedWebLogin extends ProtectedLoginController {
-  private window: BrowserWindow;
   constructor(options: {
     session: Session; url: string; username: string; password: string; config?: WebLoginConfig;
     bounds: Rectangle; prepare?: () => Promise<void>; manualFallback?: () => void; changed: () => void; completed: (result: ProtectedLoginResult) => Promise<void>;
@@ -33,7 +32,6 @@ export class ProtectedWebLogin extends ProtectedLoginController {
       cookies: () => options.session.cookies.get({}), clear: (origins) => options.session.clearData({ origins }),
       destroy: () => { if (!window.isDestroyed()) window.destroy(); },
     } });
-    this.window = window;
     const allowed = (url: string) => { try { const parsed = new URL(url); return ["http:", "https:"].includes(parsed.protocol) && !parsed.username && !parsed.password && [new URL(options.url).origin, ...(options.config?.allowedOrigins ?? [])].includes(parsed.origin); } catch { return false; } };
     contents.setWindowOpenHandler(() => { this.fail("登录需要新窗口，请调整入口的登录流程后重试"); return { action: "deny" }; });
     contents.on("will-navigate", (event, url) => { if (!allowed(url)) { event.preventDefault(); this.fail("登录跳转到了未授权的域名，请检查入口配置"); } });

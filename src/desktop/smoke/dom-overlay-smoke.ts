@@ -2,10 +2,10 @@ import { session } from "electron";
 import { createBrowserGuest } from "../browser-guest-host.js";
 import { desktopWebPreferences } from "../web-view-support.js";
 import { join } from "node:path";
-import { app, BrowserWindow, screen, WebContentsView } from "electron";
+import { app, BrowserWindow, WebContentsView } from "electron";
 import { closeDomOverlayWindow } from "../overlays/dom-overlay-windows.js";
 import { mainWindow } from "../window-host.js";
-import { domOverlayView, domOverlayViews, sidebarOverlayViews } from "../overlays/sidebar-overlay-view.js";
+import { domOverlayView, domOverlayViews } from "../overlays/sidebar-overlay-view.js";
 
 export async function runDesktopDomOverlaySmoke(): Promise<{
   nodeAdopted: boolean;

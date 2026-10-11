@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { canManageWorkspace, getWorkspaceAccess, requireConnectionConfig, workspaceParams, workspaceWhere } from "../access-control.js";
+import { getWorkspaceAccess, requireConnectionConfig, workspaceParams, workspaceWhere } from "../access-control.js";
 import { removeResourceAuthorizations } from "../access-authorizations.js";
 import { writeAudit } from "../audit.js";
 import { connectionEnvironmentMap, environmentsExist, normalizeEnvironmentIds, replaceConnectionEnvironments } from "../connection-environments.js";
@@ -93,12 +93,6 @@ async function tunnelError(app: FastifyInstance, mode: "tcp" | "sshTunnel", sshC
   if (!sshConnectionId) return "SSH Tunnel 模式必须选择 SSH 连接";
   const row = await app.db.prepare(`SELECT id FROM ssh_connections WHERE id = ? AND ${workspaceWhere()}`).get(sshConnectionId, ...workspace);
   return row ? null : "SSH Tunnel 连接不存在或不属于当前工作空间";
-}
-
-function requireWorkspaceManager(request: Parameters<typeof canManageWorkspace>[0], reply: { code: (status: number) => { send: (body: unknown) => unknown } }): boolean {
-  if (canManageWorkspace(request)) return true;
-  reply.code(403).send({ error: "WORKSPACE_MANAGER_REQUIRED", message: "只有当前工作空间管理员可以修改 Redis 连接" });
-  return false;
 }
 
 export async function registerRedisConnectionRoutes(app: FastifyInstance): Promise<void> {

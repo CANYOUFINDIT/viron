@@ -42,9 +42,6 @@ export function registerExtensionContentBridge(partition: Session, sendMessage: 
 }
 
 const injected = new WeakMap<WebFrameMain, Set<string>>();
-export function hasInjectedExtension(tab: WebContents, extensionId: string): boolean {
-  return Boolean(injected.get(tab.mainFrame)?.has(extensionId));
-}
 
 export async function executeGrantedScript(tab: WebContents, extensionId: string, input: Record<string, any>, isGranted: () => boolean): Promise<unknown[]> {
   const extension = tab.session.extensions.getExtension(extensionId);

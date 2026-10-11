@@ -1,84 +1,37 @@
-import { computed, nextTick, ref } from "vue";
+import { computed, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { format } from "sql-formatter";
-import { Clock3, Eye, FileCode2, HardDriveDownload, Table2 } from "@lucide/vue";
-import { translate as tr, currentLocale } from "../../i18n";
-import { ApiError, api } from "../../api";
-import { createClientId } from "../../client-id";
+import { translate as tr } from "../../i18n";
+import { api } from "../../api";
 import {
-  buildConnectionNavigatorMenu,
-  buildDatabaseNavigatorMenu,
-  type DatabaseNavigatorMenuItem,
   type DatabaseNavigatorTarget,
 } from "../../database-navigator-menu";
 import {
   downloadApiFile,
-  desktopExecutionTargets,
   isDesktopApp,
   openDesktopDatabaseQueryExternally,
-  openMacosLocalNetworkSettings,
   revealDesktopDatabaseBackup,
   revealDesktopDatabaseQuery,
   selectDesktopDatabaseSqlFile,
-  stopDesktopAgentResourceRuns,
 } from "../../desktop";
-import { registerAgentDatabaseSceneProvider } from "../../agent-database-scene";
-import { registerAgentWorkbenchExecutionProvider } from "../../agent-workbench-execution";
-import { rememberActiveConnectionOrigin } from "../../active-connection-origin";
-import { session } from "../../session";
-import { onAppShortcut, shortcutActionFromKeyboardEvent, shortcutLabel } from "../../keyboard-shortcuts";
-import type { SqlCompletionCatalog } from "../../sql-completion";
-import type { ShortcutActionId } from "../../../shared/keyboard-shortcuts";
-import {
-  agentTransportValue,
-  type AgentDatabaseReadResult,
-  type AgentWorkbenchExecutionRequest,
-} from "../../../shared/agent";
 import DatabaseAutomationWorkspace from "../DatabaseAutomationWorkspace.vue";
 import DatabaseBiWorkspace from "../DatabaseBiWorkspace.vue";
 import DatabaseModelWorkspace from "../DatabaseModelWorkspace.vue";
 import type {
-  BrowserCategory,
-  ConnectionGroupItem,
-  DatabaseConnection,
-  DatabaseObject,
-  DatabaseSearchResult,
   DatabaseTreeTask,
   FavoriteItem,
   HistoryItem,
-  NavigatorCategory,
-  NavigatorCategoryKey,
-  NavigatorObjectClipboard,
-  ObjectCategory,
-  ObjectCategoryDefinition,
-  ObjectFavoriteItem,
-  ObjectGroupItem,
-  OrganizationGrant,
-  OrganizationShareDetail,
-  QueryJob,
-  QueryResultSet,
   QueryTab,
   SavedQueryItem,
-  SchemaItem,
-  TableMaintenanceOperation,
   UtilityCategory,
-  WorkbenchNavigatorTarget,
-  DatabaseWorkbenchProps,
 } from "./types";
-import { formatBytes, sqlIdentifier, textSize } from "./format";
 import { deferDatabaseWorkbenchPart, type DatabaseWorkbenchContext } from "./context";
 
 export function useDatabaseArtifacts(
   ctx: DatabaseWorkbenchContext,
-  props: Readonly<DatabaseWorkbenchProps>,
-  route: { fullPath: string },
 ) {
-  const $layout = deferDatabaseWorkbenchPart(ctx, "layout");
   const $connections = deferDatabaseWorkbenchPart(ctx, "connections");
   const $navigator = deferDatabaseWorkbenchPart(ctx, "navigator");
   const $queryTabs = deferDatabaseWorkbenchPart(ctx, "queryTabs");
-  const $agentScene = deferDatabaseWorkbenchPart(ctx, "agentScene");
-  const $menuActions = deferDatabaseWorkbenchPart(ctx, "menuActions");
   const syncDialogOpen = ref(false);
 
   const syncDialogMode = ref<"data" | "structure">("structure");

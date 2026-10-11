@@ -723,7 +723,7 @@ export class DesktopDatabaseRuntime {
     if (!category || !["tables", "views", "procedures", "functions", "triggers", "events"].includes(category)) {
       throw new DesktopDatabaseError(400, "INVALID_OBJECT_QUERY", tr("请选择数据库和对象分类"));
     }
-    const { context, connected } = await this.connect(connectionId, database);
+    const { connected } = await this.connect(connectionId, database);
     try {
       let sql = "";
       let values: unknown[] = [database];
@@ -802,7 +802,7 @@ export class DesktopDatabaseRuntime {
       event: "EVENT",
     };
     if (!showTypes[type]) throw new DesktopDatabaseError(400, "INVALID_DDL_QUERY", tr("数据库对象参数不完整"));
-    const { context, connected } = await this.connect(connectionId, database);
+    const { connected } = await this.connect(connectionId, database);
     try {
       const [rows] = await connected.connection.query<RowDataPacket[]>(
         `SHOW CREATE ${showTypes[type]} ${identifier(database)}.${identifier(name)}`,

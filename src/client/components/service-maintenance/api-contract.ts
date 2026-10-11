@@ -4,7 +4,7 @@ import type { MessageHandler } from "element-plus";
 
 import type { CandidateStatus, MonitorCandidate, Provider } from "../../service-candidate-tree";
 import type { MonitorAlertSettings, MonitorDiskType } from "../../../shared/monitor-alerts";
-import type { DirectoryDropTarget, DirectoryMoveDirection, EnvironmentLog, HostFocusMetric, HostSnapshot, HostWorkspaceTab, KubernetesConfigDiscovery, MaintenanceCounts, MaintenanceDeploymentResponse, MaintenanceDirectory, MaintenancePayload, MaintenancePayloadResponse, MaintenanceServiceResponse, MaintenanceWorkspace, MonitorHost, MonitorInstallPreflight, MonitorInstallTask, MonitorInstallTaskPhase, MonitorInstallTaskStatus, ScriptAction, ScriptActionExecution, ScriptActionExecutionResult, ScriptActionIcon, ServiceItem, Deployment } from "./types";
+import type { DirectoryDropTarget, DirectoryMoveDirection, HostWorkspaceTab, KubernetesConfigDiscovery, MaintenanceDirectory, MaintenancePayload, MaintenanceWorkspace, MonitorHost, MonitorInstallTask, MonitorInstallTaskPhase, MonitorInstallTaskStatus, ScriptAction, ScriptActionExecution, ScriptActionIcon, ServiceItem, Deployment } from "./types";
 
 export interface MaintenanceApi {
   "loading": Ref<boolean, boolean>;

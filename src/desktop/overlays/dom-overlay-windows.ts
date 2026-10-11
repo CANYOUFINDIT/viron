@@ -79,15 +79,6 @@ export function closeDomOverlayWindow(frameName: string): void {
   }
 }
 
-export function domOverlayWindow(frameName: string): BrowserWindow | null {
-  const window = windows.get(frameName)?.window;
-  return window && !window.isDestroyed() ? window : null;
-}
-
-export function domOverlayWindows(): BrowserWindow[] {
-  return [...windows.values()].map((entry) => entry.window).filter((window) => !window.isDestroyed());
-}
-
 export function layoutDomOverlayWindows(): void {
   layoutDomOverlayViews();
   for (const entry of windows.values()) {

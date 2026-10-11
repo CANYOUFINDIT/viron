@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { copyFile, mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
 import type { FastifyInstance } from "fastify";
-import type { Connection, RowDataPacket } from "mysql2/promise";
+import type { RowDataPacket } from "mysql2/promise";
 import { executeDatabaseSync, type DatabaseSyncOptions } from "../../database-sync.js";
 import type { AuthenticatedUser, WorkspaceType } from "../access-control.js";
 import { writeAudit } from "../audit.js";

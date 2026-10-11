@@ -25,7 +25,6 @@ import type {
   QueryTab,
   SchemaItem,
   WorkbenchNavigatorTarget,
-  DatabaseWorkbenchProps,
 } from "./types";
 import { formatBytes } from "./format";
 import { deferDatabaseWorkbenchPart, type DatabaseWorkbenchContext } from "./context";
@@ -33,8 +32,6 @@ import { createDatabaseNavigatorActions } from "./database-navigator-actions";
 
 export function useDatabaseNavigator(
   ctx: DatabaseWorkbenchContext,
-  props: Readonly<DatabaseWorkbenchProps>,
-  route: { fullPath: string },
 ) {
   const $layout = deferDatabaseWorkbenchPart(ctx, "layout");
   const $connections = deferDatabaseWorkbenchPart(ctx, "connections");

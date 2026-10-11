@@ -1,5 +1,4 @@
 export const TABLE_GRID_MIN_COLUMN_WIDTH = 72;
-export const TABLE_GRID_DEFAULT_COLUMN_WIDTH = 120;
 export const TABLE_GRID_MAX_INITIAL_COLUMN_WIDTH = 280;
 export const TABLE_GRID_LAYOUT = "fitData";
 
@@ -15,7 +14,7 @@ export function tableGridColumnWidth(columnName: string, storedWidth?: number): 
   return Math.max(88, Math.min(TABLE_GRID_MAX_INITIAL_COLUMN_WIDTH, Math.ceil(columnName.length * HEADER_CHAR_WIDTH + HEADER_CHROME)));
 }
 
-export function tableGridColumnSize(columnName: string, storedWidth?: number) {
+export function tableGridColumnSize(storedWidth?: number) {
   if (typeof storedWidth === "number" && Number.isFinite(storedWidth) && storedWidth >= TABLE_GRID_MIN_COLUMN_WIDTH) {
     return {
       minWidth: TABLE_GRID_MIN_COLUMN_WIDTH,

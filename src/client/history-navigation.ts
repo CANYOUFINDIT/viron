@@ -31,7 +31,6 @@ interface HistoryNavigationController {
 
 let gesture = idleHistoryNavigationGesture();
 let idleTimer: number | undefined;
-let hideTimer: number | undefined;
 let controller: HistoryNavigationController | null = null;
 let lastNavigationAt = 0;
 let holdUntilRelease = false;
@@ -51,11 +50,6 @@ function overlayFromGesture(state: HistoryNavigationGestureState, available: boo
 function clearIdleTimer() {
   window.clearTimeout(idleTimer);
   idleTimer = undefined;
-}
-
-function clearHideTimer() {
-  window.clearTimeout(hideTimer);
-  hideTimer = undefined;
 }
 
 function suppressInertia(time = performance.now()) {
@@ -101,18 +95,6 @@ export function applyHistoryNavigationTouch(phase: "begin" | "end") {
   historyNavigationOverlay.value = null;
   suppressInertia();
   finishHeldGesture();
-}
-
-export function showHistoryNavigationOverlay(view: HistoryNavigationOverlayView | null) {
-  clearHideTimer();
-  historyNavigationOverlay.value = view;
-}
-
-export function flashHistoryNavigationOverlay(direction: HistoryNavigationDirection, available = true) {
-  showHistoryNavigationOverlay({ direction, progress: 1, available });
-  hideTimer = window.setTimeout(() => {
-    if (historyNavigationOverlay.value?.direction === direction) historyNavigationOverlay.value = null;
-  }, 80);
 }
 
 function commitNavigation(direction: HistoryNavigationDirection) {
@@ -193,12 +175,6 @@ export function historyNavigationBlockedByScrollTarget(target: EventTarget | nul
   return false;
 }
 
-export function appHistoryCanNavigate(direction: HistoryNavigationDirection): boolean {
-  const state = window.history.state as { back?: unknown; forward?: unknown } | null;
-  if (direction === "back") return state?.back != null && state.back !== "";
-  return state?.forward != null && state.forward !== "";
-}
-
 export function installHistoryNavigationGestures(next: HistoryNavigationController): () => void {
   controller = next;
   const fromEmbeddedWeb = (target: EventTarget | null) => target instanceof Element && Boolean(target.closest(".web-account-browser"));
@@ -240,6 +216,5 @@ export function installHistoryNavigationGestures(next: HistoryNavigationControll
     window.removeEventListener("auxclick", onAuxClick, true);
     controller = null;
     resetGesture();
-    clearHideTimer();
   };
 }

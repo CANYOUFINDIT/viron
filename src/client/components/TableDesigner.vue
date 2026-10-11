@@ -30,7 +30,6 @@ import {
   tableFieldCapabilities,
   validateTableDesigner,
   type ForeignKeyAction,
-  type TableDefaultKind,
   type TableDesignerCheck,
   type TableDesignerField,
   type TableDesignerForeignKey,
@@ -38,10 +37,8 @@ import {
   type TableDesignerState,
   type TableDesignerTrigger,
   type TableFieldType,
-  type TableIndexType,
   type TableTriState,
   type TriggerEvent,
-  type TriggerTiming,
 } from "../database-table-designer";
 
 const props = defineProps<{ connectionId: string; database: string; table?: string }>();

@@ -16,7 +16,6 @@ const {
   summarizeService,
   hostPresence,
   hostLiveCpu,
-  openWorkspaceTab,
   selectService,
   selectHost,
   dragDirectoryOver,

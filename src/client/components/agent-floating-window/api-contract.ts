@@ -1,13 +1,11 @@
 // Mechanical type contract captured before AgentFloatingWindow was partitioned.
 import type { ComputedRef, Ref, ShallowRef } from "vue";
-import type { MessageHandler } from "element-plus";
 import type { AgentFloatingEdge, AgentFloatingPosition, AgentFloatingViewport } from "../../agent-floating-position";
-import type { AgentActionRiskLevel, AgentChatMessage, AgentChatRole, AgentContextCard, AgentContextKind, AgentConversationSummary, AgentDatabaseReadResult, AgentDatabaseSqlSuggestion, AgentEntryMode, AgentExecutionPresentation, AgentJsonValue, AgentSettingsPublic, AgentSshCommandSuggestion, AgentSshDiagnosticResult, AgentSshScriptInterpreter, AgentSshScriptSuggestion, AgentStreamEvent, AgentTurnUsage, AgentVironToolApprovalSuggestion } from "../../../shared/agent";
+import type { AgentActionRiskLevel, AgentChatMessage, AgentChatRole, AgentContextCard, AgentContextKind, AgentConversationSummary, AgentDatabaseSqlSuggestion, AgentEntryMode, AgentExecutionPresentation, AgentJsonValue, AgentSettingsPublic, AgentSshCommandSuggestion, AgentSshScriptInterpreter, AgentSshScriptSuggestion, AgentStreamEvent, AgentTurnUsage } from "../../../shared/agent";
 import type { AgentSqlWriteKind } from "../../../shared/agent-write";
 import type { AgentFloatingOverlayAction } from "../../../shared/agent-floating-overlay";
-import type { ShortcutActionId } from "../../../shared/keyboard-shortcuts";
 import type { AgentToolActivity } from "../../agent-tool-activity";
-import type { AgentOverlayDragState, AgentSshSuggestionState, AgentDatabaseSuggestionState, AgentSshScriptSuggestionState, AgentVironApprovalState } from "./types";
+import type { AgentSshSuggestionState, AgentDatabaseSuggestionState, AgentSshScriptSuggestionState, AgentVironApprovalState } from "./types";
 
 export interface AgentFloatingApi {
   "edgeCollapsedStorageKey": string;

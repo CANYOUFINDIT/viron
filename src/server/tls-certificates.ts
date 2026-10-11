@@ -26,7 +26,6 @@ import {
   tlsDaysRemaining,
   tlsEndpointIsStale,
   tlsProbeDueAt,
-  tlsWebEntryBadge,
   type SslCertificateAsset,
   type SslCertificateStatus,
   type TlsCertificateSnapshot,
@@ -35,7 +34,6 @@ import {
   type TlsHttpsOrigin,
   type TlsProbeResult,
   type TlsProbeStatus,
-  type TlsWebEntryBadge,
   type TlsWebEntryLink,
 } from "../shared/tls-certificates.js";
 import { isUniqueConstraintError } from "./database-errors.js";
@@ -1152,22 +1150,4 @@ export async function deleteWorkspaceCertificate(
       .run(certificateId, workspace.type, workspace.id);
   })();
   return { endpointCount: asset.endpointCount, webEntryCount: asset.webEntryCount };
-}
-
-export async function webEntryTlsBadge(
-  app: FastifyInstance,
-  environmentId: string,
-  webEntryId: string,
-  warnDays = DEFAULT_TLS_WARN_DAYS,
-): Promise<TlsWebEntryBadge | null> {
-  const linked = await app.db.prepare(`
-    SELECT endpoint_id FROM ssl_endpoint_web_entries WHERE web_entry_id = ?
-  `).all(webEntryId) as Array<{ endpoint_id: string }>;
-  if (!linked.length) return null;
-  const endpoints = [];
-  for (const item of linked) {
-    const endpoint = await getTlsEndpoint(app, item.endpoint_id);
-    if (endpoint && endpoint.environmentId === environmentId) endpoints.push(endpoint);
-  }
-  return tlsWebEntryBadge(endpoints, warnDays);
 }

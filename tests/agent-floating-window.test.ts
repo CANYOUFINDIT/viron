@@ -333,7 +333,7 @@ describe("AI Agent floating window layout", () => {
     expect(floatingWindow).toContain('v-if="canFillSshSuggestion(suggestion)"');
     expect(quickSurface).toContain("suggestion.source.startsWith('desktop-ssh:')");
     expect(agentSuggestions).toContain("respondDesktopAgentApproval");
-    expect(agentSuggestions).toContain("respondDesktopAgentWorkbenchExecution");
+    expect(agentChat).toContain(".then((result) => respondDesktopAgentWorkbenchExecution({ requestId: event.requestId, result }))");
     expect(agentChat).toContain('event.type === "workbench-execution-request"');
     expect(agentChat).toContain("resourceId: snapshot.connectionId");
     expect(agentSuggestions).toContain("suggestion.approval.step");
