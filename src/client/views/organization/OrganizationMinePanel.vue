@@ -147,8 +147,8 @@ async function withdraw(id: string) {
       <small v-if="item.blockReason">{{ item.blockReason }}</small>
       <button v-if="view === 'requests' && item.canWithdraw" type="button" @click="withdraw(item.id)">撤回</button>
       <template v-if="view === 'todo' && item.canDecide">
-        <button type="button" @click="decide(item.id, 'approve')">通过</button>
-        <button type="button" @click="decide(item.id, 'reject')">拒绝</button>
+        <button v-if="item.canApprove" type="button" @click="decide(item.id, 'approve')">通过</button>
+        <button v-if="item.canReject" type="button" @click="decide(item.id, 'reject')">拒绝</button>
         <button type="button" @click="revise(item.id, 'transfer')">转交</button>
         <button type="button" @click="revise(item.id, 'add_sign')">加签</button>
         <button type="button" @click="revise(item.id, 'rollback')">回退</button>

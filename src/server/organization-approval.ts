@@ -22,6 +22,8 @@ export interface FlowNode {
 }
 export interface FlowSnapshotNode extends FlowNode {
   resolvedApproverIds: string[];
+  /** Members who held approval.approve for these targets when the request was submitted. */
+  passApproverIds: string[];
   resolution: string;
 }
 interface RequestRow {
@@ -334,17 +336,22 @@ function flowFor(all: Awaited<ReturnType<typeof flows>>, target: ResourceRef) {
   );
 }
 
-async function qualifiedApprovers(db: EnvmanDatabase, org: string, userIds: string[], targets: ResourceRef[]) {
-  const qualified: string[] = [];
+function coversApproval(access: Awaited<ReturnType<typeof loadOrganizationAccess>>, code: "approval.approve" | "approval.reject", targets: ResourceRef[]) {
+  if (access.allows(code)) return true;
+  return targets.length > 0 && targets.every((target) => access.allows(code, target));
+}
+
+/** Node membership is approve or reject on the current targets. Each decision still checks its own code. */
+async function approverCapabilities(db: EnvmanDatabase, org: string, userIds: string[], targets: ResourceRef[]) {
+  const capabilities = new Map<string, { approve: boolean; reject: boolean }>();
   for (const userId of userIds) {
+    if (capabilities.has(userId)) continue;
     const access = await loadOrganizationAccess(db, org, userId);
-    if (
-      access.allows("approval.approve") ||
-      targets.every((target) => access.allows("approval.approve", target))
-    )
-      qualified.push(userId);
+    const approve = coversApproval(access, "approval.approve", targets);
+    const reject = coversApproval(access, "approval.reject", targets);
+    if (approve || reject) capabilities.set(userId, { approve, reject });
   }
-  return qualified;
+  return capabilities;
 }
 
 async function resolveNode(
@@ -362,10 +369,12 @@ async function resolveNode(
     resolution = resolution ? `${resolution}；角色成员` : "角色成员";
   }
   if (!node.allowSelf) ids = ids.filter((id) => id !== requesterId);
-  const resolved = human.has(node.mode) ? await qualifiedApprovers(db, org, ids, targets) : ids;
+  const capabilities = human.has(node.mode) ? await approverCapabilities(db, org, ids, targets) : null;
+  const resolved = capabilities ? ids.filter((id) => capabilities.has(id)) : ids;
+  const passApproverIds = capabilities ? resolved.filter((id) => capabilities.get(id)?.approve) : [];
   if (human.has(node.mode) && !resolved.length)
     throw new OrganizationPermissionError("APPROVER_UNAVAILABLE", 409, `节点“${node.name}”没有可审批的人，不能提交`);
-  return { ...node, resolvedApproverIds: resolved, resolution: resolution || node.mode };
+  return { ...node, resolvedApproverIds: resolved, passApproverIds, resolution: resolution || node.mode };
 }
 
 interface PermissionSnapshot {
@@ -569,22 +578,44 @@ async function stageState(db: EnvmanDatabase, org: string, row: RequestRow) {
   const history = parse<Array<{ stageIndex: number; userId?: string; decision: string; superseded?: boolean }>>(row.decisions_json, []);
   const decisions = history.filter((item) => !item.superseded);
   const targets = snapshotOf(row).targets;
-  if (!node || row.status !== "pending") return { node, decisions, history, paused: false, reason: row.block_reason, qualified: [] as string[] };
-  const qualified = human.has(node.mode)
-    ? await qualifiedApprovers(db, org, node.resolvedApproverIds, targets)
-    : node.resolvedApproverIds;
+  if (!node || row.status !== "pending")
+    return {
+      node,
+      decisions,
+      history,
+      paused: false,
+      approvePaused: false,
+      reason: row.block_reason,
+      qualified: [] as string[],
+      canApprove: [] as string[],
+      canReject: [] as string[],
+      passIds: [] as string[],
+    };
+  const capabilities = human.has(node.mode) ? await approverCapabilities(db, org, node.resolvedApproverIds, targets) : null;
+  const qualified = capabilities ? node.resolvedApproverIds.filter((id) => capabilities.has(id)) : node.resolvedApproverIds;
+  const canApprove = node.resolvedApproverIds.filter((id) => capabilities?.get(id)?.approve);
+  const canReject = node.resolvedApproverIds.filter((id) => capabilities?.get(id)?.reject);
   const approved = new Set(
     decisions.filter((item) => item.stageIndex === stage && item.decision === "approve").map((item) => item.userId),
   );
+  // Snapshot pass ids stay required. Losing approve while keeping reject is not a pass, and the id is not removed.
+  const passIds = node.passApproverIds ?? node.resolvedApproverIds;
   const lost = node.resolvedApproverIds.filter((id) => !qualified.includes(id) && !approved.has(id));
   const paused = (node.mode === "all" || node.mode === "sequence") && lost.length > 0;
+  const approvePaused =
+    (node.mode === "all" || node.mode === "sequence") &&
+    passIds.some((id) => !canApprove.includes(id) && !approved.has(id));
   return {
     node,
     decisions,
     history,
     paused,
+    approvePaused,
     qualified,
-    reason: paused ? "会签或依次审批中有审批人失去资格，流程暂停" : row.block_reason,
+    canApprove,
+    canReject,
+    passIds,
+    reason: paused || approvePaused ? "会签或依次审批中有审批人失去资格，流程暂停" : row.block_reason,
   };
 }
 
@@ -649,6 +680,8 @@ async function presentRequest(
     decisions: state.history,
     grantIds: parse<string[]>(row.grant_ids_json, []),
     canDecide: todo && viewerId !== "",
+    canApprove: todo && state.canApprove.includes(viewerId),
+    canReject: todo && state.canReject.includes(viewerId),
     canWithdraw: row.status === "pending" && row.requester_id === viewerId,
     version: Number(row.version),
   };
@@ -726,6 +759,12 @@ export async function decideGrantRequest(
     const node = state.node;
     if (!node || !state.qualified.includes(actorId))
       throw new OrganizationPermissionError("APPROVER_REQUIRED", 403, "当前节点没有你的有效审批资格");
+    if (decision === "approve" && !state.canApprove.includes(actorId))
+      throw new OrganizationPermissionError("APPROVAL_DECISION_FORBIDDEN", 403, "没有当前范围的审批通过权限");
+    if (decision === "reject" && !state.canReject.includes(actorId))
+      throw new OrganizationPermissionError("APPROVAL_DECISION_FORBIDDEN", 403, "没有当前范围的审批拒绝权限");
+    if (decision === "approve" && state.approvePaused)
+      throw new OrganizationPermissionError("APPROVAL_PAUSED", 409, state.reason);
     if (node.mode === "sequence") {
       const pending = node.resolvedApproverIds.find(
         (id) => state.qualified.includes(id) && !state.decisions.some((item) => item.stageIndex === Number(row.stage_index) && item.userId === id),
@@ -741,10 +780,13 @@ export async function decideGrantRequest(
     ];
     if (decision === "reject") return { status: "rejected", stage: Number(row.stage_index), decisions };
     const approvals = decisions.filter((item) => !item.superseded && item.stageIndex === Number(row.stage_index) && item.decision === "approve");
+    const approvedBy = (id: string) => approvals.some((item) => item.userId === id);
     const complete =
       node.mode === "any" ||
-      (node.mode === "all" && state.qualified.every((id) => approvals.some((item) => item.userId === id))) ||
-      (node.mode === "sequence" && node.resolvedApproverIds.every((id) => approvals.some((item) => item.userId === id) || !state.qualified.includes(id)));
+      ((node.mode === "all" || node.mode === "sequence") &&
+        state.passIds.length > 0 &&
+        !state.approvePaused &&
+        state.passIds.every(approvedBy));
     if (!complete) return { status: "pending", stage: Number(row.stage_index), decisions };
     let stage = Number(row.stage_index) + 1;
     const nodes = nodesOf(row);
@@ -842,7 +884,10 @@ export async function reviseGrantRequest(
       if (target < 0 || target > stage)
         throw new OrganizationPermissionError("INVALID_ROLLBACK", 400, "只能回退到当前或更早的节点");
       workflow.nodes.forEach((node, index) => {
-        if (index >= target) node.resolvedApproverIds = before[index]?.resolvedApproverIds ?? node.resolvedApproverIds;
+        const prior = before[index];
+        if (index < target || !prior) return;
+        node.resolvedApproverIds = prior.resolvedApproverIds;
+        if (prior.passApproverIds) node.passApproverIds = [...prior.passApproverIds];
       });
       const decisions = state.history.map((item) =>
         item.stageIndex >= target && !item.superseded ? { ...item, superseded: true } : item,
@@ -855,12 +900,19 @@ export async function reviseGrantRequest(
     } else {
       if (!revision.userId) throw new OrganizationPermissionError("APPROVER_REQUIRED", 400, "请选择人员");
       const targets = snapshotOf(row).targets;
-      const [qualified] = await qualifiedApprovers(db, org, [revision.userId], targets);
-      if (!qualified) throw new OrganizationPermissionError("APPROVER_REQUIRED", 409, "对象没有当前范围的审批权限");
+      const capabilities = await approverCapabilities(db, org, [revision.userId], targets);
+      if (!capabilities.has(revision.userId)) throw new OrganizationPermissionError("APPROVER_REQUIRED", 409, "对象没有当前范围的审批权限");
       const node = workflow.nodes[stage];
-      if (revision.type === "transfer")
-        node.resolvedApproverIds = node.resolvedApproverIds.map((id) => (id === actor.id ? revision.userId! : id));
-      else if (!node.resolvedApproverIds.includes(revision.userId)) node.resolvedApproverIds.push(revision.userId);
+      const nextId = revision.userId;
+      if (revision.type === "transfer") {
+        node.resolvedApproverIds = node.resolvedApproverIds.map((id) => (id === actor.id ? nextId : id));
+        if (node.passApproverIds)
+          node.passApproverIds = node.passApproverIds.map((id) => (id === actor.id ? nextId : id));
+      } else if (!node.resolvedApproverIds.includes(nextId)) {
+        node.resolvedApproverIds.push(nextId);
+        if (node.passApproverIds && capabilities.get(nextId)?.approve && !node.passApproverIds.includes(nextId))
+          node.passApproverIds = [...node.passApproverIds, nextId];
+      }
       await db
         .prepare(
           "UPDATE organization_grant_requests SET workflow_snapshot_json = ?, version = version + 1, updated_at = ? WHERE id = ?",

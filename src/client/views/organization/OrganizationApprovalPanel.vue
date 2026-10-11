@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
 import { api } from "../../api";
+import { workspaceCan } from "../../session";
 import { useOrganizationContext } from "./context";
 
 const { activePanel, currentOrganizationId } = useOrganizationContext();
@@ -76,7 +77,7 @@ async function saveFlow() {
       <strong>{{ flow.name }}</strong>
       <small>{{ flow.isDefault ? "默认流程" : "指定流程" }} · 覆盖 {{ flow.coverage }} · {{ nodeModes(flow) }}</small>
     </article>
-    <form @submit.prevent="saveFlow">
+    <form v-if="workspaceCan('approval.workflow')" @submit.prevent="saveFlow">
       <label>流程名称 <input v-model="name" /></label>
       <label>节点
         <select v-model="mode">

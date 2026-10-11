@@ -114,14 +114,14 @@ export async function registerOrganizationPhaseRoutes(app: FastifyInstance): Pro
   app.get<{ Params: { id: string } }>("/api/v1/organizations/:id/approval-flows", async (request, reply) => {
     if (!workspaceReady(request, reply, request.params.id)) return;
     const access = request.admin!.organizationAccess;
-    if (!access?.allows("approval.view") && !access?.allows("authorization.request") && !access?.allows("approval.approve"))
+    if (!access?.allows("approval.view") && !access?.allows("authorization.request") && !access?.allows("approval.approve") && !access?.allows("approval.reject") && !access?.allows("approval.workflow"))
       return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有查看审批流程的权限" });
     return listApprovalFlows(app.db, request.params.id);
   });
 
   app.post<{ Params: { id: string } }>("/api/v1/organizations/:id/approval-flows", async (request, reply) => {
     if (!workspaceReady(request, reply, request.params.id)) return;
-    if (!request.admin!.organizationAccess?.allows("approval.approve"))
+    if (!request.admin!.organizationAccess?.allows("approval.workflow"))
       return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有维护审批流程的权限" });
     const body = parseBody(flowSchema, request.body, reply);
     if (!body) return;
@@ -135,7 +135,7 @@ export async function registerOrganizationPhaseRoutes(app: FastifyInstance): Pro
 
   app.delete<{ Params: { id: string; flowId: string } }>("/api/v1/organizations/:id/approval-flows/:flowId", async (request, reply) => {
     if (!workspaceReady(request, reply, request.params.id)) return;
-    if (!request.admin!.organizationAccess?.allows("approval.approve"))
+    if (!request.admin!.organizationAccess?.allows("approval.workflow"))
       return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有维护审批流程的权限" });
     await deleteApprovalFlow(app.db, request.params.id, request.admin!, request.params.flowId);
     return reply.code(204).send();
