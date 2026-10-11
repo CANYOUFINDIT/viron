@@ -724,6 +724,14 @@ export interface OrganizationAccess {
   permissionCodes: string[];
   applies(subjectType: SubjectType, subjectId: string): boolean;
   allows(code: string, target?: ResourceRef | string): boolean;
+  operationPaths(
+    code: string,
+    target: ResourceRef,
+  ): Array<{ expiresAt: number | null }>;
+  featurePaths(
+    feature: keyof FeatureGrant["features"],
+    target: ResourceRef,
+  ): Array<{ expiresAt: number | null }>;
   featureAllowed(
     feature: keyof FeatureGrant["features"],
     target: ResourceRef,
@@ -844,6 +852,74 @@ export async function loadOrganizationAccess(
       catalog.some((t) => allows(code, t)) ||
       projects.some((p) => allows(code, p.id)),
   );
+  const cutoff = (left: string | null, right: string | null) => {
+    const values = [left, right].flatMap((value) =>
+      value ? [Date.parse(value)] : [],
+    );
+    return values.length ? Math.min(...values) : null;
+  };
+  const operationPaths = (code: string, target: ResourceRef) => {
+    if (!member || !targets.has(resourceKey(target))) return [];
+    const definition = PERMISSION_DEFINITIONS.find((item) => item.code === code);
+    if (!definition || definition.scope !== "resource") return [];
+    const cap = RESOURCE_CAPABILITIES[target.type];
+    if (
+      !["authorization", "approval", "audit", "resource"].includes(
+        code.split(".")[0],
+      ) &&
+      code.split(".")[0] !== cap
+    )
+      return [];
+    if (code.startsWith("resource.") && code.split(".")[1] !== cap) return [];
+    const paths: Array<{ expiresAt: number | null }> = [];
+    for (const assignment of assignments) {
+      const role = activeRoles.get(assignment.roleId);
+      if (!role?.permissionCodes.includes(code)) continue;
+      if (
+        [
+          "authorization.view",
+          "authorization.create",
+          "authorization.update",
+          "authorization.revoke",
+          "approval.view",
+          "approval.approve",
+          "approval.reject",
+          "audit.view",
+        ].includes(code) &&
+        assignment.managementScope.kind === "organization"
+      ) {
+        paths.push({ expiresAt: cutoff(assignment.expiresAt, null) });
+        continue;
+      }
+      for (const grant of state.dataGrants)
+        if (
+          grant.roleId === assignment.roleId &&
+          validAt(grant, now) &&
+          resourceKey(grant.target) === resourceKey(target)
+        )
+          paths.push({
+            expiresAt: cutoff(assignment.expiresAt, grant.expiresAt),
+          });
+    }
+    return paths;
+  };
+  const featurePaths = (
+    feature: keyof FeatureGrant["features"],
+    target: ResourceRef,
+  ) =>
+    targets.has(resourceKey(target))
+      ? state.featureGrants
+          .filter(
+            (grant) =>
+              validAt(grant, now) &&
+              applies(grant.subjectType, grant.subjectId) &&
+              grant.features[feature] &&
+              grant.targets.some((item) => resourceKey(item) === resourceKey(target)),
+          )
+          .map((grant) => ({
+            expiresAt: grant.expiresAt ? Date.parse(grant.expiresAt) : null,
+          }))
+      : [];
   return {
     state,
     catalog,
@@ -851,15 +927,9 @@ export async function loadOrganizationAccess(
     permissionCodes,
     applies,
     allows,
-    featureAllowed: (feature, target) =>
-      targets.has(resourceKey(target)) &&
-      state.featureGrants.some(
-        (g) =>
-          validAt(g, now) &&
-          applies(g.subjectType, g.subjectId) &&
-          g.features[feature] &&
-          g.targets.some((t) => resourceKey(t) === resourceKey(target)),
-      ),
+    operationPaths,
+    featurePaths,
+    featureAllowed: (feature, target) => featurePaths(feature, target).length > 0,
   };
 }
 export async function attachOrganizationAccess(

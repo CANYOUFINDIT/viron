@@ -27,13 +27,15 @@ export interface DesktopWebContextMenuContext {
   inspectAllowed?: boolean;
 }
 
-export function desktopWebPartitionName(endpoint: string, userId: string, credentialId: string): string {
-  const key = createHash("sha256").update(`${endpoint}\0${userId}\0${credentialId}`).digest("hex").slice(0, 40);
+export function desktopWebPartitionName(endpoint: string, userId: string, credentialId: string, environmentId?: string): string {
+  const scope = environmentId ? `\0${environmentId}` : "";
+  const key = createHash("sha256").update(`${endpoint}\0${userId}\0${credentialId}${scope}`).digest("hex").slice(0, 40);
   return `persist:viron-web-${key}`;
 }
 
-export function desktopWebLastUrlKey(endpoint: string, userId: string, credentialId: string): string {
-  return createHash("sha256").update(`${endpoint}\0${userId}\0${credentialId}`).digest("hex");
+export function desktopWebLastUrlKey(endpoint: string, userId: string, credentialId: string, environmentId?: string): string {
+  const scope = environmentId ? `\0${environmentId}` : "";
+  return createHash("sha256").update(`${endpoint}\0${userId}\0${credentialId}${scope}`).digest("hex");
 }
 
 export function supportedDesktopWebUrl(value: string): boolean {

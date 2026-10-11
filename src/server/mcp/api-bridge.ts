@@ -5,6 +5,7 @@ import type { InjectOptions } from "light-my-request";
 import { resolveVironMcpApiRequest } from "../../shared/mcp-tools.js";
 import type { McpApiRequest, McpApiResponse, VironMcpBackend } from "../../shared/mcp-protocol.js";
 import { runWithAuditSource } from "../audit.js";
+import { runWithExecutionChannel } from "../organization-boundary.js";
 
 interface McpHttpContext {
   authorization: string;
@@ -95,10 +96,10 @@ export class McpApiBridge implements VironMcpBackend {
       headers,
       ...(multipart ? { payload: multipart.payload } : input.body === undefined ? {} : { payload: JSON.stringify(input.body) }),
     };
-    const response = await runWithAuditSource("mcp", (auditHeaders) => this.app.inject({
+    const response = await runWithExecutionChannel("mcp", (channelHeaders) => runWithAuditSource("mcp", (auditHeaders) => this.app.inject({
       ...options,
-      headers: { ...options.headers, ...auditHeaders },
-    }));
+      headers: { ...options.headers, ...channelHeaders, ...auditHeaders },
+    })));
     const responseHeaders = Object.fromEntries(Object.entries(response.headers).map(([name, value]) => [
       name,
       typeof value === "number" ? String(value) : value,

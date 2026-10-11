@@ -48,6 +48,40 @@ CREATE TABLE IF NOT EXISTS organization_role_migrations (
  organization_id VARCHAR(64) PRIMARY KEY, version INTEGER NOT NULL, completed_at VARCHAR(40) NOT NULL,
  FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS organization_approval_flows (
+ id VARCHAR(64) PRIMARY KEY, organization_id VARCHAR(64) NOT NULL,
+ name VARCHAR(160) NOT NULL, is_default INTEGER NOT NULL DEFAULT 0,
+ enabled INTEGER NOT NULL DEFAULT 1, nodes_json LONGTEXT NOT NULL,
+ version INTEGER NOT NULL DEFAULT 1, created_at VARCHAR(40) NOT NULL, updated_at VARCHAR(40) NOT NULL,
+ FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS organization_approval_flow_targets (
+ organization_id VARCHAR(64) NOT NULL, target_type VARCHAR(32) NOT NULL,
+ target_id VARCHAR(64) NOT NULL, flow_id VARCHAR(64) NOT NULL,
+ PRIMARY KEY (organization_id, target_type, target_id),
+ FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+ FOREIGN KEY(flow_id) REFERENCES organization_approval_flows(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS organization_grant_requests (
+ id VARCHAR(64) PRIMARY KEY, organization_id VARCHAR(64) NOT NULL,
+ requester_id VARCHAR(64) NOT NULL, kind VARCHAR(16) NOT NULL,
+ role_id VARCHAR(64), features_json LONGTEXT, targets_json LONGTEXT NOT NULL,
+ duration_ms INTEGER, permission_snapshot_json LONGTEXT NOT NULL,
+ workflow_snapshot_json LONGTEXT NOT NULL, decisions_json LONGTEXT NOT NULL,
+ status VARCHAR(16) NOT NULL, stage_index INTEGER NOT NULL DEFAULT 0,
+ grant_ids_json LONGTEXT NOT NULL, block_reason TEXT NOT NULL,
+ reason TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 0,
+ created_at VARCHAR(40) NOT NULL, updated_at VARCHAR(40) NOT NULL,
+ FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS organization_grant_ledger (
+ id VARCHAR(64) PRIMARY KEY, organization_id VARCHAR(64) NOT NULL,
+ actor_id VARCHAR(64), actor_name VARCHAR(160) NOT NULL, action VARCHAR(80) NOT NULL,
+ reason TEXT NOT NULL, before_json LONGTEXT, after_json LONGTEXT,
+ target_refs_json LONGTEXT NOT NULL, request_id VARCHAR(64), grant_id VARCHAR(64),
+ channel VARCHAR(32), created_at VARCHAR(40) NOT NULL,
+ FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+);
 `;
 
 export const MYSQL_ORGANIZATION_RBAC_SCHEMA = ORGANIZATION_RBAC_SCHEMA.replace(

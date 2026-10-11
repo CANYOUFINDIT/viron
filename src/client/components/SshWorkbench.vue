@@ -98,6 +98,7 @@ interface SshConnection {
   options: Record<string, unknown>;
   hasPassword: boolean;
   hasPrivateKey: boolean;
+  operationWindow?: { label: string | null } | null;
 }
 
 interface ServerSession {
@@ -1111,7 +1112,7 @@ onBeforeUnmount(() => {
             <div class="ssh-host-card" :class="{ 'is-opening': openingId === connection.id, 'is-dragging': draggingConnectionId === connection.id, 'is-drop-before': connectionDropTarget?.id === connection.id && !connectionDropTarget.after, 'is-drop-after': connectionDropTarget?.id === connection.id && connectionDropTarget.after }" :draggable="canSortConnections" @dragstart="startConnectionDrag(connection, $event)" @dragover="dragConnectionOver(connection, $event)" @drop="dropConnection(connection, $event)" @dragend="endConnectionDrag">
               <button class="connection-card-main" type="button" :disabled="openingId === connection.id" :title="connectionDragTitle(connection)" @dblclick="openConnection(connection)" @keydown.enter="openConnection(connection)">
                 <span class="ssh-host-card__icon"><Server :size="16" /></span>
-                <span class="ssh-host-card__details"><strong>{{ connection.name }}</strong><small class="ssh-host-card__endpoint"><em v-if="connection.username">{{ connection.username }}@</em><span>{{ connection.host }}:{{ connection.port }}</span></small><span v-if="connection.tags.length" class="ssh-host-tags"><i v-for="tag in connection.tags" :key="tag">{{ tag }}</i></span></span>
+                <span class="ssh-host-card__details"><strong>{{ connection.name }}</strong><small v-if="connection.operationWindow?.label">{{ connection.operationWindow.label }}</small><small class="ssh-host-card__endpoint"><em v-if="connection.username">{{ connection.username }}@</em><span>{{ connection.host }}:{{ connection.port }}</span></small><span v-if="connection.tags.length" class="ssh-host-tags"><i v-for="tag in connection.tags" :key="tag">{{ tag }}</i></span></span>
               </button>
               <el-dropdown class="ssh-host-card__menu" trigger="click" placement="bottom-end" popper-class="workbench-connection-menu-popper" @command="handleConnectionAction($event, connection)">
                 <button class="connect-indicator" type="button" :disabled="openingId === connection.id" :aria-label="$t('打开 {0} 的连接菜单', [connection.name])" :title="$t('连接操作')" @pointerdown.stop="suppressConnectionDrag" @pointerup.stop="releaseConnectionDragSuppression" @pointercancel.stop="releaseConnectionDragSuppression">

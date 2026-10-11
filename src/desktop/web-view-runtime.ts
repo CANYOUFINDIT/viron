@@ -208,6 +208,7 @@ export interface ManagedDesktopWebView {
   id: string;
   registrationId: string;
   credentialId: string;
+  environmentId: string;
   entryId: string;
   entryUrl: string;
   entryOrigin: string;
@@ -997,16 +998,29 @@ export async function openDesktopWebView(
   originEnvironmentId?: string,
 ): Promise<DesktopWebViewState> {
   if (!mainWindow) throw new Error(tr("主窗口不可用"));
-  const existing = [...desktopWebViews.values()].find((view) => view.credentialId === credentialId && !view.closing);
+  const environmentId = originEnvironmentId ?? "";
+  const existing = [...desktopWebViews.values()].find((view) => view.credentialId === credentialId && view.environmentId === environmentId && !view.closing);
   if (existing) return webViewState(existing);
   if (desktopWebViews.size >= 8) throw new Error(tr("本机最多同时打开 8 个账号页面，请先关闭一个页面"));
   const { auth, credential, expiresAt } = await localWebCredential(credentialId);
   if (!supportedDesktopWebUrl(credential.entryUrl)) throw new Error(tr("Web 入口地址只支持 HTTP 或 HTTPS"));
   const endpoint = activeEndpoint?.endpoint;
   if (!endpoint) throw new Error(tr("请先验证 Viron Endpoint"));
+  let allowExtensions = auth.workspace.type === "personal";
+  if (auth.workspace.type === "organization") {
+    allowExtensions = false;
+    if (environmentId) {
+      try {
+        const policy = await endpointJson<{ inject: boolean }>(`/api/v1/web-plugin-policy?environmentId=${encodeURIComponent(environmentId)}`);
+        allowExtensions = policy.inject === true;
+      } catch {
+        allowExtensions = false;
+      }
+    }
+  }
   const registrationId = await reserveDesktopRuntime("web", credentialId, undefined, originEnvironmentId);
   const id = randomUUID();
-  const partitionName = desktopWebPartitionName(endpoint, auth.user.id, credential.credentialId);
+  const partitionName = desktopWebPartitionName(endpoint, auth.user.id, credential.credentialId, environmentId || undefined);
   const webPartition = session.fromPartition(partitionName);
   installDesktopPublicWebAssets(webPartition, endpoint, auth.user.id);
   try { await closingProfiles.get(webPartition); }
@@ -1016,11 +1030,12 @@ export async function openDesktopWebView(
     await releaseDesktopRuntimeReservation(registrationId);
     return webViewState(concurrent);
   }
-  const lastUrlKey = desktopWebLastUrlKey(endpoint, auth.user.id, credential.credentialId);
+  const lastUrlKey = desktopWebLastUrlKey(endpoint, auth.user.id, credential.credentialId, environmentId || undefined);
   const managed: ManagedDesktopWebView = {
     id,
     registrationId,
     credentialId,
+    environmentId,
     entryId: credential.entryId,
     entryUrl: credential.entryUrl,
     entryOrigin: new URL(credential.entryUrl).origin,
@@ -1041,7 +1056,7 @@ export async function openDesktopWebView(
     closing: false,
     lastActivityAt: Date.now(),
     closedReason: "",
-    allowExtensions: auth.workspace.type === "personal",
+    allowExtensions,
     partition: webPartition,
     partitionName,
     lastUrlKey,

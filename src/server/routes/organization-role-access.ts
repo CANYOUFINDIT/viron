@@ -20,7 +20,8 @@ import {
   resourceKey,
   type ResourceRef,
 } from "../../shared/organization-rbac.js";
-import { revokeWorkspaceRuntime } from "../user-runtime.js";
+import { disconnectGrantees } from "../access-expiry.js";
+import { recordGrantLedger } from "../organization-approval.js";
 import { writeAudit } from "../audit.js";
 import { isUniqueConstraintError } from "../database-errors.js";
 
@@ -319,9 +320,22 @@ export async function registerOrganizationRoleAccessRoutes(
             JSON.stringify({ id: change.id, ids: change.ids }),
             new Date().toISOString(),
           );
+      const targets = [
+        ...((change.before as { targets?: ResourceRef[]; target?: ResourceRef } | undefined)?.targets ?? []),
+        ...((change.after as { targets?: ResourceRef[] } | undefined)?.targets ?? []),
+      ];
+      const single = (change.before as { target?: ResourceRef } | undefined)?.target;
+      await recordGrantLedger(app.db, org, { id: request.admin!.id, name: request.admin!.username }, action, reason, {
+        before: change.before,
+        after: change.after,
+        targets: single ? [single, ...targets] : targets,
+      });
       return change;
     })();
-    await revokeWorkspaceRuntime(app, request.admin!.workspace);
+    const members = await app.db
+      .prepare("SELECT user_id FROM organization_members WHERE organization_id = ?")
+      .all<{ user_id: string }>(request.admin!.workspace.id);
+    await disconnectGrantees(app, request.admin!.workspace.id, members.map((member) => member.user_id));
     return { ok: true, id: result.id, ids: result.ids };
   };
   app.get<{ Params: { id: string } }>(

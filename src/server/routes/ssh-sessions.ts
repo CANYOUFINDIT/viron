@@ -13,6 +13,7 @@ import { ConnectionLimitError } from "../active-connections.js";
 import { auditLikePattern, auditRetentionCutoff, parseAuditListQuery, type AuditListQuery } from "../audit-query.js";
 import { SshCommandAbortedError } from "../ssh/command.js";
 import { acceptDesktopReport, DesktopReportError } from "../desktop-report.js";
+import { executionDecision } from "../organization-boundary.js";
 
 const createSessionSchema = z.object({
   connectionId: z.string().uuid(),
@@ -228,6 +229,12 @@ export async function registerSshSessionRoutes(app: FastifyInstance): Promise<vo
         if (!await canAccessConnection(app.db, request.admin!, "ssh", currentTarget.connectionId, "use")) {
           throw new DesktopReportError(404, "SESSION_NOT_FOUND", "SSH 会话不存在或已经结束");
         }
+        const organizationAccess = request.admin!.organizationAccess;
+        if (organizationAccess) {
+          const code = report.payload.intent === "write" ? "ssh.upload" : "ssh.use";
+          const decision = executionDecision(organizationAccess, "agent", code, { type: "ssh_connection", id: currentTarget.connectionId });
+          if (!decision.allowed) throw new DesktopReportError(403, decision.error ?? "FEATURE_FORBIDDEN", decision.message);
+        }
         payload = report.payload;
         approvedTarget = currentTarget;
         await writeAudit(app.db, {
@@ -295,6 +302,11 @@ export async function registerSshSessionRoutes(app: FastifyInstance): Promise<vo
         const currentTarget = app.sshSessions.agentTarget(request.params.id, request.admin!, scope);
         if (!await canAccessConnection(app.db, request.admin!, "ssh", currentTarget.connectionId, "use")) {
           throw new DesktopReportError(404, "SESSION_NOT_FOUND", "SSH 会话不存在或已经结束");
+        }
+        const organizationAccess = request.admin!.organizationAccess;
+        if (organizationAccess) {
+          const decision = executionDecision(organizationAccess, "agent", "ssh.use", { type: "ssh_connection", id: currentTarget.connectionId });
+          if (!decision.allowed) throw new DesktopReportError(403, decision.error ?? "FEATURE_FORBIDDEN", decision.message);
         }
         target = currentTarget;
         acceptedDeviceId = deviceId;

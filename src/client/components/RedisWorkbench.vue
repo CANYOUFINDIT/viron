@@ -74,6 +74,7 @@ interface RedisConnection {
   defaultDatabase: number;
   connectionMode: "tcp" | "sshTunnel";
   options: { keySeparator?: string; readOnly?: boolean; tls?: { enabled?: boolean } };
+  operationWindow?: { label: string | null } | null;
 }
 
 interface KeyItem { key: BinaryValue; type: "string" | "hash" | "list" | "set" | "zset" | "stream" | "none"; ttlMs: number }
@@ -796,6 +797,7 @@ onBeforeUnmount(() => {
             <span class="redis-connection-icon"><Server :size="14" /></span>
             <div>
               <strong>{{ connection.name }}</strong>
+              <small v-if="connection.operationWindow?.label">{{ connection.operationWindow.label }}</small>
               <small>{{ connection.host }}:{{ connection.port }} · DB {{ connection.defaultDatabase }}</small>
             </div>
             <em v-if="connection.options.readOnly">{{ $t('只读') }}</em><ChevronRight v-else :size="14" />

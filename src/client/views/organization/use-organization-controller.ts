@@ -15,6 +15,7 @@ interface Member {
   username: string;
   status: "active" | "disabled";
   role: "admin" | "member";
+  roleNames?: string[];
   projectIds: string[];
   invitedBy: { id: string; username: string } | null;
 }
@@ -85,7 +86,7 @@ interface StructureNode {
   meta: string;
   children?: StructureNode[];
 }
-type Panel = "structure" | "invitations" | "platform" | "access" | "roles";
+type Panel = "structure" | "invitations" | "platform" | "access" | "roles" | "resources" | "approval" | "mine" | "requests" | "todo";
 type InvitationDuration = 1 | 24 | 168 | 720;
 type InvitationLimitPreset = 1 | 3 | 5 | 10 | "unlimited" | "custom";
 

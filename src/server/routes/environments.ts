@@ -9,6 +9,7 @@ import type { PermissionMap } from "../../shared/access-permissions.js";
 import { parseBody } from "../validation.js";
 import { requireAdmin } from "./auth.js";
 import { revokeWorkspaceRuntime } from "../user-runtime.js";
+import { presentTargetWindow } from "../organization-boundary.js";
 
 const groupSchema = z.object({
   name: z.string().trim().min(1).max(80),
@@ -42,7 +43,7 @@ const environmentPreferenceSchema = z.object({
   favorite: z.boolean().optional(),
 }).refine((preference) => preference.alias !== undefined || preference.favorite !== undefined, "至少需要提供一项环境偏好");
 
-function mapEnvironment(row: Record<string, unknown>, permissions?: PermissionMap) {
+function mapEnvironment(row: Record<string, unknown>, permissions?: PermissionMap, operationWindow?: { label: string | null; expiresAt: string | null; permanent: boolean; partial: boolean } | null) {
   return {
     id: row.id,
     groupId: row.group_id,
@@ -67,7 +68,12 @@ function mapEnvironment(row: Record<string, unknown>, permissions?: PermissionMa
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     permissions: permissions ?? null,
+    operationWindow: operationWindow ?? null,
   };
+}
+
+function environmentWindow(access: Awaited<ReturnType<typeof getWorkspaceAccess>>, id: string) {
+  return access.organizationAccess ? presentTargetWindow(access.organizationAccess, { type: "environment", id }) : null;
 }
 
 function requireWorkspaceManager(request: Parameters<typeof canManageWorkspace>[0], reply: { code: (status: number) => { send: (body: unknown) => unknown } }): boolean {
@@ -299,7 +305,7 @@ export async function registerEnvironmentRoutes(app: FastifyInstance): Promise<v
         ORDER BY CASE WHEN e.group_id IS NULL THEN 1 ELSE 0 END, g.sort_order, g.name, e.sort_order, e.name
       `).all(request.admin!.id, ...params) as Record<string, unknown>[];
       await applyKnowledgeDocumentCounts(app, rows);
-      return { items: rows.map((row) => mapEnvironment(row, access.environmentPermissions(String(row.id)))) };
+      return { items: rows.map((row) => mapEnvironment(row, access.environmentPermissions(String(row.id)), environmentWindow(access, String(row.id)))) };
     },
   );
 
@@ -359,7 +365,7 @@ export async function registerEnvironmentRoutes(app: FastifyInstance): Promise<v
     if (!row) return reply.code(404).send({ error: "NOT_FOUND", message: "环境不存在" });
     await applyKnowledgeDocumentCounts(app, [row]);
     const access = await getWorkspaceAccess(app.db, request.admin!);
-    return { item: mapEnvironment(row, access.environmentPermissions(request.params.id)) };
+    return { item: mapEnvironment(row, access.environmentPermissions(request.params.id), environmentWindow(access, request.params.id)) };
   });
 
   app.post("/api/v1/environments", async (request, reply) => {

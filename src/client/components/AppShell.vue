@@ -365,6 +365,7 @@ onBeforeUnmount(() => {
               </span>
               <ChevronsUpDown class="workspace-switcher__chevrons sidebar-label" :size="14" />
             </button>
+            <button v-if="session.workspace?.type === 'organization'" class="sidebar-label" type="button" @click="router.push({ name: 'organization', query: { section: 'mine' } })">我的授权</button>
             <template #dropdown>
               <el-dropdown-menu class="workspace-menu">
                 <li class="workspace-menu__heading" role="presentation">{{ $t('个人空间') }}</li>

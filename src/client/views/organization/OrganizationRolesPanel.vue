@@ -19,6 +19,7 @@ import {
 } from "../../../shared/organization-rbac";
 import RolePermissionList from "./RolePermissionList.vue";
 import OrganizationResourceAuthorizationDialog from "./OrganizationResourceAuthorizationDialog.vue";
+import { pendingResourceGrant } from "./grant-selection";
 const { currentOrganizationId, detail } = useOrganizationContext();
 const state = ref<RoleAccessState | null>(null),
   catalog = ref<ResourceCatalogItem[]>([]),
@@ -72,7 +73,8 @@ const assignmentForm = reactive({
 });
 const grantDialog = ref(false),
   editData = ref<RoleDataGrant>(),
-  editFeature = ref<FeatureGrant>();
+  editFeature = ref<FeatureGrant>(),
+  grantTargets = ref(pendingResourceGrant.value ? [pendingResourceGrant.value] : []);
 const base = computed(
   () => `/api/v1/organizations/${currentOrganizationId.value}`,
 );
@@ -274,6 +276,14 @@ function openGrant(data?: RoleDataGrant, feature?: FeatureGrant) {
   editFeature.value = feature;
   grantDialog.value = true;
 }
+watch(pendingResourceGrant, (target) => {
+  if (!target) return;
+  editData.value = undefined;
+  editFeature.value = undefined;
+  grantTargets.value = [target];
+  grantDialog.value = true;
+  pendingResourceGrant.value = null;
+}, { immediate: true });
 watch(currentOrganizationId, () => {
   selected.value = "";
   roleDialog.value = false;
@@ -698,6 +708,7 @@ onMounted(load);
       v-model="grantDialog"
       :organization-id="currentOrganizationId"
       :role-id="selected"
+      :targets="grantTargets"
       :edit-data="editData"
       :edit-feature="editFeature"
       @saved="load"

@@ -6,6 +6,7 @@ import { writeAudit } from "../audit.js";
 import { isUniqueConstraintError } from "../database-errors.js";
 import { inspectSshPrivateKey, generateSshKeyPair } from "../ssh/key-store.js";
 import { revokeWorkspaceRuntime } from "../user-runtime.js";
+import { hasWorkspacePermission } from "../access-control.js";
 import { parseBody } from "../validation.js";
 import { requireAdmin } from "./auth.js";
 
@@ -193,6 +194,9 @@ export async function registerSshKeyRoutes(app: FastifyInstance): Promise<void> 
     const part = request.query.part === "private" ? "private" : "public";
     let content = key.public_key.endsWith("\n") ? key.public_key : `${key.public_key}\n`;
     if (part === "private") {
+      if (request.admin?.workspace.type === "organization" && !hasWorkspacePermission(request, "credential.export")) {
+        return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有导出私钥的权限" });
+      }
       const credential = JSON.parse(app.secrets.decrypt(key.private_key_ciphertext)) as { privateKey?: string };
       if (!credential.privateKey) return reply.code(409).send({ error: "SSH_KEY_CONTENT_MISSING", message: "SSH 密钥没有保存私钥" });
       content = credential.privateKey.endsWith("\n") ? credential.privateKey : `${credential.privateKey}\n`;

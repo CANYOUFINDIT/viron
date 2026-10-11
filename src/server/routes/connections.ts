@@ -18,6 +18,8 @@ import { applySubsetOrder, sameOrder } from "../../shared/tab-order.js";
 import { parseBody } from "../validation.js";
 import { requireAdmin } from "./auth.js";
 import { revokeWorkspaceRuntime } from "../user-runtime.js";
+import { presentTargetWindow } from "../organization-boundary.js";
+import type { ResourceRef } from "../../shared/organization-rbac.js";
 import { normalizeDatabaseStorage } from "../database-credentials.js";
 import { closeSshConnectionPool } from "../ssh/connector.js";
 import { closeDatabaseConnectionPool } from "../database-workbench/connector.js";
@@ -621,6 +623,13 @@ export async function registerConnectionRoutes(app: FastifyInstance): Promise<vo
     }
 
     items.sort((left, right) => String(right.updatedAt).localeCompare(String(left.updatedAt)));
+    if (access.organizationAccess) {
+      const types: Record<string, ResourceRef["type"]> = { ssh: "ssh_connection", database: "database_connection", redis: "redis_connection" };
+      for (const item of items) {
+        const resourceType = types[String(item.type)];
+        if (resourceType) item.operationWindow = presentTargetWindow(access.organizationAccess, { type: resourceType, id: String(item.id) });
+      }
+    }
     return { items };
   });
 

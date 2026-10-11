@@ -11,6 +11,7 @@ import { authorizationBodySchema } from "./access-governance.js";
 import { writeAudit } from "../audit.js";
 import { isUniqueConstraintError } from "../database-errors.js";
 import { revokeUserRuntime } from "../user-runtime.js";
+import { roleNamesByMember } from "../organization-approval.js";
 import { parseBody } from "../validation.js";
 import { requireAdmin } from "./auth.js";
 
@@ -368,6 +369,8 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
       updatedAt: row.updated_at,
     }));
     const grants = hasWorkspacePermission(request,"authorization.view") ? await listOrganizationGrants(app.db, request.params.id) : [];
+    const roleNames = await roleNamesByMember(app.db, request.params.id);
+    for (const member of members) Object.assign(member, { roleNames: roleNames.get(String(member.id)) ?? [] });
     return { organization, members, projects, grants };
   });
 
@@ -669,7 +672,7 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
       if (isUniqueConstraintError(error)) return reply.code(409).send({ error: "PROJECT_EXISTS", message: "项目名称已存在" });
       throw error;
     }
-    await Promise.all(affectedUsers.map((userId) => revokeUserRuntime(app, userId, false)));
+    await disconnectGrantees(app, request.params.id, affectedUsers);
     await writeAudit(app.db, { action: "project.updated", resourceType: "project", resourceId: request.params.projectId, summary: `更新项目组 ${body.name}`, details: { parentId: body.parentId }, request });
     return { ok: true };
   });
@@ -695,7 +698,7 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
       await assertOrganizationMaintainer(app.db,request.params.id);
       for (const projectId of [...projectIds].reverse()) await app.db.prepare("DELETE FROM projects WHERE id = ?").run(projectId);
     })();
-    await Promise.all(affectedUsers.map((userId) => revokeUserRuntime(app, userId, false)));
+    await disconnectGrantees(app, request.params.id, affectedUsers);
     await writeAudit(app.db, { action: "project.deleted", resourceType: "project", resourceId: request.params.projectId, summary: `删除项目组 ${project.name}`, details: { deletedProjectIds: projectIds }, request });
     return reply.code(204).send();
   });
@@ -721,7 +724,7 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
       await app.db.prepare("DELETE FROM project_members WHERE project_id = ? AND user_id = ?").run(request.params.projectId, request.params.userId);
       await assertOrganizationMaintainer(app.db, request.params.id);
     })();
-    await revokeUserRuntime(app, request.params.userId, false);
+    await disconnectGrantees(app, request.params.id, [request.params.userId]);
     await writeAudit(app.db, { action: "project.member_removed", resourceType: "project", resourceId: request.params.projectId, summary: "移除项目成员", details: { userId: request.params.userId }, request });
     return reply.code(204).send();
   });

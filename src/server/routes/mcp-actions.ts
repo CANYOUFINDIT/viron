@@ -91,6 +91,9 @@ export async function registerMcpActionRoutes(app: FastifyInstance): Promise<voi
     if (!body || !request.admin) return;
     if (!await canAccessConnection(app.db, request.admin, "ssh", request.params.id, "view")) return reply.code(404).send({ error: "NOT_FOUND", message: "SSH 连接不存在" });
     if (!await canAccessConnection(app.db, request.admin, "ssh", request.params.id, "use")) return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有这项操作权限" });
+    if (request.admin.organizationAccess && sshCommandRiskLevel(body.command) !== "low" && !request.admin.organizationAccess.allows("ssh.upload", { type: "ssh_connection", id: request.params.id })) {
+      return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "角色未获得这项资源操作权限" });
+    }
     const connection = await app.db.prepare("SELECT name FROM ssh_connections WHERE id = ?").get(request.params.id) as { name: string } | undefined;
     try {
       const result = await executeSshCommand(app, request.params.id, body.command, { timeoutMs: body.timeoutMs, maxBytes: body.maxBytes });

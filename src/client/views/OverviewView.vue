@@ -37,6 +37,7 @@ interface EnvironmentGroup {
 }
 
 interface EnvironmentItem {
+  operationWindow?: { label: string | null } | null;
   id: string;
   groupId: string | null;
   groupName: string | null;
@@ -735,6 +736,7 @@ onMounted(load);
                         <p class="environment-card__description">{{ environment.description || $t('暂无环境说明') }}</p>
                       </el-tooltip>
                     </div>
+                    <small v-if="environment.operationWindow?.label" class="environment-card__remaining">{{ environment.operationWindow.label }}</small>
                     <div class="resource-counts" :aria-label="$t('环境资源数量')">
                       <span :title="$t('{0} 个 Web 入口', [environment.webCount])"><Globe2 :size="14" aria-hidden="true" /><strong>{{ environment.webCount }}</strong><small>Web</small></span>
                       <span :title="$t('{0} 个 SSH 连接', [environment.sshCount])"><TerminalSquare :size="14" aria-hidden="true" /><strong>{{ environment.sshCount }}</strong><small>SSH</small></span>

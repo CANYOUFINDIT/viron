@@ -28,6 +28,7 @@ export interface DatabaseConnection {
   canManage: boolean;
   starred: boolean;
   color: string;
+  operationWindow?: { label: string | null } | null;
 }
 
 export interface ConnectionGroupItem { id: string; parentId: string | null; name: string; path: string }
