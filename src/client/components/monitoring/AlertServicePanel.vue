@@ -335,19 +335,20 @@ onBeforeUnmount(() => {
           class="event-row"
           @click="emit('open-event', event)"
         >
-          <span class="tone-badge" :class="`is-${event.peakSeverity}`">{{ severityLabel(event.peakSeverity) }}</span>
+          <span class="tone-badge event-severity" :class="`is-${event.peakSeverity}`">{{ severityLabel(event.peakSeverity) }}</span>
           <span class="event-time">{{ eventTime(event) }}</span>
-          <span>
+          <span class="event-summary">
             <strong>{{ monitorAlertRuleLabel(event) }}</strong>
             <small class="event-message">
               {{ eventBody(event) }}<template v-if="event.occurrenceCount > 1"> · {{ $t('合并 {0} 次短时复发', [event.occurrenceCount - 1]) }}</template>
             </small>
           </span>
-          <span>
+          <span class="event-target">
+            <span class="event-target-label">{{ $t('目标') }}</span>
             <strong>{{ eventTarget(event) }}</strong>
             <small>{{ event.environmentName }}</small>
           </span>
-          <span class="tone-badge" :class="event.status === 'active' ? 'is-critical' : event.status === 'recovered' && event.details.ignored !== true ? 'is-healthy' : 'is-info'">{{ statusLabel(event) }}</span>
+          <span class="tone-badge event-status" :class="event.status === 'active' ? 'is-critical' : event.status === 'recovered' && event.details.ignored !== true ? 'is-healthy' : 'is-info'">{{ statusLabel(event) }}</span>
         </button>
       </div>
       </div>
@@ -367,12 +368,12 @@ onBeforeUnmount(() => {
         </div>
         <div v-if="!visibleServices.length && !servicesLoading" class="observe-empty">{{ $t('暂无服务实例') }}</div>
         <div v-for="service in visibleServices" :key="service.id" class="service-row">
-          <div>
+          <div class="service-identity">
             <strong>{{ service.name }}</strong>
             <small>{{ service.environmentName }} · {{ service.runningCount }} / {{ service.deploymentCount }}</small>
           </div>
-          <span><b class="tone-badge" :class="`is-${service.health}`">{{ healthLabel(service.health) }}</b></span>
-          <span :class="{ 'is-hot': (service.activeAlertCount ?? 0) > 0 }">{{ serviceAlertText(service) }}</span>
+          <span class="service-health"><b class="tone-badge" :class="`is-${service.health}`">{{ healthLabel(service.health) }}</b></span>
+          <span class="service-alerts" :class="{ 'is-hot': (service.activeAlertCount ?? 0) > 0 }"><span class="service-alerts-label">{{ $t('活动告警') }} · </span>{{ serviceAlertText(service) }}</span>
           <button type="button" class="row-action" @click="emit('open-service', service)">{{ $t('服务维护') }} →</button>
         </div>
       </div>
@@ -432,19 +433,20 @@ onBeforeUnmount(() => {
             class="event-row"
             @click="openDrawerEvent(event)"
           >
-            <span class="tone-badge" :class="`is-${event.peakSeverity}`">{{ severityLabel(event.peakSeverity) }}</span>
+            <span class="tone-badge event-severity" :class="`is-${event.peakSeverity}`">{{ severityLabel(event.peakSeverity) }}</span>
             <span class="event-time">{{ eventTime(event) }}</span>
-            <span>
+            <span class="event-summary">
               <strong>{{ monitorAlertRuleLabel(event) }}</strong>
               <small class="event-message">
                 {{ eventBody(event) }}<template v-if="event.occurrenceCount > 1"> · {{ $t('合并 {0} 次短时复发', [event.occurrenceCount - 1]) }}</template>
               </small>
             </span>
-            <span>
+            <span class="event-target">
+              <span class="event-target-label">{{ $t('目标') }}</span>
               <strong>{{ eventTarget(event) }}</strong>
               <small>{{ event.environmentName }}</small>
             </span>
-            <span class="tone-badge" :class="event.status === 'active' ? 'is-critical' : event.status === 'recovered' && event.details.ignored !== true ? 'is-healthy' : 'is-info'">{{ statusLabel(event) }}</span>
+            <span class="tone-badge event-status" :class="event.status === 'active' ? 'is-critical' : event.status === 'recovered' && event.details.ignored !== true ? 'is-healthy' : 'is-info'">{{ statusLabel(event) }}</span>
           </button>
         </div>
         <footer v-if="allEventTotal > allEventPageSize" class="event-pagination">
@@ -464,6 +466,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .alert-service-panel {
   min-width: 0;
+  container: alert-service / inline-size;
   display: flex;
   flex-direction: column;
   gap: 20px;
@@ -494,9 +497,12 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
   padding: 12px 18px;
   border-bottom: 1px solid var(--color-rule, var(--ink-100));
 }
+
+.observe-panel__head > div { min-width: 0; }
 
 .observe-panel__head h3,
 .observe-panel__head small {
@@ -663,6 +669,7 @@ onBeforeUnmount(() => {
 }
 
 .drawer-event-list {
+  container: event-list / inline-size;
   min-height: 180px;
   overflow: hidden;
   border: 1px solid var(--color-rule, var(--ink-100));
@@ -684,11 +691,20 @@ onBeforeUnmount(() => {
 
 .event-row {
   width: 100%;
-  grid-template-columns: 92px 132px minmax(180px, 1.4fr) minmax(140px, 1fr) 72px;
+  grid-template-columns: 92px 132px minmax(0, 1.4fr) minmax(0, 1fr) 72px;
   cursor: pointer;
   color: inherit;
   transition: background var(--dur-micro, 120ms) var(--ease-out, ease);
 }
+
+.event-row > *,
+.service-row > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.event-target-label,
+.service-alerts-label { display: none; }
 
 .event-row:last-child,
 .service-row:last-child { border-bottom: 0; }
@@ -785,7 +801,8 @@ onBeforeUnmount(() => {
 
 .observe-empty.compact { min-height: 160px; padding: 24px 16px; }
 
-.service-section { overflow: hidden; }
+.priority-event-panel { container: event-list / inline-size; }
+.service-section { container: service-list / inline-size; overflow: hidden; }
 .priority-event-body,
 .service-table { flex: 1; position: relative; min-height: 160px; }
 
@@ -822,23 +839,57 @@ onBeforeUnmount(() => {
 .row-action:hover { color: var(--ink-900); text-decoration: underline; }
 .row-action:focus-visible { outline: 2px solid var(--teal-500); outline-offset: 2px; }
 
-@media (max-width: 1100px) {
+/* Use the space remaining after the sidebar, including immersive layouts. */
+@container alert-service (max-width: 1320px) {
   .observe-split { grid-template-columns: 1fr; }
   .observe-panel { min-height: 0; }
 }
 
-@media (max-width: 960px) {
-  .observe-panel__head,
-  .drawer-event-context { align-items: flex-start; flex-direction: column; }
-
-  .event-range-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-
-  .event-row,
-  .event-row.is-head,
-  .service-row,
-  .service-row.is-head {
-    grid-template-columns: minmax(140px, 1fr) auto;
+@container event-list (max-width: 740px) {
+  .event-row.is-head { display: none; }
+  .event-row:not(.is-head) {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "severity status"
+      "time time"
+      "summary summary"
+      "target target";
+    align-items: start;
+    gap: 8px 12px;
+    padding: 14px 16px;
   }
+  .event-severity { grid-area: severity; }
+  .event-status { grid-area: status; justify-self: end; }
+  .event-time { grid-area: time; }
+  .event-summary { grid-area: summary; }
+  .event-target { grid-area: target; }
+  .event-target-label { display: block; margin-bottom: 3px; color: var(--ink-400); font-size: 11px; }
+}
+
+@container service-list (max-width: 480px) {
+  .service-row.is-head { display: none; }
+  .service-row:not(.is-head) {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "identity identity"
+      "health alerts"
+      "action action";
+    gap: 8px 12px;
+  }
+  .service-identity { grid-area: identity; }
+  .service-health { grid-area: health; }
+  .service-alerts { grid-area: alerts; }
+  .service-alerts-label { display: inline; color: var(--ink-400); font-weight: 400; }
+  .row-action { grid-area: action; justify-self: start; padding-left: 0; }
+}
+
+@container alert-service (max-width: 600px) {
+  .event-range-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 960px) {
+  .drawer-event-context { align-items: flex-start; flex-direction: column; }
+  .drawer-event-filters .event-range-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 @media (prefers-reduced-motion: reduce) {
