@@ -12,6 +12,14 @@ function trimmedStatement(source: string, start: number, end: number): SqlStatem
   return from < to ? { sql: source.slice(from, to), start: from, end: to } : null;
 }
 
+export function startsSqlLineComment(source: string, index: number): boolean {
+  const char = source[index];
+  if (char === "#") return true;
+  if (char !== "-" || source[index + 1] !== "-") return false;
+  const next = source[index + 2];
+  return next === undefined || next <= " ";
+}
+
 export function parseSqlStatements(source: string): SqlStatement[] {
   if (source.includes("-- ENVMAN_STATEMENT_BOUNDARY")) {
     const statements: SqlStatement[] = [];
@@ -74,13 +82,9 @@ export function parseSqlStatements(source: string): SqlStatement[] {
       }
       continue;
     }
-    if (char === "-" && next === "-") {
+    if (startsSqlLineComment(source, index)) {
       lineComment = true;
-      index += 1;
-      continue;
-    }
-    if (char === "#") {
-      lineComment = true;
+      if (char === "-") index += 1;
       continue;
     }
     if (char === "/" && next === "*") {

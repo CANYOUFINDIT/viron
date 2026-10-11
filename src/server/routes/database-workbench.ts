@@ -4,8 +4,9 @@ import type { FieldPacket, RowDataPacket } from "mysql2/promise";
 import { z } from "zod";
 import { writeAudit } from "../audit.js";
 import { filterAsync } from "../async-utils.js";
-import { canAccessConnection, canManageWorkspace } from "../access-control.js";
+import { canAccessConnection, canManageWorkspace, type AuthenticatedUser } from "../access-control.js";
 import { executionScope } from "../execution-scope.js";
+import { trustedExecutionChannel } from "../organization-boundary.js";
 import { connectDatabase, type DatabaseConnectionClient } from "../database-workbench/connector.js";
 import { parseCreateTableConstraints } from "../../shared/database-table-design.js";
 import { deserializeDatabaseCellValue, normalizeCellColumns, serializeDatabaseRow } from "../../shared/database-cell-value.js";
@@ -14,7 +15,7 @@ import { parseBody } from "../validation.js";
 import { requireAdmin } from "./auth.js";
 import { auditLikePattern, auditRetentionCutoff, parseAuditListQuery, type AuditListQuery } from "../audit-query.js";
 import { assertMcpReadOnlySql } from "../../shared/mcp-policy.js";
-import { sqlRequiresWrite } from "../../shared/access-permissions.js";
+import { missingDatabaseSqlPermission } from "../../shared/access-permissions.js";
 
 const querySchema = z.object({
   sql: z.string().trim().min(1).max(2 * 1024 * 1024),
@@ -226,12 +227,23 @@ async function tableColumns(app: FastifyInstance, connectionId: string, database
   }
 }
 
+async function queryOperationAllowed(app: FastifyInstance, user: AuthenticatedUser, connectionId: string, sql: string): Promise<boolean> {
+  const connection = await app.db.prepare("SELECT workspace_type, workspace_id FROM database_connections WHERE id = ?").get(connectionId) as
+    | { workspace_type: string; workspace_id: string }
+    | undefined;
+  if (!connection || connection.workspace_type !== user.workspace.type || connection.workspace_id !== user.workspace.id) return false;
+  const missing = await missingDatabaseSqlPermission(sql, (code) => canAccessConnection(app.db, user, "database", connectionId, code.slice("database.".length)));
+  return missing === null;
+}
+
 export async function registerDatabaseWorkbenchRoutes(app: FastifyInstance): Promise<void> {
   app.addHook("preHandler", requireAdmin);
   app.addHook("preHandler", async (request, reply) => {
     if (!request.url.startsWith("/api/v1/database-connections/")) return;
     const connectionId = (request.params as { id?: string }).id;
-    if (connectionId && !await canAccessConnection(app.db, request.admin!, "database", connectionId)) {
+    const path = request.url.split("?", 1)[0] ?? "";
+    const queryExecution = request.method === "POST" && /\/queries$/.test(path);
+    if (connectionId && !queryExecution && !await canAccessConnection(app.db, request.admin!, "database", connectionId)) {
       await reply.code(404).send({ error: "NOT_FOUND", message: "数据库连接不存在" });
       return;
     }
@@ -774,9 +786,14 @@ export async function registerDatabaseWorkbenchRoutes(app: FastifyInstance): Pro
   app.post<{ Params: { id: string } }>("/api/v1/database-connections/:id/queries", async (request, reply) => {
     const body = parseBody(querySchema, request.body, reply);
     if (!body || !request.admin) return;
-    if (sqlRequiresWrite(body.sql) && !await canAccessConnection(app.db, request.admin, "database", request.params.id, "write")) {
-      return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有这项操作权限" });
+    const connection = await app.db.prepare("SELECT workspace_type, workspace_id FROM database_connections WHERE id = ?").get(request.params.id) as
+      | { workspace_type: string; workspace_id: string }
+      | undefined;
+    if (!connection || connection.workspace_type !== request.admin.workspace.type || connection.workspace_id !== request.admin.workspace.id) {
+      return reply.code(404).send({ error: "NOT_FOUND", message: "数据库连接不存在" });
     }
+    const missing = await missingDatabaseSqlPermission(body.sql, (code) => canAccessConnection(app.db, request.admin!, "database", request.params.id, code.slice("database.".length)));
+    if (missing) return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有这项操作权限" });
     try {
       const job = await app.databaseQueries.create(
         request.admin,
@@ -785,6 +802,7 @@ export async function registerDatabaseWorkbenchRoutes(app: FastifyInstance): Pro
         body.database,
         executionScope(request),
         body.continueOnError,
+        trustedExecutionChannel(request),
       );
       return reply.code(202).send({ job });
     } catch (error) {
@@ -854,7 +872,7 @@ export async function registerDatabaseWorkbenchRoutes(app: FastifyInstance): Pro
 
   app.get<{ Params: { id: string } }>("/api/v1/database-queries/:id", async (request, reply) => {
     const job = app.databaseQueries.get(request.params.id, request.admin!.id, executionScope(request));
-    if (!job || !await canAccessConnection(app.db, request.admin!, "database", job.connectionId)) {
+    if (!job || !await queryOperationAllowed(app, request.admin!, job.connectionId, job.sql)) {
       return reply.code(404).send({ error: "QUERY_NOT_FOUND", message: "查询任务不存在或已过期" });
     }
     return { job };
@@ -862,7 +880,7 @@ export async function registerDatabaseWorkbenchRoutes(app: FastifyInstance): Pro
 
   app.delete<{ Params: { id: string } }>("/api/v1/database-queries/:id", async (request, reply) => {
     const job = app.databaseQueries.get(request.params.id, request.admin!.id, executionScope(request));
-    if (!job || !await canAccessConnection(app.db, request.admin!, "database", job.connectionId)) {
+    if (!job || !await queryOperationAllowed(app, request.admin!, job.connectionId, job.sql)) {
       return reply.code(404).send({ error: "QUERY_NOT_FOUND", message: "查询任务不存在或已过期" });
     }
     if (!app.databaseQueries.cancel(request.params.id, request.admin!.id, executionScope(request))) {

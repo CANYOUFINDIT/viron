@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { FieldPacket, ResultSetHeader } from "mysql2/promise";
-import type { AuthenticatedUser, WorkspaceType } from "../access-control.js";
+import { getWorkspaceAccess, type AuthenticatedUser, type WorkspaceType } from "../access-control.js";
 import { writeAudit } from "../audit.js";
+import { missingDatabaseSqlPermission } from "../../shared/access-permissions.js";
 import { normalizeCellColumns, serializeDatabaseRow } from "../../shared/database-cell-value.js";
 import { splitSqlStatements } from "../../shared/sql-statements.js";
+import { executionDecision, type ExecutionChannel } from "../organization-boundary.js";
 import { connectDatabase, type ConnectedDatabase } from "./connector.js";
 
 export type QueryStatus = "pending" | "running" | "success" | "error" | "cancelled";
@@ -31,6 +33,8 @@ interface QueryJob {
   database: string;
   sql: string;
   continueOnError: boolean;
+  channel: ExecutionChannel;
+  workspaceRole: AuthenticatedUser["workspace"]["role"];
   status: QueryStatus;
   createdAt: string;
   startedAt?: string;
@@ -128,6 +132,7 @@ export class DatabaseQueryManager {
     database = "",
     executionScope: string | null = null,
     continueOnError = false,
+    channel: ExecutionChannel = "manual",
   ): Promise<PublicQueryJob> {
     const activeCount = [...this.jobs.values()].filter((job) => job.status === "pending" || job.status === "running").length;
     if (activeCount >= 10) throw new Error("数据库查询已达到 10 个并发上限");
@@ -145,6 +150,8 @@ export class DatabaseQueryManager {
       database,
       sql,
       continueOnError,
+      channel,
+      workspaceRole: user.workspace.role,
       status: "pending",
       createdAt: new Date().toISOString(),
       resultSets: [],
@@ -235,23 +242,62 @@ export class DatabaseQueryManager {
     }
   }
 
+  private async sqlAllowed(job: QueryJob, sql: string): Promise<boolean> {
+    if (isCancelled(job)) return false;
+    if (job.workspaceType !== "organization") return job.workspaceRole === "owner";
+    const access = await getWorkspaceAccess(this.app.db, {
+      id: job.ownerId,
+      username: "",
+      isPlatformAdmin: false,
+      workspace: { type: "organization", id: job.workspaceId, name: "", role: "member" },
+    });
+    const organization = access.organizationAccess;
+    if (!organization) return false;
+    const target = { type: "database_connection" as const, id: job.connectionId };
+    const missing = await missingDatabaseSqlPermission(sql, (code) => (
+      job.channel === "manual"
+        ? organization.allows(code, target)
+        : executionDecision(organization, job.channel, code, target).allowed
+    ));
+    return missing === null;
+  }
+
+  private stopForAccess(job: QueryJob): void {
+    job.status = "cancelled";
+    job.error = "授权已到期";
+    job.active?.connection.destroy();
+  }
+
   private async run(job: QueryJob): Promise<void> {
     const started = Date.now();
     job.status = "running";
     job.startedAt = new Date(started).toISOString();
     try {
+      const statements = job.continueOnError ? splitSqlStatements(job.sql) : [job.sql];
+      const planned = statements.length ? statements : [job.sql];
+      if (!await this.sqlAllowed(job, planned[0] ?? job.sql)) {
+        this.stopForAccess(job);
+        return;
+      }
       job.active = await this.connect(this.app, job.connectionId, job.database || undefined);
       if (isCancelled(job)) return;
       if (!job.continueOnError) {
+        if (!await this.sqlAllowed(job, job.sql)) {
+          this.stopForAccess(job);
+          return;
+        }
         const [rows, fields] = await job.active.connection.query(job.sql);
         if (isCancelled(job)) return;
         job.resultSets = normalizeResults(rows, fields);
         job.status = "success";
       } else {
-        const statements = splitSqlStatements(job.sql);
         let errors = 0;
-        for (const statement of statements.length ? statements : [job.sql]) {
+        for (const statement of planned) {
           if (isCancelled(job)) return;
+          if (!await this.sqlAllowed(job, statement)) {
+            this.stopForAccess(job);
+            return;
+          }
           try {
             const [rows, fields] = await job.active.connection.query(statement);
             if (isCancelled(job)) return;

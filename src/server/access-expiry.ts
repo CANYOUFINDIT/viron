@@ -7,7 +7,7 @@ import {
 } from "./access-control.js";
 import { expireServiceOperation } from "./service-operations.js";
 import { recordExpiredAccess } from "./access-governance-events.js";
-import { databaseSqlOperation } from "../shared/access-permissions.js";
+import { databaseSqlActions } from "../shared/access-permissions.js";
 
 const REASON = "授权已到期";
 const roleSweepTimes = new WeakMap<object, string>();
@@ -219,8 +219,8 @@ async function closeDisallowed(
   }
   for (const job of app.databaseQueries.runningJobs()) {
     if (job.ownerId !== userId || job.workspaceId !== organizationId) continue;
-    const action = databaseSqlOperation(job.sql).slice("database.".length);
-    if (!access.allowsConnection("database", job.connectionId, action))
+    const actions = databaseSqlActions(job.sql);
+    if (actions.some((action) => !access.allowsConnection("database", job.connectionId, action)))
       app.databaseQueries.closeJob(job.id, REASON);
   }
   for (const task of app.databaseTasks.runningTasks()) {
