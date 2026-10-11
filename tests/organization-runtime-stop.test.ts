@@ -21,6 +21,7 @@ import { buildApp } from "../src/server/app.js";
 import type { AppConfig } from "../src/server/config.js";
 import { ensureAdmin, openDatabase } from "../src/server/database.js";
 import { disconnectGrantees } from "../src/server/access-expiry.js";
+import { defaultDataSyncOptions, defaultStructureSyncOptions } from "../src/database-sync.js";
 import { DESKTOP_LOCAL_SFTP_CONNECTION_ID, desktopSftpReservation } from "../src/desktop/sftp-runtime.js";
 import { refreshOrganizationWebPlugins, webExtensionShortcutEnabled, type WebPluginView } from "../src/desktop/web-plugin-session.js";
 
@@ -267,6 +268,72 @@ describe("runtime authorization stop", () => {
     await put(["database.read"], "撤销结构");
     expect(f.app.databaseQueries.get(alterJob.id, f.userId)).toMatchObject({ status: "cancelled", error: "授权已到期" });
     expect(f.app.databaseQueries.get(selectJob.id, f.userId)?.status).toBe("running");
+  }, 20_000);
+
+  it("rechecks transfer and sync changes on the target connection", async () => {
+    const f = await fixture();
+    const source = await f.app.inject({
+      method: "POST", url: "/api/v1/database-connections", cookies: f.cookies,
+      payload: { name: "来源库", engine: "mysql", host: "127.0.0.1", port: 3306, username: "root", credential: { password: "secret" }, environmentIds: [f.env] },
+    });
+    const target = await f.app.inject({
+      method: "POST", url: "/api/v1/database-connections", cookies: f.cookies,
+      payload: { name: "目标库", engine: "mysql", host: "127.0.0.1", port: 3306, username: "root", credential: { password: "secret" }, environmentIds: [f.env] },
+    });
+    expect(source.statusCode, source.body).toBe(201);
+    expect(target.statusCode, target.body).toBe(201);
+    const sourceId = source.json().id as string;
+    const targetId = target.json().id as string;
+    await grantRole(f, "来源读取", ["database.read", "database.write"], [{ type: "database_connection", id: sourceId }]);
+    const targetRole = await grantRole(f, "目标变更", ["database.read", "database.write", "database.ddl"], [{ type: "database_connection", id: targetId }]);
+    const defaults = { sourceConnectionId: sourceId, sourceDatabase: "billing", targetConnectionId: targetId, targetDatabase: "archive", includeStructure: true, includeData: true, includeObjects: true, dropExisting: false };
+    const setTarget = async (permissionCodes: string[], reason: string) => {
+      const response = await f.app.inject({
+        method: "PUT", url: `${f.base}/roles/${targetRole.roleId}`, cookies: f.cookies,
+        payload: { name: "目标变更", description: "", permissionCodes, enabled: true, reason },
+      });
+      expect(response.statusCode, response.body).toBe(200);
+    };
+    const started = async () => {
+      const task = await f.app.databaseTasks.createTransfer(f.user, defaults);
+      await vi.waitFor(() => { expect(f.app.databaseTasks.get(task.id, f.userId)?.status).toBe("running"); }, { timeout: 5_000 });
+      await disconnectGrantees(f.app, f.org, [f.userId]);
+      expect(f.app.databaseTasks.get(task.id, f.userId)?.status).toBe("running");
+      return task.id;
+    };
+
+    const transferId = await started();
+    await setTarget(["database.read", "database.ddl"], "撤销目标写入");
+    await disconnectGrantees(f.app, f.org, [f.userId]);
+    expect(f.app.databaseTasks.get(transferId, f.userId)).toMatchObject({ status: "cancelled", error: "授权已到期" });
+
+    await setTarget(["database.read", "database.write", "database.ddl"], "恢复目标写入");
+    const structureOnly = await f.app.databaseTasks.createTransfer(f.user, { ...defaults, includeData: false, includeObjects: true });
+    await vi.waitFor(() => { expect(f.app.databaseTasks.get(structureOnly.id, f.userId)?.status).toBe("running"); }, { timeout: 5_000 });
+    await setTarget(["database.read", "database.ddl"], "结构迁移不写数据");
+    await disconnectGrantees(f.app, f.org, [f.userId]);
+    expect(f.app.databaseTasks.get(structureOnly.id, f.userId)?.status).toBe("running");
+    await setTarget(["database.read", "database.write"], "撤销目标结构");
+    await disconnectGrantees(f.app, f.org, [f.userId]);
+    expect(f.app.databaseTasks.get(structureOnly.id, f.userId)).toMatchObject({ status: "cancelled", error: "授权已到期" });
+
+    await setTarget(["database.read", "database.write", "database.ddl"], "恢复目标结构");
+    const synced = await f.app.databaseTasks.createSync(f.user, {
+      mode: "data",
+      sourceConnectionId: sourceId,
+      targetConnectionId: targetId,
+      sourceDatabase: "billing",
+      targetDatabase: "archive",
+      selectedItems: ["table:table:accounts"],
+      data: defaultDataSyncOptions(),
+      structure: defaultStructureSyncOptions(),
+    });
+    await vi.waitFor(() => { expect(f.app.databaseTasks.get(synced.id, f.userId)?.status).toBe("running"); }, { timeout: 5_000 });
+    await disconnectGrantees(f.app, f.org, [f.userId]);
+    expect(f.app.databaseTasks.get(synced.id, f.userId)?.status).toBe("running");
+    await setTarget(["database.read", "database.ddl"], "撤销同步写入");
+    await disconnectGrantees(f.app, f.org, [f.userId]);
+    expect(f.app.databaseTasks.get(synced.id, f.userId)).toMatchObject({ status: "cancelled", error: "授权已到期" });
   }, 20_000);
 
   it("suspends web plugins after the feature grant ends and keeps a page that still has web.use", async () => {

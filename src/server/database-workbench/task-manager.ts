@@ -18,18 +18,14 @@ export interface DatabaseTaskAccessPlan {
 }
 
 export function databaseTaskAccessPlan(type: DatabaseTaskType, details: Record<string, unknown>): DatabaseTaskAccessPlan {
-  const structural = details.syncMode === "structure" || details.includeStructure === true || details.dropExisting === true || details.includeObjects === true;
-  const operations: DatabaseTaskAccessPlan["operations"] = type === "backup"
-    ? ["export", "write"]
-    : type === "restore"
-      ? ["ddl", "write"]
-      : type === "import"
-        ? ["write"]
-        : structural
-          ? ["ddl", "write"]
-          : ["write"];
   const targetConnectionId = typeof details.targetConnectionId === "string" ? details.targetConnectionId : null;
-  return { operations, targetConnectionId, targetOperations: targetConnectionId ? ["read"] : [] };
+  if (type === "backup") return { operations: ["export", "write"], targetConnectionId: null, targetOperations: [] };
+  if (type === "restore") return { operations: ["ddl", "write"], targetConnectionId: null, targetOperations: [] };
+  if (type === "import" || !targetConnectionId) return { operations: ["write"], targetConnectionId: null, targetOperations: [] };
+  // Transfer and sync read the source. CREATE/DROP and INSERT/UPDATE/DELETE run on the target.
+  const targetOperations: DatabaseTaskAccessPlan["targetOperations"] = ["read", "ddl"];
+  if (details.syncMode === "data" || details.includeData === true) targetOperations.push("write");
+  return { operations: ["read", "write"], targetConnectionId, targetOperations };
 }
 
 interface DatabaseTask {
