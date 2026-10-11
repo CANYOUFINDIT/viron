@@ -147,12 +147,12 @@ onMounted(() => { void load(); });
     <header class="access-heading">
       <div><span class="access-eyebrow">{{ $t('申请 · 审批 · 追溯') }}</span><h3>{{ $t('授权中心') }}</h3><p>{{ workflow ? workflow.name : $t('尚未配置审批流程') }}</p></div>
       <div class="access-heading__actions">
-        <el-button v-if="canManageOrganization" @click="editWorkflow"><Settings2 :size="15" />{{ $t('审批流程') }}</el-button>
+        <el-button v-if="canManageOrganization" disabled title="阶段 5 开放" @click="editWorkflow"><Settings2 :size="15" />{{ $t('审批流程') }}</el-button>
         <el-button :aria-label="$t('刷新授权中心')" @click="load"><RefreshCw :size="15" /></el-button>
-        <el-button type="primary" :disabled="!workflow" @click="openAccessRequest"><Plus :size="15" />{{ $t('申请授权') }}</el-button>
+        <el-button type="primary" disabled title="旧申请入口已关闭" @click="openAccessRequest"><Plus :size="15" />{{ $t('申请授权') }}</el-button>
       </div>
     </header>
-    <div v-if="!workflow && !loading" class="access-notice"><GitBranch :size="18" /><span>{{ $t('组织管理员配置审批节点后，成员即可提交权限申请。') }}</span></div>
+    <div v-if="!workflow && !loading" class="access-notice"><GitBranch :size="18" /><span>{{ $t('此处保留旧授权申请和台账。请在角色维护中直接授权；新申请与审批在阶段 5 开放。') }}</span></div>
     <div class="access-toolbar">
       <div class="access-switch" role="tablist" :aria-label="$t('授权中心视图')">
         <button type="button" role="tab" :aria-selected="tab === 'requests'" :class="{ 'is-active': tab === 'requests' }" @click="selectTab('requests')"><Send :size="14" />{{ $t('授权申请') }}</button>

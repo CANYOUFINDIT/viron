@@ -1,4 +1,5 @@
-<script setup lang="ts">import { localizeMessage, translate as tr } from "../i18n";
+<script setup lang="ts">
+import { workspaceCan } from "../session";import { localizeMessage, translate as tr } from "../i18n";
 
 import {
   ChevronDown,
@@ -117,7 +118,7 @@ const emit = defineEmits<{ countChange: [count: number] }>();
 const loading = ref(true);
 const saving = ref(false);
 const savingLogOrder = ref(false);
-const canSortLogs = computed(() => (session.workspace?.role === "owner" || session.workspace?.role === "admin") && !savingLogOrder.value);
+const canSortLogs = computed(() => (workspaceCan("resource.logs.configure")) && !savingLogOrder.value);
 const draggingLogId = ref("");
 const logDropTarget = ref<{ id: string; after: boolean } | null>(null);
 const logDragSuppressed = ref(false);

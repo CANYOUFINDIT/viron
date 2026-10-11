@@ -120,7 +120,7 @@ export function useDatabaseNavigator(
           return buildConnectionNavigatorMenu(target.connectionId === $connections.activeRootConnectionId.value && $connections.databaseConnected.value, {
               starred: connection?.starred,
               canManage: connection?.canManage,
-              canShare: Boolean(connection?.canManage && session.workspace?.type === "organization" && session.workspace.role === "admin"),
+              canShare: Boolean(connection?.canManage && session.workspace?.type === "organization" && false),
               connectionGroupId: connection?.connectionGroupId,
               groups: $connections.connectionGroups.value,
               profiles: profiles.map((profile) => ({ id: profile.id, name: profile.profileName || profile.name })),
@@ -130,7 +130,7 @@ export function useDatabaseNavigator(
           });
       }
       return buildDatabaseNavigatorMenu(target, {
-          canShare: Boolean($connections.selectedRootConnection.value?.canManage && session.workspace?.type === "organization" && session.workspace.role === "admin"),
+          canShare: Boolean($connections.selectedRootConnection.value?.canManage && session.workspace?.type === "organization" && false),
           canPaste: Boolean(target.category && navigatorObjectClipboard.value?.category === target.category),
           profiles: $connections.activeConnectionProfiles.value,
       });

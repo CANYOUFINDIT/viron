@@ -85,7 +85,7 @@ interface StructureNode {
   meta: string;
   children?: StructureNode[];
 }
-type Panel = "structure" | "invitations" | "platform" | "access";
+type Panel = "structure" | "invitations" | "platform" | "access" | "roles";
 type InvitationDuration = 1 | 24 | 168 | 720;
 type InvitationLimitPreset = 1 | 3 | 5 | 10 | "unlimited" | "custom";
 
@@ -138,7 +138,7 @@ export function useOrganizationController() {
   const userForm = reactive({ username: "", password: "", isPlatformAdmin: false });
 
   const currentOrganizationId = computed(() => session.workspace?.type === "organization" ? session.workspace.id : "");
-  const canManageOrganization = computed(() => session.workspace?.type === "organization" && session.workspace.role === "admin");
+  const canManageOrganization = computed(() => session.workspace?.type === "organization" && session.workspace.permissionCodes?.some(code => ["organization.update", "member.invite", "team.update", "team.create"].includes(code)) === true);
   const resourceTypeLabels: Record<ResourceType, string> = {
     environment_group: tr("环境组"),
     environment: tr("环境"),
@@ -506,13 +506,8 @@ export function useOrganizationController() {
     return Math.max(0, invitation.usedCount - invitation.acceptedUsers.length);
   }
 
-  async function changeRole(member: Member) {
-    const role = member.role === "admin" ? "member" : "admin";
-    try {
-      await api(`/api/v1/organizations/${currentOrganizationId.value}/members/${member.id}`, { method: "PUT", body: JSON.stringify({ role }) });
-      await loadSession();
-      await load();
-    } catch (error) { ElMessage.error(error instanceof Error ? error.message : tr("调整角色失败")); }
+  async function changeRole(_member: Member) {
+    activePanel.value = "roles";
   }
   async function removeMember(member: Member) {
     try {

@@ -193,6 +193,7 @@ export async function registerSftpRoutes(app: FastifyInstance): Promise<void> {
   app.addHook("preHandler", async (request, reply) => {
     if (!request.routeOptions.url?.startsWith("/api/v1/ssh-connections/:id/sftp")) return;
     const connectionId = (request.params as { id?: string }).id;
+    if (request.admin!.workspace.type === "organization" && request.url.includes("/sftp")) return;
     if (connectionId && !await canAccessConnection(app.db, request.admin!, "ssh", connectionId, "use")) {
       await reply.code(404).send({ error: "NOT_FOUND", message: "SSH 连接不存在" });
     }
@@ -206,8 +207,8 @@ export async function registerSftpRoutes(app: FastifyInstance): Promise<void> {
     const body = parseBody(transferPreviewSchema, request.body, reply);
     if (!body) return;
     const [sourceAllowed, targetAllowed] = await Promise.all([
-      canAccessConnection(app.db, request.admin!, "ssh", body.sourceConnectionId, "use"),
-      canAccessConnection(app.db, request.admin!, "ssh", body.targetConnectionId, "use"),
+      canAccessConnection(app.db, request.admin!, "ssh", body.sourceConnectionId, request.admin!.workspace.type === "organization" ? "download" : "use"),
+      canAccessConnection(app.db, request.admin!, "ssh", body.targetConnectionId, request.admin!.workspace.type === "organization" ? "upload" : "use"),
     ]);
     if (!sourceAllowed || !targetAllowed) return reply.code(404).send({ error: "NOT_FOUND", message: "SSH 连接不存在" });
     try {
@@ -221,8 +222,8 @@ export async function registerSftpRoutes(app: FastifyInstance): Promise<void> {
     const body = parseBody(transferSchema, request.body, reply);
     if (!body) return;
     const [sourceAllowed, targetAllowed] = await Promise.all([
-      canAccessConnection(app.db, request.admin!, "ssh", body.sourceConnectionId, "use"),
-      canAccessConnection(app.db, request.admin!, "ssh", body.targetConnectionId, "use"),
+      canAccessConnection(app.db, request.admin!, "ssh", body.sourceConnectionId, request.admin!.workspace.type === "organization" ? "download" : "use"),
+      canAccessConnection(app.db, request.admin!, "ssh", body.targetConnectionId, request.admin!.workspace.type === "organization" ? "upload" : "use"),
     ]);
     if (!sourceAllowed || !targetAllowed) return reply.code(404).send({ error: "NOT_FOUND", message: "SSH 连接不存在" });
     if (body.originEnvironmentId && !await canAccessEnvironment(app.db, request.admin!, body.originEnvironmentId)) {
@@ -257,8 +258,8 @@ export async function registerSftpRoutes(app: FastifyInstance): Promise<void> {
     const previous = app.sftpTransfers.get(request.params.id, request.admin!, executionScope(request));
     if (!previous) return reply.code(404).send({ error: "SFTP_TRANSFER_NOT_FOUND", message: "传输任务不存在" });
     const [sourceAllowed, targetAllowed] = await Promise.all([
-      canAccessConnection(app.db, request.admin!, "ssh", previous.sourceConnectionId, "use"),
-      canAccessConnection(app.db, request.admin!, "ssh", previous.targetConnectionId, "use"),
+      canAccessConnection(app.db, request.admin!, "ssh", previous.sourceConnectionId, request.admin!.workspace.type === "organization" ? "download" : "use"),
+      canAccessConnection(app.db, request.admin!, "ssh", previous.targetConnectionId, request.admin!.workspace.type === "organization" ? "upload" : "use"),
     ]);
     if (!sourceAllowed || !targetAllowed) return reply.code(404).send({ error: "NOT_FOUND", message: "SSH 连接不存在" });
     if (body.originEnvironmentId && !await canAccessEnvironment(app.db, request.admin!, body.originEnvironmentId)) {

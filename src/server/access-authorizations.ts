@@ -433,7 +433,7 @@ export async function deleteAccessForGrantee(db: EnvmanDatabase, organizationId:
   `).run(organizationId, granteeType, ...granteeIds);
 }
 
-async function applySources(db: EnvmanDatabase, organizationId: string, sources: GrantSource[]): Promise<ResolvedOrganizationAccess> {
+export async function applySources(db: EnvmanDatabase, organizationId: string, sources: GrantSource[]): Promise<ResolvedOrganizationAccess> {
   const resolution = emptyResolution();
   const wholeGroupIds = new Set(sources.filter((source) => source.wholeGroup && source.groupId).map((source) => source.groupId!));
   const groupedEnvironments = wholeGroupIds.size

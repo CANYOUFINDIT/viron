@@ -470,7 +470,7 @@ describe("Desktop Agent Pi runtime", () => {
         }, { id: "db-1" }),
       ], { stopReason: "toolUse" }),
     ]);
-    const firstWorkspace = testScope("o1");
+    const firstWorkspace = testScope();
     const started = runtime.chat(firstWorkspace, { message: "统计用户数量", sceneHint: databaseScene });
     const approvalEvent = await waitForRunEvent(events, "approval-required", started.runId);
     const approval = typeof approvalEvent.suggestion === "object" && approvalEvent.suggestion !== null && !Array.isArray(approvalEvent.suggestion)
@@ -531,14 +531,15 @@ describe("Desktop Agent Pi runtime", () => {
         return fauxAssistantMessage("第二轮回答");
       },
     ]);
-    const first = runtime.chat(testScope("o1"), { message: "第一轮问题" });
+    const first = runtime.chat(testScope(), { message: "第一轮问题" });
     await waitForRunEvent(events, "run-finish", first.runId);
-    const second = runtime.chat(testScope("o2"), { sessionId: first.sessionId, message: "继续刚才的问题" });
+    expect(() => runtime.chat(testScope("o2"), { message: "组织执行" })).toThrow("阶段 6");
+    const second = runtime.chat(testScope(), { sessionId: first.sessionId, message: "继续刚才的问题" });
     await waitForRunEvent(events, "run-finish", second.runId);
 
     expect(second.sessionId).toBe(first.sessionId);
     expect(secondTurnContext?.messages.map((message) => message.role)).toEqual(["user", "assistant", "user"]);
-    const stored = runtime.currentConversation(testScope("o2"));
+    const stored = runtime.currentConversation(testScope());
     expect(stored.messages.map((message) => message.content)).toEqual([
       "第一轮问题",
       "第一轮回答",

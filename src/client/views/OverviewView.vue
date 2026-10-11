@@ -1,4 +1,5 @@
-<script setup lang="ts">import { translate as tr } from "../i18n";
+<script setup lang="ts">
+import { workspaceCan } from "../session";import { translate as tr } from "../i18n";
 
 import {
   ArrowLeft,
@@ -98,7 +99,7 @@ const environmentForm = reactive({
   tags: "",
 });
 const groupForm = reactive({ name: "", description: "", color: "#1d8a74" });
-const canManageWorkspace = computed(() => session.workspace?.role === "owner" || session.workspace?.role === "admin");
+const canManageWorkspace = computed(() => workspaceCan("environment.create"));
 const isOrganizationWorkspace = computed(() => session.workspace?.type === "organization");
 const canSort = computed(() => canManageWorkspace.value && !keyword.value.trim() && !savingGroupOrder.value && !savingEnvironmentOrder.value);
 

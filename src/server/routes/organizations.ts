@@ -1,3 +1,5 @@
+import { initializeOrganizationRoles, OrganizationPermissionError, assertOrganizationMaintainer } from "../organization-rbac.js";
+import { hasWorkspacePermission } from "../access-control.js";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
@@ -21,7 +23,6 @@ const invitationSchema = z.object({
   maxUses: z.number().int().min(1).max(10_000).nullable().default(1),
   projectId: z.string().uuid().nullable().default(null),
 });
-const memberRoleSchema = z.object({ role: z.enum(["admin", "member"]) });
 const projectSchema = z.object({
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().max(1000).default(""),
@@ -224,26 +225,20 @@ async function membership(app: FastifyInstance, organizationId: string, userId: 
   `).get(organizationId, userId) as { id: string; name: string; description: string; role: "admin" | "member" } | undefined;
 }
 
-async function requireOrganizationAdmin(app: FastifyInstance, request: FastifyRequest, reply: FastifyReply, organizationId: string): Promise<boolean> {
+async function requireOrganizationPermission(app: FastifyInstance, request: FastifyRequest, reply: FastifyReply, organizationId: string): Promise<boolean> {
   if (request.admin?.workspace.type !== "organization" || request.admin.workspace.id !== organizationId) {
     void reply.code(403).send({ error: "ORGANIZATION_WORKSPACE_REQUIRED", message: "请先切换到目标组织工作空间" });
     return false;
   }
-  const current = await membership(app, organizationId, request.admin!.id);
-  if (current?.role === "admin") return true;
+  if (!await membership(app, organizationId, request.admin!.id)) return false;
+  const path=request.url.split("?",1)[0];
+  const code=path.includes("/invitations")?"member.invite":path.includes("/members")?(request.method==="DELETE"?"member.remove":"team.update"):path.includes("/projects")?(request.method==="POST"?"team.create":"team.update"):path.includes("/grants")?(request.method==="DELETE"?"authorization.revoke":request.method==="PUT"?"authorization.update":"authorization.create"):"organization.update";
+  if (hasWorkspacePermission(request,code,(request.params as {projectId?:string}).projectId ?? organizationId)) return true;
   void reply.code(403).send({ error: "ORGANIZATION_ADMIN_REQUIRED", message: "只有组织管理员可以执行此操作" });
   return false;
 }
 
-async function activeAdministratorCount(app: FastifyInstance, organizationId: string): Promise<number> {
-  const row = await app.db.prepare(`
-    SELECT COUNT(*) AS count
-    FROM organization_members m
-    JOIN admin_users u ON u.id = m.user_id
-    WHERE m.organization_id = ? AND m.role = 'admin' AND u.status = 'active'
-  `).get(organizationId) as { count: number };
-  return Number(row.count);
-}
+
 
 async function projectBelongsToOrganization(app: FastifyInstance, projectId: string, organizationId: string): Promise<boolean> {
   return Boolean(await app.db.prepare("SELECT 1 FROM projects WHERE id = ? AND organization_id = ?").get(projectId, organizationId));
@@ -284,6 +279,13 @@ async function projectSubtreeUserIds(app: FastifyInstance, organizationId: strin
 
 export async function registerOrganizationRoutes(app: FastifyInstance): Promise<void> {
   app.addHook("preHandler", requireAdmin);
+  app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof OrganizationPermissionError) return reply.code(error.statusCode).send({ error: error.code, message: error.message });
+    return reply.send(error);
+  });
+  app.addHook("preHandler",async(request,reply)=>{
+    if(request.method!=="GET"&&/\/organizations\/[^/]+\/grants(?:\/|$)/.test(request.url))return reply.code(410).send({error:"LEGACY_AUTHORIZATION_READ_ONLY",message:"旧授权已改为只读，请使用角色数据授权或独立功能授权"});
+  });
 
   app.get("/api/v1/organizations", async (request) => ({
     items: (await app.db.prepare(`
@@ -310,6 +312,7 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
         .run(id, body.name, body.description, request.admin!.id, now, now);
       await app.db.prepare("INSERT INTO organization_members (organization_id, user_id, role, created_at, updated_at) VALUES (?, ?, 'admin', ?, ?)")
         .run(id, request.admin!.id, now, now);
+      await initializeOrganizationRoles(app.db, id, true);
     })();
     await writeAudit(app.db, { action: "organization.created", resourceType: "organization", resourceId: id, summary: `创建组织 ${body.name}`, request });
     return reply.code(201).send({ id });
@@ -364,12 +367,12 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
-    const grants = organization.role === "admin" ? await listOrganizationGrants(app.db, request.params.id) : [];
+    const grants = hasWorkspacePermission(request,"authorization.view") ? await listOrganizationGrants(app.db, request.params.id) : [];
     return { organization, members, projects, grants };
   });
 
   app.put<{ Params: { id: string } }>("/api/v1/organizations/:id", async (request, reply) => {
-    if (!await requireOrganizationAdmin(app, request, reply, request.params.id)) return;
+    if (!await requireOrganizationPermission(app, request, reply, request.params.id)) return;
     const body = parseBody(organizationSchema, request.body, reply);
     if (!body) return;
     const duplicate = await app.db.prepare("SELECT id FROM organizations WHERE name = ? COLLATE NOCASE AND id != ?").get(body.name, request.params.id);
@@ -380,7 +383,7 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
   });
 
   app.post<{ Params: { id: string } }>("/api/v1/organizations/:id/invitations", async (request, reply) => {
-    if (!await requireOrganizationAdmin(app, request, reply, request.params.id)) return;
+    if (!await requireOrganizationPermission(app, request, reply, request.params.id)) return;
     const body = parseBody(invitationSchema, request.body, reply);
     if (!body) return;
     if (body.projectId && !await projectBelongsToOrganization(app, body.projectId, request.params.id)) {
@@ -423,7 +426,7 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
   });
 
   app.get<{ Params: { id: string } }>("/api/v1/organizations/:id/invitations", async (request, reply) => {
-    if (!await requireOrganizationAdmin(app, request, reply, request.params.id)) return;
+    if (!await requireOrganizationPermission(app, request, reply, request.params.id)) return;
     const [invitations, acceptances] = await Promise.all([
       invitationsForOrganization(app, request.params.id),
       invitationAcceptancesForOrganization(app, request.params.id),
@@ -432,7 +435,7 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
   });
 
   app.delete<{ Params: { id: string; invitationId: string } }>("/api/v1/organizations/:id/invitations/:invitationId", async (request, reply) => {
-    if (!await requireOrganizationAdmin(app, request, reply, request.params.id)) return;
+    if (!await requireOrganizationPermission(app, request, reply, request.params.id)) return;
     const invitation = (await invitationsForOrganization(app, request.params.id)).find((item) => item.id === request.params.invitationId);
     if (!invitation) return reply.code(404).send({ error: "NOT_FOUND", message: "邀请链接不存在" });
     if (invitation.revoked_at) return reply.code(204).send();
@@ -458,7 +461,7 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
   });
 
   app.delete<{ Params: { id: string; invitationId: string } }>("/api/v1/organizations/:id/invitations/:invitationId/record", async (request, reply) => {
-    if (!await requireOrganizationAdmin(app, request, reply, request.params.id)) return;
+    if (!await requireOrganizationPermission(app, request, reply, request.params.id)) return;
     const invitation = (await invitationsForOrganization(app, request.params.id)).find((item) => item.id === request.params.invitationId);
     if (!invitation) return reply.code(404).send({ error: "NOT_FOUND", message: "邀请链接不存在或记录已删除" });
     const deletedAt = new Date().toISOString();
@@ -593,38 +596,27 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
   });
 
   app.put<{ Params: { id: string; userId: string } }>("/api/v1/organizations/:id/members/:userId", async (request, reply) => {
-    if (!await requireOrganizationAdmin(app, request, reply, request.params.id)) return;
-    const body = parseBody(memberRoleSchema, request.body, reply);
-    if (!body) return;
-    const member = await app.db.prepare("SELECT role FROM organization_members WHERE organization_id = ? AND user_id = ?").get(request.params.id, request.params.userId) as { role: string } | undefined;
-    if (!member) return reply.code(404).send({ error: "NOT_FOUND", message: "组织成员不存在" });
-    if (member.role === "admin" && body.role === "member" && await activeAdministratorCount(app, request.params.id) <= 1) {
-      return reply.code(400).send({ error: "LAST_ORGANIZATION_ADMIN", message: "组织必须保留至少一名有效管理员" });
-    }
-    await app.db.prepare("UPDATE organization_members SET role = ?, updated_at = ? WHERE organization_id = ? AND user_id = ?")
-      .run(body.role, new Date().toISOString(), request.params.id, request.params.userId);
-    if (member.role === "admin" && body.role === "member") await revokeUserRuntime(app, request.params.userId, false);
-    await writeAudit(app.db, { action: "organization.member_role_changed", resourceType: "organization", resourceId: request.params.id, summary: "调整组织成员角色", details: { userId: request.params.userId, role: body.role }, request });
-    return { ok: true };
+    if (!await requireOrganizationPermission(app, request, reply, request.params.id)) return;
+    return reply.code(410).send({error:"ROLE_ASSIGNMENT_REQUIRED",message:"请在角色的已授权对象中维护角色分配"});
+
   });
 
   app.delete<{ Params: { id: string; userId: string } }>("/api/v1/organizations/:id/members/:userId", async (request, reply) => {
-    if (!await requireOrganizationAdmin(app, request, reply, request.params.id)) return;
+    if (!await requireOrganizationPermission(app, request, reply, request.params.id)) return;
     const member = await app.db.prepare(`
       SELECT m.role, u.username FROM organization_members m JOIN admin_users u ON u.id = m.user_id
       WHERE m.organization_id = ? AND m.user_id = ?
     `).get(request.params.id, request.params.userId) as { role: string; username: string } | undefined;
     if (!member) return reply.code(404).send({ error: "NOT_FOUND", message: "组织成员不存在" });
-    if (member.role === "admin" && await activeAdministratorCount(app, request.params.id) <= 1) {
-      return reply.code(400).send({ error: "LAST_ORGANIZATION_ADMIN", message: "组织必须保留至少一名有效管理员" });
-    }
     await app.db.transaction(async () => {
+      await app.db.prepare("UPDATE organizations SET updated_at = updated_at WHERE id = ?").run(request.params.id);
       await recordGranteeRevocations(app.db, request.params.id, "user", [request.params.userId], "成员被移出组织，撤销关联授权", request);
       await app.db.prepare("DELETE FROM project_members WHERE user_id = ? AND project_id IN (SELECT id FROM projects WHERE organization_id = ?)").run(request.params.userId, request.params.id);
       await app.db.prepare("DELETE FROM resource_grants WHERE organization_id = ? AND grantee_type = 'user' AND grantee_id = ?").run(request.params.id, request.params.userId);
       await deleteAccessForGrantee(app.db, request.params.id, "user", [request.params.userId]);
       await app.db.prepare("DELETE FROM knowledge_node_grants WHERE organization_id = ? AND grantee_type = 'user' AND grantee_id = ?").run(request.params.id, request.params.userId);
       await app.db.prepare("DELETE FROM organization_members WHERE organization_id = ? AND user_id = ?").run(request.params.id, request.params.userId);
+      await assertOrganizationMaintainer(app.db, request.params.id);
       await app.db.prepare("UPDATE sessions SET workspace_type = 'personal', workspace_id = user_id WHERE user_id = ? AND workspace_type = 'organization' AND workspace_id = ?")
         .run(request.params.userId, request.params.id);
     })();
@@ -634,7 +626,7 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
   });
 
   app.post<{ Params: { id: string } }>("/api/v1/organizations/:id/projects", async (request, reply) => {
-    if (!await requireOrganizationAdmin(app, request, reply, request.params.id)) return;
+    if (!await requireOrganizationPermission(app, request, reply, request.params.id)) return;
     const body = parseBody(projectSchema, request.body, reply);
     if (!body) return;
     if (body.parentId && !await projectBelongsToOrganization(app, body.parentId, request.params.id)) {
@@ -654,7 +646,7 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
   });
 
   app.put<{ Params: { id: string; projectId: string } }>("/api/v1/organizations/:id/projects/:projectId", async (request, reply) => {
-    if (!await requireOrganizationAdmin(app, request, reply, request.params.id)) return;
+    if (!await requireOrganizationPermission(app, request, reply, request.params.id)) return;
     const body = parseBody(projectSchema, request.body, reply);
     if (!body) return;
     if (!await projectBelongsToOrganization(app, request.params.projectId, request.params.id)) return reply.code(404).send({ error: "NOT_FOUND", message: "项目不存在" });
@@ -667,8 +659,12 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
     }
     const affectedUsers = await projectSubtreeUserIds(app, request.params.id, request.params.projectId);
     try {
-      await app.db.prepare("UPDATE projects SET parent_id = ?, name = ?, description = ?, updated_at = ? WHERE id = ?")
-        .run(body.parentId, body.name, body.description, new Date().toISOString(), request.params.projectId);
+      await app.db.transaction(async () => {
+        await app.db.prepare("UPDATE organizations SET updated_at = updated_at WHERE id = ?").run(request.params.id);
+        await app.db.prepare("UPDATE projects SET parent_id = ?, name = ?, description = ?, updated_at = ? WHERE id = ?")
+          .run(body.parentId, body.name, body.description, new Date().toISOString(), request.params.projectId);
+        await assertOrganizationMaintainer(app.db, request.params.id);
+      })();
     } catch (error) {
       if (isUniqueConstraintError(error)) return reply.code(409).send({ error: "PROJECT_EXISTS", message: "项目名称已存在" });
       throw error;
@@ -679,7 +675,7 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
   });
 
   app.delete<{ Params: { id: string; projectId: string } }>("/api/v1/organizations/:id/projects/:projectId", async (request, reply) => {
-    if (!await requireOrganizationAdmin(app, request, reply, request.params.id)) return;
+    if (!await requireOrganizationPermission(app, request, reply, request.params.id)) return;
     const project = await app.db.prepare("SELECT name FROM projects WHERE id = ? AND organization_id = ?").get(request.params.projectId, request.params.id) as { name: string } | undefined;
     if (!project) return reply.code(404).send({ error: "NOT_FOUND", message: "项目不存在" });
     const projectRows = await projectRowsForOrganization(app, request.params.id);
@@ -687,12 +683,16 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
     const placeholders = projectIds.map(() => "?").join(",");
     const affectedUsers = (await app.db.prepare(`SELECT DISTINCT user_id FROM project_members WHERE project_id IN (${placeholders})`).all(...projectIds) as Array<{ user_id: string }>).map((item) => item.user_id);
     await app.db.transaction(async () => {
+      await app.db.prepare("UPDATE organizations SET updated_at = updated_at WHERE id = ?").run(request.params.id);
       await recordGranteeRevocations(app.db, request.params.id, "project", projectIds, "项目组被删除，撤销关联授权", request);
       await app.db.prepare(`UPDATE organization_invitation_policies SET project_id = NULL WHERE project_id IN (${placeholders})`).run(...projectIds);
       await app.db.prepare(`DELETE FROM resource_grants WHERE organization_id = ? AND grantee_type = 'project' AND grantee_id IN (${placeholders})`).run(request.params.id, ...projectIds);
       await deleteAccessForGrantee(app.db, request.params.id, "project", projectIds);
       await app.db.prepare(`DELETE FROM knowledge_node_grants WHERE organization_id = ? AND grantee_type = 'project' AND grantee_id IN (${placeholders})`).run(request.params.id, ...projectIds);
       await app.db.prepare(`DELETE FROM project_members WHERE project_id IN (${placeholders})`).run(...projectIds);
+      await app.db.prepare(`DELETE FROM organization_role_assignments WHERE organization_id = ? AND subject_type = 'project' AND subject_id IN (${placeholders})`).run(request.params.id,...projectIds);
+      await app.db.prepare(`DELETE FROM organization_feature_grants WHERE organization_id = ? AND subject_type = 'project' AND subject_id IN (${placeholders})`).run(request.params.id,...projectIds);
+      await assertOrganizationMaintainer(app.db,request.params.id);
       for (const projectId of [...projectIds].reverse()) await app.db.prepare("DELETE FROM projects WHERE id = ?").run(projectId);
     })();
     await Promise.all(affectedUsers.map((userId) => revokeUserRuntime(app, userId, false)));
@@ -701,7 +701,7 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
   });
 
   app.post<{ Params: { id: string; projectId: string } }>("/api/v1/organizations/:id/projects/:projectId/members", async (request, reply) => {
-    if (!await requireOrganizationAdmin(app, request, reply, request.params.id)) return;
+    if (!await requireOrganizationPermission(app, request, reply, request.params.id)) return;
     const body = parseBody(projectMemberSchema, request.body, reply);
     if (!body) return;
     if (!await projectBelongsToOrganization(app, request.params.projectId, request.params.id)) return reply.code(404).send({ error: "NOT_FOUND", message: "项目不存在" });
@@ -714,9 +714,13 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
   });
 
   app.delete<{ Params: { id: string; projectId: string; userId: string } }>("/api/v1/organizations/:id/projects/:projectId/members/:userId", async (request, reply) => {
-    if (!await requireOrganizationAdmin(app, request, reply, request.params.id)) return;
+    if (!await requireOrganizationPermission(app, request, reply, request.params.id)) return;
     if (!await projectBelongsToOrganization(app, request.params.projectId, request.params.id)) return reply.code(404).send({ error: "NOT_FOUND", message: "项目不存在" });
-    await app.db.prepare("DELETE FROM project_members WHERE project_id = ? AND user_id = ?").run(request.params.projectId, request.params.userId);
+    await app.db.transaction(async () => {
+      await app.db.prepare("UPDATE organizations SET updated_at = updated_at WHERE id = ?").run(request.params.id);
+      await app.db.prepare("DELETE FROM project_members WHERE project_id = ? AND user_id = ?").run(request.params.projectId, request.params.userId);
+      await assertOrganizationMaintainer(app.db, request.params.id);
+    })();
     await revokeUserRuntime(app, request.params.userId, false);
     await writeAudit(app.db, { action: "project.member_removed", resourceType: "project", resourceId: request.params.projectId, summary: "移除项目成员", details: { userId: request.params.userId }, request });
     return reply.code(204).send();
@@ -736,7 +740,7 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
   });
 
   app.get<{ Params: { id: string }; Querystring: { environmentIds?: string } }>("/api/v1/organizations/:id/grant-catalog", async (request, reply) => {
-    if (!await requireOrganizationAdmin(app, request, reply, request.params.id)) return;
+    if (!await requireOrganizationPermission(app, request, reply, request.params.id)) return;
     const environmentIds = (request.query.environmentIds ?? "").split(",").map((id) => id.trim()).filter(Boolean);
     if (environmentIds.some((id) => !z.string().uuid().safeParse(id).success)) {
       return reply.code(400).send({ error: "INVALID_RESOURCE", message: "环境无效" });
@@ -750,7 +754,7 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
   });
 
   app.post<{ Params: { id: string } }>("/api/v1/organizations/:id/grants", async (request, reply) => {
-    if (!await requireOrganizationAdmin(app, request, reply, request.params.id)) return;
+    if (!await requireOrganizationPermission(app, request, reply, request.params.id)) return;
     if (request.body && typeof request.body === "object" && "scopeKind" in request.body) {
       const body = parseBody(fineGrantSchema, request.body, reply);
       if (!body) return;
@@ -809,7 +813,7 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
   });
 
   app.put<{ Params: { id: string; grantId: string } }>("/api/v1/organizations/:id/grants/:grantId", async (request, reply) => {
-    if (!await requireOrganizationAdmin(app, request, reply, request.params.id)) return;
+    if (!await requireOrganizationPermission(app, request, reply, request.params.id)) return;
     const body = parseBody(fineGrantSchema, request.body, reply);
     if (!body) return;
     try {
@@ -824,7 +828,7 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
   });
 
   app.delete<{ Params: { id: string; grantId: string } }>("/api/v1/organizations/:id/grants/:grantId", async (request, reply) => {
-    if (!await requireOrganizationAdmin(app, request, reply, request.params.id)) return;
+    if (!await requireOrganizationPermission(app, request, reply, request.params.id)) return;
     const body = parseBody(z.object({ reason: z.string().trim().min(1).max(2000).optional() }), request.body ?? {}, reply);
     if (!body) return;
     const grant = await app.db.transaction(async () => {

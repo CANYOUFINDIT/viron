@@ -10,7 +10,7 @@ const sessionState = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/client/api", () => ({ api: vi.fn() }));
-vi.mock("../src/client/session", () => ({ session: sessionState }));
+vi.mock("../src/client/session", () => ({ session: sessionState, workspaceCan: () => sessionState.workspace.role === "owner" }));
 
 import { api } from "../src/client/api";
 import EnvironmentLogPanel from "../src/client/components/EnvironmentLogPanel.vue";

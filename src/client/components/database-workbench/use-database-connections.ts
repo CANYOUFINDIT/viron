@@ -565,23 +565,8 @@ export function useDatabaseConnections(
       }
   }
 
-  async function openConnectionShare(connection = selectedRootConnection.value) {
-      if (!connection || session.workspace?.type !== "organization" || session.workspace.role !== "admin")
-          return ElMessage.warning(tr("请切换到具有管理权限的组织工作空间"));
-      shareConnection.value = connection;
-      shareGrantee.value = "";
-      shareDialogOpen.value = true;
-      shareDialogLoading.value = true;
-      try {
-          shareDetail.value = await api<OrganizationShareDetail>(`/api/v1/organizations/${session.workspace.id}`);
-      }
-      catch (error) {
-          shareDialogOpen.value = false;
-          ElMessage.error(error instanceof Error ? error.message : tr("加载共享设置失败"));
-      }
-      finally {
-          shareDialogLoading.value = false;
-      }
+  async function openConnectionShare(_connection = selectedRootConnection.value) {
+      return ElMessage.warning(tr("请在组织的角色维护中授权资源"));
   }
 
   async function grantSharedConnection() {

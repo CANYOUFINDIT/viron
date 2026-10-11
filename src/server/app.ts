@@ -38,6 +38,7 @@ import { registerSettingsRoutes } from "./routes/settings.js";
 import { registerWebEntryRoutes } from "./routes/web-entries.js";
 import { registerWebAccountViewRoutes } from "./routes/web-account-views.js";
 import { registerUserRoutes } from "./routes/users.js";
+import { registerOrganizationRoleAccessRoutes } from "./routes/organization-role-access.js";
 import { registerOrganizationRoutes } from "./routes/organizations.js";
 import { registerAccessGovernanceRoutes } from "./routes/access-governance.js";
 import { PRODUCT_VERSION, productCapabilities } from "./product-info.js";
@@ -153,6 +154,7 @@ export async function buildApp(options: BuildAppOptions) {
   await app.register(registerActiveConnectionRoutes);
   await app.register(registerUserRoutes);
   await app.register(registerOrganizationRoutes);
+  await app.register(registerOrganizationRoleAccessRoutes);
   await app.register(registerAccessGovernanceRoutes);
   await app.register(registerEnvironmentRoutes);
   await app.register(registerKnowledgeBaseRoutes);

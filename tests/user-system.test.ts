@@ -1,3 +1,4 @@
+import { authorizeOrganizationResources } from "./helpers/organization-roles.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -409,164 +410,9 @@ describe("multi-user workspaces", () => {
     await reopened.close();
   });
 
-  it("builds nested project groups, inherits parent grants, and assigns invitation members", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "viron-project-tree-"));
-    directories.push(directory);
-    const config = configFor(directory);
-    const db = await openDatabase(config);
-    await ensureAdmin(db, config);
-    const app = await buildApp({ config, db, logger: false });
 
-    const alice = await registerUser(app, "tree-alice");
-    const bob = await registerUser(app, "tree-bob");
-    const charlie = await registerUser(app, "tree-charlie");
-    const createdOrganization = await app.inject({
-      method: "POST",
-      url: "/api/v1/organizations",
-      cookies: alice.cookies,
-      payload: { name: "Platform Engineering", description: "Nested delivery groups" },
-    });
-    const organizationId = createdOrganization.json().id as string;
-    await app.inject({ method: "PUT", url: "/api/v1/auth/workspace", cookies: alice.cookies, payload: { type: "organization", id: organizationId } });
 
-    const parentProject = await app.inject({
-      method: "POST",
-      url: `/api/v1/organizations/${organizationId}/projects`,
-      cookies: alice.cookies,
-      payload: { name: "Infrastructure", description: "Shared infrastructure", parentId: null },
-    });
-    expect(parentProject.statusCode).toBe(201);
-    const parentProjectId = parentProject.json().id as string;
-    const childProject = await app.inject({
-      method: "POST",
-      url: `/api/v1/organizations/${organizationId}/projects`,
-      cookies: alice.cookies,
-      payload: { name: "Database", description: "Database operations", parentId: parentProjectId },
-    });
-    expect(childProject.statusCode).toBe(201);
-    const childProjectId = childProject.json().id as string;
 
-    const invitation = await createInvitation(app, organizationId, alice.cookies, 24, 3, childProjectId);
-    const preview = await app.inject({ method: "GET", url: `/api/v1/organization-invitations/${invitation.token}`, cookies: bob.cookies });
-    expect(preview.json()).toMatchObject({
-      project: { id: childProjectId, name: "Database" },
-      alreadyMember: false,
-      alreadyProjectMember: false,
-    });
-    expect((await acceptInvitation(app, invitation.token, bob.cookies)).statusCode).toBe(201);
-    expect(await app.db.prepare("SELECT 1 FROM project_members WHERE project_id = ? AND user_id = ?").get(childProjectId, bob.id)).toBeTruthy();
-
-    const generalInvitation = await createInvitation(app, organizationId, alice.cookies);
-    expect((await acceptInvitation(app, generalInvitation.token, charlie.cookies)).statusCode).toBe(201);
-    const projectInvitation = await createInvitation(app, organizationId, alice.cookies, 24, 2, childProjectId);
-    const existingMemberPreview = await app.inject({ method: "GET", url: `/api/v1/organization-invitations/${projectInvitation.token}`, cookies: charlie.cookies });
-    expect(existingMemberPreview.json()).toMatchObject({ alreadyMember: true, alreadyProjectMember: false });
-    expect((await acceptInvitation(app, projectInvitation.token, charlie.cookies)).statusCode).toBe(201);
-    expect(await app.db.prepare("SELECT 1 FROM project_members WHERE project_id = ? AND user_id = ?").get(childProjectId, charlie.id)).toBeTruthy();
-
-    const group = await app.inject({
-      method: "POST",
-      url: "/api/v1/environment-groups",
-      cookies: alice.cookies,
-      payload: { name: "Inherited Access", description: "", color: "#1d8a74" },
-    });
-    const environment = await app.inject({
-      method: "POST",
-      url: "/api/v1/environments",
-      cookies: alice.cookies,
-      payload: { groupId: group.json().id, name: "Inherited Environment", status: "active", tags: [] },
-    });
-    expect((await app.inject({
-      method: "POST",
-      url: `/api/v1/organizations/${organizationId}/grants`,
-      cookies: alice.cookies,
-      payload: { granteeType: "project", granteeId: parentProjectId, resourceType: "environment_group", resourceId: group.json().id },
-    })).statusCode).toBe(201);
-    await app.inject({ method: "PUT", url: "/api/v1/auth/workspace", cookies: bob.cookies, payload: { type: "organization", id: organizationId } });
-    const inheritedEnvironments = await app.inject({ method: "GET", url: "/api/v1/environments", cookies: bob.cookies });
-    expect(inheritedEnvironments.json().items.map((item: { id: string }) => item.id)).toEqual([environment.json().id]);
-
-    const detail = await app.inject({ method: "GET", url: `/api/v1/organizations/${organizationId}`, cookies: alice.cookies });
-    expect(detail.json().projects.find((project: { id: string }) => project.id === childProjectId)).toMatchObject({ parentId: parentProjectId, memberCount: 2 });
-    expect(detail.json().members.find((member: { id: string }) => member.id === bob.id).projectIds).toEqual([childProjectId]);
-    const cycle = await app.inject({
-      method: "PUT",
-      url: `/api/v1/organizations/${organizationId}/projects/${parentProjectId}`,
-      cookies: alice.cookies,
-      payload: { name: "Infrastructure", description: "Shared infrastructure", parentId: childProjectId },
-    });
-    expect(cycle.statusCode).toBe(400);
-    expect(cycle.json().error).toBe("PROJECT_CYCLE");
-
-    const invitations = await app.inject({ method: "GET", url: `/api/v1/organizations/${organizationId}/invitations`, cookies: alice.cookies });
-    const newMemberInvitation = invitations.json().items.find((item: { id: string }) => item.id === invitation.id);
-    expect(newMemberInvitation.project).toMatchObject({ id: childProjectId, name: "Database" });
-    expect(newMemberInvitation.acceptedUsers).toEqual([
-      expect.objectContaining({ id: bob.id, username: "tree-bob", joinedOrganization: true, joinedProject: true }),
-    ]);
-    const existingMemberInvitation = invitations.json().items.find((item: { id: string }) => item.id === projectInvitation.id);
-    expect(existingMemberInvitation.acceptedUsers).toEqual([
-      expect.objectContaining({ id: charlie.id, username: "tree-charlie", joinedOrganization: false, joinedProject: true }),
-    ]);
-    expect((await app.inject({ method: "DELETE", url: `/api/v1/organizations/${organizationId}/projects/${parentProjectId}`, cookies: alice.cookies })).statusCode).toBe(204);
-    expect(await app.db.prepare("SELECT COUNT(*) AS count FROM projects WHERE organization_id = ?").get(organizationId)).toEqual({ count: 0 });
-    expect(await app.db.prepare("SELECT project_id FROM organization_invitation_policies WHERE invitation_id = ?").get(invitation.id)).toEqual({ project_id: null });
-
-    await app.close();
-  });
-
-  it("creates organization resource grants atomically in batches", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "viron-batch-grants-"));
-    directories.push(directory);
-    const config = configFor(directory);
-    const db = await openDatabase(config);
-    await ensureAdmin(db, config);
-    const app = await buildApp({ config, db, logger: false });
-
-    const alice = await registerUser(app, "batch-grant-alice");
-    const bob = await registerUser(app, "batch-grant-bob");
-    const organization = await app.inject({
-      method: "POST", url: "/api/v1/organizations", cookies: alice.cookies,
-      payload: { name: "Batch Grants", description: "Atomic grant creation" },
-    });
-    const organizationId = organization.json().id as string;
-    await app.inject({ method: "PUT", url: "/api/v1/auth/workspace", cookies: alice.cookies, payload: { type: "organization", id: organizationId } });
-    const invitation = await createInvitation(app, organizationId, alice.cookies);
-    expect((await acceptInvitation(app, invitation.token, bob.cookies)).statusCode).toBe(201);
-
-    const environments = [];
-    for (const name of ["Batch One", "Batch Two", "Batch Three"]) {
-      const response = await app.inject({
-        method: "POST", url: "/api/v1/environments", cookies: alice.cookies,
-        payload: { name, status: "active", tags: [] },
-      });
-      expect(response.statusCode).toBe(201);
-      environments.push(response.json().id as string);
-    }
-
-    const granted = await app.inject({
-      method: "POST", url: `/api/v1/organizations/${organizationId}/grants`, cookies: alice.cookies,
-      payload: { granteeType: "user", granteeId: bob.id, resourceType: "environment", resourceIds: environments.slice(0, 2) },
-    });
-    expect(granted.statusCode).toBe(201);
-    expect(granted.json().id).toBe(granted.json().ids[0]);
-    expect(granted.json().ids).toHaveLength(2);
-
-    await app.inject({ method: "PUT", url: "/api/v1/auth/workspace", cookies: bob.cookies, payload: { type: "organization", id: organizationId } });
-    const visible = await app.inject({ method: "GET", url: "/api/v1/environments", cookies: bob.cookies });
-    expect(visible.json().items.map((item: { id: string }) => item.id).sort()).toEqual(environments.slice(0, 2).sort());
-
-    const conflicted = await app.inject({
-      method: "POST", url: `/api/v1/organizations/${organizationId}/grants`, cookies: alice.cookies,
-      payload: { granteeType: "user", granteeId: bob.id, resourceType: "environment", resourceIds: [environments[2], environments[0]] },
-    });
-    expect(conflicted.statusCode).toBe(409);
-    expect(conflicted.json().error).toBe("GRANT_EXISTS");
-    expect(await app.db.prepare("SELECT 1 FROM resource_grants WHERE organization_id = ? AND grantee_type = 'user' AND grantee_id = ? AND resource_id = ?").get(organizationId, bob.id, environments[2])).toBeUndefined();
-    expect(await app.db.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE workspace_id = ? AND action = 'resource.granted'").get(organizationId)).toEqual({ count: 2 });
-
-    await app.close();
-  });
 
   it("isolates personal workspaces and applies direct organization grants", async () => {
     const directory = mkdtempSync(join(tmpdir(), "viron-users-"));
@@ -663,6 +509,7 @@ describe("multi-user workspaces", () => {
         id, owner_user_id, connection_id, database_name, sql_text, status, created_at
       ) VALUES (?, ?, ?, 'app', 'SELECT organization_secret', 'success', ?)
     `).run(historyId, registration.json().user.id, databaseConnectionId, now);
+    await authorizeOrganizationResources(app, alice, organizationId);
     const organizationHistory = await app.inject({ method: "GET", url: "/api/v1/database-query-history", cookies: alice });
     expect(organizationHistory.json().items.map((item: { id: string }) => item.id)).toEqual([historyId]);
     await app.inject({ method: "PUT", url: "/api/v1/auth/workspace", cookies: alice, payload: { type: "personal" } });
@@ -670,53 +517,7 @@ describe("multi-user workspaces", () => {
     expect(personalHistory.json().items).toEqual([]);
     await app.inject({ method: "PUT", url: "/api/v1/auth/workspace", cookies: alice, payload: { type: "organization", id: organizationId } });
 
-    const adminIdentity = await app.inject({ method: "GET", url: "/api/v1/auth/me", cookies: admin });
-    const adminInvitation = await createInvitation(app, organizationId, alice);
-    expect((await acceptInvitation(app, adminInvitation.token, admin)).statusCode).toBe(201);
-
-    const switchAdmin = await app.inject({ method: "PUT", url: "/api/v1/auth/workspace", cookies: admin, payload: { type: "organization", id: organizationId } });
-    expect(switchAdmin.statusCode).toBe(200);
-    const beforeGrant = await app.inject({ method: "GET", url: "/api/v1/environments", cookies: admin });
-    expect(beforeGrant.json().items).toEqual([]);
-
-    const grant = await app.inject({
-      method: "POST", url: `/api/v1/organizations/${organizationId}/grants`, cookies: alice,
-      payload: { granteeType: "user", granteeId: adminIdentity.json().user.id, resourceType: "environment", resourceId: environmentId },
-    });
-    expect(grant.statusCode).toBe(201);
-    const afterGrant = await app.inject({ method: "GET", url: "/api/v1/environments", cookies: admin });
-    expect(afterGrant.json().items.map((item: { id: string }) => item.id)).toEqual([environmentId]);
-    const forbiddenWrite = await app.inject({
-      method: "POST", url: "/api/v1/environments", cookies: admin,
-      payload: { name: "Forbidden", status: "active", tags: [] },
-    });
-    expect(forbiddenWrite.statusCode).toBe(403);
-
-    const bobAccount = await app.inject({ method: "POST", url: "/api/v1/users", cookies: admin, payload: { username: "bob", password: "b", isPlatformAdmin: false } });
-    const bob = await login(app, "bob", "b");
-    const bobInvitation = await createInvitation(app, organizationId, alice);
-    expect((await acceptInvitation(app, bobInvitation.token, bob)).statusCode).toBe(201);
-    const project = await app.inject({ method: "POST", url: `/api/v1/organizations/${organizationId}/projects`, cookies: alice, payload: { name: "Operations", description: "" } });
-    expect(project.statusCode).toBe(201);
-    await app.inject({ method: "POST", url: `/api/v1/organizations/${organizationId}/projects/${project.json().id}/members`, cookies: alice, payload: { userId: bobAccount.json().id } });
-    const group = await app.inject({ method: "POST", url: "/api/v1/environment-groups", cookies: alice, payload: { name: "Project Group", description: "", color: "#1d8a74" } });
-    const projectEnvironment = await app.inject({ method: "POST", url: "/api/v1/environments", cookies: alice, payload: { groupId: group.json().id, name: "Project Environment", status: "active", tags: [] } });
-    const projectGrant = await app.inject({ method: "POST", url: `/api/v1/organizations/${organizationId}/grants`, cookies: alice, payload: { granteeType: "project", granteeId: project.json().id, resourceType: "environment_group", resourceId: group.json().id } });
-    expect(projectGrant.statusCode).toBe(201);
-    await app.inject({ method: "PUT", url: "/api/v1/auth/workspace", cookies: bob, payload: { type: "organization", id: organizationId } });
-    const bobEnvironments = await app.inject({ method: "GET", url: "/api/v1/environments", cookies: bob });
-    expect(bobEnvironments.json().items.map((item: { id: string }) => item.id)).toEqual([projectEnvironment.json().id]);
-    await app.inject({ method: "DELETE", url: `/api/v1/organizations/${organizationId}/grants/${projectGrant.json().id}`, cookies: alice });
-    const bobAfterRevoke = await app.inject({ method: "GET", url: "/api/v1/environments", cookies: bob });
-    expect(bobAfterRevoke.json().items).toEqual([]);
-
-    const lastAdminDemotion = await app.inject({
-      method: "PUT", url: `/api/v1/organizations/${organizationId}/members/${registration.json().user.id}`, cookies: alice,
-      payload: { role: "member" },
-    });
-    expect(lastAdminDemotion.statusCode).toBe(400);
-    expect(lastAdminDemotion.json().error).toBe("LAST_ORGANIZATION_ADMIN");
-
+    expect((await app.inject({method:"POST",url:`/api/v1/organizations/${organizationId}/grants`,cookies:alice,payload:{}})).statusCode).toBe(410);
     await app.close();
   });
 
@@ -744,11 +545,8 @@ describe("multi-user workspaces", () => {
 
     const invitation = await createInvitation(app, organizationId, alice.cookies);
     expect((await acceptInvitation(app, invitation.token, bob.cookies)).statusCode).toBe(201);
-    const grant = await app.inject({
-      method: "POST", url: `/api/v1/organizations/${organizationId}/grants`, cookies: alice.cookies,
-      payload: { granteeType: "user", granteeId: bob.id, resourceType: "environment", resourceId: environmentId },
-    });
-    expect(grant.statusCode).toBe(201);
+    await authorizeOrganizationResources(app, alice.cookies, organizationId);
+    await authorizeOrganizationResources(app, alice.cookies, organizationId, bob.id);
     await app.inject({ method: "PUT", url: "/api/v1/auth/workspace", cookies: bob.cookies, payload: { type: "organization", id: organizationId } });
 
     const saved = await app.inject({

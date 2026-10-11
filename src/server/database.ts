@@ -9,6 +9,8 @@ import { SQLITE_SCHEMA } from "./sqlite-schema.js";
 import { passwordPolicyError } from "./password-policy.js";
 import { refreshPendingExistingConnections } from "./connection-existing.js";
 import { migrateSslAssets } from "./ssl-asset-migration.js";
+import { ORGANIZATION_RBAC_SCHEMA, MYSQL_ORGANIZATION_RBAC_SCHEMA } from "./organization-rbac-schema.js";
+import { migrateOrganizationRoles } from "./organization-rbac.js";
 import { backfillAccessGovernance } from "./access-governance-events.js";
 import { apiRateLimitSettingsSchema } from "./api-rate-limit-settings.js";
 
@@ -103,6 +105,8 @@ export async function openDatabase(config: AppConfig): Promise<EnvmanDatabase> {
     await refreshPendingExistingConnections(db);
     await loadSavedSettings(db, config);
     await backfillAccessGovernance(db);
+    await db.exec(MYSQL_ORGANIZATION_RBAC_SCHEMA);
+    await migrateOrganizationRoles(db);
     return db;
   }
 
@@ -234,6 +238,8 @@ export async function openDatabase(config: AppConfig): Promise<EnvmanDatabase> {
   await refreshPendingExistingConnections(db);
   await loadSavedSettings(db, config);
   await backfillAccessGovernance(db);
+  await db.exec(ORGANIZATION_RBAC_SCHEMA);
+  await migrateOrganizationRoles(db);
   return db;
 }
 

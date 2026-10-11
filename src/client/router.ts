@@ -1,3 +1,4 @@
+import { workspaceCan } from "./session";
 import { translate as tr } from "./i18n";
 import { createRouter, createWebHashHistory, createWebHistory } from "vue-router";
 import { onAuthenticationRequired } from "./authentication-required";
@@ -63,7 +64,7 @@ router.beforeEach(async (to) => {
   if (!to.meta.public && !session.user) return { name: "login", query: { redirect: to.fullPath } };
   if (to.name === "login" && session.user) return { name: "monitoring" };
   if (to.meta.webOnly && isDesktopApp()) return { name: "overview" };
-  if (to.meta.managerOnly && !["owner", "admin"].includes(session.workspace?.role ?? "")) return { name: "overview" };
+  if (to.meta.managerOnly && !workspaceCan("credential.view")) return { name: "overview" };
   return true;
 });
 

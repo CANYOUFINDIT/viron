@@ -516,6 +516,7 @@ export async function registerConnectionCopyRoutes(app: FastifyInstance): Promis
     if (!requireOrganizationAdmin(request, reply)) return;
     const body = parseBody(commitSchema, request.body, reply);
     if (!body) return;
+    if (body.grantees.length) return reply.code(410).send({error:"LEGACY_ACCESS_READ_ONLY",message:"复制资源后请通过角色的数据授权维护访问范围"});
     try {
       const { source, plan } = await buildPlan(app, request.admin!.id, request.admin!.workspace.id, body.selection);
       const result = await executeCopy(app, request, source, plan, body.reuse, body.grantees);

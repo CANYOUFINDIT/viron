@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { workspaceCan } from "../session";
 import { Radio, RefreshCw, Server, ShieldAlert } from "@lucide/vue";
 import { ElMessage } from "element-plus";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
@@ -80,7 +81,7 @@ const refreshSeconds = computed<MonitoringRefreshSeconds>(() => {
   return value === 0 || value === 30 || value === 60 ? value : 15;
 });
 const selectedHostId = computed(() => String(route.query.hostId ?? ""));
-const canOperate = computed(() => ["owner", "admin"].includes(session.workspace?.role ?? ""));
+const canOperate = computed(() => workspaceCan("maintenance.install"));
 
 function isMonitoringRoute() {
   return route.name === "monitoring";

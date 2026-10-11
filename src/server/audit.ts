@@ -32,7 +32,7 @@ export async function runWithAuditSource<T>(source: AuditSource, callback: (head
   }
 }
 
-function internalRequestAuditSource(request: FastifyRequest): AuditSource | null {
+export function internalRequestAuditSource(request: FastifyRequest): AuditSource | null {
   const marker = request.headers[INTERNAL_AUDIT_SOURCE_HEADER];
   return typeof marker === "string" ? internalAuditSources.get(marker) ?? null : null;
 }

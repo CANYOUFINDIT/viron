@@ -1,4 +1,5 @@
-<script setup lang="ts">import { translate as tr } from "../i18n";
+<script setup lang="ts">
+import { workspaceCan } from "../session";import { translate as tr } from "../i18n";
 
 import {
   ChevronDown,
@@ -187,7 +188,7 @@ const groupedConnections = computed(() => {
     .sort(([left], [right]) => left === tr("未分组") ? 1 : right === tr("未分组") ? -1 : left.localeCompare(right, "zh-CN"))
     .map(([path, items]) => ({ path, items }));
 });
-const canManageConnections = computed(() => adminSession.workspace?.role === "owner" || adminSession.workspace?.role === "admin");
+const canManageConnections = computed(() => workspaceCan("resource.ssh.configure"));
 const canSortConnections = computed(() => canManageConnections.value && !keyword.value.trim() && !savingConnectionOrder.value);
 
 function compareConnections(left: SshConnection, right: SshConnection) {

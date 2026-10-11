@@ -8,6 +8,7 @@ vi.mock("../src/client/api", () => ({
   ApiError: class ApiError extends Error {},
 }));
 vi.mock("../src/client/session", () => ({
+  workspaceCan: () => true,
   session: { workspace: { role: "owner" } },
 }));
 

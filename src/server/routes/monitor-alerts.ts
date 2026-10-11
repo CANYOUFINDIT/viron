@@ -79,10 +79,10 @@ interface AlertWorkspaceScope extends WorkspaceContext {
 }
 
 async function alertWorkspaceAccess(app: FastifyInstance, user: AuthenticatedUser, workspace: WorkspaceContext): Promise<AlertWorkspaceScope> {
-  const canManage = workspace.role === "owner" || workspace.role === "admin";
+  const canManage = workspace.type === "personal" && workspace.role === "owner";
   if (canManage) return { ...workspace, canManage: true, environmentIds: new Set() };
   const access = await getWorkspaceAccess(app.db, { ...user, workspace });
-  return { ...workspace, canManage: access.canManage, environmentIds: access.environmentIds };
+  return { ...workspace, canManage: access.canManage, environmentIds: access.organizationAccess ? new Set(access.organizationAccess.catalog.filter(t => t.type === "environment" && access.allowsEnvironment(t.id, "maintenance", "view")).map(t => t.id)) : access.environmentIds };
 }
 
 async function alertWorkspaceScopes(app: FastifyInstance, request: FastifyRequest): Promise<AlertWorkspaceScope[]> {
@@ -480,7 +480,9 @@ export async function registerMonitorAlertRoutes(app: FastifyInstance): Promise<
     if (query.data.environmentId && !await canAccessEnvironment(app.db, request.admin!, query.data.environmentId)) {
       return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
     }
-    const scope = alertScopeWhere(await alertWorkspaceScopes(app, request));
+    const scopes = await alertWorkspaceScopes(app, request);
+    if (query.data.environmentId && !scopes.some(s=>s.type===request.admin!.workspace.type && s.id===request.admin!.workspace.id && (s.canManage || s.environmentIds.has(query.data.environmentId!)))) return reply.code(404).send({error:"ENVIRONMENT_NOT_FOUND",message:"环境不存在或没有监控查看权限"});
+    const scope = alertScopeWhere(scopes);
     const environmentClause = query.data.environmentId ? " AND a.environment_id = ?" : "";
     const parameters = [request.admin!.id, ...scope.parameters, ...(query.data.environmentId ? [query.data.environmentId] : [])];
     const limit = query.data.limit ?? 100;

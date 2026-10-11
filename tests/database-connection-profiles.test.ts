@@ -1,3 +1,4 @@
+import { authorizeOrganizationResources } from "./helpers/organization-roles.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -57,7 +58,7 @@ describe("database connection profiles", () => {
     await migrated.close();
   });
 
-  it("uses real encrypted connection records while inheriting root grants and isolating user preferences", async () => {
+  it("uses real encrypted connection records with explicit profile grants and isolating user preferences", async () => {
     const directory = mkdtempSync(join(tmpdir(), "viron-database-profiles-"));
     directories.push(directory);
     const config = configFor(directory);
@@ -81,6 +82,7 @@ describe("database connection profiles", () => {
       payload: { name: "Billing", engine: "mysql", host: "primary.internal", port: 3306, username: "root", credential: { password: "primary-secret" }, defaultDatabase: "billing" },
     });
     const connectionId = connection.json().id as string;
+    await authorizeOrganizationResources(app, alice.cookies, organizationId);
     const profile = await app.inject({
       method: "POST",
       url: `/api/v1/database-connections/${connectionId}/profiles`,
@@ -100,6 +102,7 @@ describe("database connection profiles", () => {
     expect(profile.statusCode).toBe(201);
     const profileId = profile.json().id as string;
 
+    await authorizeOrganizationResources(app, alice.cookies, organizationId);
     const defaultList = await app.inject({ method: "GET", url: "/api/v1/connections?type=database", cookies: alice.cookies });
     expect(defaultList.json().items.map((item: { id: string }) => item.id)).toEqual([connectionId]);
     const fullList = await app.inject({ method: "GET", url: "/api/v1/connections?type=database&includeProfiles=true", cookies: alice.cookies });
@@ -140,6 +143,7 @@ describe("database connection profiles", () => {
       cookies: alice.cookies,
       payload: { profileId: duplicateId },
     })).statusCode).toBe(200);
+    await authorizeOrganizationResources(app, alice.cookies, organizationId);
     const managedList = await app.inject({ method: "GET", url: "/api/v1/connections?type=database&includeProfiles=true", cookies: alice.cookies });
     expect(managedList.json().items).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: connectionId, options: expect.objectContaining({ activeProfileId: duplicateId }) }),
@@ -167,7 +171,7 @@ describe("database connection profiles", () => {
     expect((await app.inject({ method: "DELETE", url: `/api/v1/database-connections/${connectionId}/profiles/${duplicateId}`, cookies: alice.cookies })).statusCode).toBe(409);
     app.activeConnections.release(activeConnection.id);
 
-    expect((await app.inject({ method: "POST", url: `/api/v1/organizations/${organizationId}/grants`, cookies: alice.cookies, payload: { granteeType: "user", granteeId: bob.id, resourceType: "database_connection", resourceId: connectionId } })).statusCode).toBe(201);
+    await authorizeOrganizationResources(app, alice.cookies, organizationId, bob.id);
     const bobList = await app.inject({ method: "GET", url: "/api/v1/connections?type=database&includeProfiles=true", cookies: bob.cookies });
     expect(bobList.json().items.map((item: { id: string }) => item.id).sort()).toEqual([connectionId, profileId, duplicateId].sort());
     expect((await app.inject({ method: "POST", url: "/api/v1/database-sessions", cookies: bob.cookies, payload: { connectionId: profileId } })).statusCode).toBe(201);

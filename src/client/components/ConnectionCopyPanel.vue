@@ -1,4 +1,5 @@
-<script setup lang="ts">import { translate as tr } from "../i18n";
+<script setup lang="ts">
+import { workspaceCan } from "../session";import { translate as tr } from "../i18n";
 
 import { AlertTriangle, ArrowLeft, CheckCircle2, Copy, Database, FileText, FolderTree, Globe2, KeyRound, RotateCcw, ShieldCheck, TerminalSquare, Users } from "@lucide/vue";
 import { ElMessage, ElMessageBox } from "element-plus";
@@ -64,7 +65,7 @@ const selectedWebEntries = ref<Set<string>>(new Set());
 const selectedWebCredentials = ref<Set<string>>(new Set());
 const selectedLogs = ref<Set<string>>(new Set());
 
-const canCopy = computed(() => session.workspace?.type === "organization" && session.workspace.role === "admin");
+const canCopy = computed(() => session.workspace?.type === "organization" && workspaceCan("tool.copy"));
 const personalName = computed(() => tr("{0} 的个人空间", [session.user?.username ?? tr("我")]));
 const selectionCount = computed(() => [selectedGroups, selectedEnvironments, selectedSsh, selectedDatabases, selectedWebEntries, selectedWebCredentials, selectedLogs]
   .reduce((total, item) => total + item.value.size, 0));
@@ -309,8 +310,8 @@ onMounted(loadCatalog);
           <div v-else class="copy-no-conflict"><CheckCircle2 :size="18" />{{ $t('没有发现需要处理的组织资源冲突') }}</div>
         </section>
         <section class="copy-resource-section">
-          <header><span><Users :size="16" />{{ $t('组织授权') }}<TipIcon :content="$t('默认不授权；组织管理员始终可以管理复制后的资源。')" placement="right" /></span></header>
-          <div v-if="catalog.grantees.length" class="copy-grantee-grid"><label v-for="item in catalog.grantees" :key="granteeKey(item)"><el-checkbox :model-value="selectedGrantees.has(granteeKey(item))" @change="toggleGrantee(item, Boolean($event))" /><Users :size="15" /><span><strong>{{ item.name }}</strong><small>{{ item.type === 'project' ? $t('项目') : $t('组织成员') }}</small></span></label></div>
+          <header><span><Users :size="16" />{{ $t('组织授权') }}<TipIcon :content="$t('复制后的资源需要在角色维护中明确授权。')" placement="right" /></span></header>
+          <div v-if="catalog.grantees.length" class="copy-grantee-grid"><label v-for="item in catalog.grantees" :key="granteeKey(item)"><el-checkbox disabled :model-value="selectedGrantees.has(granteeKey(item))" @change="toggleGrantee(item, Boolean($event))" /><Users :size="15" /><span><strong>{{ item.name }}</strong><small>{{ item.type === 'project' ? $t('项目') : $t('组织成员') }}</small></span></label></div>
           <div v-else class="copy-no-conflict">{{ $t('当前组织没有可选的普通成员或项目，复制后仅组织管理员可用') }}</div>
         </section>
         <div class="copy-security-summary"><ShieldCheck :size="19" /><span><strong>{{ selectionCount }} {{ $t('项配置 ·') }} {{ preview.secretCount }} {{ $t('份加密凭据') }}</strong></span><TipIcon :content="$t('密码与私钥只在服务端内存中解密并重新加密；失败时整次操作回滚。')" placement="left" /></div>

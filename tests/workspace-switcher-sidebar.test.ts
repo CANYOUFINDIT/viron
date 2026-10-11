@@ -44,6 +44,7 @@ vi.mock("../src/client/agent-host", () => ({
   agentNativeOverlayActive: { value: false },
 }));
 vi.mock("../src/client/session", () => ({
+  workspaceCan: () => true,
   session: {
     user: { id: "u1", username: "futongyong", isPlatformAdmin: true, createdAt: "" },
     workspace: { type: "personal", id: "p1", name: "personal", role: "owner" },

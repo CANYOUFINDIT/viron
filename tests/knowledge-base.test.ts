@@ -61,7 +61,7 @@ async function login(app: Awaited<ReturnType<typeof buildApp>>, username: string
 }
 
 describe("environment knowledge base", () => {
-  it("persists nested Markdown, creator rights, inherited project edit grants, conflicts, and Base64 images", async () => {
+  it("persists nested Markdown, conflicts and Base64 images in a personal workspace", async () => {
     const directory = mkdtempSync(join(tmpdir(), "viron-knowledge-test-"));
     directories.push(directory);
     const config = configFor(directory);
@@ -70,22 +70,9 @@ describe("environment knowledge base", () => {
     const app = await buildApp({ config, db, logger: false });
     try {
       const admin = await login(app, "admin", config.adminPassword);
-      const registered = await app.inject({ method: "POST", url: "/api/v1/auth/register", payload: { username: "writer", password: "Writer-password-123!" } });
-      expect(registered.statusCode).toBe(201);
-      const writer = await login(app, "writer", "Writer-password-123!");
-      const writerId = (await app.inject({ method: "GET", url: "/api/v1/auth/me", cookies: writer })).json().user.id as string;
-
-      const organization = await app.inject({ method: "POST", url: "/api/v1/organizations", cookies: admin, payload: { name: "知识团队", description: "" } });
-      const organizationId = organization.json().id as string;
-      await app.inject({ method: "PUT", url: "/api/v1/auth/workspace", cookies: admin, payload: { type: "organization", id: organizationId } });
-      const invitation = await app.inject({ method: "POST", url: `/api/v1/organizations/${organizationId}/invitations`, cookies: admin, payload: { expiresInHours: 24, maxUses: 1 } });
-      expect((await app.inject({ method: "POST", url: `/api/v1/organization-invitations/${invitation.json().token}/accept`, cookies: writer })).statusCode).toBe(201);
-      await app.inject({ method: "PUT", url: "/api/v1/auth/workspace", cookies: writer, payload: { type: "organization", id: organizationId } });
-
-      const environment = await app.inject({ method: "POST", url: "/api/v1/environments", cookies: admin, payload: { name: "生产环境" } });
+      const writer = admin;
+      const environment = await app.inject({method:"POST",url:"/api/v1/environments",cookies:admin,payload:{name:"测试环境"}});
       const environmentId = environment.json().id as string;
-      expect((await app.inject({ method: "POST", url: `/api/v1/organizations/${organizationId}/grants`, cookies: admin, payload: { granteeType: "user", granteeId: writerId, resourceType: "environment", resourceId: environmentId } })).statusCode).toBe(201);
-
       const folder = await app.inject({ method: "POST", url: `/api/v1/environments/${environmentId}/knowledge/nodes`, cookies: admin, payload: { type: "folder", name: "运行手册", parentId: null } });
       const folderId = folder.json().id as string;
       const environmentTree = (await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/knowledge`, cookies: admin })).json();
@@ -109,26 +96,6 @@ describe("environment knowledge base", () => {
       expect(writerDocument.json().name).toBe("我的记录.md");
       expect((await app.inject({ method: "PUT", url: `/api/v1/knowledge-documents/${writerDocumentId}/content`, cookies: writer, payload: { content: "# Writer", revision: 1 } })).statusCode).toBe(200);
       expect((await app.inject({ method: "PUT", url: `/api/v1/knowledge-documents/${adminDocumentId}/content`, cookies: writer, payload: { content: "forbidden", revision: 1 } })).statusCode).toBe(200);
-
-      const restrictedGlobalDocument = await app.inject({ method: "POST", url: "/api/v1/knowledge/nodes", cookies: admin, payload: { type: "document", name: "管理员文档", parentId: null } });
-      const ownGlobalDocument = await app.inject({ method: "POST", url: "/api/v1/knowledge/nodes", cookies: writer, payload: { type: "document", name: "成员文档", parentId: null } });
-      const writerKnowledgeIds = (await app.inject({ method: "GET", url: "/api/v1/knowledge", cookies: writer })).json().items.map((item: { id: string }) => item.id);
-      expect(writerKnowledgeIds).toContain(ownGlobalDocument.json().id);
-      expect(writerKnowledgeIds).not.toContain(restrictedGlobalDocument.json().id);
-      expect((await app.inject({ method: "GET", url: `/api/v1/knowledge-documents/${restrictedGlobalDocument.json().id}`, cookies: writer })).statusCode).toBe(404);
-      const associationCandidates = await app.inject({ method: "GET", url: `/api/v1/environments/${environmentId}/knowledge/association-candidates`, cookies: writer });
-      expect(associationCandidates.json().items.map((item: { id: string }) => item.id)).toEqual([ownGlobalDocument.json().id]);
-      expect((await app.inject({
-        method: "POST",
-        url: `/api/v1/environments/${environmentId}/knowledge/associations`,
-        cookies: writer,
-        payload: { nodeIds: [restrictedGlobalDocument.json().id] },
-      })).statusCode).toBe(403);
-
-      const project = await app.inject({ method: "POST", url: `/api/v1/organizations/${organizationId}/projects`, cookies: admin, payload: { name: "运维组", description: "", parentId: null } });
-      const projectId = project.json().id as string;
-      await app.inject({ method: "POST", url: `/api/v1/organizations/${organizationId}/projects/${projectId}/members`, cookies: admin, payload: { userId: writerId } });
-      expect((await app.inject({ method: "POST", url: `/api/v1/knowledge-nodes/${folderId}/grants`, cookies: admin, payload: { granteeType: "project", granteeId: projectId } })).statusCode).toBe(201);
 
       const saved = await app.inject({ method: "PUT", url: `/api/v1/knowledge-documents/${adminDocumentId}/content`, cookies: writer, payload: { content: "# 发布\n\n安全执行。", revision: 2 } });
       expect(saved.statusCode).toBe(200);

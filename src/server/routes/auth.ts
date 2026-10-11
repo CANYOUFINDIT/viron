@@ -1,3 +1,4 @@
+import { organizationExecutionFence } from "../organization-execution-fence.js";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import argon2 from "argon2";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -10,6 +11,8 @@ import { executionScope } from "../execution-scope.js";
 import { parseBody } from "../validation.js";
 import { revokeUserRuntime } from "../user-runtime.js";
 import { authenticatePersonalApiKey, hasBearerApiKey } from "../api-key-auth.js";
+
+import { attachOrganizationAccess } from "../organization-rbac.js";
 
 const COOKIE_NAME = "envman_session";
 
@@ -105,6 +108,9 @@ export async function requireAdmin(request: FastifyRequest, reply: FastifyReply)
     isPlatformAdmin: Boolean(row.is_platform_admin),
     workspace,
   };
+  await attachOrganizationAccess(request.server.db, request.admin);
+  await organizationExecutionFence(request, reply);
+  if (reply.sent) return;
   request.sessionId = row.session_id;
   await request.server.db.prepare("UPDATE sessions SET last_seen_at = ? WHERE id = ?").run(
     new Date().toISOString(),
@@ -127,6 +133,7 @@ async function workspacesFor(app: FastifyInstance, user: AuthenticatedUser) {
 }
 
 async function authResponse(app: FastifyInstance, user: AuthenticatedUser) {
+  await attachOrganizationAccess(app.db, user);
   const profile = await app.db.prepare("SELECT created_at FROM admin_users WHERE id = ?").get(user.id) as { created_at: string };
   return {
     user: { id: user.id, username: user.username, isPlatformAdmin: user.isPlatformAdmin, createdAt: profile.created_at },

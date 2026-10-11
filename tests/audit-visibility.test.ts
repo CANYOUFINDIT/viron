@@ -1,3 +1,4 @@
+import { authorizeOrganizationResources } from "./helpers/organization-roles.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -95,6 +96,8 @@ describe("organization audit visibility", () => {
       `).run(crypto.randomUUID(), organizationId, bob.id, resourceType, resourceId, alice.id, now);
     }
 
+    await authorizeOrganizationResources(app, alice.cookies, organizationId);
+    await authorizeOrganizationResources(app, alice.cookies, organizationId, bob.id);
     for (const [index, user] of [alice, bob].entries()) {
       await writeAudit(app.db, {
         action: "test.operation",

@@ -7,7 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const desktopMode = vi.hoisted(() => ({ enabled: false }));
 vi.mock("../src/client/api", () => ({ api: vi.fn(), prefetchApi: vi.fn() }));
-vi.mock("../src/client/session", () => ({ session: { workspace: { role: "owner" } } }));
+vi.mock("../src/client/session", () => ({
+  workspaceCan: () => true, session: { workspace: { role: "owner" } } }));
 vi.mock("../src/client/desktop", async (importOriginal) => ({
   ...await importOriginal<typeof import("../src/client/desktop")>(),
   isDesktopApp: () => desktopMode.enabled,

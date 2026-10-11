@@ -83,7 +83,7 @@ function fixtureSelection(fixture: Awaited<ReturnType<typeof createPersonalFixtu
 }
 
 describe("personal resource copy to organization", () => {
-  it("copies a complete environment graph, expands dependencies, reencrypts secrets, and grants the group", async () => {
+  it("copies a complete environment graph, expands dependencies, reencrypts secrets, without legacy grants", async () => {
     const directory = mkdtempSync(join(tmpdir(), "viron-copy-"));
     directories.push(directory);
     const config = configFor(directory);
@@ -114,10 +114,10 @@ describe("personal resource copy to organization", () => {
 
     const copied = await app.inject({
       method: "POST", url: "/api/v1/connection-copy", cookies,
-      payload: { selection: fixtureSelection(fixture), reuse: {}, grantees: [{ type: "project", id: project.json().id }] },
+      payload: { selection: fixtureSelection(fixture), reuse: {}, grantees: [] },
     });
     expect(copied.statusCode, copied.body).toBe(201);
-    expect(copied.json().counts).toMatchObject({ environmentGroups: 1, environments: 1, sshConnections: 2, databaseConnections: 1, webEntries: 1, webCredentials: 1, logs: 1, grants: 1 });
+    expect(copied.json().counts).toMatchObject({ environmentGroups: 1, environments: 1, sshConnections: 2, databaseConnections: 1, webEntries: 1, webCredentials: 1, logs: 1, grants: 0 });
 
     const copiedApplication = await app.db.prepare("SELECT id, credential_ciphertext, jump_connection_id FROM ssh_connections WHERE workspace_type = 'organization' AND workspace_id = ? AND host = '10.0.0.20'").get<{ id: string; credential_ciphertext: string; jump_connection_id: string }>(organizationId);
     const copiedJump = await app.db.prepare("SELECT id FROM ssh_connections WHERE workspace_type = 'organization' AND workspace_id = ? AND host = '10.0.0.10'").get<{ id: string }>(organizationId);
@@ -130,7 +130,7 @@ describe("personal resource copy to organization", () => {
     const copiedEnvironment = await app.db.prepare("SELECT id FROM environments WHERE workspace_type = 'organization' AND workspace_id = ?").get<{ id: string }>(organizationId);
     expect(await app.db.prepare("SELECT 1 FROM ssh_connection_environments WHERE connection_id = ? AND environment_id = ?").get(copiedApplication!.id, copiedEnvironment!.id)).toBeTruthy();
     expect(await app.db.prepare("SELECT 1 FROM environment_logs WHERE environment_id = ? AND ssh_connection_id = ?").get(copiedEnvironment!.id, copiedApplication!.id)).toBeTruthy();
-    expect(await app.db.prepare("SELECT resource_type FROM resource_grants WHERE organization_id = ? AND grantee_type = 'project' AND grantee_id = ?").get<{ resource_type: string }>(organizationId, project.json().id)).toEqual({ resource_type: "environment_group" });
+    expect(await app.db.prepare("SELECT resource_type FROM resource_grants WHERE organization_id = ? AND grantee_type = 'project' AND grantee_id = ?").get<{ resource_type: string }>(organizationId, project.json().id)).toBeUndefined();
 
     const conflictPreview = await app.inject({ method: "POST", url: "/api/v1/connection-copy/preview", cookies, payload: { selection: fixtureSelection(fixture) } });
     expect(conflictPreview.json().conflicts).toHaveLength(8);

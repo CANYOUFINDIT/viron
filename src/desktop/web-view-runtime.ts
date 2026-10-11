@@ -204,6 +204,7 @@ export interface ManagedDesktopWebPage {
 }
 
 export interface ManagedDesktopWebView {
+  allowExtensions: boolean;
   id: string;
   registrationId: string;
   credentialId: string;
@@ -607,7 +608,7 @@ function configureDesktopWebPage(
       ...(index > 0 ? [{ type: "separator" as const }] : []),
       ...group.map((action) => desktopWebContextMenuItem(view, nativeView.webContents, params, action, available ? token : undefined)),
     ]);
-    const extensionItems = view.loginConfig.mode === "locked" ? [] : desktopWebExtensionContextMenuItems(view.partition, nativeView.webContents, params);
+    const extensionItems = !view.allowExtensions || view.loginConfig.mode === "locked" ? [] : desktopWebExtensionContextMenuItems(view.partition, nativeView.webContents, params);
     if (extensionItems.length) {
       if (template.length) template.push({ type: "separator" });
       template.push(...extensionItems);
@@ -737,6 +738,7 @@ function cacheableLoginResumeUrl(entryUrl: string, key: string): string {
 }
 
 function registerBusinessExtensions(view: ManagedDesktopWebView): void {
+  if (!view.allowExtensions) return;
   enableDesktopWebSessionExtensions(view.partition, view.lastUrlKey);
   registerExtensionBrowser(view.partition, {
     create: async (url, active) => {
@@ -766,20 +768,21 @@ async function startConfiguredDesktopLogin(view: ManagedDesktopWebView): Promise
   if (!current()) return;
   closeDesktopWebExtensionPopup();
   closeExtensionBrowser(view.partition);
-  if (view.loginConfig.mode === "locked") await suspendDesktopWebSessionExtensions(view.partition);
-  else await resumeDesktopWebSessionExtensions(view.partition);
+  if (!view.allowExtensions || view.loginConfig.mode === "locked") await suspendDesktopWebSessionExtensions(view.partition);
+  else if (view.allowExtensions) await resumeDesktopWebSessionExtensions(view.partition);
+        else await suspendDesktopWebSessionExtensions(view.partition);
   if (!current()) return;
   // Both fill modes use an interactive guest. Locked mode keeps extensions
   // suspended and developer tools disabled for the account's entire view.
-  if (view.loginConfig.mode !== "locked") {
+  if (view.allowExtensions && view.loginConfig.mode !== "locked") {
     enableDesktopWebSessionExtensions(view.partition, view.lastUrlKey);
-    await loadDesktopWebExtensions(view.partition, view.lastUrlKey);
+    if (view.allowExtensions) await loadDesktopWebExtensions(view.partition, view.lastUrlKey);
   }
   if (!current()) return;
   const page = await createDesktopWebPage(view, true);
   if (!current()) { page.view.dispose(); return; }
   view.login = null;
-  if (view.loginConfig.mode !== "locked") registerBusinessExtensions(view);
+  if (view.allowExtensions && view.loginConfig.mode !== "locked") registerBusinessExtensions(view);
   page.loadingUrl = view.entryUrl;
   activateDesktopWebPage(view, page.id);
   const navigation = page.view.webContents.loadURL(view.entryUrl);
@@ -833,10 +836,11 @@ function startProtectedDesktopLogin(view: ManagedDesktopWebView): void {
       if (!current()) return;
       try {
         // Authentication document was destroyed before any extension or guest exists.
-        await resumeDesktopWebSessionExtensions(view.partition);
+        if (view.allowExtensions) await resumeDesktopWebSessionExtensions(view.partition);
+        else await suspendDesktopWebSessionExtensions(view.partition);
         if (!current()) return;
         registerBusinessExtensions(view);
-        await loadDesktopWebExtensions(view.partition, view.lastUrlKey);
+        if (view.allowExtensions) await loadDesktopWebExtensions(view.partition, view.lastUrlKey);
         if (!current()) return;
         const page = await createDesktopWebPage(view, false);
         if (!current()) { page.view.dispose(); return; }
@@ -907,10 +911,11 @@ export function browseDesktopWebWithoutAutofill(view: ManagedDesktopWebView): Pr
       await login.settled();
       if (!current()) return;
       destroyDesktopWebPages(view);
-      await resumeDesktopWebSessionExtensions(view.partition);
+      if (view.allowExtensions) await resumeDesktopWebSessionExtensions(view.partition);
+        else await suspendDesktopWebSessionExtensions(view.partition);
       if (!current()) return;
       registerBusinessExtensions(view);
-      await loadDesktopWebExtensions(view.partition, view.lastUrlKey);
+      if (view.allowExtensions) await loadDesktopWebExtensions(view.partition, view.lastUrlKey);
       if (!current()) return;
       const page = await createDesktopWebPage(view, false);
       if (!current()) { page.view.dispose(); return; }
@@ -1036,6 +1041,7 @@ export async function openDesktopWebView(
     closing: false,
     lastActivityAt: Date.now(),
     closedReason: "",
+    allowExtensions: auth.workspace.type === "personal",
     partition: webPartition,
     partitionName,
     lastUrlKey,
@@ -1070,11 +1076,12 @@ export async function openDesktopWebView(
     if (initialPage === "entry") await startConfiguredDesktopLogin(managed);
     else {
       managed.password = "";
-      if (managed.loginConfig.mode === "locked") await suspendDesktopWebSessionExtensions(managed.partition);
+      if (!managed.allowExtensions || managed.loginConfig.mode === "locked") await suspendDesktopWebSessionExtensions(managed.partition);
       else {
-        await resumeDesktopWebSessionExtensions(managed.partition);
+        if (managed.allowExtensions) await resumeDesktopWebSessionExtensions(managed.partition);
+      else await suspendDesktopWebSessionExtensions(managed.partition);
         registerBusinessExtensions(managed);
-        await loadDesktopWebExtensions(managed.partition, lastUrlKey);
+        if (managed.allowExtensions) await loadDesktopWebExtensions(managed.partition, lastUrlKey);
       }
       const entryPage = await createDesktopWebPage(managed, false);
       entryPage.protectedEntry = true;
@@ -1256,7 +1263,8 @@ export async function closeDesktopWebView(id: string, reason = tr("用户主动�
     try {
       destroyDesktopWebPages(managed);
       await login?.settled();
-      await resumeDesktopWebSessionExtensions(managed.partition);
+      if (managed.allowExtensions) await resumeDesktopWebSessionExtensions(managed.partition);
+      else await suspendDesktopWebSessionExtensions(managed.partition);
       await releaseDesktopWebSessionExtensions(managed.partition);
       managed.partition.flushStorageData();
       await managed.partition.cookies.flushStore();

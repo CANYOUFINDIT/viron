@@ -192,7 +192,7 @@ function grantExpiry(grant: { expired: boolean; pending?: boolean; startsAt?: st
                       <el-button type="danger" plain @click="deleteProject(selectedProject)"><Trash2 :size="15" />{{ $t('删除') }}</el-button>
                     </template>
                     <template v-else-if="selectedMember">
-                      <el-button @click="changeRole(selectedMember)">{{ selectedMember.role === 'admin' ? $t('降为成员') : $t('设为管理员') }}</el-button>
+                      <el-button @click="changeRole(selectedMember)">{{ $t('分配角色') }}</el-button>
                       <el-button type="danger" plain @click="removeMember(selectedMember)">{{ $t('移出组织') }}</el-button>
                     </template>
                   </span>
@@ -228,7 +228,7 @@ function grantExpiry(grant: { expired: boolean; pending?: boolean; startsAt?: st
                         <button type="button" role="radio" :aria-checked="grantView === 'timeline'" :class="{ 'is-active': grantView === 'timeline' }" @click="grantView = 'timeline'">{{ $t('时间线') }}</button>
                       </div>
                       <TipIcon :content="$t('子项目组继承父项目组授权；成员权限是个人直授与所属项目组、祖先项目组授权的并集。')" placement="left" />
-                      <el-button v-if="selectedGrantTarget" type="primary" @click="openGrantDialog"><ShieldCheck :size="15" />{{ $t('授权资源') }}</el-button>
+                      <el-button v-if="selectedGrantTarget" type="primary" disabled title="请在角色维护中授权" @click="openGrantDialog"><ShieldCheck :size="15" />{{ $t('授权资源') }}</el-button>
                     </span>
                   </header>
                   <div v-if="selectedGrantRows.length && grantView === 'list'" class="grant-ledger">
@@ -238,7 +238,7 @@ function grantExpiry(grant: { expired: boolean; pending?: boolean; startsAt?: st
                       <span :title="row.grant.permissionText">{{ row.grant.permissionText }}</span>
                       <span :title="grantExpiry(row.grant)">{{ grantExpiry(row.grant) }}</span>
                       <span><em :class="{ 'is-inherited': row.inherited }" :title="grantSource(row)">{{ grantSource(row) }}</em></span>
-                      <span class="grant-ledger__actions"><button type="button" class="is-edit" @click="openGrantHistory(row.grant)">{{ $t('记录') }}</button><template v-if="!row.inherited || selectedNode.type === 'organization'"><button type="button" class="is-edit" @click="openEditGrant(row.grant)">{{ $t('修改') }}</button><button type="button" @click="revokeGrant(row.grant)">{{ $t('撤销') }}</button></template><small v-else :title="$t('在来源节点管理')">{{ $t('在来源节点管理') }}</small></span>
+                      <span class="grant-ledger__actions"><button type="button" class="is-edit" @click="openGrantHistory(row.grant)">{{ $t('记录') }}</button><template v-if="!row.inherited || selectedNode.type === 'organization'"><button type="button" class="is-edit" disabled title="旧授权只读" @click="openEditGrant(row.grant)">{{ $t('修改') }}</button><button type="button" disabled title="旧授权只读" @click="revokeGrant(row.grant)">{{ $t('撤销') }}</button></template><small v-else :title="$t('在来源节点管理')">{{ $t('在来源节点管理') }}</small></span>
                     </div>
                   </div>
                   <GrantTimelineView

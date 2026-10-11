@@ -1,3 +1,4 @@
+import { authorizeOrganizationResources } from "./helpers/organization-roles.js";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -619,6 +620,13 @@ describe("monitor alerts", () => {
           created_by_user_id, created_at
         ) VALUES (?, ?, 'user', ?, 'environment', ?, ?, ?)
       `).run(randomUUID(), organizationId, memberId, environmentId, ownerLogin.json().user.id, now);
+      for (const id of [environmentId,hiddenEnvironmentId]) {
+        const ssh = await app.inject({method:"POST",url:"/api/v1/ssh-connections",cookies:ownerCookies,payload:{name:id,host:"host.invalid",username:"test",authType:"password",credential:{password:"fake"},environmentIds:[id]}});
+        expect(ssh.statusCode,ssh.body).toBe(201);
+      }
+      await authorizeOrganizationResources(app,ownerCookies,organizationId);
+      const all = await import("../src/server/organization-rbac.js").then(m=>m.organizationResourceCatalog(db,organizationId));
+      await authorizeOrganizationResources(app,ownerCookies,organizationId,memberId,all.filter(t=>t.type==="monitor_host"&&t.environmentIds.includes(environmentId)).map(({type,id})=>({type,id})),["maintenance.view"]);
       const insertAlert = async (environmentId: string, environmentName: string, targetName: string) => {
         const alertId = randomUUID();
         await app.db.prepare(`

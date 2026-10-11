@@ -1,4 +1,5 @@
-<script setup lang="ts">import { translate as tr } from "../i18n";
+<script setup lang="ts">
+import { workspaceCan } from "../session";import { translate as tr } from "../i18n";
 
 import {
   Activity,
@@ -87,7 +88,7 @@ const isWorkbenchPage = computed(() => ["environment", "knowledge", "ssh", "data
 const currentWorkspaceCommand = computed(() => session.workspace ? `${session.workspace.type}:${session.workspace.id}` : "");
 const personalWorkspace = computed(() => session.workspaces.find((workspace) => workspace.type === "personal"));
 const organizationWorkspaces = computed(() => session.workspaces.filter((workspace) => workspace.type === "organization"));
-const visibleMenuItems = computed(() => menuItems.filter((item) => !("managerOnly" in item && item.managerOnly) || ["owner", "admin"].includes(session.workspace?.role ?? "")));
+const visibleMenuItems = computed(() => menuItems.filter((item) => !("managerOnly" in item && item.managerOnly) || workspaceCan("credential.view")));
 
 function workspaceLabel(workspace: { type: "personal" | "organization"; name: string }) {
   return workspace.type === "personal" ? tr("{0} 的个人空间", [session.user?.username ?? tr("我")]) : workspace.name;

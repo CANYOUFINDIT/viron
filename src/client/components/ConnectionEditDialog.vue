@@ -1,4 +1,5 @@
-<script setup lang="ts">import { translate as tr } from "../i18n";
+<script setup lang="ts">
+import { workspaceCan } from "../session";import { translate as tr } from "../i18n";
 
 import { BadgeCheck, Copy, Database, KeyRound, Pencil, Plus, Trash2 } from "@lucide/vue";
 import { ElMessage } from "element-plus";
@@ -228,7 +229,7 @@ async function loadOptions() {
       api<{ items: EnvironmentItem[] }>("/api/v1/environments"),
       api<{ items: ConnectionGroup[] }>("/api/v1/connection-groups"),
       api<{ items: SshOption[] }>("/api/v1/connections?type=ssh"),
-      ["owner", "admin"].includes(session.workspace?.role ?? "") ? api<{ items: SshKeyOption[] }>("/api/v1/ssh-keys") : Promise.resolve({ items: [] as SshKeyOption[] }),
+      workspaceCan("credential.view") ? api<{ items: SshKeyOption[] }>("/api/v1/ssh-keys") : Promise.resolve({ items: [] as SshKeyOption[] }),
     ]);
     environments.value = environmentResponse.items;
     connectionGroups.value = groupResponse.items;

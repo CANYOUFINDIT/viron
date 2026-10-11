@@ -7,6 +7,7 @@ import { accessEvent, authorizationSnapshot, recordAccessEvent } from "../access
 import { writeAudit } from "../audit.js";
 import { isUniqueConstraintError } from "../database-errors.js";
 import { parseBody } from "../validation.js";
+import { hasWorkspacePermission } from "../access-control.js";
 import { requireAdmin } from "./auth.js";
 
 export const authorizationBodySchema = z.object({
@@ -38,7 +39,7 @@ async function organizationRole(app: FastifyInstance, request: FastifyRequest, r
   const member = await app.db.prepare("SELECT m.role FROM organization_members m JOIN admin_users u ON u.id = m.user_id WHERE m.organization_id = ? AND m.user_id = ? AND u.status = 'active'")
     .get<{ role: "admin" | "member" }>(organizationId, request.admin!.id);
   if (!member) { void reply.code(403).send({ error: "NOT_ORGANIZATION_MEMBER", message: "你已不是组织的有效成员" }); return null; }
-  return member.role;
+  return hasWorkspacePermission(request, "approval.view") ? "admin" : "member";
 }
 
 function requestItem(row: RequestRow, userId: string): AccessRequest {
@@ -48,7 +49,7 @@ function requestItem(row: RequestRow, userId: string): AccessRequest {
   return { id: row.id, requesterId: row.requester_id, requesterName: String(row.requester_name), reason: String(row.reason), status: row.status as AccessRequest["status"],
     snapshot: JSON.parse(String(row.snapshot_json)), workflow, approverNames: JSON.parse(String(row.approver_names_json)), stageIndex, stageApprovals,
     grantId: row.grant_id ? String(row.grant_id) : null,
-    canApprove: row.status === "pending" && Boolean(workflow.stages[stageIndex]?.approverIds.includes(userId)) && !stageApprovals.includes(userId),
+    canApprove: false,
     canWithdraw: row.status === "pending" && row.requester_id === userId, createdAt: String(row.created_at), updatedAt: String(row.updated_at) };
 }
 
@@ -76,6 +77,9 @@ function failure(error: unknown, reply: FastifyReply): unknown {
 
 export async function registerAccessGovernanceRoutes(app: FastifyInstance): Promise<void> {
   app.addHook("preHandler", requireAdmin);
+  app.addHook("preHandler", async (request, reply) => {
+    if (request.method !== "GET" && !request.url.endsWith("/withdraw")) return reply.code(410).send({error:"LEGACY_ACCESS_READ_ONLY",message:"旧申请与审批仅保留历史记录；请在角色维护中直接授权"});
+  });
 
   app.get<{ Params: { id: string } }>("/api/v1/organizations/:id/approval-workflow", async (request, reply) => {
     if (!await organizationRole(app, request, reply, request.params.id)) return;
@@ -250,7 +254,7 @@ export async function registerAccessGovernanceRoutes(app: FastifyInstance): Prom
     const query = parseBody(historyQuerySchema, request.query, reply);
     if (!query) return;
     // Organization administrators manage the ledger; applicants use their own request detail.
-    if (role !== "admin") return reply.code(403).send({ error: "ORGANIZATION_ADMIN_REQUIRED", message: "只有组织管理员可以查看授权台账" });
+    if (!hasWorkspacePermission(request, "audit.view")) return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有台账查看权限" });
     const filters = ["organization_id = ?"];
     const params: unknown[] = [request.params.id];
     if (query.grantId) {

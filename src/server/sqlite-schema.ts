@@ -1,3 +1,4 @@
+import { ORGANIZATION_RBAC_SCHEMA } from "./organization-rbac-schema.js";
 import { monitorStorageSchema } from "./monitor-storage-schema.js";
 
 export const SQLITE_SCHEMA = `
@@ -1360,4 +1361,4 @@ CREATE TABLE IF NOT EXISTS service_operation_locks (
   expires_at TEXT NOT NULL,
   PRIMARY KEY(workspace_type, workspace_id, resource_key)
 );
-` + monitorStorageSchema("sqlite");
+` + monitorStorageSchema("sqlite") + ORGANIZATION_RBAC_SCHEMA;

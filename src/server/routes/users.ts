@@ -1,3 +1,4 @@
+import { assertOrganizationMaintainer, OrganizationPermissionError } from "../organization-rbac.js";
 import { randomUUID } from "node:crypto";
 import argon2 from "argon2";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -91,23 +92,17 @@ export async function registerUserRoutes(app: FastifyInstance): Promise<void> {
       const activeAdmins = await app.db.prepare("SELECT COUNT(*) AS count FROM admin_users WHERE is_platform_admin = 1 AND status = 'active'").get() as { count: number };
       if (activeAdmins.count <= 1) return reply.code(400).send({ error: "LAST_PLATFORM_ADMIN", message: "平台必须保留至少一名有效平台管理员" });
     }
-    if (body.status === "disabled") {
-      const orphanedOrganization = await app.db.prepare(`
-        SELECT o.name
-        FROM organization_members own
-        JOIN organizations o ON o.id = own.organization_id
-        WHERE own.user_id = ? AND own.role = 'admin'
-          AND NOT EXISTS (
-            SELECT 1 FROM organization_members other
-            JOIN admin_users u ON u.id = other.user_id
-            WHERE other.organization_id = own.organization_id AND other.role = 'admin'
-              AND other.user_id != own.user_id AND u.status = 'active'
-          )
-        LIMIT 1
-      `).get(request.params.id) as { name: string } | undefined;
-      if (orphanedOrganization) return reply.code(400).send({ error: "LAST_ORGANIZATION_ADMIN", message: `用户是组织“${orphanedOrganization.name}”的最后一名有效管理员` });
+    try {
+      await app.db.transaction(async () => {
+        const organizations = await app.db.prepare("SELECT organization_id FROM organization_members WHERE user_id = ? ORDER BY organization_id").all<{organization_id:string}>(request.params.id);
+        for (const org of organizations) await app.db.prepare("UPDATE organizations SET updated_at = updated_at WHERE id = ?").run(org.organization_id);
+        await app.db.prepare("UPDATE admin_users SET status = ?, updated_at = ? WHERE id = ?").run(body.status, new Date().toISOString(), request.params.id);
+        if (body.status === "disabled") for (const org of organizations) await assertOrganizationMaintainer(app.db, org.organization_id);
+      })();
+    } catch (error) {
+      if (error instanceof OrganizationPermissionError) return reply.code(error.statusCode).send({error:error.code,message:error.message});
+      throw error;
     }
-    await app.db.prepare("UPDATE admin_users SET status = ?, updated_at = ? WHERE id = ?").run(body.status, new Date().toISOString(), request.params.id);
     if (body.status === "disabled") await revokeUserRuntime(app, request.params.id, true);
     await writeAudit(app.db, { action: `user.${body.status}`, resourceType: "user", resourceId: request.params.id, summary: `${body.status === "active" ? "启用" : "停用"}用户 ${user.username}`, request });
     return { ok: true };

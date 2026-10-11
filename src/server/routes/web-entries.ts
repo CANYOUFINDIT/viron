@@ -367,7 +367,7 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
     { preHandler: requireAdmin },
     async (request, reply) => {
       const target = await credentialTarget(app, request.params.id);
-      if (!target || !await requireEnvironmentAction(app.db, request.admin!, reply, target.environmentId, "web", "manage", target.entryId, { error: "NOT_FOUND", message: "登录账号不存在" })) return;
+      if (!target || !await requireEnvironmentAction(app.db, request.admin!, reply, target.environmentId, "web", request.admin!.workspace.type === "organization" ? "reveal" : "manage", target.entryId, { error: "NOT_FOUND", message: "登录账号不存在" })) return;
       const credential = await app.db.prepare(`
         SELECT username, password_ciphertext FROM web_credentials WHERE id = ?
       `).get(request.params.id) as { username: string; password_ciphertext: string } | undefined;

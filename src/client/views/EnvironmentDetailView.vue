@@ -37,7 +37,8 @@ import {
   type EnvironmentPreloadTab,
 } from "../environment-preload";
 import { immersiveModeKey } from "../immersive-mode";
-import { session } from "../session";
+import OrganizationResourceAuthorizationDialog from "./organization/OrganizationResourceAuthorizationDialog.vue";
+import { session, workspaceCan } from "../session";
 import type { Capability, PermissionMap } from "../../shared/access-permissions";
 import type { ImmersiveNavigationEntry, ImmersiveWorkspaceTab } from "../../shared/immersive-navigation";
 import { reorderIds, sameOrder } from "../../shared/tab-order";
@@ -146,6 +147,7 @@ const sslBindOpen = ref(false);
 const sslBindEntry = ref<{ id: string; name: string; url: string } | null>(null);
 const credentialDialog = ref(false);
 const environmentDialog = ref(false);
+const resourceAuthorizationDialog = ref(false);
 const editingEntryId = ref("");
 const editingCredentialId = ref("");
 const saving = ref(false);
@@ -176,7 +178,7 @@ const credentialForm = reactive({ username: "", password: "", note: "" });
 const environmentForm = reactive({ name: "", groupId: null as string | null, description: "", tags: "" });
 const selectedEntry = computed(() => webEntries.value.find((item) => item.id === selectedEntryId.value) ?? null);
 const displayEntryFavicons = computed(() => ({ ...entryFavicons.value, ...desktopEntryFavicons.value }));
-const canManageWorkspace = computed(() => session.workspace?.role === "owner" || session.workspace?.role === "admin");
+const canManageWorkspace = computed(() => workspaceCan("environment.update"));
 const canSortTabs = computed(() => canManageWorkspace.value && !savingEntryOrder.value && !savingCredentialOrder.value);
 const workspaceTabs: WorkspaceTab[] = ["web", "ssh", "logs", "database", "redis", "knowledge", "maintenance"];
 
@@ -1036,7 +1038,7 @@ onBeforeUnmount(() => {
         <RouterLink :to="{ name: 'overview' }" class="environment-back-action" :aria-label="$t('返回环境总览')" :title="$t('返回环境总览')"><ArrowLeft :size="16" /></RouterLink>
         <span class="environment-avatar environment-avatar--large">{{ environment.name.slice(0, 2) }}</span>
         <div class="environment-hero__copy">
-          <div class="hero-title-row"><h2>{{ environment.name }}</h2><span class="hero-group">{{ environment.groupName || $t('未分组') }}</span></div>
+          <div class="hero-title-row"><h2>{{ environment.name }}</h2><el-button v-if="session.workspace?.type === 'organization'" size="small" @click="resourceAuthorizationDialog = true">资源授权</el-button><span class="hero-group">{{ environment.groupName || $t('未分组') }}</span></div>
           <p v-if="environment.description">{{ environment.description }}</p>
         </div>
       </div>
@@ -1276,5 +1278,6 @@ onBeforeUnmount(() => {
       </el-form>
       <template #footer><div class="dialog-footer-actions"><el-button @click="environmentDialog = false">{{ $t('取消') }}</el-button><div><el-button type="danger" plain @click="removeEnvironment">{{ $t('删除环境') }}</el-button><el-button type="primary" :loading="saving" @click="saveEnvironment">{{ $t('保存修改') }}</el-button></div></div></template>
     </el-dialog>
+    <OrganizationResourceAuthorizationDialog v-if="session.workspace?.type === 'organization'" v-model="resourceAuthorizationDialog" :organization-id="session.workspace.id" :targets="[{type:'environment',id:environmentId}]" @saved="loadEnvironment"/>
   </div>
 </template>

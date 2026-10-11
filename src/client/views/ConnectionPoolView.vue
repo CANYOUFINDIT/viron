@@ -31,7 +31,8 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { api } from "../api";
-import { session } from "../session";
+import OrganizationResourceAuthorizationDialog from "./organization/OrganizationResourceAuthorizationDialog.vue";
+import { session, workspaceCan } from "../session";
 import ConnectionMethodPicker from "../components/ConnectionMethodPicker.vue";
 import DatabaseTlsSettings from "../components/DatabaseTlsSettings.vue";
 import PageHeader from "../components/PageHeader.vue";
@@ -311,7 +312,8 @@ function connectionCellSpan({ row, columnIndex }: { row: ConnectionTableRow; col
 }
 
 const sshOptions = computed(() => connections.value.filter((item) => item.type === "ssh" && item.id !== editingId.value));
-const canManageWorkspace = computed(() => ["owner", "admin"].includes(session.workspace?.role ?? ""));
+const canManageWorkspace = computed(() => workspaceCan("environment.create"));
+const resourceAuthorizationDialog = ref(false);
 const editingConnection = computed(() => inventory.value.find((item) => item.id === editingId.value) ?? connections.value.find((item) => item.id === editingId.value));
 const preservesLegacyPrivateKey = computed(() => Boolean(editingConnection.value?.authType === "privateKey" && editingConnection.value.hasPrivateKey && !editingConnection.value.sshKeyId));
 const availableGroups = computed(() => connectionGroups.value.filter((item) => item.type === form.type));
@@ -966,6 +968,7 @@ onMounted(async () => {
   <div class="connection-pool" v-loading="loading">
     <PageHeader :title="$t('连接资源池')">
       <template #actions>
+        <el-button v-if="session.workspace?.type === 'organization'" @click="resourceAuthorizationDialog = true">资源授权</el-button>
         <el-button :aria-label="$t('打开连接工具')" @click="router.push({ name: 'connection-tools' })"><Wrench :size="16" />{{ $t('连接工具') }}</el-button>
         <el-button :aria-label="$t('导入连接')" @click="resetImport"><Upload :size="16" />{{ $t('导入') }}</el-button>
         <el-dropdown split-button type="primary" :aria-label="$t('新建连接')" @click="resetForm('ssh')">
@@ -1287,5 +1290,6 @@ onMounted(async () => {
       </template>
       <template #footer><el-button @click="cancelImport">{{ importBatch?.sourceType === 'securecrt_sync' ? $t('稍后处理') : $t('取消') }}</el-button><el-button v-if="importStep === 'upload'" type="primary" :loading="saving" :disabled="!importFile" @click="previewImport">{{ $t('解析并预览') }}</el-button><el-button v-else type="primary" :loading="saving" @click="confirmImport">{{ $t('确认导入') }}</el-button></template>
     </el-dialog>
+    <OrganizationResourceAuthorizationDialog v-if="session.workspace?.type === 'organization'" v-model="resourceAuthorizationDialog" :organization-id="session.workspace.id" @saved="load"/>
   </div>
 </template>

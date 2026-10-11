@@ -14,6 +14,7 @@ export interface Workspace {
   id: string;
   name: string;
   role: "owner" | "admin" | "member";
+  permissionCodes?: string[];
 }
 
 export const session = reactive<{
@@ -110,4 +111,8 @@ export async function logout(): Promise<"logged-out" | "session-expired"> {
   }
   clearSession();
   return result;
+}
+
+export function workspaceCan(code: string): boolean {
+  return (session.workspace?.type === "personal" && session.workspace.role === "owner") || session.workspace?.permissionCodes?.includes(code) === true;
 }

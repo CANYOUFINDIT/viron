@@ -10,7 +10,7 @@ const sessionState = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/client/api", () => ({ api: vi.fn() }));
-vi.mock("../src/client/session", () => ({ session: sessionState }));
+vi.mock("../src/client/session", () => ({ session: sessionState, workspaceCan: () => sessionState.workspace.role === "owner" }));
 vi.mock("../src/client/components/SshTerminalPane.vue", async () => {
   const { defineComponent, h } = await import("vue");
   return { default: defineComponent({

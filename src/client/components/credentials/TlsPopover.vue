@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { workspaceCan } from "../../session";
 import { Link2, Lock, LockOpen, Pencil, RefreshCw, Server, Shield, ShieldAlert, ShieldCheck, ShieldOff } from "@lucide/vue";
 import { ElMessage } from "element-plus";
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
@@ -38,7 +39,7 @@ const asset = ref<SslCertificateAsset | null>(null);
 const endpoint = ref<TlsEndpoint | null>(null);
 const sshConnections = ref<SshOption[]>([]);
 const bindForm = reactive({ sshConnectionId: "" });
-const canManage = computed(() => ["owner", "admin"].includes(session.workspace?.role ?? ""));
+const canManage = computed(() => workspaceCan("credential.update"));
 const isHttps = computed(() => {
   try {
     return new URL(props.entryUrl || "").protocol === "https:";

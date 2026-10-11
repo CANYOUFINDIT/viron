@@ -289,6 +289,7 @@ export function boundedDesktopSshBatchResult(result: DesktopSshCommandResult, ma
 }
 
 export async function executeDesktopMcpApprovedRequest(input: McpApiRequest): Promise<McpApiResponse> {
+  if ((await currentDesktopSshContext()).workspaceType === "organization") throw new Error(tr("组织 MCP 与 Agent 执行尚未开放"));
   if (!desktopDeviceAuthorizationContext.getStore()) {
     const authorization = await currentDeviceAuthorization();
     return desktopDeviceAuthorizationContext.run(authorization, () => executeDesktopMcpApprovedRequest(input));
@@ -431,6 +432,7 @@ export async function handleDesktopMcpOperationResponse(toolName: string, argume
 
 export async function invokeDesktopMcpTool(toolName: string, arguments_: Record<string, unknown>): Promise<McpApiResponse> {
   if (!activeEndpoint) throw new Error(tr("请先在 Viron App 中验证 Endpoint"));
+  if ((await currentDesktopSshContext()).workspaceType === "organization") throw new Error(tr("组织 MCP 与 Agent 执行尚未开放"));
   const request = resolveVironMcpApiRequest(toolName, arguments_);
   if (request.workspace) {
     const context = await currentDesktopSshContext();

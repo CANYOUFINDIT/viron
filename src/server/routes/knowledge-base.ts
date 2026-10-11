@@ -200,7 +200,7 @@ async function permissionsForNodes(app: FastifyInstance, user: AuthenticatedUser
   const access = await getWorkspaceAccess(app.db, user);
   const canManage = access.canManage;
   const organizationId = user.workspace.type === "organization" ? user.workspace.id : null;
-  const grants = !canManage && organizationId ? await grantedNodeIds(app, user, organizationId) : new Set<string>();
+  const grants = !canManage && organizationId && !access.organizationAccess ? await grantedNodeIds(app, user, organizationId) : new Set<string>();
   const byId = new Map(rows.map((node) => [node.id, node]));
   const directEnvironmentIds = new Map<string, Set<string>>();
   if (!canManage && rows.length) {
@@ -244,12 +244,14 @@ async function permissionsForNodes(app: FastifyInstance, user: AuthenticatedUser
     canManage,
     byId,
     canView(node: KnowledgeNodeRow) {
+      if (access.organizationAccess) return access.organizationAccess.allows("knowledge.view", {type:"knowledge_node",id:node.id});
       return canManage
         || (node.type === "document" && node.created_by_user_id === user.id)
         || hasGrantedAncestor(node, byId, grants)
         || environmentKnowledge(node, "view");
     },
     canEdit(node: KnowledgeNodeRow) {
+      if (access.organizationAccess) return access.organizationAccess.allows("knowledge.edit", {type:"knowledge_node",id:node.id});
       return canManage
         || (node.type === "document" && node.created_by_user_id === user.id)
         || hasGrantedAncestor(node, byId, grants)
@@ -747,6 +749,9 @@ async function createKnowledgeNode(
 
 export async function registerKnowledgeBaseRoutes(app: FastifyInstance): Promise<void> {
   app.addHook("preHandler", requireAdmin);
+  app.addHook("preHandler", async (request, reply) => {
+    if (request.admin!.workspace.type === "organization" && request.method !== "GET" && request.url.includes("/grants")) return reply.code(410).send({error:"LEGACY_ACCESS_READ_ONLY",message:"请通过角色的数据授权维护知识库权限"});
+  });
 
   app.get("/api/v1/knowledge", async (request) => knowledgeResponse(await knowledgeContext(app, request.admin!)));
 

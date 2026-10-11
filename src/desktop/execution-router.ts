@@ -125,7 +125,11 @@ export async function syncDesktopRuntimeConnections(): Promise<void> {
       await endpointJson("/api/v1/active-connections/desktop", { method: "PUT", body: { items: remaining } });
     }
   } catch {
-    // The next heartbeat reconciles after transient endpoint or authentication failures.
+    // Without a fresh server decision, local organization permissions cannot be trusted.
+    for (const [id, registration] of desktopRuntimeRegistrations) {
+      await registration.close(tr("无法确认当前授权，连接已关闭"));
+      desktopRuntimeRegistrations.delete(id);
+    }
   }
 }
 

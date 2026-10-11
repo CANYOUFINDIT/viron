@@ -1,3 +1,5 @@
+import { organizationExecutionFence } from "./organization-execution-fence.js";
+import { attachOrganizationAccess } from "./organization-rbac.js";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { OrganizationRole, WorkspaceContext } from "./access-control.js";
 import { apiKeyHash, type ApiKeyType } from "./api-keys.js";
@@ -93,6 +95,9 @@ async function authenticateApiKey(request: FastifyRequest, reply: FastifyReply, 
       workspace,
     };
   }
+  if (request.admin) await attachOrganizationAccess(request.server.db, request.admin);
+  await organizationExecutionFence(request, reply);
+  if (reply.sent) return false;
   const now = new Date().toISOString();
   await request.server.db.prepare("UPDATE api_keys SET last_used_at = ? WHERE id = ?").run(now, row.id);
   return true;

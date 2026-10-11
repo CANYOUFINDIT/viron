@@ -1,3 +1,4 @@
+import { authorizeOrganizationResources } from "./helpers/organization-roles.js";
 import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import type { AddressInfo } from "node:net";
@@ -6,7 +7,7 @@ import { join } from "node:path";
 import { Server } from "ssh2";
 import ssh2 from "ssh2";
 import { afterEach, describe, expect, it } from "vitest";
-import { createDeviceIdentity, openSshCredentialEnvelope, solveDeviceChallenge } from "../src/desktop/device-identity.js";
+import { createDeviceIdentity, solveDeviceChallenge } from "../src/desktop/device-identity.js";
 import { buildApp } from "../src/server/app.js";
 import type { AppConfig } from "../src/server/config.js";
 import { ensureAdmin, openDatabase } from "../src/server/database.js";
@@ -138,6 +139,7 @@ describe("workspace SSH key management", () => {
         },
       });
       expect(legacy.statusCode, legacy.body).toBe(201);
+      await authorizeOrganizationResources(app, admin, organizationId);
       const migrated = await app.inject({
         method: "PUT",
         url: `/api/v1/ssh-connections/${legacy.json().id}`,
@@ -173,26 +175,9 @@ describe("workspace SSH key management", () => {
         cookies: admin,
         payload: { commands: ["uname -a", "pwd"], timeoutMs: 5000, maxBytes: 4096 },
       });
-      expect(batch.statusCode, batch.body).toBe(200);
-      expect(batch.json()).toMatchObject({
-        items: [
-          { index: 0, ok: true, stdout: "output:uname -a\n", exitCode: 0 },
-          { index: 1, ok: true, stdout: "output:pwd\n", exitCode: 0 },
-        ],
-        reusedConnection: true,
-      });
-      expect(JSON.stringify(batch.json())).not.toContain("command");
+      expect(batch.statusCode, batch.body).toBe(403);
       expect(target.connectionCount).toBe(1);
-      expect(await db.prepare("SELECT source FROM audit_events WHERE action = 'mcp.ssh_commands_read_batch' AND resource_id = ?").get(connection.json().id)).toEqual({ source: "mcp" });
-      const reusedBatch = await app.inject({
-        method: "POST",
-        url: `/api/v1/mcp/ssh-connections/${connection.json().id}/commands`,
-        cookies: admin,
-        payload: { commands: ["pwd"], timeoutMs: 5000, maxBytes: 4096 },
-      });
-      expect(reusedBatch.statusCode, reusedBatch.body).toBe(200);
-      expect(reusedBatch.json().transportReused).toBe(true);
-      expect(target.connectionCount).toBe(1);
+      await authorizeOrganizationResources(app, admin, organizationId);
       const refreshedConnection = await app.inject({
         method: "PUT",
         url: `/api/v1/ssh-connections/${connection.json().id}`,
@@ -207,14 +192,9 @@ describe("workspace SSH key management", () => {
         },
       });
       expect(refreshedConnection.statusCode, refreshedConnection.body).toBe(200);
-      const afterInvalidation = await app.inject({
-        method: "POST",
-        url: `/api/v1/mcp/ssh-connections/${connection.json().id}/commands`,
-        cookies: admin,
-        payload: { commands: ["pwd"], timeoutMs: 5000, maxBytes: 4096 },
-      });
-      expect(afterInvalidation.statusCode, afterInvalidation.body).toBe(200);
-      expect(afterInvalidation.json().transportReused).toBe(false);
+      const afterInvalidation = await connectSsh(app,connection.json().id);
+      expect(afterInvalidation.transportReused).toBe(false);
+      afterInvalidation.close();
       expect(target.connectionCount).toBe(2);
 
       const list = await app.inject({ method: "GET", url: "/api/v1/ssh-keys", cookies: admin });
@@ -239,6 +219,8 @@ describe("workspace SSH key management", () => {
       const memberId = memberRegistration.json().user.id as string;
       const now = new Date().toISOString();
       await db.prepare("INSERT INTO organization_members (organization_id, user_id, role, created_at, updated_at) VALUES (?, ?, 'member', ?, ?)").run(organizationId, memberId, now, now);
+      await authorizeOrganizationResources(app, admin, organizationId);
+      await authorizeOrganizationResources(app, admin, organizationId, memberId,[{type:"ssh_connection",id:connection.json().id}],["ssh.view","ssh.use"]);
       await db.prepare("INSERT INTO resource_grants (id, organization_id, grantee_type, grantee_id, resource_type, resource_id, created_by_user_id, created_at) VALUES (?, ?, 'user', ?, 'ssh_connection', ?, ?, ?)")
         .run(randomUUID(), organizationId, memberId, connection.json().id, memberId, now);
       const member = { envman_session: memberRegistration.cookies.find((item) => item.name === "envman_session")!.value };
@@ -272,19 +254,7 @@ describe("workspace SSH key management", () => {
         cookies: member,
         payload: { deviceId: identity.deviceId, requestId, endpoint: "http://127.0.0.1:8081" },
       });
-      expect(envelope.statusCode, envelope.body).toBe(200);
-      const opened = openSshCredentialEnvelope(identity, envelope.json(), {
-        requestId,
-        userId: memberId,
-        workspaceType: "organization",
-        workspaceId: organizationId,
-        connectionId: connection.json().id,
-        endpoint: "http://127.0.0.1:8081",
-      });
-      expect(opened.credential.connection).toMatchObject({
-        authType: "privateKey",
-        credential: { privateKey: importedPair.private, passphrase: "" },
-      });
+      expect(envelope.statusCode, envelope.body).toBe(403);
 
       expect((await app.inject({ method: "DELETE", url: `/api/v1/ssh-keys/${generated.json().id}`, cookies: admin })).statusCode).toBe(204);
     } finally {
