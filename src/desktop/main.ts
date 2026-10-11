@@ -136,6 +136,7 @@ import {
   closeAllDesktopWebViews,
   desktopWebViews,
   handleDesktopShellPageZoom,
+  syncOpenWebPluginPolicies,
 } from "./web-view-runtime.js";
 import {
   closeDesktopMcpOperations,
@@ -760,7 +761,10 @@ app.whenReady().then(async () => {
   });
   await desktopUpdater.cleanup();
   registerIpc();
-  desktopRuntimeHeartbeat = setInterval(() => { void syncDesktopRuntimeConnections(); }, 3_000);
+  desktopRuntimeHeartbeat = setInterval(() => {
+    void syncDesktopRuntimeConnections();
+    void syncOpenWebPluginPolicies();
+  }, 3_000);
   desktopRuntimeHeartbeat.unref();
   await createWindow();
   app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) void createWindow(); });

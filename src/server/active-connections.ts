@@ -28,6 +28,8 @@ interface ResourceMetadata {
 }
 
 interface ManagedActiveConnection extends Omit<ActiveConnectionItem, "traffic" | "currentExecutionInstance"> {
+  relatedResourceId?: string;
+  sftpAction?: "download" | "upload";
   executionScope: string | null;
   external: boolean;
   externalHeartbeatSeen: boolean;
@@ -47,6 +49,7 @@ export interface ActiveConnectionReservation {
   resourceId: string;
   originEnvironmentId?: string | null;
   relatedResourceId?: string;
+  sftpAction?: "download" | "upload";
   label?: string;
   executionScope?: string | null;
   client?: "web" | "desktop";
@@ -103,6 +106,8 @@ export class ActiveConnectionManager {
       type: input.type,
       label: metadata.label,
       resourceId: input.resourceId,
+      relatedResourceId: input.relatedResourceId,
+      sftpAction: input.sftpAction,
       originEnvironmentId,
       environmentIds: metadata.environmentIds,
       environmentNames: metadata.environmentNames,
@@ -229,6 +234,8 @@ export class ActiveConnectionManager {
     ownerId: string;
     type: ActiveConnectionType;
     resourceId: string;
+    relatedResourceId?: string;
+    sftpAction?: "download" | "upload";
     workspaceType: "personal" | "organization";
     workspaceId: string;
     executionScope: string | null;
@@ -238,15 +245,26 @@ export class ActiveConnectionManager {
       ownerId: entry.ownerId,
       type: entry.type,
       resourceId: entry.resourceId,
+      relatedResourceId: entry.relatedResourceId,
+      sftpAction: entry.sftpAction,
       workspaceType: entry.workspaceType,
       workspaceId: entry.workspaceId,
       executionScope: entry.executionScope,
     }));
   }
 
-  async closeInspected(id: string, reason: string): Promise<void> {
+  async closeInspected(id: string, reason: string, options?: { skipCallback?: boolean }): Promise<void> {
     const entry = this.entries.get(id);
-    if (entry) await this.requestClose(entry, reason);
+    if (!entry) return;
+    if (!options?.skipCallback) {
+      await this.requestClose(entry, reason);
+      return;
+    }
+    if (!this.entries.has(entry.id) || entry.closeRequestedReason) return;
+    entry.closeRequestedReason = reason;
+    entry.status = "closing";
+    if (entry.external) return;
+    this.release(entry.id);
   }
 
   async closeOwner(ownerId: string, reason: string): Promise<void> {
@@ -324,7 +342,8 @@ export class ActiveConnectionManager {
     const elapsedSeconds = Math.max(1, Math.min(TRAFFIC_WINDOW_MS, now - oldest + TRAFFIC_BUCKET_MS) / 1000);
     const { executionScope: _executionScope, external: _external, externalHeartbeatSeen: _externalHeartbeatSeen, leaseExpiresAt: _leaseExpiresAt,
       lastActivityAtMs: _lastActivityAtMs, closeRequestedReason: _closeRequestedReason,
-      trafficBuckets: _trafficBuckets, sentBytes, receivedBytes, close: _close, ...result } = entry;
+      trafficBuckets: _trafficBuckets, sentBytes, receivedBytes, close: _close,
+      relatedResourceId: _relatedResourceId, sftpAction: _sftpAction, ...result } = entry;
     return {
       ...result,
       currentExecutionInstance: Boolean(currentExecutionScope && entry.executionScope === currentExecutionScope),

@@ -7,6 +7,7 @@ import {
 } from "./access-control.js";
 import { expireServiceOperation } from "./service-operations.js";
 import { recordExpiredAccess } from "./access-governance-events.js";
+import { databaseSqlOperation } from "../shared/access-permissions.js";
 
 const REASON = "授权已到期";
 const roleSweepTimes = new WeakMap<object, string>();
@@ -207,56 +208,68 @@ async function closeDisallowed(
   for (const entry of app.activeConnections.inspect()) {
     if (entry.ownerId !== userId || entry.workspaceId !== organizationId)
       continue;
-    if (await entryAllowed(app, access, entry.type, entry.resourceId)) continue;
-    await app.activeConnections.closeInspected(entry.id, REASON);
-    if (entry.type === "database") {
-      app.databaseQueries.closeMatching(userId, entry.resourceId, REASON);
-      await app.databaseTasks.closeMatching(userId, entry.resourceId, REASON);
-    }
+    if (await entryAllowed(app, access, entry)) continue;
+    // The database session callback cancels every query on that connection.
+    // Expiry only drops the browse reservation here; each job is rechecked below.
+    await app.activeConnections.closeInspected(
+      entry.id,
+      REASON,
+      entry.type === "database" ? { skipCallback: true } : undefined,
+    );
   }
   for (const job of app.databaseQueries.runningJobs()) {
-    if (
-      job.ownerId === userId &&
-      job.workspaceId === organizationId &&
-      !access.allowsConnection("database", job.connectionId, "read")
-    ) {
-      app.databaseQueries.closeMatching(userId, job.connectionId, REASON);
-    }
+    if (job.ownerId !== userId || job.workspaceId !== organizationId) continue;
+    const action = databaseSqlOperation(job.sql).slice("database.".length);
+    if (!access.allowsConnection("database", job.connectionId, action))
+      app.databaseQueries.closeJob(job.id, REASON);
   }
   for (const task of app.databaseTasks.runningTasks()) {
-    if (
-      task.ownerId === userId &&
-      task.workspaceId === organizationId &&
-      task.connectionId &&
-      !access.allowsConnection("database", task.connectionId, "read")
-    ) {
-      await app.databaseTasks.closeMatching(userId, task.connectionId, REASON);
-    }
+    if (task.ownerId !== userId || task.workspaceId !== organizationId || !task.connectionId)
+      continue;
+    const sourceDenied = task.accessPlan.operations.some(
+      (action) => !access.allowsConnection("database", task.connectionId!, action),
+    );
+    const targetDenied = Boolean(task.accessPlan.targetConnectionId)
+      && task.accessPlan.targetOperations.some(
+        (action) => !access.allowsConnection("database", task.accessPlan.targetConnectionId!, action),
+      );
+    if (sourceDenied || targetDenied) await app.databaseTasks.closeTask(task.id, REASON);
   }
 }
 
 async function entryAllowed(
   app: FastifyInstance,
   access: WorkspaceAccess,
-  type: string,
-  resourceId: string,
+  entry: {
+    type: string;
+    resourceId: string;
+    relatedResourceId?: string;
+    sftpAction?: "download" | "upload";
+  },
 ): Promise<boolean> {
-  if (type === "ssh" || type === "sftp")
-    return access.allowsConnection("ssh", resourceId, "use");
-  if (type === "redis")
-    return access.allowsConnection("redis", resourceId, "view");
-  if (type === "database")
-    return access.allowsConnection("database", resourceId, "read");
-  if (type === "logs") {
+  if (entry.type === "ssh")
+    return access.allowsConnection("ssh", entry.resourceId, "use");
+  if (entry.type === "sftp") {
+    if (entry.relatedResourceId) {
+      return access.allowsConnection("ssh", entry.resourceId, "download")
+        && access.allowsConnection("ssh", entry.relatedResourceId, "upload");
+    }
+    return access.allowsConnection("ssh", entry.resourceId, entry.sftpAction === "upload" ? "upload" : "download");
+  }
+  if (entry.type === "redis")
+    return access.allowsConnection("redis", entry.resourceId, "view");
+  if (entry.type === "database")
+    return access.allowsConnection("database", entry.resourceId, "read");
+  if (entry.type === "logs") {
     const row = (await app.db
       .prepare("SELECT environment_id FROM environment_logs WHERE id = ?")
-      .get(resourceId)) as { environment_id: string } | undefined;
+      .get(entry.resourceId)) as { environment_id: string } | undefined;
     return Boolean(
       row &&
-      access.allowsEnvironment(row.environment_id, "logs", "view", resourceId),
+      access.allowsEnvironment(row.environment_id, "logs", "view", entry.resourceId),
     );
   }
-  if (type === "web") {
+  if (entry.type === "web") {
     const row = (await app.db
       .prepare(
         `
@@ -265,7 +278,7 @@ async function entryAllowed(
       WHERE c.id = ?
     `,
       )
-      .get(resourceId)) as
+      .get(entry.resourceId)) as
       { environment_id: string; entry_id: string } | undefined;
     return Boolean(
       row &&

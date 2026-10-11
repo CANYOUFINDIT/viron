@@ -70,6 +70,7 @@ import {
 } from "./history-navigation-runtime.js";
 import { mainWindow } from "./window-host.js";
 import { closeDesktopWebExtensionPopup, forgetDesktopWebExtensions, loadDesktopWebExtensions, releaseDesktopWebSessionExtensions, resumeDesktopWebSessionExtensions, suspendDesktopWebSessionExtensions } from "./web-extensions.js";
+import { refreshOrganizationWebPlugins, webExtensionShortcutEnabled } from "./web-plugin-session.js";
 import { closeExtensionBrowser, handleExtensionShortcut, registerExtensionBrowser, registerExtensionTab, selectExtensionTab } from "./web-extension-browser.js";
 import { desktopWebExtensionContextMenuItems } from "./web-extension-context-menus.js";
 import {
@@ -617,7 +618,7 @@ function configureDesktopWebPage(
     Menu.buildFromTemplate(template).popup({ window: pageWindow ?? mainWindow });
   });
   nativeView.webContents.on("before-input-event", (event, input) => {
-    if (view.loginConfig.mode !== "locked" && handleExtensionShortcut(nativeView.webContents, input)) { event.preventDefault(); return; }
+    if (webExtensionShortcutEnabled(view.allowExtensions, view.loginConfig.mode === "locked") && handleExtensionShortcut(nativeView.webContents, input)) { event.preventDefault(); return; }
     if (input.type === "keyDown") {
       const command = pageZoomCommandFromKey({
         key: input.key,
@@ -736,6 +737,26 @@ function configureDesktopWebPage(
 function cacheableLoginResumeUrl(entryUrl: string, key: string): string {
   const restored = cachedDesktopWebUrl(entryUrl, key);
   return restored === entryUrl || /\/(login|signin)(?:[/?#]|$)/i.test(restored) ? "" : restored;
+}
+
+export async function syncOpenWebPluginPolicies(): Promise<void> {
+  const open = [...desktopWebViews.values()].filter((view) => !view.closing);
+  await refreshOrganizationWebPlugins(open.map((view) => ({
+    environmentId: view.environmentId,
+    get allowExtensions() { return view.allowExtensions; },
+    set allowExtensions(value: boolean) { view.allowExtensions = value; },
+    locked: view.loginConfig.mode === "locked",
+    suspend: () => suspendDesktopWebSessionExtensions(view.partition),
+    resume: async () => {
+      await resumeDesktopWebSessionExtensions(view.partition);
+      await loadDesktopWebExtensions(view.partition, view.lastUrlKey);
+      registerBusinessExtensions(view);
+    },
+    closePopup: () => {
+      closeDesktopWebExtensionPopup(view.lastUrlKey);
+      closeExtensionBrowser(view.partition);
+    },
+  })), async (environmentId) => endpointJson<{ inject: boolean }>(`/api/v1/web-plugin-policy?environmentId=${encodeURIComponent(environmentId)}`));
 }
 
 function registerBusinessExtensions(view: ManagedDesktopWebView): void {

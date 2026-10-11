@@ -128,9 +128,18 @@ function statementText(sql: string): string {
 export function sqlRequiresWrite(sql: string): boolean {
   const statements = parseSqlStatements(sql).map((item) => statementText(item.sql)).filter(Boolean);
   if (!statements.length) return true;
-  return statements.some((statement) => {
-    if (/\b(?:INTO\s+(?:OUTFILE|DUMPFILE)|FOR\s+UPDATE|LOCK\s+IN\s+SHARE\s+MODE)\b/i.test(statement)) return true;
-    if (/^WITH\b/i.test(statement)) return /\b(?:INSERT|UPDATE|DELETE|REPLACE|ALTER|DROP|CREATE|TRUNCATE|GRANT|REVOKE)\b/i.test(statement);
-    return !/^(?:SELECT|SHOW|DESCRIBE|DESC|EXPLAIN|TABLE)\b/i.test(statement);
-  });
+  return statements.some((statement) => statementRequiresWrite(statement));
+}
+
+function statementRequiresWrite(statement: string): boolean {
+  if (/\b(?:INTO\s+(?:OUTFILE|DUMPFILE)|FOR\s+UPDATE|LOCK\s+IN\s+SHARE\s+MODE)\b/i.test(statement)) return true;
+  if (/^WITH\b/i.test(statement)) return /\b(?:INSERT|UPDATE|DELETE|REPLACE|ALTER|DROP|CREATE|TRUNCATE|GRANT|REVOKE)\b/i.test(statement);
+  return !/^(?:SELECT|SHOW|DESCRIBE|DESC|EXPLAIN|TABLE)\b/i.test(statement);
+}
+
+export function databaseSqlOperation(sql: string): "database.read" | "database.write" | "database.ddl" {
+  const statements = parseSqlStatements(sql).map((item) => statementText(item.sql)).filter(Boolean);
+  if (!statements.length) return "database.write";
+  if (statements.some((statement) => /^(?:CREATE|ALTER|DROP|TRUNCATE|RENAME)\b/i.test(statement))) return "database.ddl";
+  return statements.some((statement) => statementRequiresWrite(statement)) ? "database.write" : "database.read";
 }

@@ -36,6 +36,17 @@ export function desktopSftpRemoteConnectionIds(sourceConnectionId: string, targe
   return [sourceConnectionId, targetConnectionId];
 }
 
+export function desktopSftpReservation(sourceConnectionId: string, targetConnectionId: string): {
+  resourceId: string;
+  relatedResourceId?: string;
+  sftpAction?: "download" | "upload";
+} {
+  const [resourceId, relatedResourceId] = desktopSftpRemoteConnectionIds(sourceConnectionId, targetConnectionId);
+  if (relatedResourceId) return { resourceId, relatedResourceId };
+  const sourceIsLocal = sourceConnectionId === DESKTOP_LOCAL_SFTP_CONNECTION_ID;
+  return { resourceId, sftpAction: sourceIsLocal ? "upload" : "download" };
+}
+
 export interface DesktopSftpItem {
   name: string;
   path: string;

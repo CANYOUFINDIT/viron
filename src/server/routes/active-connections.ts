@@ -15,6 +15,7 @@ const desktopReservationSchema = z.object({
   resourceId: z.string().uuid(),
   originEnvironmentId: z.string().uuid().optional(),
   relatedResourceId: z.string().uuid().optional(),
+  sftpAction: z.enum(["download", "upload"]).optional(),
 });
 
 const desktopHeartbeatSchema = z.object({
@@ -87,6 +88,13 @@ function sendReservationError(error: unknown, reply: FastifyReply) {
 async function canReserveDesktop(app: FastifyInstance, user: NonNullable<Parameters<typeof canAccessConnection>[1]>, body: z.infer<typeof desktopReservationSchema>): Promise<boolean> {
   if (body.type === "web") return canAccessWebCredential(app.db, user, body.resourceId);
   if (body.type === "logs") return canAccessEnvironmentLog(app.db, user, body.resourceId);
+  if (body.type === "sftp") {
+    if (body.relatedResourceId) {
+      return await canAccessConnection(app.db, user, "ssh", body.resourceId, "download")
+        && await canAccessConnection(app.db, user, "ssh", body.relatedResourceId, "upload");
+    }
+    return canAccessConnection(app.db, user, "ssh", body.resourceId, body.sftpAction === "upload" ? "upload" : "download");
+  }
   if (!await canAccessConnection(app.db, user, "ssh", body.resourceId, "use")) return false;
   return !body.relatedResourceId || canAccessConnection(app.db, user, "ssh", body.relatedResourceId, "use");
 }

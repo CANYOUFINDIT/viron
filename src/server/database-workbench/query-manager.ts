@@ -202,10 +202,18 @@ export class DatabaseQueryManager {
     }
   }
 
-  runningJobs(): Array<{ ownerId: string; connectionId: string; workspaceType: WorkspaceType; workspaceId: string }> {
+  runningJobs(): Array<{ id: string; ownerId: string; connectionId: string; workspaceType: WorkspaceType; workspaceId: string; sql: string }> {
     return [...this.jobs.values()]
       .filter((job) => job.status === "pending" || job.status === "running")
-      .map((job) => ({ ownerId: job.ownerId, connectionId: job.connectionId, workspaceType: job.workspaceType, workspaceId: job.workspaceId }));
+      .map((job) => ({ id: job.id, ownerId: job.ownerId, connectionId: job.connectionId, workspaceType: job.workspaceType, workspaceId: job.workspaceId, sql: job.sql }));
+  }
+
+  closeJob(id: string, reason: string): void {
+    const job = this.jobs.get(id);
+    if (!job || !["pending", "running"].includes(job.status)) return;
+    job.status = "cancelled";
+    job.error = reason;
+    job.active?.connection.destroy();
   }
 
   closeMatching(ownerId: string, connectionId: string, reason: string): void {

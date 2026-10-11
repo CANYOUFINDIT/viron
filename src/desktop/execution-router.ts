@@ -75,12 +75,12 @@ let desktopRuntimeContext: DesktopSshContext | null = null;
 let desktopAuthContext: DesktopAuthContext | null = null;
 let desktopAuthEndpoint: string | null = null;
 
-export async function reserveDesktopRuntime(type: Exclude<ActiveConnectionType, "database" | "redis">, resourceId: string, relatedResourceId?: string, originEnvironmentId?: string): Promise<string> {
+export async function reserveDesktopRuntime(type: Exclude<ActiveConnectionType, "database" | "redis">, resourceId: string, relatedResourceId?: string, originEnvironmentId?: string, sftpAction?: "download" | "upload"): Promise<string> {
   assertDesktopRuntimeContextInitialized();
   const id = randomUUID();
   const response = await endpointJson<{ idleMinutes: number }>("/api/v1/active-connections/desktop", {
     method: "POST",
-    body: { id, type, resourceId, relatedResourceId, originEnvironmentId },
+    body: { id, type, resourceId, relatedResourceId, originEnvironmentId, sftpAction },
   });
   desktopSshRuntime.setIdleMinutes(response.idleMinutes);
   return id;

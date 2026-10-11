@@ -4,7 +4,7 @@ import { basename, join } from "node:path";
 import { app, dialog, ipcMain } from "electron";
 import { translate as tr } from "../i18n.js";
 import {
-  desktopSftpRemoteConnectionIds,
+  desktopSftpReservation,
   type DesktopSftpTransferOptions,
 } from "../sftp-runtime.js";
 import { mainWindow } from "../window-host.js";
@@ -229,8 +229,8 @@ export function registerDesktopSshIpc(): void {
     }));
     const sourceConnectionId = requireDesktopString(input?.sourceConnectionId, tr("来源 SSH 连接 ID"));
     const targetConnectionId = requireDesktopString(input?.targetConnectionId, tr("目标 SSH 连接 ID"));
-    const [resourceId, relatedResourceId] = desktopSftpRemoteConnectionIds(sourceConnectionId, targetConnectionId);
-    const registrationId = await reserveDesktopRuntime("sftp", resourceId, relatedResourceId, input.originEnvironmentId);
+    const reservation = desktopSftpReservation(sourceConnectionId, targetConnectionId);
+    const registrationId = await reserveDesktopRuntime("sftp", reservation.resourceId, reservation.relatedResourceId, input.originEnvironmentId, reservation.sftpAction);
     try {
       const context = await currentDesktopSshContext();
       const task = await desktopSftpRuntime.create(context, {
@@ -270,8 +270,8 @@ export function registerDesktopSshIpc(): void {
     const context = await currentDesktopSshContext();
     const previous = desktopSftpRuntime.listTransfers(context).find((task) => task.id === id);
     if (!previous) throw new Error(tr("传输任务不存在"));
-    const [resourceId, relatedResourceId] = desktopSftpRemoteConnectionIds(previous.sourceConnectionId, previous.targetConnectionId);
-    const registrationId = await reserveDesktopRuntime("sftp", resourceId, relatedResourceId, originEnvironmentId);
+    const reservation = desktopSftpReservation(previous.sourceConnectionId, previous.targetConnectionId);
+    const registrationId = await reserveDesktopRuntime("sftp", reservation.resourceId, reservation.relatedResourceId, originEnvironmentId, reservation.sftpAction);
     try {
       const task = await desktopSftpRuntime.retryTransfer(id, context);
       trackDesktopRuntime({

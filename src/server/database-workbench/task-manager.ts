@@ -11,6 +11,27 @@ import { connectDatabase, type ConnectedDatabase } from "./connector.js";
 export type DatabaseTaskType = "backup" | "restore" | "transfer" | "import";
 export type DatabaseTaskStatus = "pending" | "running" | "success" | "error" | "cancelled";
 
+export interface DatabaseTaskAccessPlan {
+  operations: Array<"read" | "write" | "ddl" | "export">;
+  targetConnectionId: string | null;
+  targetOperations: Array<"read" | "write" | "ddl" | "export">;
+}
+
+export function databaseTaskAccessPlan(type: DatabaseTaskType, details: Record<string, unknown>): DatabaseTaskAccessPlan {
+  const structural = details.syncMode === "structure" || details.includeStructure === true || details.dropExisting === true || details.includeObjects === true;
+  const operations: DatabaseTaskAccessPlan["operations"] = type === "backup"
+    ? ["export", "write"]
+    : type === "restore"
+      ? ["ddl", "write"]
+      : type === "import"
+        ? ["write"]
+        : structural
+          ? ["ddl", "write"]
+          : ["write"];
+  const targetConnectionId = typeof details.targetConnectionId === "string" ? details.targetConnectionId : null;
+  return { operations, targetConnectionId, targetOperations: targetConnectionId ? ["read"] : [] };
+}
+
 interface DatabaseTask {
   id: string;
   ownerId: string;
@@ -19,6 +40,7 @@ interface DatabaseTask {
   workspaceId: string;
   type: DatabaseTaskType;
   connectionId: string | null;
+  accessPlan: DatabaseTaskAccessPlan;
   status: DatabaseTaskStatus;
   progress: number;
   title: string;
@@ -32,7 +54,7 @@ interface DatabaseTask {
   active: Set<ConnectedDatabase>;
 }
 
-export interface PublicDatabaseTask extends Omit<DatabaseTask, "active" | "outputPath" | "ownerId" | "executionScope" | "workspaceType" | "workspaceId"> {
+export interface PublicDatabaseTask extends Omit<DatabaseTask, "active" | "outputPath" | "ownerId" | "executionScope" | "workspaceType" | "workspaceId" | "accessPlan"> {
   downloadable: boolean;
   outputFilename: string | null;
 }
@@ -138,6 +160,7 @@ export class DatabaseTaskManager {
     const rows = await this.app.db.prepare("SELECT * FROM database_tasks ORDER BY created_at DESC LIMIT 200").all() as Record<string, unknown>[];
     for (const row of rows) {
       const status = ["pending", "running"].includes(String(row.status)) ? "error" : String(row.status) as DatabaseTaskStatus;
+      const details = JSON.parse(String(row.details_json)) as Record<string, unknown>;
       const task: DatabaseTask = {
         id: String(row.id),
         ownerId: String(row.owner_user_id ?? ""),
@@ -146,10 +169,11 @@ export class DatabaseTaskManager {
         workspaceId: String(row.owner_user_id ?? ""),
         type: row.type as DatabaseTaskType,
         connectionId: row.connection_id ? String(row.connection_id) : null,
+        accessPlan: databaseTaskAccessPlan(row.type as DatabaseTaskType, details),
         status,
         progress: Number(row.progress),
         title: String(row.title),
-        details: JSON.parse(String(row.details_json)),
+        details,
         logs: JSON.parse(String(row.logs_json)),
         outputPath: row.output_path ? String(row.output_path) : null,
         error: status === "error" && ["pending", "running"].includes(String(row.status)) ? "Viron 重启导致任务中断" : String(row.error_message),
@@ -249,6 +273,7 @@ export class DatabaseTaskManager {
     const outputPath = join(dirname(source.outputPath), `${cleanName.replace(/\.sql$/i, "")}-${randomUUID().slice(0, 8)}${extension}`);
     await copyFile(source.outputPath, outputPath);
     const now = new Date().toISOString();
+    const details = { ...source.details, copiedFromId: source.id };
     const task: DatabaseTask = {
       id: randomUUID(),
       ownerId: source.ownerId,
@@ -257,10 +282,11 @@ export class DatabaseTaskManager {
       workspaceId: source.workspaceId,
       type: "backup",
       connectionId: source.connectionId,
+      accessPlan: databaseTaskAccessPlan("backup", details),
       status: "success",
       progress: 100,
       title: cleanName,
-      details: { ...source.details, copiedFromId: source.id },
+      details,
       logs: [`从备份 ${source.title} 创建副本`],
       outputPath,
       error: "",
@@ -311,10 +337,21 @@ export class DatabaseTaskManager {
     await Promise.all(updates);
   }
 
-  runningTasks(): Array<{ ownerId: string; connectionId: string | null; workspaceType: WorkspaceType; workspaceId: string }> {
+  runningTasks(): Array<{ id: string; ownerId: string; connectionId: string | null; workspaceType: WorkspaceType; workspaceId: string; accessPlan: DatabaseTaskAccessPlan }> {
     return [...this.tasks.values()]
       .filter((task) => task.status === "pending" || task.status === "running")
-      .map((task) => ({ ownerId: task.ownerId, connectionId: task.connectionId, workspaceType: task.workspaceType, workspaceId: task.workspaceId }));
+      .map((task) => ({ id: task.id, ownerId: task.ownerId, connectionId: task.connectionId, workspaceType: task.workspaceType, workspaceId: task.workspaceId, accessPlan: task.accessPlan }));
+  }
+
+  async closeTask(id: string, reason: string): Promise<void> {
+    const task = this.tasks.get(id);
+    if (!task || !["pending", "running"].includes(task.status)) return;
+    task.status = "cancelled";
+    task.error = reason;
+    task.completedAt = new Date().toISOString();
+    for (const connected of task.active) connected.connection.destroy();
+    this.log(task, reason);
+    await this.persist(task);
   }
 
   async closeMatching(ownerId: string, connectionId: string, reason: string): Promise<void> {
@@ -346,7 +383,7 @@ export class DatabaseTaskManager {
   private async createTask(user: AuthenticatedUser, type: DatabaseTaskType, connectionId: string | null, title: string, details: Record<string, unknown>, executionScope: string | null): Promise<DatabaseTask> {
     const active = [...this.tasks.values()].filter((task) => ["pending", "running"].includes(task.status)).length;
     if (active >= 3) throw new Error("数据库后台任务已达到 3 个并发上限");
-    const task: DatabaseTask = { id: randomUUID(), ownerId: user.id, executionScope, workspaceType: user.workspace.type, workspaceId: user.workspace.id, type, connectionId, status: "pending", progress: 0, title, details, logs: [], outputPath: null, error: "", createdAt: new Date().toISOString(), active: new Set() };
+    const task: DatabaseTask = { id: randomUUID(), ownerId: user.id, executionScope, workspaceType: user.workspace.type, workspaceId: user.workspace.id, type, connectionId, accessPlan: databaseTaskAccessPlan(type, details), status: "pending", progress: 0, title, details, logs: [], outputPath: null, error: "", createdAt: new Date().toISOString(), active: new Set() };
     this.tasks.set(task.id, task);
     await this.persist(task, true);
     return task;
@@ -398,8 +435,9 @@ export class DatabaseTaskManager {
     await mkdir(backupDir, { recursive: true });
     const outputPath = join(backupDir, `${database.replace(/[^a-zA-Z0-9_.-]/g, "_")}-${new Date().toISOString().replace(/[:.]/g, "-")}.sql`);
     const file = await open(outputPath, "wx", 0o600);
-    const connected = await this.connect(task, connectionId, database);
+    let connected: ConnectedDatabase | undefined;
     try {
+      connected = await this.connect(task, connectionId, database);
       const [tableRows] = await connected.connection.query<RowDataPacket[]>(`SHOW FULL TABLES FROM ${identifier(database)}`);
       const objects = tableRows.map((row) => ({ name: String(Object.values(row)[0]), type: String(Object.values(row)[1]) }));
       const [routineRows] = await connected.connection.query<RowDataPacket[]>(`SELECT ROUTINE_NAME AS name, ROUTINE_TYPE AS type FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = ? ORDER BY ROUTINE_NAME`, [database]);
@@ -423,10 +461,11 @@ export class DatabaseTaskManager {
           const [rows, fields] = await connected.connection.query<RowDataPacket[]>(`SELECT * FROM ${identifier(database)}.${identifier(table.name)}`);
           const fieldNames = (fields as unknown as Array<{ name: string }>).map((field) => field.name);
           rowCount = rows.length;
+          const active = connected;
           for (let index = 0; index < rows.length; index += 250) {
             const chunk = rows.slice(index, index + 250);
             if (!chunk.length || !fieldNames.length) continue;
-            const values = chunk.map((row) => `(${fieldNames.map((name) => connected.connection.escape(row[name])).join(",")})`).join(",\n");
+            const values = chunk.map((row) => `(${fieldNames.map((name) => active.connection.escape(row[name])).join(",")})`).join(",\n");
             await file.write(`INSERT INTO ${identifier(table.name)} (${fieldNames.map(identifier).join(",")}) VALUES\n${values};${BACKUP_BOUNDARY}`);
           }
         }
@@ -467,8 +506,10 @@ export class DatabaseTaskManager {
       this.progress(task, 96);
     } finally {
       await file.close();
-      await connected.close();
-      task.active.delete(connected);
+      if (connected) {
+        await connected.close();
+        task.active.delete(connected);
+      }
     }
   }
 
