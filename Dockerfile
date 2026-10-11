@@ -48,6 +48,8 @@ RUN --mount=type=cache,id=viron-npm,target=/root/.npm,sharing=locked \
 
 FROM ${VIRON_BUILD_BASE} AS production-dependencies
 RUN npm prune --omit=dev --ignore-scripts --offline --no-audit --no-fund
+COPY scripts/server-runtime-dependencies.mjs /usr/local/lib/viron-server-runtime-dependencies.mjs
+RUN node /usr/local/lib/viron-server-runtime-dependencies.mjs /app /opt/viron/server-node_modules
 
 FROM ${VIRON_BUILD_BASE} AS build
 COPY package.json package-lock.json ./
@@ -79,7 +81,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 CMD ["node", "dist/server/index.js"]
 
 FROM ${VIRON_SERVER_BASE} AS lite-runtime
-COPY --from=production-base --chown=viron:viron /app/node_modules ./node_modules
+COPY --from=production-base --chown=viron:viron /opt/viron/server-node_modules ./node_modules
 
 FROM ${VIRON_LITE_BASE} AS server-base
 COPY --from=build --chown=viron:viron /app/package.json /app/package-lock.json ./
@@ -107,7 +109,7 @@ ENV WEB_BROWSER_EXECUTABLE=/usr/bin/chromium
 USER viron
 
 FROM ${VIRON_FULL_BASE} AS full-application-runtime
-COPY --from=production-base --chown=viron:viron /app/node_modules ./node_modules
+COPY --from=production-base --chown=viron:viron /opt/viron/server-node_modules ./node_modules
 
 FROM ${VIRON_FULL_APP_BASE} AS full
 COPY --from=server-base --chown=viron:viron /app/package.json /app/package-lock.json ./

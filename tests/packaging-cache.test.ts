@@ -9,7 +9,7 @@ import { fingerprintFiles } from "../scripts/build-fingerprint.mjs";
 const dockerfile = readFileSync(new URL("../Dockerfile", import.meta.url), "utf8");
 const manifest = { name: "test", version: "1.0.0", dependencies: { example: "1.0.0" } };
 const lock = { version: "1.0.0", packages: { "": manifest, "node_modules/example": { version: "1.0.0", integrity: "old" } } };
-const input = { dockerfile, manifest, lock, normalizer: "v1", goManifests: ["go.mod", "go.sum"], architecture: "arm64", builderArchitecture: "arm64", registry: "docker.io", apt: "mirror", aptSecurity: "security" };
+const input = { dockerfile, manifest, lock, normalizer: "v1", runtimeSelector: "v1", goManifests: ["go.mod", "go.sum"], architecture: "arm64", builderArchitecture: "arm64", registry: "docker.io", apt: "mirror", aptSecurity: "security" };
 const temps: string[] = [];
 afterEach(() => { for (const path of temps.splice(0)) rmSync(path, { recursive: true, force: true }); });
 const images = (options = input) => Object.fromEntries(baseImagePlan(options).map((base) => [base.target, base.image]));
@@ -37,6 +37,12 @@ describe("packaging Base invalidation", () => {
     expect(imageMatchesPlatform({ Os: "linux", Architecture: "arm64" }, "arm64")).toBe(true);
     expect(imageMatchesPlatform({ Descriptor: { platform: { os: "linux", architecture: "amd64" } } }, "amd64")).toBe(true);
     expect(imageMatchesPlatform({ Os: "linux", Architecture: "amd64" }, "arm64")).toBe(false);
+  });
+  it("invalidates only production and application Bases when runtime dependency selection changes", () => {
+    const before = images();
+    const changed = images({ ...input, runtimeSelector: "v2" });
+    for (const target of ["production-dependencies", "lite-runtime", "full-application-runtime"]) expect(changed[target]).not.toBe(before[target]);
+    for (const target of ["dependencies", "server-runtime", "full-runtime", "script-runner-runtime", "monitor-dependencies"]) expect(changed[target]).toBe(before[target]);
   });
   it("creates missing Bases once, then only builds three application images; refresh rebuilds Bases", () => {
     const available = new Map<string, string>();

@@ -17,14 +17,14 @@ export function stageRecipe(dockerfile, names) {
   }).join("\n");
 }
 
-export function baseImagePlan({ dockerfile, manifest, lock, normalizer, goManifests, architecture, registry, apt, aptSecurity, builderArchitecture = process.arch === "arm64" ? "arm64" : "amd64" }) {
+export function baseImagePlan({ dockerfile, manifest, lock, normalizer, runtimeSelector, goManifests, architecture, registry, apt, aptSecurity, builderArchitecture = process.arch === "arm64" ? "arm64" : "amd64" }) {
   const image = (name, inputs) => `viron-base-${name}:${name === "go" ? builderArchitecture : architecture}-${hash(inputs)}`;
   const settings = { architecture, registry, schema: 1 };
   const dependencies = image("dependencies", [settings, stageRecipe(dockerfile, ["dependency-manifests", "dependencies"]), normalizer, dependencyManifests(manifest, lock)]);
   const bases = [
     { target: "server-runtime", argument: "VIRON_SERVER_BASE", image: image("server", [settings, stageRecipe(dockerfile, ["server-runtime"])]) },
     { target: "dependencies", argument: "VIRON_BUILD_BASE", image: dependencies },
-    { target: "production-dependencies", argument: "VIRON_PRODUCTION_BASE", image: image("production", [dependencies, stageRecipe(dockerfile, ["production-dependencies"])]) },
+    { target: "production-dependencies", argument: "VIRON_PRODUCTION_BASE", image: image("production", [dependencies, stageRecipe(dockerfile, ["production-dependencies"]), runtimeSelector]) },
     { target: "full-runtime", argument: "VIRON_FULL_BASE", image: image("full", [settings, apt, aptSecurity, stageRecipe(dockerfile, ["server-runtime", "full-runtime"])]) },
     { target: "script-runner-runtime", argument: "VIRON_RUNNER_BASE", image: image("runner", [settings, apt, aptSecurity, stageRecipe(dockerfile, ["script-runner-runtime"])]) },
     { target: "monitor-dependencies", architecture: builderArchitecture, argument: "VIRON_GO_BASE", image: image("go", [{ ...settings, architecture: builderArchitecture }, goManifests, stageRecipe(dockerfile, ["monitor-dependencies"])]) },
@@ -51,7 +51,7 @@ export function packageServer({ architecture, refresh = false, baseOnly = false,
   const registry = env.VIRON_DOCKER_REGISTRY_MIRROR || "docker.io";
   const apt = env.VIRON_APT_MIRROR || "https://mirrors.aliyun.com/debian";
   const aptSecurity = env.VIRON_APT_SECURITY_MIRROR || "https://mirrors.aliyun.com/debian-security";
-  const bases = baseImagePlan({ dockerfile: read("Dockerfile"), manifest, lock: JSON.parse(read("package-lock.json")), normalizer: read("scripts/dependency-manifest.mjs"), goManifests: ["monitor/go.mod", "monitor/go.sum", "monitor/collector/go.mod", "monitor/collector/go.sum"].map(read), architecture, registry, apt, aptSecurity });
+  const bases = baseImagePlan({ dockerfile: read("Dockerfile"), manifest, lock: JSON.parse(read("package-lock.json")), normalizer: read("scripts/dependency-manifest.mjs"), runtimeSelector: read("scripts/server-runtime-dependencies.mjs"), goManifests: ["monitor/go.mod", "monitor/go.sum", "monitor/collector/go.mod", "monitor/collector/go.sum"].map(read), architecture, registry, apt, aptSecurity });
   const run = (args, capture = false) => {
     const result = execute("docker", args, { cwd: projectRoot, env: { ...env, BUILDX_NO_DEFAULT_ATTESTATIONS: "1" }, encoding: "utf8", stdio: capture ? "pipe" : "inherit" });
     if (result.error || result.status !== 0) throw new Error(`docker ${args.slice(0, 3).join(" ")} 失败：${result.error?.message ?? result.stderr ?? result.status}`);

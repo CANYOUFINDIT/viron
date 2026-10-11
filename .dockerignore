@@ -3,6 +3,10 @@ dist
 .npm-cache
 data
 secrets
+private
+.env
+.env.*
+!.env.example
 release
 .tmp
 output
