@@ -6,7 +6,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildApp } from "../src/server/app.js";
 import type { AppConfig } from "../src/server/config.js";
 import { ensureAdmin, openDatabase } from "../src/server/database.js";
-import { ensureDefaultApprovalFlow } from "../src/server/organization-approval.js";
 
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -117,27 +116,41 @@ describe("legacy approval flow compatibility", () => {
     expect(after!.count).toBe(before!.count);
   });
 
-  it("rolls back a failed default-flow import and then creates one idempotent flow", async () => {
+  it("rolls back a failed ledger from GET approval-flows and rereads one default flow", async () => {
     const f = await fixture();
-    await f.db.prepare("INSERT INTO organization_approval_workflows (organization_id, workflow_json, updated_at) VALUES (?,?,?)").run(
-      f.org,
-      JSON.stringify({ name: "旧流程", stages: [{ name: "会签", mode: "all", approverIds: [randomUUID()], allowSelf: false, requireComment: true }] }),
-      new Date().toISOString(),
-    );
-    await expect(f.db.transaction(async () => {
-      await ensureDefaultApprovalFlow(f.db, f.org);
-      throw new Error("injected-rollback");
-    })()).rejects.toThrow("injected-rollback");
+    const legacy = JSON.stringify({ name: "旧流程", stages: [{ name: "会签", mode: "all", approverIds: [randomUUID()], allowSelf: false, requireComment: true }] });
+    await f.db.prepare("INSERT INTO organization_approval_workflows (organization_id, workflow_json, updated_at) VALUES (?,?,?)").run(f.org, legacy, new Date().toISOString());
+    const originalPrepare = f.db.prepare.bind(f.db);
+    (f.db as unknown as { prepare: typeof f.db.prepare }).prepare = ((sql: string) => {
+      const statement = originalPrepare(sql);
+      if (!sql.includes("INSERT INTO organization_grant_ledger")) return statement;
+      return {
+        ...statement,
+        run: async (...values: unknown[]) => {
+          if (values[4] === "建立默认审批流程") throw new Error("fictional migration ledger unavailable");
+          return statement.run(...values);
+        },
+      };
+    }) as typeof f.db.prepare;
+    let failed: { statusCode: number; body: string };
+    try {
+      failed = await f.app.inject({ method: "GET", url: f.base + "/approval-flows", cookies: f.cookies });
+    } finally {
+      f.db.prepare = originalPrepare;
+    }
+    expect(failed.statusCode, failed.body).toBe(500);
     expect(await f.db.prepare("SELECT id FROM organization_approval_flows WHERE organization_id = ?").all(f.org)).toEqual([]);
     expect(await f.db.prepare("SELECT id FROM organization_grant_ledger WHERE organization_id = ? AND action = ?").all(f.org, "建立默认审批流程")).toEqual([]);
-    const original = await f.db.prepare("SELECT workflow_json FROM organization_approval_workflows WHERE organization_id = ?").get<{ workflow_json: string }>(f.org);
-    const first = await ensureDefaultApprovalFlow(f.db, f.org);
-    const second = await ensureDefaultApprovalFlow(f.db, f.org);
-    expect(second).toBe(first);
-    const defaults = await f.db.prepare("SELECT id, nodes_json FROM organization_approval_flows WHERE organization_id = ? AND is_default = 1").all<{ id: string; nodes_json: string }>(f.org);
+    const flows = await f.app.inject({ method: "GET", url: f.base + "/approval-flows", cookies: f.cookies });
+    expect(flows.statusCode, flows.body).toBe(200);
+    const defaults = flows.json().items.filter((item: { isDefault: boolean }) => item.isDefault);
     expect(defaults).toHaveLength(1);
-    expect(JSON.parse(defaults[0].nodes_json)[0].mode).toBe("all");
-    expect((await f.db.prepare("SELECT workflow_json FROM organization_approval_workflows WHERE organization_id = ?").get<{ workflow_json: string }>(f.org))!.workflow_json).toBe(original!.workflow_json);
+    expect(defaults[0].nodes[0].mode).toBe("all");
+    const again = await f.app.inject({ method: "GET", url: f.base + "/approval-flows", cookies: f.cookies });
+    const reread = again.json().items.filter((item: { isDefault: boolean }) => item.isDefault);
+    expect(reread).toHaveLength(1);
+    expect(reread[0].id).toBe(defaults[0].id);
+    expect((await f.db.prepare("SELECT workflow_json FROM organization_approval_workflows WHERE organization_id = ?").get<{ workflow_json: string }>(f.org))!.workflow_json).toBe(legacy);
   });
 
   it("keeps an independent feature grant when a referenced role cannot be deleted", async () => {

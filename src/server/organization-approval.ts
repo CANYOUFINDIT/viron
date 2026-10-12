@@ -243,61 +243,67 @@ export async function roleHolderIds(db: EnvmanDatabase, org: string, roleId: str
   return [...holders].sort();
 }
 
-export async function ensureDefaultApprovalFlow(db: EnvmanDatabase, org: string) {
-  const existing = await db
+async function defaultFlowId(db: EnvmanDatabase, org: string) {
+  const row = await db
     .prepare(
       "SELECT id FROM organization_approval_flows WHERE organization_id = ? AND is_default = 1 ORDER BY created_at, id",
     )
     .get<{ id: string }>(org);
-  if (existing) return existing.id;
-  const legacy = await db
-    .prepare("SELECT workflow_json FROM organization_approval_workflows WHERE organization_id = ?")
-    .get<{ workflow_json: string }>(org);
-  let nodes: FlowNode[];
-  if (legacy) nodes = legacyNodesFromWorkflow(legacy.workflow_json);
-  else {
-    const role = await db
+  return row?.id;
+}
+
+export async function ensureDefaultApprovalFlow(db: EnvmanDatabase, org: string) {
+  const ready = await defaultFlowId(db, org);
+  if (ready) return ready;
+  // The flow row and its ledger entry commit together. A ledger failure must not leave the default flow.
+  return db.transaction(async () => {
+    const existing = await defaultFlowId(db, org);
+    if (existing) return existing;
+    const legacy = await db
+      .prepare("SELECT workflow_json FROM organization_approval_workflows WHERE organization_id = ?")
+      .get<{ workflow_json: string }>(org);
+    let nodes: FlowNode[];
+    if (legacy) nodes = legacyNodesFromWorkflow(legacy.workflow_json);
+    else {
+      const role = await db
+        .prepare(
+          `SELECT id FROM organization_roles WHERE organization_id = ? AND enabled = 1
+           AND permission_codes_json LIKE ? ORDER BY created_at, id LIMIT 1`,
+        )
+        .get<{ id: string }>(org, '%"approval.approve"%');
+      nodes = [{
+        id: randomUUID(),
+        name: "组织审批",
+        mode: "any",
+        approverUserIds: [],
+        approverRoleId: role?.id ?? null,
+        allowSelf: false,
+        requireComment: false,
+      }];
+    }
+    const now = new Date().toISOString();
+    const id = randomUUID();
+    const inserted = await db
       .prepare(
-        `SELECT id FROM organization_roles WHERE organization_id = ? AND enabled = 1
-         AND permission_codes_json LIKE ? ORDER BY created_at, id LIMIT 1`,
+        `INSERT INTO organization_approval_flows (
+          id, organization_id, name, is_default, enabled, nodes_json, created_at, updated_at
+        )
+        SELECT ?, ?, ?, 1, 1, ?, ?, ?
+        WHERE NOT EXISTS (
+          SELECT 1 FROM organization_approval_flows WHERE organization_id = ? AND is_default = 1
+        )`,
       )
-      .get<{ id: string }>(org, '%"approval.approve"%');
-    nodes = [{
-      id: randomUUID(),
-      name: "组织审批",
-      mode: "any",
-      approverUserIds: [],
-      approverRoleId: role?.id ?? null,
-      allowSelf: false,
-      requireComment: false,
-    }];
-  }
-  const now = new Date().toISOString();
-  const id = randomUUID();
-  const inserted = await db
-    .prepare(
-      `INSERT INTO organization_approval_flows (
-        id, organization_id, name, is_default, enabled, nodes_json, created_at, updated_at
-      )
-      SELECT ?, ?, ?, 1, 1, ?, ?, ?
-      WHERE NOT EXISTS (
-        SELECT 1 FROM organization_approval_flows WHERE organization_id = ? AND is_default = 1
-      )`,
-    )
-    .run(id, org, "所有连接", JSON.stringify(nodes), now, now, org);
-  if (!inserted.changes) {
-    const winner = await db
-      .prepare(
-        "SELECT id FROM organization_approval_flows WHERE organization_id = ? AND is_default = 1 ORDER BY created_at, id",
-      )
-      .get<{ id: string }>(org);
-    if (!winner) throw new OrganizationPermissionError("DEFAULT_FLOW_REQUIRED", 409, "组织必须保留一条默认审批流程");
-    return winner.id;
-  }
-  await recordGrantLedger(db, org, { name: "系统" }, "建立默认审批流程", legacy ? "兼容旧审批流程，保留原节点" : "承接未分配的资源", {
-    after: { id, name: "所有连接", legacy: Boolean(legacy) },
-  });
-  return id;
+      .run(id, org, "所有连接", JSON.stringify(nodes), now, now, org);
+    if (!inserted.changes) {
+      const winner = await defaultFlowId(db, org);
+      if (!winner) throw new OrganizationPermissionError("DEFAULT_FLOW_REQUIRED", 409, "组织必须保留一条默认审批流程");
+      return winner;
+    }
+    await recordGrantLedger(db, org, { name: "系统" }, "建立默认审批流程", legacy ? "兼容旧审批流程，保留原节点" : "承接未分配的资源", {
+      after: { id, name: "所有连接", legacy: Boolean(legacy) },
+    });
+    return id;
+  })();
 }
 
 async function flows(db: EnvmanDatabase, org: string) {

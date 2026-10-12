@@ -47,6 +47,7 @@ export class SqliteDatabaseClient implements EnvmanDatabase {
   readonly dialect = "sqlite" as const;
   private readonly mutex = new AsyncMutex();
   private readonly transactionContext = new AsyncLocalStorage<boolean>();
+  private savepointSeq = 0;
 
   constructor(readonly raw: Database.Database) {}
 
@@ -67,17 +68,36 @@ export class SqliteDatabaseClient implements EnvmanDatabase {
   }
 
   transaction<T>(callback: () => T | Promise<T>): () => Promise<T> {
-    return () => this.mutex.run(async () => {
-      this.raw.exec("BEGIN");
-      try {
-        const result = await this.transactionContext.run(true, callback);
-        this.raw.exec("COMMIT");
-        return result;
-      } catch (error) {
-        this.raw.exec("ROLLBACK");
-        throw error;
-      }
-    });
+    return async () => {
+      // A caller such as flow import may already be inside saveApprovalFlow's transaction.
+      // Savepoints keep that work atomic without starting a second BEGIN on the same connection.
+      if (this.transactionContext.getStore()) return this.withSavepoint(callback);
+      return this.mutex.run(async () => {
+        this.raw.exec("BEGIN");
+        try {
+          const result = await this.transactionContext.run(true, callback);
+          this.raw.exec("COMMIT");
+          return result;
+        } catch (error) {
+          this.raw.exec("ROLLBACK");
+          throw error;
+        }
+      });
+    };
+  }
+
+  private async withSavepoint<T>(callback: () => T | Promise<T>): Promise<T> {
+    const name = `viron_sp_${++this.savepointSeq}`;
+    this.raw.exec(`SAVEPOINT ${name}`);
+    try {
+      const result = await callback();
+      this.raw.exec(`RELEASE SAVEPOINT ${name}`);
+      return result;
+    } catch (error) {
+      this.raw.exec(`ROLLBACK TO SAVEPOINT ${name}`);
+      this.raw.exec(`RELEASE SAVEPOINT ${name}`);
+      throw error;
+    }
   }
 
   backup(destinationPath: string): Promise<void> {
@@ -126,6 +146,7 @@ export class MysqlDatabaseClient implements EnvmanDatabase {
   readonly dialect = "mysql" as const;
   private readonly pool: Pool;
   private readonly transactionContext = new AsyncLocalStorage<PoolConnection>();
+  private savepointSeq = 0;
 
   constructor(options: MysqlDatabaseOptions) {
     this.pool = mysql.createPool({
@@ -171,6 +192,8 @@ export class MysqlDatabaseClient implements EnvmanDatabase {
 
   transaction<T>(callback: () => T | Promise<T>): () => Promise<T> {
     return async () => {
+      const current = this.transactionContext.getStore();
+      if (current) return this.withSavepoint(current, callback);
       const connection = await this.pool.getConnection();
       try {
         await connection.beginTransaction();
@@ -184,6 +207,20 @@ export class MysqlDatabaseClient implements EnvmanDatabase {
         connection.release();
       }
     };
+  }
+
+  private async withSavepoint<T>(connection: PoolConnection, callback: () => T | Promise<T>): Promise<T> {
+    const name = `viron_sp_${++this.savepointSeq}`;
+    await connection.query(`SAVEPOINT ${name}`);
+    try {
+      const result = await callback();
+      await connection.query(`RELEASE SAVEPOINT ${name}`);
+      return result;
+    } catch (error) {
+      await connection.query(`ROLLBACK TO SAVEPOINT ${name}`);
+      await connection.query(`RELEASE SAVEPOINT ${name}`);
+      throw error;
+    }
   }
 
   async backup(): Promise<void> {
