@@ -74,6 +74,14 @@ CREATE TABLE IF NOT EXISTS organization_grant_requests (
  created_at VARCHAR(40) NOT NULL, updated_at VARCHAR(40) NOT NULL,
  FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS organization_resource_maintenance (
+ id VARCHAR(64) PRIMARY KEY, organization_id VARCHAR(64) NOT NULL,
+ actor_id VARCHAR(64) NOT NULL, code VARCHAR(80) NOT NULL,
+ target_type VARCHAR(32) NOT NULL, target_id VARCHAR(64) NOT NULL,
+ created_at VARCHAR(40) NOT NULL,
+ UNIQUE(organization_id, actor_id, code, target_type, target_id),
+ FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS organization_grant_ledger (
  id VARCHAR(64) PRIMARY KEY, organization_id VARCHAR(64) NOT NULL,
  actor_id VARCHAR(64), actor_name VARCHAR(160) NOT NULL, action VARCHAR(80) NOT NULL,

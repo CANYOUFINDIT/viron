@@ -146,6 +146,32 @@ async function resolveLedgerActor(db: EnvmanDatabase, actor: LedgerActor): Promi
   return { id: actor.id, username, name: username };
 }
 
+/** Records configure-only maintenance for the creator. It is not a role data grant and does not add web.use. */
+export async function grantCreatedResourceMaintenance(
+  db: EnvmanDatabase,
+  org: string,
+  actor: LedgerActor,
+  code: string,
+  environmentId: string,
+  target: ResourceRef,
+) {
+  if (!actor.id) return null;
+  const id = randomUUID();
+  await db
+    .prepare(
+      `INSERT INTO organization_resource_maintenance (
+        id, organization_id, actor_id, code, target_type, target_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(id, org, actor.id, code, target.type, target.id, new Date().toISOString());
+  await recordGrantLedger(db, org, actor, "建立资源配置", "仅记录创建者对这条资源的配置维护，不加入原角色数据授权", {
+    after: { maintenanceId: id, code, environmentId, target },
+    targets: [{ type: "environment", id: environmentId }, target],
+    channel: "initial",
+  });
+  return id;
+}
+
 export async function recordGrantLedger(
   db: EnvmanDatabase,
   org: string,

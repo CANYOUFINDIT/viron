@@ -164,7 +164,12 @@ describe("organization phases 2-7", () => {
     expect(overview.statusCode, overview.body).toBe(200);
     const body = overview.json();
     expect(body.entries.map((entry: { label: string }) => entry.label)).toEqual(["环境总览", "密钥与证书", "SSH 工作台", "数据库工作台", "Redis 工作台", "知识库"]);
-    expect(overview.body).not.toContain("example.invalid");
+    const visibleSsh = body.entries[2].items.find((item: { id: string }) => item.id === f.sshId);
+    const hiddenSsh = body.entries[2].items.find((item: { id: string }) => item.id === f.otherId);
+    expect(visibleSsh.host).toBe("example.invalid");
+    expect(visibleSsh.username).toBe("root");
+    expect(hiddenSsh.host).toBeUndefined();
+    expect(overview.body).not.toContain("other.invalid");
     expect(overview.body).not.toContain("fake-password");
     expect(overview.body).not.toContain("secret-body-text");
     expect(overview.body).not.toContain("ciphertext");

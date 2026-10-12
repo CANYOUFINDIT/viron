@@ -5,7 +5,7 @@ import { parseBody } from "../validation.js";
 import { OrganizationPermissionError } from "../organization-rbac.js";
 import { RESOURCE_TYPES, type ResourceRef } from "../../shared/organization-rbac.js";
 import { webPluginInjection } from "../organization-boundary.js";
-import { personalAuthorization, resourceOverview } from "../organization-overview.js";
+import { personalAuthorization, resourceAuthorization, resourceOverview } from "../organization-overview.js";
 import {
   decideGrantRequest,
   deleteApprovalFlow,
@@ -99,6 +99,19 @@ export async function registerOrganizationPhaseRoutes(app: FastifyInstance): Pro
         if (!project) return reply.code(404).send({ error: "NOT_FOUND", message: "子组织不存在" });
       }
       return resourceOverview(app.db, request.params.id, request.admin!.id, request.query.projectId);
+    },
+  );
+
+  app.get<{ Params: { id: string; type: string; resourceId: string } }>(
+    "/api/v1/organizations/:id/resource-authorizations/:type/:resourceId",
+    async (request, reply) => {
+      if (!workspaceReady(request, reply, request.params.id)) return;
+      const parsed = z.object({ type: z.enum(RESOURCE_TYPES), resourceId: z.string().uuid() }).safeParse(request.params);
+      if (!parsed.success) return reply.code(400).send({ error: "INVALID_RESOURCE", message: "资源不存在" });
+      return resourceAuthorization(app.db, request.params.id, request.admin!.id, {
+        type: parsed.data.type,
+        id: parsed.data.resourceId,
+      });
     },
   );
 

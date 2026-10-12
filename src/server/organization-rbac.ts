@@ -752,6 +752,8 @@ export interface OrganizationAccess {
     feature: keyof FeatureGrant["features"],
     target: ResourceRef,
   ): boolean;
+  /** Roles that may create the first resource of a capability in this environment. */
+  maintenanceRoleIds(capability: string, environmentId: string): string[];
 }
 export async function loadOrganizationAccess(
   db: EnvmanDatabase,
@@ -760,7 +762,7 @@ export async function loadOrganizationAccess(
   now = Date.now(),
 ): Promise<OrganizationAccess> {
   await ensureOrganizationRoles(db, org);
-  const [state, catalog, projects, member, direct] = await Promise.all([
+  const [state, catalog, projects, member, direct, maintenanceRows] = await Promise.all([
     roleState(db, org),
     organizationResourceCatalog(db, org),
     db
@@ -776,7 +778,13 @@ export async function loadOrganizationAccess(
         "SELECT pm.project_id FROM project_members pm JOIN projects p ON p.id = pm.project_id WHERE p.organization_id = ? AND pm.user_id = ?",
       )
       .all<{ project_id: string }>(org, userId),
+    db
+      .prepare(
+        "SELECT code, target_type, target_id FROM organization_resource_maintenance WHERE organization_id = ? AND actor_id = ?",
+      )
+      .all<{ code: string; target_type: ResourceRef["type"]; target_id: string }>(org, userId),
   ]);
+  const maintained = new Set(maintenanceRows.map((row) => `${row.code}:${row.target_type}:${row.target_id}`));
   const ancestors = new Set<string>();
   for (const d of direct) {
     let id: string | null = d.project_id;
@@ -818,6 +826,8 @@ export async function loadOrganizationAccess(
     if (!definition || !member) return false;
     if (typeof target === "object" && !targets.has(resourceKey(target)))
       return false;
+    // A creation maintenance record covers only its own configure code for this user.
+    if (typeof target === "object" && maintained.has(`${code}:${target.type}:${target.id}`)) return true;
     return assignments.some((a) => {
       const r = activeRoles.get(a.roleId);
       if (!r?.permissionCodes.includes(code)) return false;
@@ -936,6 +946,30 @@ export async function loadOrganizationAccess(
             expiresAt: grant.expiresAt ? Date.parse(grant.expiresAt) : null,
           }))
       : [];
+  const maintenanceRoleIds = (capability: string, environmentId: string) => {
+    const code = `resource.${capability}.configure`;
+    const environmentKey = resourceKey({ type: "environment", id: environmentId });
+    const existing = new Set(
+      catalog
+        .filter((item) => item.capability === capability && item.environmentIds.includes(environmentId))
+        .map((item) => resourceKey(item)),
+    );
+    const ids = new Set<string>();
+    for (const assignment of assignments) {
+      const role = activeRoles.get(assignment.roleId);
+      if (!role?.permissionCodes.includes(code)) continue;
+      const holdsEnvironment = state.dataGrants.some(
+        (grant) => grant.roleId === assignment.roleId && validAt(grant, now) && resourceKey(grant.target) === environmentKey,
+      );
+      const holdsExisting = state.dataGrants.some(
+        (grant) => grant.roleId === assignment.roleId && validAt(grant, now) && existing.has(resourceKey(grant.target)),
+      );
+      // Organization scope is the creator's explicit maintain code, not the admin name.
+      // A data grant on this environment is the narrower configuration target.
+      if (assignment.managementScope.kind === "organization" || holdsEnvironment || holdsExisting) ids.add(assignment.roleId);
+    }
+    return [...ids];
+  };
   return {
     state,
     catalog,
@@ -946,6 +980,7 @@ export async function loadOrganizationAccess(
     operationPaths,
     featurePaths,
     featureAllowed: (feature, target) => featurePaths(feature, target).length > 0,
+    maintenanceRoleIds,
   };
 }
 export async function attachOrganizationAccess(

@@ -4,6 +4,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { writeAudit } from "../audit.js";
 import { getWorkspaceAccess, requireEnvironmentAction } from "../access-control.js";
+import { grantCreatedResourceMaintenance } from "../organization-approval.js";
 import { parseBody } from "../validation.js";
 import { loadWebFavicon } from "../../shared/web-favicon.js";
 import { tlsWebEntryBadge } from "../../shared/tls-certificates.js";
@@ -96,22 +97,37 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
         SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_sort_order
         FROM web_entries WHERE environment_id = ?
       `).get(request.params.environmentId) as { next_sort_order: number | string };
-      await app.db.prepare(`
-        INSERT INTO web_entries (
-          id, environment_id, name, url, description, tags_json, login_config_json, sort_order, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        id,
-        request.params.environmentId,
-        body.name,
-        body.url,
-        body.description,
-        JSON.stringify(body.tags),
-        JSON.stringify(body.loginConfig ?? parseWebLoginConfig(undefined)),
-        Number(nextOrder.next_sort_order),
-        now,
-        now,
-      );
+      const maintainer = request.admin!;
+      const maintainCode = "resource.web.configure";
+      const canRecordMaintenance = maintainer.workspace.type === "organization"
+        && (maintainer.organizationAccess?.maintenanceRoleIds("web", request.params.environmentId).length ?? 0) > 0;
+      await app.db.transaction(async () => {
+        await app.db.prepare(`
+          INSERT INTO web_entries (
+            id, environment_id, name, url, description, tags_json, login_config_json, sort_order, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          id,
+          request.params.environmentId,
+          body.name,
+          body.url,
+          body.description,
+          JSON.stringify(body.tags),
+          JSON.stringify(body.loginConfig ?? parseWebLoginConfig(undefined)),
+          Number(nextOrder.next_sort_order),
+          now,
+          now,
+        );
+        if (canRecordMaintenance)
+          await grantCreatedResourceMaintenance(
+            app.db,
+            maintainer.workspace.id,
+            { id: maintainer.id, username: maintainer.username },
+            maintainCode,
+            request.params.environmentId,
+            { type: "web_entry", id },
+          );
+      })();
       const tlsEndpointId = await syncWebEntryTlsEndpoint(app, request.params.environmentId, id, body.url);
       const tlsEndpoint = tlsEndpointId ? await getTlsEndpoint(app, tlsEndpointId) : null;
       await writeAudit(app.db, {

@@ -105,8 +105,11 @@ export async function getWorkspaceAccess(db: EnvmanDatabase, user: Authenticated
   }
   const permits=(environmentId:string,capability:Capability,action:string,itemId?:string,requireAll=false) => {
     const candidates=rbac.catalog.filter(c=>c.capability===capability&&c.environmentIds.includes(environmentId)&&(!itemId||c.id===(capability === "maintenance" ? itemId.replace(/^(service|host):/, "") : itemId)));
-    const check=(c:ResourceRef)=>legacyOperationCodes(capability,action).some(code=>rbac.allows(code,c));
-    return candidates.length>0&&(requireAll?candidates.every(check):candidates.some(check));
+    // An empty candidate list is not a denial for the first Web entry. The maintain code and environment target decide.
+    if (!candidates.length) return capability === "web" && action === "manage" && rbac.maintenanceRoleIds(capability, environmentId).length > 0;
+    const configureCode = `resource.${capability}.configure`;
+    const check=(c:ResourceRef)=>legacyOperationCodes(capability,action).some(code=>rbac.allows(code,c)) || ((action === "view" || action === "manage") && rbac.allows(configureCode, c));
+    return requireAll?candidates.every(check):candidates.some(check);
   };
   const envIds=new Set(rbac.catalog.filter(c=>c.type==="environment"&&(rbac.allows("environment.catalog")||rbac.allows("environment.view",c)||rbac.catalog.some(t=>t.environmentIds.includes(c.id)&&[...PERMITTED_RESOURCE_ACTIONS(t.capability)].some(code=>rbac.allows(code,t))))).map(c=>c.id));
   return {canManage:false,organizationAccess:rbac,environmentIds:envIds,environmentGroupIds:new Set(rbac.catalog.filter(c=>c.type==="environment"&&envIds.has(c.id)).flatMap(c=>c.groupIds)),sshConnectionIds:visible("ssh_connection"),databaseConnectionIds:visible("database_connection"),redisConnectionIds:visible("redis_connection"),environmentScopes:new Map(),connectionActions:actionMaps,allowsEnvironment:permits,allowsConnection:(type,id,action)=>legacyOperationCodes(type,action).some(code=>rbac.allows(code,{type:`${type}_connection` as ResourceRef["type"],id})),environmentPermissions:(id)=>Object.fromEntries(["web","ssh","database","redis","logs","knowledge","maintenance"].map(cap=>[cap,["view","use","read","write","manage","edit","control","script","install"].filter(action=>permits(id,cap as Capability,action))])) as PermissionMap};

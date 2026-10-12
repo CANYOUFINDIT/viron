@@ -1,0 +1,194 @@
+import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { buildApp } from "../src/server/app.js";
+import type { AppConfig } from "../src/server/config.js";
+import { ensureAdmin, openDatabase } from "../src/server/database.js";
+
+const cleanup: Array<() => Promise<void>> = [];
+afterEach(async () => {
+  for (const fn of cleanup.splice(0)) await fn();
+});
+
+async function fixture() {
+  const dir = mkdtempSync(join(tmpdir(), "viron-resource-overview-"));
+  const config: AppConfig = {
+    nodeEnv: "test",
+    host: "127.0.0.1",
+    port: 0,
+    dataDir: dir,
+    databasePath: join(dir, "db.sqlite"),
+    masterKey: Buffer.alloc(32, 21),
+    adminUsername: "admin",
+    adminPassword: "test-password-123",
+    allowWeakPasswords: true,
+    sessionTtlHours: 12,
+    terminalIdleMinutes: 30,
+    auditRetentionDays: 30,
+  };
+  const db = await openDatabase(config);
+  await ensureAdmin(db, config);
+  const app = await buildApp({ config, db, logger: false });
+  cleanup.push(async () => {
+    await app.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const login = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { username: "admin", password: config.adminPassword } });
+  const cookies = { envman_session: login.cookies[0].value };
+  const organization = await app.inject({ method: "POST", url: "/api/v1/organizations", cookies, payload: { name: "资源浏览组织" } });
+  const org = organization.json().id as string;
+  const base = `/api/v1/organizations/${org}`;
+  await app.inject({ method: "PUT", url: "/api/v1/auth/workspace", cookies, payload: { type: "organization", id: org } });
+  return { app, db, cookies, org, base, adminId: login.json().user.id as string };
+}
+
+describe("resource overview and first configuration", () => {
+  it("returns safe configuration, knowledge structure, linked certificates, and one resource's authorization rows", async () => {
+    const f = await fixture();
+    const registered = await f.app.inject({ method: "POST", url: "/api/v1/auth/register", payload: { username: "overview-member", password: "member-password" } });
+    const userId = registered.json().user.id as string;
+    const memberCookies = { envman_session: registered.cookies[0].value };
+    const stamp = new Date().toISOString();
+    await f.db.prepare("INSERT INTO organization_members (organization_id,user_id,role,created_at,updated_at) VALUES (?,?,'member',?,?)").run(f.org, userId, stamp, stamp);
+    await f.app.inject({ method: "PUT", url: "/api/v1/auth/workspace", cookies: memberCookies, payload: { type: "organization", id: f.org } });
+    const ssh = await f.app.inject({
+      method: "POST",
+      url: "/api/v1/ssh-connections",
+      cookies: f.cookies,
+      payload: { name: "可见连接", host: "example.invalid", port: 22, username: "fake", authType: "password", password: "fake-password" },
+    });
+    const other = await f.app.inject({
+      method: "POST",
+      url: "/api/v1/ssh-connections",
+      cookies: f.cookies,
+      payload: { name: "其他连接", host: "other.invalid", port: 22, username: "other", authType: "password", password: "other-secret" },
+    });
+    const sshId = ssh.json().id as string;
+    const otherId = other.json().id as string;
+    const role = await f.app.inject({
+      method: "POST",
+      url: f.base + "/roles",
+      cookies: f.cookies,
+      payload: { name: "连接查看", permissionCodes: ["environment.catalog", "ssh.view"], reason: "验收" },
+    });
+    const roleId = role.json().id as string;
+    expect((await f.app.inject({
+      method: "POST",
+      url: f.base + "/role-assignments",
+      cookies: f.cookies,
+      payload: { roleId, subjectType: "user", subjectId: userId, managementScope: { kind: "organization", ids: [], includeChildren: true }, reason: "验收" },
+    })).statusCode).toBe(201);
+    expect((await f.app.inject({
+      method: "POST",
+      url: f.base + "/role-data-grants",
+      cookies: f.cookies,
+      payload: { roleId, targets: [{ type: "ssh_connection", id: sshId }], reason: "同一角色" },
+    })).statusCode).toBe(201);
+    const catalogRole = await f.app.inject({
+      method: "POST",
+      url: f.base + "/roles",
+      cookies: f.cookies,
+      payload: { name: "仅目录", permissionCodes: ["environment.catalog"], reason: "验收" },
+    });
+    const catalogUser = await f.app.inject({ method: "POST", url: "/api/v1/auth/register", payload: { username: "catalog-only", password: "member-password" } });
+    const catalogId = catalogUser.json().user.id as string;
+    const catalogCookies = { envman_session: catalogUser.cookies[0].value };
+    await f.db.prepare("INSERT INTO organization_members (organization_id,user_id,role,created_at,updated_at) VALUES (?,?,'member',?,?)").run(f.org, catalogId, stamp, stamp);
+    await f.app.inject({ method: "PUT", url: "/api/v1/auth/workspace", cookies: catalogCookies, payload: { type: "organization", id: f.org } });
+    expect((await f.app.inject({
+      method: "POST",
+      url: f.base + "/role-assignments",
+      cookies: f.cookies,
+      payload: { roleId: catalogRole.json().id, subjectType: "user", subjectId: catalogId, managementScope: { kind: "organization", ids: [], includeChildren: true }, reason: "验收" },
+    })).statusCode).toBe(201);
+    const folder = randomUUID();
+    const document = randomUUID();
+    await f.db.prepare("INSERT INTO knowledge_nodes (id,workspace_type,workspace_id,type,name,content,created_by_user_id,created_at,updated_at) VALUES (?,'organization',?,'folder','文件夹','',?,?,?)").run(folder, f.org, f.adminId, stamp, stamp);
+    await f.db.prepare("INSERT INTO knowledge_nodes (id,workspace_type,workspace_id,parent_id,type,name,content,created_by_user_id,created_at,updated_at) VALUES (?,'organization',?,?,'document','文档','# 正文',?,?,?)").run(document, f.org, folder, f.adminId, stamp, stamp);
+    const overview = await f.app.inject({ method: "GET", url: f.base + "/resource-overview", cookies: memberCookies });
+    const sshItem = overview.json().entries.find((entry: { id: string }) => entry.id === "ssh").items.find((item: { id: string }) => item.id === sshId);
+    const hidden = overview.json().entries.find((entry: { id: string }) => entry.id === "ssh").items.find((item: { id: string }) => item.id === otherId);
+    expect(sshItem).toMatchObject({ host: "example.invalid", username: "fake" });
+    expect(sshItem.password).toBeUndefined();
+    expect(hidden.host).toBeUndefined();
+    const catalogOverview = await f.app.inject({ method: "GET", url: f.base + "/resource-overview", cookies: catalogCookies });
+    const catalogSsh = catalogOverview.json().entries.find((entry: { id: string }) => entry.id === "ssh").items.find((item: { id: string }) => item.id === sshId);
+    expect(catalogSsh.host).toBeUndefined();
+    const environment = await f.app.inject({ method: "POST", url: "/api/v1/environments", cookies: f.cookies, payload: { name: "空环境" } });
+    const refreshed = await f.app.inject({ method: "GET", url: f.base + "/resource-overview", cookies: catalogCookies });
+    const doc = refreshed.json().entries.find((entry: { id: string }) => entry.id === "knowledge").items.find((item: { id: string }) => item.id === document);
+    expect(doc.parentId).toBe(folder);
+    expect(doc.nodeType).toBe("document");
+    expect(doc.content).toBeUndefined();
+    expect(refreshed.body).not.toContain("# 正文");
+    const environmentItem = refreshed.json().entries[0].items.find((item: { id: string }) => item.id === environment.json().id);
+    expect(environmentItem.located).toEqual({ web: [], logs: [], services: [], knowledge: [] });
+    const detail = await f.app.inject({ method: "GET", url: `${f.base}/resource-authorizations/ssh_connection/${sshId}`, cookies: f.cookies });
+    expect(detail.statusCode, detail.body).toBe(200);
+    expect(detail.json().dataGrants).toHaveLength(1);
+    expect(detail.json().dataGrants[0]).toMatchObject({ name: "连接查看", source: "direct", status: "active", targets: [{ type: "ssh_connection", id: sshId }] });
+    expect(detail.json().featureGrants).toEqual([]);
+    const otherDetail = await f.app.inject({ method: "GET", url: `${f.base}/resource-authorizations/ssh_connection/${otherId}`, cookies: f.cookies });
+    expect(otherDetail.json().dataGrants).toEqual([]);
+    const denied = await f.app.inject({ method: "GET", url: `${f.base}/resource-authorizations/ssh_connection/${sshId}`, cookies: catalogCookies });
+    expect(denied.statusCode).toBe(403);
+  });
+
+  it("lets the maintain code create and update the first Web entry without granting that path to environment.create", async () => {
+    const f = await fixture();
+    const environment = await f.app.inject({ method: "POST", url: "/api/v1/environments", cookies: f.cookies, payload: { name: "首条入口环境" } });
+    const envId = environment.json().id as string;
+    const created = await f.app.inject({
+      method: "POST",
+      url: `/api/v1/environments/${envId}/web-entries`,
+      cookies: f.cookies,
+      payload: { name: "第一条", url: "http://fixture.invalid" },
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const entryId = created.json().id as string;
+    const grants = await f.db.prepare("SELECT id FROM organization_role_data_grants WHERE target_id = ?").all(entryId);
+    expect(grants).toEqual([]);
+    const maintenance = await f.db.prepare("SELECT code, actor_id FROM organization_resource_maintenance WHERE target_id = ?").all<{ code: string; actor_id: string }>(entryId);
+    expect(maintenance).toEqual([{ code: "resource.web.configure", actor_id: f.adminId }]);
+    const { loadOrganizationAccess } = await import("../src/server/organization-rbac.js");
+    const createdAccess = await loadOrganizationAccess(f.db, f.org, f.adminId);
+    expect(createdAccess.allows("web.use", { type: "web_entry", id: entryId })).toBe(false);
+    expect(createdAccess.allows("resource.web.configure", { type: "web_entry", id: entryId })).toBe(true);
+    const updated = await f.app.inject({
+      method: "PUT",
+      url: `/api/v1/web-entries/${entryId}`,
+      cookies: f.cookies,
+      payload: { name: "第一条已维护", url: "http://fixture.invalid/edited" },
+    });
+    expect(updated.statusCode, updated.body).toBe(200);
+    const registered = await f.app.inject({ method: "POST", url: "/api/v1/auth/register", payload: { username: "env-creator", password: "member-password" } });
+    const userId = registered.json().user.id as string;
+    const cookies = { envman_session: registered.cookies[0].value };
+    const stamp = new Date().toISOString();
+    await f.db.prepare("INSERT INTO organization_members (organization_id,user_id,role,created_at,updated_at) VALUES (?,?,'member',?,?)").run(f.org, userId, stamp, stamp);
+    await f.app.inject({ method: "PUT", url: "/api/v1/auth/workspace", cookies, payload: { type: "organization", id: f.org } });
+    const role = await f.app.inject({
+      method: "POST",
+      url: f.base + "/roles",
+      cookies: f.cookies,
+      payload: { name: "只创建环境", permissionCodes: ["environment.create"], reason: "验收" },
+    });
+    expect((await f.app.inject({
+      method: "POST",
+      url: f.base + "/role-assignments",
+      cookies: f.cookies,
+      payload: { roleId: role.json().id, subjectType: "user", subjectId: userId, managementScope: { kind: "organization", ids: [], includeChildren: true }, reason: "验收" },
+    })).statusCode).toBe(201);
+    const ownEnvironment = await f.app.inject({ method: "POST", url: "/api/v1/environments", cookies, payload: { name: "无维护环境" } });
+    expect(ownEnvironment.statusCode, ownEnvironment.body).toBe(201);
+    const denied = await f.app.inject({
+      method: "POST",
+      url: `/api/v1/environments/${ownEnvironment.json().id}/web-entries`,
+      cookies,
+      payload: { name: "不能维护", url: "http://fixture.invalid" },
+    });
+    expect(denied.statusCode).toBe(403);
+  });
+});
