@@ -221,6 +221,10 @@ describe("organization SQL query permissions", () => {
       [writer, "GRANT SELECT ON example.* TO fictional"],
       [writer, "/* user's ordinary comment */ CREATE TABLE quoted_comment_probe(id INT)"],
       [reader, "SET SESSION sql_mode='NO_BACKSLASH_ESCAPES'; SELECT '\\'; CREATE TABLE sqlmode_comment_probe(id INT); -- '"],
+      [reader, "SELECT '\\'; CREATE TABLE initial_mode_probe(id INT); -- '"],
+      [reader, "SET SESSION sql_mode=DEFAULT; SELECT '\\'; CREATE TABLE default_mode_probe(id INT); -- '"],
+      [reader, "SET SESSION sql_mode=@mode; SELECT '\\'; CREATE TABLE expr_mode_probe(id INT); -- '"],
+      [reader, "/*! SET SESSION sql_mode='NO_BACKSLASH_ESCAPES' */; SELECT '\\'; CREATE TABLE exec_mode_probe(id INT); -- '"],
     ] as const) {
       const denied = await post(actor, sql);
       expect(denied.statusCode, denied.body).toBe(403);
@@ -232,7 +236,7 @@ describe("organization SQL query permissions", () => {
       [reader, "SELECT 1--1"],
       [reader, "/* user's ordinary comment */ SELECT 1"],
       [reader, "SET SESSION sql_mode='NO_BACKSLASH_ESCAPES'; SELECT 1"],
-      [reader, "SELECT '\\'; CREATE TABLE hidden(id INT); -- '"],
+      [reader, "SET SESSION sql_mode=DEFAULT; SELECT 1"],
       [reader, "WITH x AS (SELECT 'DROP TABLE foo' AS label) SELECT * FROM x"],
       [writer, "UPDATE example SET label='create drop alter'"],
       [writer, "SET @acceptance_sql=1"],

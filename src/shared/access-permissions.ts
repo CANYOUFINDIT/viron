@@ -421,6 +421,7 @@ function sessionSqlModeEffect(statement: string): "unchanged" | "backslash" | "n
       continue;
     }
     if (char === "/" && next === "*") {
+      if (executableComment(text, index) && /\bsql_mode\s*(?::=|=)\s*$/i.test(text.slice(0, index))) return "unknown";
       const end = commentEnd(text, index + 2);
       index = text.startsWith("*/", end) ? end + 1 : end;
       continue;
@@ -444,7 +445,7 @@ function sessionSqlModeEffect(statement: string): "unchanged" | "backslash" | "n
   }
   if (!value) return "unchanged";
   const literal = simpleSqlString(value);
-  if (literal === null) return /^\s*DEFAULT\s*$/i.test(value) ? "backslash" : "unknown";
+  if (literal === null) return "unknown";
   const modes = new Set(literal.toUpperCase().split(",").map((item) => item.trim()).filter(Boolean));
   return modes.has("NO_BACKSLASH_ESCAPES") ? "no-backslash" : "backslash";
 }
@@ -458,16 +459,24 @@ function classifySql(sql: string, backslashEscapes: boolean): DatabaseSqlPermiss
     if (effect === "unchanged" || (effect === "backslash" && backslashEscapes) || (effect === "no-backslash" && !backslashEscapes)) continue;
     const tail = sql.slice(statement.end).replace(/^\s*;\s*/, "");
     if (!tail.trim()) break;
-    if (effect === "unknown") requireEvery(found);
-    else for (const code of classifySql(tail, effect === "backslash")) found.add(code);
+    const tails = effect === "unknown" ? [true, false] : [effect === "backslash"];
+    for (const escapes of tails) for (const code of classifySql(tail, escapes)) found.add(code);
     break;
   }
   if (!statements.length && !found.size) return ["database.write"];
   return DATABASE_SQL_PERMISSIONS.filter((code) => found.has(code));
 }
 
+function unionSqlPermissions(groups: DatabaseSqlPermission[][]): DatabaseSqlPermission[] {
+  const found = new Set<DatabaseSqlPermission>();
+  for (const group of groups) for (const code of group) found.add(code);
+  return DATABASE_SQL_PERMISSIONS.filter((code) => found.has(code));
+}
+
+// The connection's sql_mode is not known here. A backslash may or may not end a string,
+// so every statement is classified both ways and the operation codes are united.
 export function databaseSqlPermissions(sql: string): DatabaseSqlPermission[] {
-  return classifySql(sql, true);
+  return unionSqlPermissions([classifySql(sql, true), classifySql(sql, false)]);
 }
 
 export function databaseSqlActions(sql: string): DatabaseSqlAction[] {

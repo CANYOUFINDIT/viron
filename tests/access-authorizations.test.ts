@@ -31,7 +31,12 @@ describe("access permission helpers", () => {
     expect(databaseSqlPermissions("/* user's ordinary comment SELECT 1")).toEqual(["database.write"]);
     expect(databaseSqlPermissions("SET SESSION sql_mode='NO_BACKSLASH_ESCAPES'")).toEqual([]);
     expect(databaseSqlPermissions("SET SESSION sql_mode='NO_BACKSLASH_ESCAPES'; SELECT 1")).toEqual(["database.read"]);
-    expect(databaseSqlPermissions("SELECT '\\'; CREATE TABLE hidden(id INT); -- '")).toEqual(["database.read"]);
+    expect(databaseSqlPermissions("SET SESSION sql_mode=DEFAULT; SELECT 1")).toEqual(["database.read"]);
+    expect(databaseSqlPermissions("SELECT '\\'; CREATE TABLE hidden(id INT); -- '")).toEqual(["database.read", "database.ddl"]);
+    expect(databaseSqlPermissions("SELECT '\\'; CREATE TABLE initial_mode_probe(id INT); -- '")).toEqual(["database.read", "database.ddl"]);
+    expect(databaseSqlPermissions("SET SESSION sql_mode=DEFAULT; SELECT '\\'; CREATE TABLE default_mode_probe(id INT); -- '")).toEqual(["database.read", "database.ddl"]);
+    expect(databaseSqlPermissions("SET SESSION sql_mode=@mode; SELECT '\\'; CREATE TABLE expr_mode_probe(id INT); -- '")).toEqual(["database.read", "database.ddl"]);
+    expect(databaseSqlPermissions("/*! SET SESSION sql_mode='NO_BACKSLASH_ESCAPES' */; SELECT '\\'; CREATE TABLE exec_mode_probe(id INT); -- '")).toEqual(["database.read", "database.ddl"]);
     expect(databaseSqlPermissions("SET SESSION sql_mode='NO_BACKSLASH_ESCAPES'; SELECT '\\'; CREATE TABLE sqlmode_comment_probe(id INT); -- '")).toEqual(["database.read", "database.ddl"]);
     expect(databaseSqlPermissions("CREATE TABLE example(id int); UPDATE example SET id = 2")).toEqual(["database.write", "database.ddl"]);
     expect(databaseSqlPermissions("/*!50000 CREATE TABLE example(id int) */")).toEqual(["database.ddl"]);
