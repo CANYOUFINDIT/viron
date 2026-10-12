@@ -58,7 +58,24 @@ const human = new Set<FlowMode>(["any", "all", "sequence"]);
 type LedgerActor = { id?: string | null; name?: string | null; username?: string | null };
 
 function ledgerActorName(actor: LedgerActor): string {
-  return actor.name?.trim() || actor.username?.trim() || "系统";
+  return actor.username?.trim() || actor.name?.trim() || "系统";
+}
+
+function redactLedger(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactLedger);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => !/password|secret|credential|token|privatekey|ciphertext/i.test(key))
+      .map(([key, item]) => [key, redactLedger(item)]),
+  );
+}
+
+async function resolveLedgerActor(db: EnvmanDatabase, actor: LedgerActor): Promise<LedgerActor> {
+  if (!actor.id) return { id: null, username: actor.username ?? null, name: actor.name ?? null };
+  const row = await db.prepare("SELECT username FROM admin_users WHERE id = ?").get<{ username: string }>(actor.id);
+  const username = row?.username?.trim() || actor.username?.trim() || "";
+  return { id: actor.id, username, name: username };
 }
 
 export async function recordGrantLedger(
@@ -90,8 +107,8 @@ export async function recordGrantLedger(
       ledgerActorName(actor),
       action,
       reason,
-      details.before === undefined ? null : JSON.stringify(details.before),
-      details.after === undefined ? null : JSON.stringify(details.after),
+      details.before === undefined ? null : JSON.stringify(redactLedger(details.before)),
+      details.after === undefined ? null : JSON.stringify(redactLedger(details.after)),
       JSON.stringify(details.targets ?? []),
       details.requestId ?? null,
       details.grantId ?? null,
@@ -460,42 +477,48 @@ export async function submitGrantRequest(
     stage += 1;
     if (node.mode === "auto_approve" && stage >= snapshotNodes.length) status = "approved";
   }
-  const grantIds = status === "approved"
-    ? await grantApproved(db, org, requesterId, input.kind, permissionSnapshot, id, now, input.roleId ?? null)
-    : [];
-  await db
-    .prepare(
-      `INSERT INTO organization_grant_requests (
-        id, organization_id, requester_id, kind, role_id, features_json, targets_json, duration_ms,
-        permission_snapshot_json, workflow_snapshot_json, decisions_json, status, stage_index,
-        grant_ids_json, block_reason, reason, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?)`,
-    )
-    .run(
-      id,
-      org,
-      requesterId,
-      input.kind,
-      input.roleId ?? null,
-      features ? JSON.stringify(features) : null,
-      JSON.stringify(targets),
-      input.durationMs,
-      JSON.stringify(permissionSnapshot),
-      JSON.stringify({ flowId: flow.id, flowName: flow.name, nodes: snapshotNodes }),
-      JSON.stringify(decisions),
-      status,
-      stage,
-      JSON.stringify(grantIds),
-      input.reason,
-      created,
-      created,
-    );
-  await recordGrantLedger(db, org, { id: requesterId, name: requesterId }, "提交授权申请", input.reason, {
-    after: { id, kind: input.kind, status },
-    targets,
-    requestId: id,
-  });
-  return { id, status, grantIds };
+  return db.transaction(async () => {
+    const actor = await resolveLedgerActor(db, { id: requesterId });
+    const grantIds = status === "approved"
+      ? await grantApproved(db, org, requesterId, input.kind, permissionSnapshot, id, now, input.roleId ?? null, actor, input.reason)
+      : [];
+    await db
+      .prepare(
+        `INSERT INTO organization_grant_requests (
+          id, organization_id, requester_id, kind, role_id, features_json, targets_json, duration_ms,
+          permission_snapshot_json, workflow_snapshot_json, decisions_json, status, stage_index,
+          grant_ids_json, block_reason, reason, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?)`,
+      )
+      .run(
+        id,
+        org,
+        requesterId,
+        input.kind,
+        input.roleId ?? null,
+        features ? JSON.stringify(features) : null,
+        JSON.stringify(targets),
+        input.durationMs,
+        JSON.stringify(permissionSnapshot),
+        JSON.stringify({ flowId: flow.id, flowName: flow.name, nodes: snapshotNodes }),
+        JSON.stringify(decisions),
+        status,
+        stage,
+        JSON.stringify(grantIds),
+        input.reason,
+        created,
+        created,
+      );
+    await recordGrantLedger(db, org, actor, "提交授权申请", input.reason, {
+      before: { status: null },
+      after: { id, kind: input.kind, status, source: "request" },
+      targets,
+      requestId: id,
+      grantId: grantIds[0] ?? null,
+      channel: "request",
+    });
+    return { id, status, grantIds };
+  })();
 }
 
 async function grantApproved(
@@ -507,10 +530,13 @@ async function grantApproved(
   requestId: string,
   now: number,
   roleId: string | null,
+  actor: LedgerActor,
+  reason: string,
 ) {
   const startsAt = new Date(now).toISOString();
   const expiresAt = snapshot.durationMs === null ? null : new Date(now + snapshot.durationMs).toISOString();
   const ids: string[] = [];
+  let batch: string | null = null;
   if (kind === "data") {
     if (!roleId) throw new OrganizationPermissionError("ROLE_REQUIRED", 409, "数据申请缺少角色");
     const holders = await roleHolderIds(db, org, roleId, now);
@@ -519,7 +545,7 @@ async function grantApproved(
       throw new OrganizationPermissionError("ROLE_NOT_HELD", 409, "申请人已经不再持有该角色，不能授予");
     if ([...role.permissionCodes].sort().join("\0") !== snapshot.permissionCodes.join("\0") || holders.join("\0") !== snapshot.holderIds.join("\0"))
       throw new OrganizationPermissionError("ROLE_SNAPSHOT_MISMATCH", 409, "角色权限或共享成员已变化，请重新申请");
-    const batch = randomUUID();
+    batch = randomUUID();
     for (const target of snapshot.targets) {
       const id = await insertDataGrant(db, org, roleId, target, batch, startsAt, expiresAt, "审批通过", "request");
       await db.prepare("UPDATE organization_role_data_grants SET request_id = ? WHERE id = ?").run(requestId, id);
@@ -548,11 +574,13 @@ async function grantApproved(
       );
     ids.push(id);
   }
-  await recordGrantLedger(db, org, { name: "审批" }, kind === "data" ? "生成数据授权" : "生成功能授权", "最终通过、授权与台账同一事务", {
-    after: { grantIds: ids, startsAt, expiresAt },
+  await recordGrantLedger(db, org, actor, kind === "data" ? "生成数据授权" : "生成功能授权", reason, {
+    before: { status: "pending", requestId },
+    after: { status: "approved", grantIds: ids, startsAt, expiresAt, source: "request", batch: kind === "data" ? batch : null },
     targets: snapshot.targets,
     requestId,
     grantId: ids[0] ?? null,
+    channel: "request",
   });
   return ids;
 }
@@ -630,6 +658,10 @@ export async function listGrantRequests(
       "SELECT * FROM organization_grant_requests WHERE organization_id = ? ORDER BY created_at DESC, id DESC",
     )
     .all<RequestRow>(org);
+  const access = view === "all" ? await loadOrganizationAccess(db, org, viewerId) : null;
+  const orgWideView = access?.allows("approval.view") ?? false;
+  if (view === "all" && access && !orgWideView && !access.catalog.some((item) => access.allows("approval.view", item)))
+    throw new OrganizationPermissionError("ACTION_FORBIDDEN", 403, "没有查看全部申请的权限");
   const items = [];
   for (const row of rows) {
     const state = await stageState(db, org, row);
@@ -639,6 +671,11 @@ export async function listGrantRequests(
       : row.status === "pending" && !state.paused && state.node?.mode === "sequence" && state.qualified.find((id) => !state.decisions.some((item) => item.stageIndex === Number(row.stage_index) && item.userId === id)) === viewerId;
     if (view === "mine" && !mine) continue;
     if (view === "todo" && !todo) continue;
+    if (view === "all" && !orgWideView) {
+      const targets = snapshotOf(row).targets;
+      const covered = targets.length > 0 && targets.every((target) => access?.allows("approval.view", target));
+      if (!mine && !covered) continue;
+    }
     items.push(await presentRequest(db, org, row, viewerId, state, todo));
   }
   return { items };
@@ -687,24 +724,56 @@ async function presentRequest(
   };
 }
 
-export async function readGrantRequest(db: EnvmanDatabase, org: string, requestId: string, viewerId: string, canViewAll: boolean) {
+export async function readGrantRequest(db: EnvmanDatabase, org: string, requestId: string, viewerId: string) {
   const row = await db
     .prepare("SELECT * FROM organization_grant_requests WHERE organization_id = ? AND id = ?")
     .get<RequestRow>(org, requestId);
   if (!row) throw new OrganizationPermissionError("NOT_FOUND", 404, "申请不存在");
   const state = await stageState(db, org, row);
   const todo = row.status === "pending" && state.qualified.includes(viewerId);
-  if (row.requester_id !== viewerId && !todo && !canViewAll)
+  const access = await loadOrganizationAccess(db, org, viewerId);
+  const targets = snapshotOf(row).targets;
+  const covered = access.allows("approval.view") || (targets.length > 0 && targets.every((target) => access.allows("approval.view", target)));
+  if (row.requester_id !== viewerId && !todo && !covered)
     throw new OrganizationPermissionError("NOT_FOUND", 404, "申请不存在或无权查看");
   return presentRequest(db, org, row, viewerId, state, todo && !state.paused);
+}
+
+async function activeMember(db: EnvmanDatabase, org: string, userId: string) {
+  return db
+    .prepare(
+      `SELECT u.id, u.username FROM organization_members m JOIN admin_users u ON u.id = m.user_id
+       WHERE m.organization_id = ? AND m.user_id = ? AND u.status = 'active'`,
+    )
+    .get<{ id: string; username: string }>(org, userId);
+}
+
+async function assertClosedDecision(db: EnvmanDatabase, org: string, row: RequestRow, actorId: string, decision: "approve" | "reject") {
+  const member = await activeMember(db, org, actorId);
+  const nodes = nodesOf(row).filter((node) => human.has(node.mode) && node.resolvedApproverIds.includes(actorId));
+  if (!member || !nodes.length)
+    throw new OrganizationPermissionError("APPROVER_REQUIRED", 403, "当前节点没有你的有效审批资格");
+  const access = await loadOrganizationAccess(db, org, actorId);
+  const allowed = decision === "approve"
+    ? coversApproval(access, "approval.approve", snapshotOf(row).targets)
+    : coversApproval(access, "approval.reject", snapshotOf(row).targets);
+  if (!allowed)
+    throw new OrganizationPermissionError("APPROVAL_DECISION_FORBIDDEN", 403, decision === "approve" ? "没有当前范围的审批通过权限" : "没有当前范围的审批拒绝权限");
+}
+
+async function assertClosedWithdraw(db: EnvmanDatabase, org: string, row: RequestRow, actorId: string) {
+  const member = await activeMember(db, org, actorId);
+  if (!member || row.requester_id !== actorId)
+    throw new OrganizationPermissionError("REQUEST_NOT_WITHDRAWABLE", 403, "只能撤回自己的待审批申请");
 }
 
 async function mutateRequest(
   db: EnvmanDatabase,
   org: string,
   requestId: string,
-  _actorId: string,
+  onClosed: (row: RequestRow) => Promise<void>,
   change: (row: RequestRow) => Promise<{ status: string; stage: number; decisions: unknown[]; grantIds?: string[]; blockReason?: string } | { done: true }>,
+  record: (row: RequestRow, outcome: { status: string; grantIds: string[]; blockReason: string }) => Promise<void>,
 ) {
   return db.transaction(async () => {
     await db.prepare("UPDATE organizations SET updated_at = updated_at WHERE id = ?").run(org);
@@ -712,15 +781,20 @@ async function mutateRequest(
       .prepare("SELECT * FROM organization_grant_requests WHERE organization_id = ? AND id = ?")
       .get<RequestRow>(org, requestId);
     if (!row) throw new OrganizationPermissionError("NOT_FOUND", 404, "申请不存在");
-    if (row.status !== "pending")
+    if (row.status !== "pending") {
+      await onClosed(row);
       return {
         status: row.status,
         grantIds: parse<string[]>(row.grant_ids_json, []),
         already: true,
         blockReason: row.block_reason || "",
       };
+    }
     const next = await change(row);
-    if ("done" in next) return { status: row.status, grantIds: parse<string[]>(row.grant_ids_json, []), already: true, blockReason: row.block_reason || "" };
+    if ("done" in next) {
+      await onClosed(row);
+      return { status: row.status, grantIds: parse<string[]>(row.grant_ids_json, []), already: true, blockReason: row.block_reason || "" };
+    }
     const grantIds = next.grantIds ?? parse<string[]>(row.grant_ids_json, []);
     const changed = await db
       .prepare(
@@ -739,7 +813,9 @@ async function mutateRequest(
       );
     if (!changed.changes)
       throw new OrganizationPermissionError("REQUEST_CHANGED", 409, "申请已被其他操作处理");
-    return { status: next.status, grantIds, already: false, blockReason: next.blockReason ?? "" };
+    const outcome = { status: next.status, grantIds, already: false, blockReason: next.blockReason ?? "" };
+    await record(row, outcome);
+    return outcome;
   })();
 }
 
@@ -752,7 +828,7 @@ export async function decideGrantRequest(
   comment: string,
 ) {
   const actorId = actor.id ?? "";
-  const result = await mutateRequest(db, org, requestId, actorId, async (row) => {
+  const result = await mutateRequest(db, org, requestId, (row) => assertClosedDecision(db, org, row, actorId, decision), async (row) => {
     const state = await stageState(db, org, row);
     if (state.paused)
       throw new OrganizationPermissionError("APPROVAL_PAUSED", 409, state.reason);
@@ -809,7 +885,7 @@ export async function decideGrantRequest(
       .get(org, row.requester_id);
     if (!member) throw new OrganizationPermissionError("REQUESTER_INACTIVE", 409, "申请人已经不是有效组织成员");
     try {
-      const grantIds = await grantApproved(db, org, row.requester_id, row.kind, snapshot, row.id, serverNow(), row.role_id);
+      const grantIds = await grantApproved(db, org, row.requester_id, row.kind, snapshot, row.id, serverNow(), row.role_id, await resolveLedgerActor(db, actor), comment || decision);
       return { status: "approved", stage, decisions, grantIds };
     } catch (error) {
       if (
@@ -825,14 +901,17 @@ export async function decideGrantRequest(
         };
       throw error;
     }
-  });
-  if (!result.already) {
-    const action = result.status === "approved" ? "审批通过" : result.status === "rejected" ? "审批拒绝" : result.blockReason ? "审批未生效" : "节点通过";
-    await recordGrantLedger(db, org, actor, action, comment || decision, {
+  }, async (row, outcome) => {
+    const action = outcome.status === "approved" ? "审批通过" : outcome.status === "rejected" ? "审批拒绝" : outcome.blockReason ? "审批未生效" : "节点通过";
+    await recordGrantLedger(db, org, await resolveLedgerActor(db, actor), action, comment || decision, {
+      before: { status: row.status, stageIndex: Number(row.stage_index) },
+      after: { status: outcome.status, grantIds: outcome.grantIds, blockReason: outcome.blockReason, source: "request" },
+      targets: snapshotOf(row).targets,
       requestId,
-      after: result,
+      grantId: outcome.grantIds[0] ?? null,
+      channel: "request",
     });
-  }
+  });
   return result;
 }
 
@@ -844,15 +923,21 @@ export async function withdrawGrantRequest(
   reason: string,
 ) {
   const actorId = actor.id ?? "";
-  const result = await mutateRequest(db, org, requestId, actorId, async (row) => {
+  const result = await mutateRequest(db, org, requestId, (row) => assertClosedWithdraw(db, org, row, actorId), async (row) => {
     if (row.requester_id !== actorId)
       throw new OrganizationPermissionError("REQUEST_NOT_WITHDRAWABLE", 403, "只能撤回自己的待审批申请");
     const decisions = parse<unknown[]>(row.decisions_json, []);
     decisions.push({ decision: "withdraw", userId: actor.id, at: new Date().toISOString(), comment: reason });
     return { status: "withdrawn", stage: Number(row.stage_index), decisions };
+  }, async (row, outcome) => {
+    await recordGrantLedger(db, org, await resolveLedgerActor(db, actor), "撤回授权申请", reason, {
+      before: { status: row.status, stageIndex: Number(row.stage_index) },
+      after: { status: outcome.status, source: "request" },
+      targets: snapshotOf(row).targets,
+      requestId,
+      channel: "request",
+    });
   });
-  if (!result.already)
-    await recordGrantLedger(db, org, actor, "撤回授权申请", reason, { requestId, after: result });
   return result;
 }
 
@@ -942,24 +1027,37 @@ export async function roleNamesByMember(db: EnvmanDatabase, org: string, now = s
   return names;
 }
 
-export async function listGrantLedger(db: EnvmanDatabase, org: string) {
+export async function listGrantLedger(db: EnvmanDatabase, org: string, viewerId: string, exporting = false) {
+  const access = await loadOrganizationAccess(db, org, viewerId);
+  if (exporting && !access.allows("audit.export"))
+    throw new OrganizationPermissionError("ACTION_FORBIDDEN", 403, "没有导出台账的权限");
+  const orgWide = access.allows("audit.view") || access.allows("approval.view") || access.allows("authorization.view");
+  const targetVisible = (target: ResourceRef) => access.allows("audit.view", target) || access.allows("approval.view", target);
+  if (!orgWide && !access.catalog.some((item) => targetVisible(item)))
+    throw new OrganizationPermissionError("ACTION_FORBIDDEN", 403, "没有查看台账的权限");
   const rows = await db
     .prepare(
       "SELECT * FROM organization_grant_ledger WHERE organization_id = ? ORDER BY created_at DESC, id DESC",
     )
     .all<Record<string, unknown>>(org);
   return {
-    items: rows.map((row) => ({
-      id: row.id,
-      actorId: row.actor_id,
-      actorName: row.actor_name,
-      action: row.action,
-      reason: row.reason,
-      targets: parse<ResourceRef[]>(row.target_refs_json, []),
-      requestId: row.request_id,
-      grantId: row.grant_id,
-      channel: row.channel,
-      createdAt: row.created_at,
-    })),
+    items: rows.flatMap((row) => {
+      const targets = parse<ResourceRef[]>(row.target_refs_json, []);
+      if (!orgWide && (targets.length === 0 || !targets.every((target) => targetVisible(target)))) return [];
+      return [{
+        id: row.id,
+        actorId: row.actor_id,
+        actorName: row.actor_name,
+        action: row.action,
+        reason: row.reason,
+        before: parse<unknown>(row.before_json, null),
+        after: parse<unknown>(row.after_json, null),
+        targets,
+        requestId: row.request_id,
+        grantId: row.grant_id,
+        channel: row.channel,
+        createdAt: row.created_at,
+      }];
+    }),
   };
 }

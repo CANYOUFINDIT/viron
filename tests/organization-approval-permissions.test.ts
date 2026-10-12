@@ -475,4 +475,175 @@ describe("approval permission boundaries", () => {
     expect(sequenceStillOpen.json()).toMatchObject({ status: "pending" });
     expect(sequenceStillOpen.json().nodes[0].approverIds).toEqual([approver.userId, narrowed.userId]);
   });
+
+  it("rolls back approval and withdrawal with the ledger, and rejects closed requests from other members", async () => {
+    const f = await fixture();
+    const applicant = await f.person("atomic-applicant");
+    const approver = await f.person("atomic-approver");
+    const outsider = await f.person("atomic-outsider");
+    await f.assign(approver.userId, ["approval.approve", "approval.reject"], "organization");
+    await f.assign(outsider.userId, ["approval.workflow"], "organization");
+    const held = await f.assign(applicant.userId, ["ssh.view"], "resources", [{ type: "ssh_connection", id: f.sshA }]);
+    const flow = await f.app.inject({
+      method: "POST",
+      url: f.base + "/approval-flows",
+      cookies: f.cookies,
+      payload: { name: "原子流程", nodes: [node("审批", "any", [approver.userId])], targets: [{ type: "ssh_connection", id: f.sshA }] },
+    });
+    expect(flow.statusCode, flow.body).toBe(201);
+    const submit = () => f.app.inject({
+      method: "POST",
+      url: f.base + "/grant-requests",
+      cookies: applicant.cookies,
+      payload: { kind: "data", roleId: held.roleId, targets: [{ type: "ssh_connection", id: f.sshA }], durationMs: 3_600_000, reason: "原子验收" },
+    });
+    const originalPrepare = f.db.prepare.bind(f.db);
+    async function failLedger(action: string, requestId: string, call: () => Promise<{ statusCode: number; body: string; json: () => { status?: string } }>) {
+      f.db.prepare = ((sql: string) => {
+        const statement = originalPrepare(sql);
+        if (!sql.includes("INSERT INTO organization_grant_ledger")) return statement;
+        return {
+          ...statement,
+          run: async (...values: unknown[]) => {
+            if (values[4] === action) throw new Error("fictional acceptance ledger failure");
+            return statement.run(...values);
+          },
+        };
+      }) as typeof f.db.prepare;
+      try {
+        const result = await call();
+        const detail = await f.app.inject({ method: "GET", url: `${f.base}/grant-requests/${requestId}`, cookies: applicant.cookies });
+        const grants = await originalPrepare("SELECT id FROM organization_role_data_grants WHERE request_id = ?").all(requestId);
+        expect(result.statusCode, result.body).toBe(500);
+        expect(detail.json().status).toBe("pending");
+        expect(grants).toHaveLength(0);
+      } finally {
+        f.db.prepare = originalPrepare;
+      }
+    }
+    const approveTarget = await submit();
+    expect(approveTarget.statusCode, approveTarget.body).toBe(201);
+    await failLedger("审批通过", approveTarget.json().id, () => f.app.inject({
+      method: "POST",
+      url: `${f.base}/grant-requests/${approveTarget.json().id}/decision`,
+      cookies: approver.cookies,
+      payload: { decision: "approve", comment: "故障" },
+    }));
+    const withdrawTarget = await submit();
+    await failLedger("撤回授权申请", withdrawTarget.json().id, () => f.app.inject({
+      method: "POST",
+      url: `${f.base}/grant-requests/${withdrawTarget.json().id}/withdraw`,
+      cookies: applicant.cookies,
+      payload: { reason: "故障" },
+    }));
+
+    const [approved, withdrawn] = [await submit(), await submit()];
+    const approvedOnce = await f.app.inject({
+      method: "POST",
+      url: `${f.base}/grant-requests/${approved.json().id}/decision`,
+      cookies: approver.cookies,
+      payload: { decision: "approve", comment: "通过" },
+    });
+    expect(approvedOnce.statusCode, approvedOnce.body).toBe(200);
+    const repeated = await f.app.inject({
+      method: "POST",
+      url: `${f.base}/grant-requests/${approved.json().id}/decision`,
+      cookies: approver.cookies,
+      payload: { decision: "approve", comment: "重复" },
+    });
+    expect(repeated.json()).toMatchObject({ already: true, status: "approved" });
+    expect(await f.db.prepare("SELECT id FROM organization_role_data_grants WHERE request_id = ?").all(approved.json().id)).toHaveLength(1);
+    const withdrawnOnce = await f.app.inject({
+      method: "POST",
+      url: `${f.base}/grant-requests/${withdrawn.json().id}/withdraw`,
+      cookies: applicant.cookies,
+      payload: { reason: "撤回" },
+    });
+    expect(withdrawnOnce.json()).toMatchObject({ status: "withdrawn", grantIds: [] });
+    const withdrawnAgain = await f.app.inject({
+      method: "POST",
+      url: `${f.base}/grant-requests/${withdrawn.json().id}/withdraw`,
+      cookies: applicant.cookies,
+      payload: { reason: "再撤回" },
+    });
+    expect(withdrawnAgain.json()).toMatchObject({ already: true, status: "withdrawn" });
+    expect(await f.db.prepare("SELECT id FROM organization_role_data_grants WHERE request_id = ?").all(withdrawn.json().id)).toHaveLength(0);
+    for (const requestId of [approved.json().id, withdrawn.json().id]) {
+      const decision = await f.app.inject({
+        method: "POST",
+        url: `${f.base}/grant-requests/${requestId}/decision`,
+        cookies: outsider.cookies,
+        payload: { decision: "approve", comment: "越权" },
+      });
+      const withdraw = await f.app.inject({
+        method: "POST",
+        url: `${f.base}/grant-requests/${requestId}/withdraw`,
+        cookies: outsider.cookies,
+        payload: { reason: "越权" },
+      });
+      expect([403, 404]).toContain(decision.statusCode);
+      expect([403, 404]).toContain(withdraw.statusCode);
+    }
+    const ledger = await f.db.prepare("SELECT actor_id, actor_name, action, before_json, after_json, channel FROM organization_grant_ledger WHERE request_id = ?").all<{ actor_id: string; actor_name: string; action: string; before_json: string; after_json: string; channel: string }>(approved.json().id);
+    const approval = ledger.find((row) => row.action === "审批通过");
+    const generated = ledger.find((row) => row.action === "生成数据授权");
+    expect(approval).toMatchObject({ actor_id: approver.userId, channel: "request" });
+    expect(approval?.actor_name).not.toBe(approver.userId);
+    expect(approval?.actor_name.length).toBeGreaterThan(0);
+    expect(JSON.parse(approval!.before_json).status).toBe("pending");
+    expect(JSON.parse(approval!.after_json).status).toBe("approved");
+    expect(generated?.actor_id).toBe(approver.userId);
+    expect(JSON.stringify(ledger)).not.toMatch(/password|ciphertext|fake-password/i);
+
+    const racing = await submit();
+    const [raceApprove, raceWithdraw] = await Promise.all([
+      f.app.inject({ method: "POST", url: `${f.base}/grant-requests/${racing.json().id}/decision`, cookies: approver.cookies, payload: { decision: "approve", comment: "并发" } }),
+      f.app.inject({ method: "POST", url: `${f.base}/grant-requests/${racing.json().id}/withdraw`, cookies: applicant.cookies, payload: { reason: "并发" } }),
+    ]);
+    expect([raceApprove.statusCode, raceWithdraw.statusCode].every((code) => code === 200 || code === 403 || code === 409)).toBe(true);
+    const finalRow = await f.db.prepare("SELECT status FROM organization_grant_requests WHERE id = ?").get<{ status: string }>(racing.json().id);
+    const raceGrants = await f.db.prepare("SELECT id FROM organization_role_data_grants WHERE request_id = ?").all(racing.json().id);
+    expect(["approved", "withdrawn"]).toContain(finalRow?.status);
+    expect(raceGrants).toHaveLength(finalRow?.status === "approved" ? 1 : 0);
+  });
+
+  it("filters request and ledger reads by the viewer's resource scope", async () => {
+    const f = await fixture();
+    const applicant = await f.person("scope-applicant");
+    const viewer = await f.person("scope-viewer");
+    const held = await f.assign(applicant.userId, ["ssh.view"], "resources", [{ type: "ssh_connection", id: f.sshA }, { type: "ssh_connection", id: f.sshB }]);
+    await f.assign(viewer.userId, ["approval.view", "audit.view"], "resources", [{ type: "ssh_connection", id: f.sshA }]);
+    const submit = (id: string, reason: string) => f.app.inject({
+      method: "POST",
+      url: f.base + "/grant-requests",
+      cookies: applicant.cookies,
+      payload: { kind: "data", roleId: held.roleId, targets: [{ type: "ssh_connection", id }], durationMs: 3_600_000, reason },
+    });
+    const onA = await submit(f.sshA, "范围内申请");
+    const onB = await submit(f.sshB, "范围外申请");
+    expect(onA.statusCode, onA.body).toBe(201);
+    expect(onB.statusCode, onB.body).toBe(201);
+    const all = await f.app.inject({ method: "GET", url: f.base + "/grant-requests?view=all", cookies: viewer.cookies });
+    expect(all.statusCode, all.body).toBe(200);
+    const ids = all.json().items.map((item: { id: string }) => item.id);
+    expect(ids).toContain(onA.json().id);
+    expect(ids).not.toContain(onB.json().id);
+    expect((await f.app.inject({ method: "GET", url: `${f.base}/grant-requests/${onA.json().id}`, cookies: viewer.cookies })).statusCode).toBe(200);
+    expect((await f.app.inject({ method: "GET", url: `${f.base}/grant-requests/${onB.json().id}`, cookies: viewer.cookies })).statusCode).toBe(404);
+    const mine = await f.app.inject({ method: "GET", url: f.base + "/grant-requests?view=mine", cookies: applicant.cookies });
+    expect(mine.json().items.map((item: { id: string }) => item.id)).toEqual(expect.arrayContaining([onA.json().id, onB.json().id]));
+    expect((await f.app.inject({ method: "GET", url: `${f.base}/grant-requests/${onB.json().id}`, cookies: applicant.cookies })).statusCode).toBe(200);
+    const ledger = await f.app.inject({ method: "GET", url: f.base + "/grant-ledger", cookies: viewer.cookies });
+    expect(ledger.statusCode, ledger.body).toBe(200);
+    expect(ledger.json().items.some((item: { requestId: string }) => item.requestId === onA.json().id)).toBe(true);
+    expect(ledger.json().items.some((item: { requestId: string }) => item.requestId === onB.json().id)).toBe(false);
+    expect((await f.app.inject({ method: "GET", url: f.base + "/grant-ledger?export=1", cookies: viewer.cookies })).statusCode).toBe(403);
+    await f.assign(viewer.userId, ["audit.export"], "organization");
+    const exported = await f.app.inject({ method: "GET", url: f.base + "/grant-ledger?export=1", cookies: viewer.cookies });
+    expect(exported.statusCode, exported.body).toBe(200);
+    expect(exported.json().items.some((item: { requestId: string }) => item.requestId === onA.json().id)).toBe(true);
+    expect(exported.json().items.some((item: { requestId: string }) => item.requestId === onB.json().id)).toBe(false);
+    const adminLedger = await f.app.inject({ method: "GET", url: f.base + "/grant-ledger", cookies: f.cookies });
+    expect(adminLedger.json().items.some((item: { requestId: string }) => item.requestId === onB.json().id)).toBe(true);
+  });
 });

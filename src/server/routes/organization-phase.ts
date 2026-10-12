@@ -80,7 +80,7 @@ export async function registerOrganizationPhaseRoutes(app: FastifyInstance): Pro
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof OrganizationPermissionError)
       return reply.code(error.statusCode).send({ error: error.code, message: error.message });
-    return reply.send(error);
+    return reply.code(500).send({ error: "REQUEST_FAILED", message: "操作没有完成" });
   });
 
   app.get<{ Params: { id: string }; Querystring: { projectId?: string } }>(
@@ -161,21 +161,13 @@ export async function registerOrganizationPhaseRoutes(app: FastifyInstance): Pro
     async (request, reply) => {
       if (!workspaceReady(request, reply, request.params.id)) return;
       const view = request.query.view ?? "mine";
-      if (view === "all" && !request.admin!.organizationAccess?.allows("approval.view"))
-        return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有查看全部申请的权限" });
       return listGrantRequests(app.db, request.params.id, request.admin!.id, view);
     },
   );
 
   app.get<{ Params: { id: string; requestId: string } }>("/api/v1/organizations/:id/grant-requests/:requestId", async (request, reply) => {
     if (!workspaceReady(request, reply, request.params.id)) return;
-    return readGrantRequest(
-      app.db,
-      request.params.id,
-      request.params.requestId,
-      request.admin!.id,
-      Boolean(request.admin!.organizationAccess?.allows("approval.view")),
-    );
+    return readGrantRequest(app.db, request.params.id, request.params.requestId, request.admin!.id);
   });
 
   app.post<{ Params: { id: string; requestId: string } }>("/api/v1/organizations/:id/grant-requests/:requestId/decision", async (request, reply) => {
@@ -199,12 +191,10 @@ export async function registerOrganizationPhaseRoutes(app: FastifyInstance): Pro
     return reviseGrantRequest(app.db, request.params.id, request.params.requestId, request.admin!, body);
   });
 
-  app.get<{ Params: { id: string } }>("/api/v1/organizations/:id/grant-ledger", async (request, reply) => {
+  app.get<{ Params: { id: string }; Querystring: { export?: string } }>("/api/v1/organizations/:id/grant-ledger", async (request, reply) => {
     if (!workspaceReady(request, reply, request.params.id)) return;
-    const access = request.admin!.organizationAccess;
-    if (!access?.allows("audit.view") && !access?.allows("approval.view") && !access?.allows("authorization.view"))
-      return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有查看台账的权限" });
-    return listGrantLedger(app.db, request.params.id);
+    const exporting = request.query.export === "1" || request.query.export === "true";
+    return listGrantLedger(app.db, request.params.id, request.admin!.id, exporting);
   });
 
   app.get<{ Querystring: { environmentId?: string } }>("/api/v1/web-plugin-policy", async (request) => {
