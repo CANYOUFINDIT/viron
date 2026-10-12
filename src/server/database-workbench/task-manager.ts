@@ -4,29 +4,19 @@ import { basename, dirname, extname, join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import type { RowDataPacket } from "mysql2/promise";
 import { executeDatabaseSync, type DatabaseSyncOptions } from "../../database-sync.js";
+import { databaseSqlActions } from "../../shared/access-permissions.js";
+import { databaseTaskAccessPlan, type DatabaseTaskAccessPlan, type DatabaseTaskAction } from "../../shared/database-task-access.js";
 import type { AuthenticatedUser, WorkspaceType } from "../access-control.js";
+import { getWorkspaceAccess } from "../access-control.js";
 import { writeAudit } from "../audit.js";
+import { executionDecision, type ExecutionChannel } from "../organization-boundary.js";
 import { connectDatabase, type ConnectedDatabase } from "./connector.js";
+
+export type { DatabaseTaskAccessPlan, DatabaseTaskAction };
+export { databaseTaskAccessPlan };
 
 export type DatabaseTaskType = "backup" | "restore" | "transfer" | "import";
 export type DatabaseTaskStatus = "pending" | "running" | "success" | "error" | "cancelled";
-
-export interface DatabaseTaskAccessPlan {
-  operations: Array<"read" | "write" | "ddl" | "export">;
-  targetConnectionId: string | null;
-  targetOperations: Array<"read" | "write" | "ddl" | "export">;
-}
-
-export function databaseTaskAccessPlan(type: DatabaseTaskType, details: Record<string, unknown>): DatabaseTaskAccessPlan {
-  const targetConnectionId = typeof details.targetConnectionId === "string" ? details.targetConnectionId : null;
-  if (type === "backup") return { operations: ["export", "write"], targetConnectionId: null, targetOperations: [] };
-  if (type === "restore") return { operations: ["ddl", "write"], targetConnectionId: null, targetOperations: [] };
-  if (type === "import" || !targetConnectionId) return { operations: ["write"], targetConnectionId: null, targetOperations: [] };
-  // Transfer and sync read the source. CREATE/DROP and INSERT/UPDATE/DELETE run on the target.
-  const targetOperations: DatabaseTaskAccessPlan["targetOperations"] = ["read", "ddl"];
-  if (details.syncMode === "data" || details.includeData === true) targetOperations.push("write");
-  return { operations: ["read", "write"], targetConnectionId, targetOperations };
-}
 
 interface DatabaseTask {
   id: string;
@@ -34,6 +24,8 @@ interface DatabaseTask {
   executionScope: string | null;
   workspaceType: WorkspaceType;
   workspaceId: string;
+  workspaceRole: AuthenticatedUser["workspace"]["role"];
+  channel: ExecutionChannel;
   type: DatabaseTaskType;
   connectionId: string | null;
   accessPlan: DatabaseTaskAccessPlan;
@@ -50,7 +42,7 @@ interface DatabaseTask {
   active: Set<ConnectedDatabase>;
 }
 
-export interface PublicDatabaseTask extends Omit<DatabaseTask, "active" | "outputPath" | "ownerId" | "executionScope" | "workspaceType" | "workspaceId" | "accessPlan"> {
+export interface PublicDatabaseTask extends Omit<DatabaseTask, "active" | "outputPath" | "ownerId" | "executionScope" | "workspaceType" | "workspaceId" | "workspaceRole" | "channel" | "accessPlan"> {
   downloadable: boolean;
   outputFilename: string | null;
 }
@@ -163,6 +155,8 @@ export class DatabaseTaskManager {
         executionScope: null,
         workspaceType: "personal",
         workspaceId: String(row.owner_user_id ?? ""),
+        workspaceRole: "owner",
+        channel: "manual",
         type: row.type as DatabaseTaskType,
         connectionId: row.connection_id ? String(row.connection_id) : null,
         accessPlan: databaseTaskAccessPlan(row.type as DatabaseTaskType, details),
@@ -183,19 +177,20 @@ export class DatabaseTaskManager {
     }
   }
 
-  async createBackup(user: AuthenticatedUser, connectionId: string, database: string, executionScope: string | null = null, includeData = true): Promise<PublicDatabaseTask> {
-    const task = await this.createTask(user, "backup", connectionId, `${includeData ? "备份" : "备份结构"} ${database}`, { database, includeData }, executionScope);
+  async createBackup(user: AuthenticatedUser, connectionId: string, database: string, executionScope: string | null = null, includeData = true, channel: ExecutionChannel = "manual"): Promise<PublicDatabaseTask> {
+    const task = await this.createTask(user, "backup", connectionId, `${includeData ? "备份" : "备份结构"} ${database}`, { database, includeData }, executionScope, channel);
     void this.run(task, () => this.backup(task, connectionId, database, includeData));
     return this.publicTask(task);
   }
 
-  async createRestore(user: AuthenticatedUser, connectionId: string, database: string, inputPath: string, originalFilename: string, executionScope: string | null = null): Promise<PublicDatabaseTask> {
-    const task = await this.createTask(user, "restore", connectionId, `恢复 ${database}`, { database, originalFilename }, executionScope);
+  async createRestore(user: AuthenticatedUser, connectionId: string, database: string, inputPath: string, originalFilename: string, executionScope: string | null = null, channel: ExecutionChannel = "manual"): Promise<PublicDatabaseTask> {
+    const sql = await readFile(inputPath, "utf8").catch(() => "");
+    const task = await this.createTask(user, "restore", connectionId, `恢复 ${database}`, { database, originalFilename, restoreActions: databaseSqlActions(sql) }, executionScope, channel);
     void this.run(task, () => this.restore(task, connectionId, database, inputPath));
     return this.publicTask(task);
   }
 
-  async createTransfer(user: AuthenticatedUser, options: TransferOptions, executionScope: string | null = null): Promise<PublicDatabaseTask> {
+  async createTransfer(user: AuthenticatedUser, options: TransferOptions, executionScope: string | null = null, channel: ExecutionChannel = "manual"): Promise<PublicDatabaseTask> {
     const task = await this.createTask(user, "transfer", options.sourceConnectionId, `迁移 ${options.sourceDatabase} → ${options.targetDatabase}`, {
       sourceDatabase: options.sourceDatabase,
       targetDatabase: options.targetDatabase,
@@ -205,12 +200,12 @@ export class DatabaseTaskManager {
       includeObjects: options.includeObjects,
       dropExisting: options.dropExisting,
       tableCount: options.tables?.length ?? null,
-    }, executionScope);
+    }, executionScope, channel);
     void this.run(task, () => this.transfer(task, options));
     return this.publicTask(task);
   }
 
-  async createSync(user: AuthenticatedUser, options: SyncTaskOptions, executionScope: string | null = null): Promise<PublicDatabaseTask> {
+  async createSync(user: AuthenticatedUser, options: SyncTaskOptions, executionScope: string | null = null, channel: ExecutionChannel = "manual"): Promise<PublicDatabaseTask> {
     const label = options.mode === "data" ? "数据同步" : "结构同步";
     const task = await this.createTask(user, "transfer", options.sourceConnectionId, `${label} ${options.sourceDatabase} → ${options.targetDatabase}`, {
       syncMode: options.mode,
@@ -220,7 +215,7 @@ export class DatabaseTaskManager {
       selectedCount: options.selectedItems.length,
       data: options.data,
       structure: options.structure,
-    }, executionScope);
+    }, executionScope, channel);
     void this.run(task, () => this.sync(task, options));
     return this.publicTask(task);
   }
@@ -276,6 +271,8 @@ export class DatabaseTaskManager {
       executionScope: null,
       workspaceType: source.workspaceType,
       workspaceId: source.workspaceId,
+      workspaceRole: source.workspaceRole,
+      channel: source.channel,
       type: "backup",
       connectionId: source.connectionId,
       accessPlan: databaseTaskAccessPlan("backup", details),
@@ -376,10 +373,10 @@ export class DatabaseTaskManager {
     }));
   }
 
-  private async createTask(user: AuthenticatedUser, type: DatabaseTaskType, connectionId: string | null, title: string, details: Record<string, unknown>, executionScope: string | null): Promise<DatabaseTask> {
+  private async createTask(user: AuthenticatedUser, type: DatabaseTaskType, connectionId: string | null, title: string, details: Record<string, unknown>, executionScope: string | null, channel: ExecutionChannel): Promise<DatabaseTask> {
     const active = [...this.tasks.values()].filter((task) => ["pending", "running"].includes(task.status)).length;
     if (active >= 3) throw new Error("数据库后台任务已达到 3 个并发上限");
-    const task: DatabaseTask = { id: randomUUID(), ownerId: user.id, executionScope, workspaceType: user.workspace.type, workspaceId: user.workspace.id, type, connectionId, accessPlan: databaseTaskAccessPlan(type, details), status: "pending", progress: 0, title, details, logs: [], outputPath: null, error: "", createdAt: new Date().toISOString(), active: new Set() };
+    const task: DatabaseTask = { id: randomUUID(), ownerId: user.id, executionScope, workspaceType: user.workspace.type, workspaceId: user.workspace.id, workspaceRole: user.workspace.role, channel, type, connectionId, accessPlan: databaseTaskAccessPlan(type, details), status: "pending", progress: 0, title, details, logs: [], outputPath: null, error: "", createdAt: new Date().toISOString(), active: new Set() };
     this.tasks.set(task.id, task);
     await this.persist(task, true);
     return task;
@@ -420,9 +417,52 @@ export class DatabaseTaskManager {
     }
   }
 
-  private async connect(task: DatabaseTask, connectionId: string, database?: string): Promise<ConnectedDatabase> {
+  private async operationsAllowed(task: DatabaseTask, connectionId: string, operations: readonly DatabaseTaskAction[]): Promise<boolean> {
+    if (task.status === "cancelled") return false;
+    if (task.workspaceType !== "organization") return task.workspaceRole === "owner";
+    const access = await getWorkspaceAccess(this.app.db, {
+      id: task.ownerId,
+      username: "",
+      isPlatformAdmin: false,
+      workspace: { type: "organization", id: task.workspaceId, name: "", role: task.workspaceRole === "owner" ? "member" : task.workspaceRole },
+    });
+    const organization = access.organizationAccess;
+    if (!organization) return false;
+    const target = { type: "database_connection" as const, id: connectionId };
+    const allowed = (action: DatabaseTaskAction) => {
+      const code = `database.${action}`;
+      return task.channel === "manual" ? organization.allows(code, target) : executionDecision(organization, task.channel, code, target).allowed;
+    };
+    const required = operations.length ? operations : (["read", "export", "write", "ddl"] as const);
+    if (!operations.length) return required.some((action) => allowed(action));
+    return operations.every((action) => allowed(action));
+  }
+
+  private async stopForAccess(task: DatabaseTask): Promise<void> {
+    await this.closeTask(task.id, "授权已到期");
+  }
+
+  private async connect(task: DatabaseTask, connectionId: string, operations: readonly DatabaseTaskAction[], database?: string): Promise<ConnectedDatabase> {
+    if (!await this.operationsAllowed(task, connectionId, operations)) {
+      await this.stopForAccess(task);
+      throw new Error("授权已到期");
+    }
     const connected = await connectDatabase(this.app, connectionId, database);
     task.active.add(connected);
+    if (task.status === "cancelled" || !await this.operationsAllowed(task, connectionId, operations)) {
+      await connected.close();
+      task.active.delete(connected);
+      await this.stopForAccess(task);
+      throw new Error("授权已到期");
+    }
+    const query = connected.connection.query.bind(connected.connection) as (...args: unknown[]) => Promise<unknown>;
+    connected.connection.query = (async (...args: unknown[]) => {
+      if (!await this.operationsAllowed(task, connectionId, operations)) {
+        await this.stopForAccess(task);
+        throw new Error("授权已到期");
+      }
+      return query(...args);
+    }) as ConnectedDatabase["connection"]["query"];
     return connected;
   }
 
@@ -433,7 +473,7 @@ export class DatabaseTaskManager {
     const file = await open(outputPath, "wx", 0o600);
     let connected: ConnectedDatabase | undefined;
     try {
-      connected = await this.connect(task, connectionId, database);
+      connected = await this.connect(task, connectionId, task.accessPlan.operations, database);
       const [tableRows] = await connected.connection.query<RowDataPacket[]>(`SHOW FULL TABLES FROM ${identifier(database)}`);
       const objects = tableRows.map((row) => ({ name: String(Object.values(row)[0]), type: String(Object.values(row)[1]) }));
       const [routineRows] = await connected.connection.query<RowDataPacket[]>(`SELECT ROUTINE_NAME AS name, ROUTINE_TYPE AS type FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = ? ORDER BY ROUTINE_NAME`, [database]);
@@ -510,9 +550,8 @@ export class DatabaseTaskManager {
   }
 
   private async restore(task: DatabaseTask, connectionId: string, database: string, inputPath: string): Promise<void> {
-    const connected = await this.connect(task, connectionId);
+    const connected = await this.connect(task, connectionId, task.accessPlan.operations);
     try {
-      await connected.connection.query(`CREATE DATABASE IF NOT EXISTS ${identifier(database)}`);
       await connected.connection.query(`USE ${identifier(database)}`);
       const content = await readFile(inputPath, "utf8");
       const statements = splitSql(content);
@@ -532,10 +571,10 @@ export class DatabaseTaskManager {
   }
 
   private async transfer(task: DatabaseTask, options: TransferOptions): Promise<void> {
-    const source = await this.connect(task, options.sourceConnectionId, options.sourceDatabase);
-    const target = await this.connect(task, options.targetConnectionId);
+    const source = await this.connect(task, options.sourceConnectionId, task.accessPlan.operations, options.sourceDatabase);
+    const target = await this.connect(task, options.targetConnectionId, task.accessPlan.targetOperations);
     try {
-      await target.connection.query(`CREATE DATABASE IF NOT EXISTS ${identifier(options.targetDatabase)}`);
+      if (options.includeStructure) await target.connection.query(`CREATE DATABASE IF NOT EXISTS ${identifier(options.targetDatabase)}`);
       await target.connection.query(`USE ${identifier(options.targetDatabase)}`);
       await target.connection.query("SET FOREIGN_KEY_CHECKS=0");
       const [rows] = await source.connection.query<RowDataPacket[]>(`
@@ -633,9 +672,9 @@ export class DatabaseTaskManager {
   }
 
   private async sync(task: DatabaseTask, options: SyncTaskOptions): Promise<void> {
-    const source = await this.connect(task, options.sourceConnectionId, options.sourceDatabase);
+    const source = await this.connect(task, options.sourceConnectionId, task.accessPlan.operations, options.sourceDatabase);
     try {
-      const target = await this.connect(task, options.targetConnectionId);
+      const target = await this.connect(task, options.targetConnectionId, task.accessPlan.targetOperations);
       try {
         await executeDatabaseSync(source.connection, target.connection, options, options.selectedItems, {
           log: (message) => this.log(task, message),

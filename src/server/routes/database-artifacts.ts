@@ -8,6 +8,7 @@ import { parse as parseCsv } from "csv-parse/sync";
 import type { RowDataPacket } from "mysql2/promise";
 import { z } from "zod";
 import { defaultDataSyncOptions, defaultStructureSyncOptions, previewDatabaseSync } from "../../database-sync.js";
+import { databaseTaskAccessPlan, type DatabaseTaskAction } from "../../shared/database-task-access.js";
 import { canAccessConnection, type AuthenticatedUser, type WorkspaceContext } from "../access-control.js";
 import { writeAudit } from "../audit.js";
 import { connectDatabase } from "../database-workbench/connector.js";
@@ -332,6 +333,20 @@ async function generateAutomationData(app: FastifyInstance, row: AutomationRow, 
   }
 }
 
+async function allowsTaskActions(app: FastifyInstance, user: AuthenticatedUser, connectionId: string, actions: readonly DatabaseTaskAction[]): Promise<boolean> {
+  const required = actions.length ? actions : (["read", "write", "ddl", "export"] as const);
+  if (!actions.length) {
+    for (const action of required) {
+      if (await canAccessConnection(app.db, user, "database", connectionId, action)) return true;
+    }
+    return false;
+  }
+  for (const action of required) {
+    if (!await canAccessConnection(app.db, user, "database", connectionId, action)) return false;
+  }
+  return true;
+}
+
 async function executeAutomation(app: FastifyInstance, row: AutomationRow, user: AuthenticatedUser): Promise<void> {
   const logs: string[] = [];
   const advanced = JSON.parse(row.advanced_json || "{}") as Record<string, unknown>;
@@ -340,7 +355,7 @@ async function executeAutomation(app: FastifyInstance, row: AutomationRow, user:
   await app.db.prepare("UPDATE database_automation_jobs SET status = 'running', logs_json = ?, last_run_at = ?, updated_at = ? WHERE id = ?")
     .run(JSON.stringify(logs), now, now, row.id);
   try {
-    if (!await canAccessConnection(app.db, user, "database", row.connection_id)) throw new Error("无权访问批处理作业的数据库连接");
+    if (!await canAccessConnection(app.db, user, "database", row.connection_id, "read")) throw new Error("无权访问批处理作业的数据库连接");
     const works = JSON.parse(row.works_json) as AutomationWork[];
     for (const work of works) {
       logs.push(`开始：${work.name}`);
@@ -351,12 +366,21 @@ async function executeAutomation(app: FastifyInstance, row: AutomationRow, user:
         const job = await app.databaseQueries.create(user, row.connection_id, saved.sql_text, saved.database_name || row.database_name, null);
         await waitForQuery(app, job.id, user.id);
       } else if (work.type === "backup") {
+        const plan = databaseTaskAccessPlan("backup", { includeData: work.config.includeData !== false });
+        if (!await allowsTaskActions(app, user, row.connection_id, plan.operations)) throw new Error("无权访问批处理作业的数据库连接");
         const task = await app.databaseTasks.createBackup(user, row.connection_id, String(work.config.database ?? row.database_name), null, work.config.includeData !== false);
         await waitForTask(app, task.id, user.id);
       } else if (work.type === "transfer") {
         const targetConnectionId = String(work.config.targetConnectionId ?? "");
         const targetDatabase = String(work.config.targetDatabase ?? "");
-        if (!targetConnectionId || !targetDatabase || !await canAccessConnection(app.db, user, "database", targetConnectionId)) throw new Error(`数据传输“${work.name}”的目标配置无效`);
+        const transferPlan = databaseTaskAccessPlan("transfer", {
+          targetConnectionId,
+          includeStructure: work.config.includeStructure !== false,
+          includeData: work.config.includeData !== false,
+          includeObjects: work.config.includeObjects !== false,
+          dropExisting: work.config.dropExisting === true,
+        });
+        if (!targetConnectionId || !targetDatabase || !await allowsTaskActions(app, user, row.connection_id, transferPlan.operations) || !await allowsTaskActions(app, user, targetConnectionId, transferPlan.targetOperations)) throw new Error(`数据传输“${work.name}”的目标配置无效`);
         const task = await app.databaseTasks.createTransfer(user, {
           sourceConnectionId: row.connection_id,
           sourceDatabase: row.database_name,
@@ -371,9 +395,10 @@ async function executeAutomation(app: FastifyInstance, row: AutomationRow, user:
       } else if (work.type === "dataSync" || work.type === "structureSync") {
         const targetConnectionId = String(work.config.targetConnectionId ?? "");
         const targetDatabase = String(work.config.targetDatabase ?? "");
-        if (!targetConnectionId || !targetDatabase || !await canAccessConnection(app.db, user, "database", targetConnectionId)) throw new Error(`同步工作“${work.name}”的目标配置无效`);
         const mode = work.type === "dataSync" ? "data" : "structure";
         const options = { mode, sourceDatabase: row.database_name, targetDatabase, data: defaultDataSyncOptions(), structure: defaultStructureSyncOptions() } as const;
+        const syncPlan = databaseTaskAccessPlan("transfer", { ...options, syncMode: mode, targetConnectionId });
+        if (!targetConnectionId || !targetDatabase || !await allowsTaskActions(app, user, row.connection_id, syncPlan.operations) || !await allowsTaskActions(app, user, targetConnectionId, syncPlan.targetOperations)) throw new Error(`同步工作“${work.name}”的目标配置无效`);
         const [source, target] = await Promise.all([connectDatabase(app, row.connection_id, row.database_name), connectDatabase(app, targetConnectionId, targetDatabase)]);
         let selectedItems: string[];
         try {

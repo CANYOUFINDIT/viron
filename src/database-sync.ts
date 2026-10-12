@@ -877,7 +877,8 @@ export async function executeDatabaseSync(
   const selected = new Set(selectedItemIds);
   const items = preview.items.filter((item) => selected.has(item.id) && item.action !== "none").sort((left, right) => executionOrder(left) - executionOrder(right));
   if (!items.length) throw new Error("没有可执行的同步对象");
-  await targetConnection.query(`CREATE DATABASE IF NOT EXISTS ${identifier(options.targetDatabase)}`);
+  // Structure sync may create the target database. Data sync only changes rows in a database that already exists.
+  if (options.mode === "structure") await targetConnection.query(`CREATE DATABASE IF NOT EXISTS ${identifier(options.targetDatabase)}`);
   await targetConnection.query(`USE ${identifier(options.targetDatabase)}`);
 
   if (options.mode === "structure") {

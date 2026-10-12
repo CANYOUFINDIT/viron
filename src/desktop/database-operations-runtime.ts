@@ -14,6 +14,7 @@ import {
   type DatabaseSyncMode,
   type DatabaseSyncOptions,
 } from "../database-sync.js";
+import { databaseSqlActions } from "../shared/access-permissions.js";
 import type { DesktopDatabaseCredential } from "./device-identity.js";
 import {
   connectDesktopDatabase,
@@ -528,7 +529,7 @@ export class DesktopDatabaseOperationRuntime {
     await mkdir(this.uploadDirectory, { recursive: true });
     const inputPath = join(this.uploadDirectory, `${randomUUID()}.sql`);
     await writeFile(inputPath, file.data, { mode: 0o600, flag: "wx" });
-    const task = this.createTask(context, "restore", connectionId, tr("恢复 {{0}}", [database]), { database, originalFilename: file.name });
+    const task = this.createTask(context, "restore", connectionId, tr("恢复 {{0}}", [database]), { database, originalFilename: file.name, restoreActions: databaseSqlActions(file.data.toString("utf8")) });
     this.startTask(task, () => this.restore(task, connectionId, database, inputPath));
     return this.publicTask(task);
   }
@@ -746,7 +747,6 @@ export class DesktopDatabaseOperationRuntime {
   private async restore(task: DatabaseTask, connectionId: string, database: string, inputPath: string): Promise<void> {
     const connected = await this.connect(task, connectionId);
     try {
-      await connected.connection.query(`CREATE DATABASE IF NOT EXISTS ${identifier(database)}`);
       await connected.connection.query(`USE ${identifier(database)}`);
       const statements = splitSql(await readFile(inputPath, "utf8"));
       this.log(task, tr("读取 {{0}} 条 SQL 语句", [statements.length]));
@@ -768,7 +768,7 @@ export class DesktopDatabaseOperationRuntime {
     const source = await this.connect(task, options.sourceConnectionId, options.sourceDatabase);
     const target = await this.connect(task, options.targetConnectionId);
     try {
-      await target.connection.query(`CREATE DATABASE IF NOT EXISTS ${identifier(options.targetDatabase)}`);
+      if (options.includeStructure) await target.connection.query(`CREATE DATABASE IF NOT EXISTS ${identifier(options.targetDatabase)}`);
       await target.connection.query(`USE ${identifier(options.targetDatabase)}`);
       await target.connection.query("SET FOREIGN_KEY_CHECKS=0");
       const [rows] = await source.connection.query<RowDataPacket[]>(`

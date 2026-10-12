@@ -48,8 +48,9 @@ function mappedOperation(request: FastifyRequest, channel: ExecutionChannel): Ma
   if (/\/desktop\/redis-connections\/[^/]+\/envelope$/.test(path) && id)
     return operation("redis.view", "redis_connection", id);
   if (/\/database-connections\//.test(path) && id) {
-    if (/\/(table-export|backup)$/.test(path)) return operation("database.export", "database_connection", id);
-    if (/\/(restore|database-create|database-drop|table-create|table-alter|table-drop|table-rename|table-copy|schema-changes)$/.test(path))
+    if (/\/(table-export|backup)$/.test(path)) return { codes: ["database.read", "database.export"], type: "database_connection", id };
+    if (/\/restore$/.test(path)) return { codes: [], type: "database_connection", id };
+    if (/\/(database-create|database-drop|table-create|table-alter|table-drop|table-rename|table-copy|schema-changes)$/.test(path))
       return operation("database.ddl", "database_connection", id);
     if (path.includes("/queries") && request.method === "POST") {
       const sql = requestSql(request.body as { sql?: string; statements?: Array<string | { sql: string }>; queries?: Array<string | { sql?: string }> } | undefined);

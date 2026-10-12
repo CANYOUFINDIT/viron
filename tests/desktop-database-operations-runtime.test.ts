@@ -217,7 +217,9 @@ describe("desktop database operations runtime", () => {
 
     const list = await runtime.handle({ path: "/api/v1/database-tasks" }, context);
     expect(JSON.parse(list.body).items).toHaveLength(3);
-    expect(statements.some((statement) => statement.includes("CREATE DATABASE IF NOT EXISTS `restored`"))).toBe(true);
+    expect(statements.some((statement) => statement.includes("CREATE DATABASE IF NOT EXISTS `restored`"))).toBe(false);
+    expect(statements.some((statement) => statement.includes("USE `restored`"))).toBe(true);
+    expect(statements.some((statement) => statement.includes("CREATE TABLE restored_items"))).toBe(true);
     expect(statements.some((statement) => statement.includes("CREATE DATABASE IF NOT EXISTS `copied`"))).toBe(true);
     expect(statements.some((statement) => statement.includes("INSERT INTO `copied`.`items`"))).toBe(true);
     expect(reports.filter((report) => report.kind === "operation" && report.action === "table_exported")).toHaveLength(3);

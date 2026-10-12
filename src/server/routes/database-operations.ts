@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { mkdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import ExcelJS from "exceljs";
@@ -8,11 +8,14 @@ import type { RowDataPacket } from "mysql2/promise";
 import { parse as parseCsv } from "csv-parse/sync";
 import { z } from "zod";
 import { defaultDataSyncOptions, defaultStructureSyncOptions, previewDatabaseSync } from "../../database-sync.js";
+import { databaseSqlActions } from "../../shared/access-permissions.js";
+import { databaseTaskAccessPlan, type DatabaseTaskAction } from "../../shared/database-task-access.js";
 import { writeAudit } from "../audit.js";
 import { filterAsync } from "../async-utils.js";
-import { canAccessConnection } from "../access-control.js";
+import { canAccessConnection, type AuthenticatedUser } from "../access-control.js";
 import { connectDatabase } from "../database-workbench/connector.js";
 import { executionScope } from "../execution-scope.js";
+import { trustedExecutionChannel } from "../organization-boundary.js";
 import { parseBody } from "../validation.js";
 import { requireAdmin } from "./auth.js";
 
@@ -77,6 +80,31 @@ function errorMessage(error: unknown): string {
   return value.sqlMessage || value.message || String(error);
 }
 
+async function requireTaskConnection(app: FastifyInstance, user: AuthenticatedUser, reply: { code: (status: number) => { send: (body: unknown) => unknown } }, connectionId: string, actions: readonly DatabaseTaskAction[], missingMessage: string): Promise<boolean> {
+  const row = await app.db.prepare("SELECT workspace_type, workspace_id FROM database_connections WHERE id = ?").get(connectionId) as { workspace_type: string; workspace_id: string } | undefined;
+  const inWorkspace = Boolean(row && row.workspace_type === user.workspace.type && row.workspace_id === user.workspace.id);
+  const knownActions = ["read", "write", "ddl", "export"] as const;
+  let visible = false;
+  if (inWorkspace) {
+    for (const action of knownActions) {
+      if (await canAccessConnection(app.db, user, "database", connectionId, action)) { visible = true; break; }
+    }
+  }
+  if (!visible) {
+    await reply.code(404).send({ error: "NOT_FOUND", message: missingMessage });
+    return false;
+  }
+  const required = actions.length ? actions : knownActions;
+  if (!actions.length) return true;
+  for (const action of required) {
+    if (!await canAccessConnection(app.db, user, "database", connectionId, action)) {
+      await reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有这项操作权限" });
+      return false;
+    }
+  }
+  return true;
+}
+
 function worksheetCell(value: ExcelJS.CellValue): unknown {
   if (value instanceof Date) return value.toISOString();
   if (value && typeof value === "object") {
@@ -127,7 +155,9 @@ export async function registerDatabaseOperationRoutes(app: FastifyInstance): Pro
   app.addHook("preHandler", async (request, reply) => {
     if (!request.url.startsWith("/api/v1/database-connections/")) return;
     const connectionId = (request.params as { id?: string }).id;
-    const needsWrite = /\/(table-import|backup|restore|sync-preview|sync|transfer)(?:\?|$)/.test(request.url.split("?")[0] ?? "");
+    const path = request.url.split("?")[0] ?? "";
+    if (/\/(backup|restore|sync-preview|sync|transfer)$/.test(path)) return;
+    const needsWrite = /\/table-import$/.test(path);
     if (!connectionId) return;
     if (!await canAccessConnection(app.db, request.admin!, "database", connectionId)) {
       await reply.code(404).send({ error: "NOT_FOUND", message: "数据库连接不存在" });
@@ -260,7 +290,7 @@ export async function registerDatabaseOperationRoutes(app: FastifyInstance): Pro
 
   app.get<{ Params: { id: string } }>("/api/v1/database-tasks/:id/download", async (request, reply) => {
     const task = app.databaseTasks.get(request.params.id, request.admin!.id, executionScope(request));
-    if (!task || !task.connectionId || !await canAccessConnection(app.db, request.admin!, "database", task.connectionId)) return reply.code(404).send({ error: "TASK_OUTPUT_NOT_FOUND", message: "任务没有可下载文件" });
+    if (!task || !task.connectionId || !await requireTaskConnection(app, request.admin!, reply, task.connectionId, task.type === "backup" ? ["read", "export"] : ["read"], "任务没有可下载文件")) return;
     const path = app.databaseTasks.output(request.params.id, request.admin!.id);
     if (!path) return reply.code(404).send({ error: "TASK_OUTPUT_NOT_FOUND", message: "任务没有可下载文件" });
     const info = await stat(path);
@@ -274,8 +304,7 @@ export async function registerDatabaseOperationRoutes(app: FastifyInstance): Pro
     const body = parseBody(backupNameSchema, request.body, reply);
     if (!body || !request.admin) return;
     const task = app.databaseTasks.get(request.params.id, request.admin.id, executionScope(request));
-    if (!task?.connectionId || task.type !== "backup" || !await canAccessConnection(app.db, request.admin, "database", task.connectionId)) return reply.code(404).send({ error: "BACKUP_NOT_FOUND", message: "备份不存在" });
-    if (!await canAccessConnection(app.db, request.admin, "database", task.connectionId, "write")) return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有这项操作权限" });
+    if (!task?.connectionId || task.type !== "backup" || !await requireTaskConnection(app, request.admin, reply, task.connectionId, ["read", "export"], "备份不存在")) return;
     try {
       const updated = await app.databaseTasks.renameBackup(task.id, request.admin.id, body.name);
       if (!updated) return reply.code(409).send({ error: "BACKUP_NOT_READY", message: "只有已完成的备份可以重命名" });
@@ -290,8 +319,7 @@ export async function registerDatabaseOperationRoutes(app: FastifyInstance): Pro
     const body = parseBody(backupNameSchema, request.body, reply);
     if (!body || !request.admin) return;
     const task = app.databaseTasks.get(request.params.id, request.admin.id, executionScope(request));
-    if (!task?.connectionId || task.type !== "backup" || !await canAccessConnection(app.db, request.admin, "database", task.connectionId)) return reply.code(404).send({ error: "BACKUP_NOT_FOUND", message: "备份不存在" });
-    if (!await canAccessConnection(app.db, request.admin, "database", task.connectionId, "write")) return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有这项操作权限" });
+    if (!task?.connectionId || task.type !== "backup" || !await requireTaskConnection(app, request.admin, reply, task.connectionId, ["read", "export"], "备份不存在")) return;
     try {
       const duplicate = await app.databaseTasks.duplicateBackup(task.id, request.admin.id, body.name);
       if (!duplicate) return reply.code(409).send({ error: "BACKUP_NOT_READY", message: "只有已完成的备份可以复制" });
@@ -306,14 +334,15 @@ export async function registerDatabaseOperationRoutes(app: FastifyInstance): Pro
     const body = parseBody(backupRestoreSchema, request.body ?? {}, reply);
     if (!body || !request.admin) return;
     const task = app.databaseTasks.get(request.params.id, request.admin.id, executionScope(request));
-    if (!task?.connectionId || task.type !== "backup" || !await canAccessConnection(app.db, request.admin, "database", task.connectionId)) return reply.code(404).send({ error: "BACKUP_NOT_FOUND", message: "备份不存在" });
-    if (!await canAccessConnection(app.db, request.admin, "database", task.connectionId, "write")) return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有这项操作权限" });
+    if (!task?.connectionId || task.type !== "backup" || !await canAccessConnection(app.db, request.admin, "database", task.connectionId, "read")) return reply.code(404).send({ error: "BACKUP_NOT_FOUND", message: "备份不存在" });
     const path = app.databaseTasks.output(task.id, request.admin.id);
     if (!path) return reply.code(409).send({ error: "BACKUP_NOT_READY", message: "备份尚未完成或文件不可用" });
     const database = body.database || String(task.details.database ?? "");
     if (!database) return reply.code(400).send({ error: "INVALID_RESTORE", message: "备份缺少目标数据库" });
+    const restoreActions = databaseSqlActions(await readFile(path, "utf8").catch(() => ""));
+    if (!await requireTaskConnection(app, request.admin, reply, task.connectionId, restoreActions, "备份不存在")) return;
     try {
-      const restore = await app.databaseTasks.createRestore(request.admin, task.connectionId, database, path, task.outputFilename || `${task.title}.sql`, executionScope(request));
+      const restore = await app.databaseTasks.createRestore(request.admin, task.connectionId, database, path, task.outputFilename || `${task.title}.sql`, executionScope(request), trustedExecutionChannel(request));
       return reply.code(202).send({ task: restore });
     } catch (error) {
       return reply.code(429).send({ error: "TASK_START_FAILED", message: error instanceof Error ? error.message : "无法开始恢复任务" });
@@ -322,8 +351,7 @@ export async function registerDatabaseOperationRoutes(app: FastifyInstance): Pro
 
   app.delete<{ Params: { id: string } }>("/api/v1/database-backups/:id", async (request, reply) => {
     const task = app.databaseTasks.get(request.params.id, request.admin!.id, executionScope(request));
-    if (!task?.connectionId || task.type !== "backup" || !await canAccessConnection(app.db, request.admin!, "database", task.connectionId)) return reply.code(404).send({ error: "BACKUP_NOT_FOUND", message: "备份不存在" });
-    if (!await canAccessConnection(app.db, request.admin!, "database", task.connectionId, "write")) return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有这项操作权限" });
+    if (!task?.connectionId || task.type !== "backup" || !await requireTaskConnection(app, request.admin!, reply, task.connectionId, ["read", "export"], "备份不存在")) return;
     const deleted = await app.databaseTasks.deleteBackup(task.id, request.admin!.id);
     if (!deleted) return reply.code(409).send({ error: "BACKUP_RUNNING", message: "运行中的备份不能删除，请先取消任务" });
     await writeAudit(app.db, { action: "database.backup_deleted", resourceType: "database_connection", resourceId: task.connectionId, summary: `删除备份 ${task.title}`, request });
@@ -333,7 +361,9 @@ export async function registerDatabaseOperationRoutes(app: FastifyInstance): Pro
   app.post<{ Params: { id: string } }>("/api/v1/database-connections/:id/backup", async (request, reply) => {
     const body = parseBody(backupSchema, request.body, reply);
     if (!body || !request.admin) return;
-    try { return reply.code(202).send({ task: await app.databaseTasks.createBackup(request.admin, request.params.id, body.database, executionScope(request), body.includeData) }); }
+    const plan = databaseTaskAccessPlan("backup", { includeData: body.includeData });
+    if (!await requireTaskConnection(app, request.admin, reply, request.params.id, plan.operations, "数据库连接不存在")) return;
+    try { return reply.code(202).send({ task: await app.databaseTasks.createBackup(request.admin, request.params.id, body.database, executionScope(request), body.includeData, trustedExecutionChannel(request)) }); }
     catch (error) { return reply.code(429).send({ error: "TASK_START_FAILED", message: error instanceof Error ? error.message : "无法开始备份任务" }); }
   });
 
@@ -347,18 +377,21 @@ export async function registerDatabaseOperationRoutes(app: FastifyInstance): Pro
     }
     if (!file || !filename || !database) return reply.code(400).send({ error: "INVALID_RESTORE", message: "请选择 SQL 文件和目标数据库" });
     if (!filename.toLowerCase().endsWith(".sql")) return reply.code(400).send({ error: "SQL_REQUIRED", message: "恢复任务只接受 .sql 文件" });
+    const restoreActions = databaseSqlActions(file.toString("utf8"));
+    if (!await requireTaskConnection(app, request.admin!, reply, request.params.id, restoreActions, "数据库连接不存在")) return;
     const uploadDir = join(app.config.dataDir, "uploads");
     await mkdir(uploadDir, { recursive: true });
     const inputPath = join(uploadDir, `${randomUUID()}.sql`);
     await writeFile(inputPath, file, { mode: 0o600, flag: "wx" });
-    try { return reply.code(202).send({ task: await app.databaseTasks.createRestore(request.admin!, request.params.id, database, inputPath, filename, executionScope(request)) }); }
+    try { return reply.code(202).send({ task: await app.databaseTasks.createRestore(request.admin!, request.params.id, database, inputPath, filename, executionScope(request), trustedExecutionChannel(request)) }); }
     catch (error) { return reply.code(429).send({ error: "TASK_START_FAILED", message: error instanceof Error ? error.message : "无法开始恢复任务" }); }
   });
 
   app.post<{ Params: { id: string } }>("/api/v1/database-connections/:id/sync-preview", async (request, reply) => {
     const body = parseBody(syncPreviewSchema, request.body, reply);
     if (!body || !request.admin) return;
-    if (!await canAccessConnection(app.db, request.admin, "database", body.targetConnectionId)) return reply.code(404).send({ error: "NOT_FOUND", message: "目标数据库连接不存在" });
+    if (!await requireTaskConnection(app, request.admin, reply, request.params.id, ["read"], "数据库连接不存在")) return;
+    if (!await requireTaskConnection(app, request.admin, reply, body.targetConnectionId, ["read"], "目标数据库连接不存在")) return;
     if (request.params.id === body.targetConnectionId && body.sourceDatabase === body.targetDatabase) return reply.code(400).send({ error: "SAME_SYNC_TARGET", message: "源数据库和目标数据库不能相同" });
     try {
       const source = await connectDatabase(app, request.params.id, body.sourceDatabase);
@@ -380,11 +413,13 @@ export async function registerDatabaseOperationRoutes(app: FastifyInstance): Pro
   app.post<{ Params: { id: string } }>("/api/v1/database-connections/:id/sync", async (request, reply) => {
     const body = parseBody(syncStartSchema, request.body, reply);
     if (!body || !request.admin) return;
-    if (!await canAccessConnection(app.db, request.admin, "database", body.targetConnectionId)) return reply.code(404).send({ error: "NOT_FOUND", message: "目标数据库连接不存在" });
+    const plan = databaseTaskAccessPlan("transfer", { ...body, syncMode: body.mode, targetConnectionId: body.targetConnectionId });
+    if (!await requireTaskConnection(app, request.admin, reply, request.params.id, plan.operations, "数据库连接不存在")) return;
+    if (!await requireTaskConnection(app, request.admin, reply, body.targetConnectionId, plan.targetOperations, "目标数据库连接不存在")) return;
     if (request.params.id === body.targetConnectionId && body.sourceDatabase === body.targetDatabase) return reply.code(400).send({ error: "SAME_SYNC_TARGET", message: "源数据库和目标数据库不能相同" });
     if (body.mode === "data" && !body.data.insert && !body.data.update && !body.data.delete) return reply.code(400).send({ error: "EMPTY_DATA_SYNC", message: "请至少选择插入、更新或删除中的一项" });
     try {
-      return reply.code(202).send({ task: await app.databaseTasks.createSync(request.admin, { sourceConnectionId: request.params.id, ...body }, executionScope(request)) });
+      return reply.code(202).send({ task: await app.databaseTasks.createSync(request.admin, { sourceConnectionId: request.params.id, ...body }, executionScope(request), trustedExecutionChannel(request)) });
     } catch (error) {
       return reply.code(429).send({ error: "TASK_START_FAILED", message: error instanceof Error ? error.message : "无法开始同步任务" });
     }
@@ -393,10 +428,12 @@ export async function registerDatabaseOperationRoutes(app: FastifyInstance): Pro
   app.post<{ Params: { id: string } }>("/api/v1/database-connections/:id/transfer", async (request, reply) => {
     const body = parseBody(transferSchema, request.body, reply);
     if (!body || !request.admin) return;
-    if (!await canAccessConnection(app.db, request.admin, "database", body.targetConnectionId)) return reply.code(404).send({ error: "NOT_FOUND", message: "目标数据库连接不存在" });
+    const plan = databaseTaskAccessPlan("transfer", body);
+    if (!await requireTaskConnection(app, request.admin, reply, request.params.id, plan.operations, "数据库连接不存在")) return;
+    if (!await requireTaskConnection(app, request.admin, reply, body.targetConnectionId, plan.targetOperations, "目标数据库连接不存在")) return;
     if (!body.includeStructure && !body.includeData) return reply.code(400).send({ error: "EMPTY_TRANSFER", message: "请至少选择结构或数据" });
     try {
-      return reply.code(202).send({ task: await app.databaseTasks.createTransfer(request.admin, { sourceConnectionId: request.params.id, ...body }, executionScope(request)) });
+      return reply.code(202).send({ task: await app.databaseTasks.createTransfer(request.admin, { sourceConnectionId: request.params.id, ...body }, executionScope(request), trustedExecutionChannel(request)) });
     } catch (error) {
       return reply.code(429).send({ error: "TASK_START_FAILED", message: error instanceof Error ? error.message : "无法开始迁移任务" });
     }

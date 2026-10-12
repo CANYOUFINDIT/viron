@@ -10,7 +10,8 @@ import {
 } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { canAccessConnection, canAccessWebCredential, canManageWorkspace } from "../access-control.js";
+import { databaseTaskAccessPlan, type DatabaseTaskAction } from "../../shared/database-task-access.js";
+import { canAccessConnection, canAccessWebCredential, canManageWorkspace, type AuthenticatedUser } from "../access-control.js";
 import { sqlRequiresWrite } from "../../shared/access-permissions.js";
 import { writeAudit } from "../audit.js";
 import { decryptDatabaseCredential, hydrateDatabaseOptions } from "../database-credentials.js";
@@ -323,6 +324,24 @@ function encryptEnvelope(device: StoredDevice, protectedPayload: Record<string, 
     ciphertext: base64url(ciphertext),
     tag: base64url(tag),
   };
+}
+
+async function requireDesktopTaskConnection(app: FastifyInstance, user: AuthenticatedUser, connectionId: string, actions: readonly DatabaseTaskAction[]): Promise<void> {
+  const row = await app.db.prepare("SELECT workspace_type, workspace_id FROM database_connections WHERE id = ?").get(connectionId) as { workspace_type: string; workspace_id: string } | undefined;
+  const inWorkspace = Boolean(row && row.workspace_type === user.workspace.type && row.workspace_id === user.workspace.id);
+  const known = ["read", "write", "ddl", "export"] as const;
+  let visible = false;
+  if (inWorkspace) {
+    for (const action of known) {
+      if (await canAccessConnection(app.db, user, "database", connectionId, action)) { visible = true; break; }
+    }
+  }
+  if (!visible) throw new DesktopReportError(404, "NOT_FOUND", "数据库连接不存在");
+  const required = actions.length ? actions : known;
+  if (!actions.length) return;
+  for (const action of required) {
+    if (!await canAccessConnection(app.db, user, "database", connectionId, action)) throw new DesktopReportError(403, "ACTION_FORBIDDEN", "没有这项操作权限");
+  }
 }
 
 export async function registerDesktopDeviceRoutes(app: FastifyInstance): Promise<void> {
@@ -924,12 +943,17 @@ export async function registerDesktopDeviceRoutes(app: FastifyInstance): Promise
       const admin = request.admin;
       try {
         const accepted = await acceptDesktopReport(app, admin, request.body, databaseExecutionReportSchema, async ({ payload: body, deviceId }) => {
-          if (!await canAccessConnection(app.db, admin, "database", body.connectionId)) {
+          if (body.kind === "operation" && /^(backup|restore|transfer)_/.test(body.action)) {
+            const kind = body.action.startsWith("backup") ? "backup" : body.action.startsWith("restore") ? "restore" : "transfer";
+            const plan = databaseTaskAccessPlan(kind, body.details);
+            await requireDesktopTaskConnection(app, admin, body.connectionId, plan.operations);
+            if (plan.targetConnectionId) await requireDesktopTaskConnection(app, admin, plan.targetConnectionId, plan.targetOperations);
+          } else if (!await canAccessConnection(app.db, admin, "database", body.connectionId)) {
             throw new DesktopReportError(404, "NOT_FOUND", "数据库连接不存在");
           }
           const databaseWrite = body.kind === "query"
             ? sqlRequiresWrite(body.sql)
-            : ["table_data_changed", "table_imported", "backup_success", "backup_error", "backup_cancelled", "restore_success", "restore_error", "restore_cancelled", "transfer_success", "transfer_error", "transfer_cancelled"].includes(body.action);
+            : ["table_data_changed", "table_imported"].includes(body.action);
           if (databaseWrite && !await canAccessConnection(app.db, admin, "database", body.connectionId, "write")) {
             throw new DesktopReportError(403, "ACTION_FORBIDDEN", "没有这项操作权限");
           }
