@@ -49,6 +49,8 @@ const requestSchema = z
     targets: z.array(targetSchema).min(1).max(1000),
     durationMs: z.number().int().positive().nullable().default(null),
     reason: z.string().trim().min(1).max(2000),
+    // 分组提交：取 MULTIPLE_APPROVAL_FLOWS.groups[].flowId。缺省表示初次选择，环境目标会冻结当时关联资源。
+    flowId: z.string().uuid().optional(),
   })
   .strict();
 const decisionSchema = z
@@ -152,6 +154,7 @@ export async function registerOrganizationPhaseRoutes(app: FastifyInstance): Pro
       targets: body.targets as ResourceRef[],
       durationMs: body.durationMs,
       reason: body.reason,
+      flowId: body.flowId,
     });
     return reply.code(201).send(created);
   });

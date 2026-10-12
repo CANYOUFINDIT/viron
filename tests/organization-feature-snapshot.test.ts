@@ -190,22 +190,30 @@ describe("feature request scope snapshots", () => {
     });
     expect(mixed.statusCode, mixed.body).toBe(409);
     expect(mixed.json().error).toBe("MULTIPLE_APPROVAL_FLOWS");
-    const groups = mixed.json().groups as Array<{ flowName: string; targets: Array<{ type: string; id: string }> }>;
+    const groups = mixed.json().groups as Array<{ flowId: string; flowName: string; targets: Array<{ type: string; id: string }> }>;
     expect(groups).toHaveLength(2);
     expect(groups.map((group) => group.flowName).sort()).toEqual(["所有连接", "连接甲流程"]);
     const created: string[] = [];
+    const targetKey = (target: { type: string; id: string }) => `${target.type}:${target.id}`;
     for (const group of groups) {
       const response = await f.app.inject({
         method: "POST",
         url: f.base + "/grant-requests",
         cookies: f.cookies,
-        payload: { kind: "feature", features: { mcp: true, agent: false, webPlugins: false }, targets: group.targets, reason: group.flowName },
+        payload: {
+          kind: "feature",
+          features: { mcp: true, agent: false, webPlugins: false },
+          targets: group.targets,
+          flowId: group.flowId,
+          reason: group.flowName,
+        },
       });
       expect(response.statusCode, response.body).toBe(201);
       created.push(response.json().id as string);
       const saved = JSON.parse((await f.db.prepare("SELECT targets_json FROM organization_grant_requests WHERE id = ?").get<{ targets_json: string }>(response.json().id))!.targets_json) as Array<{ type: string; id: string }>;
       const hasConnection = (id: string) => saved.some((target) => target.type === "ssh_connection" && target.id === id);
       expect(hasConnection(firstId) && hasConnection(secondId)).toBe(false);
+      expect(saved.map(targetKey).sort()).toEqual(group.targets.map(targetKey).sort());
     }
     const later = await f.app.inject({ method: "POST", url: "/api/v1/ssh-connections", cookies: f.cookies, payload: connection("批准前新增", envId) });
     for (const id of created) {
@@ -219,5 +227,76 @@ describe("feature request scope snapshots", () => {
       const grant = JSON.parse((await f.db.prepare("SELECT targets_json FROM organization_feature_grants WHERE request_id = ?").get<{ targets_json: string }>(id))!.targets_json) as Array<{ id: string }>;
       expect(grant.some((target) => target.id === later.json().id)).toBe(false);
     }
+  });
+
+  it("submits an environment-only default group by flowId without re-expanding", async () => {
+    const f = await fixture();
+    const environment = await f.app.inject({ method: "POST", url: "/api/v1/environments", cookies: f.cookies, payload: { name: "仅环境默认组" } });
+    const envId = environment.json().id as string;
+    const ssh = await f.app.inject({ method: "POST", url: "/api/v1/ssh-connections", cookies: f.cookies, payload: connection("全部归指定流程", envId) });
+    const sshId = ssh.json().id as string;
+    const node = { id: randomUUID(), name: "审批", mode: "any", approverUserIds: [f.approverId], approverRoleId: null, allowSelf: false, requireComment: false };
+    const owned = await f.app.inject({
+      method: "POST",
+      url: f.base + "/approval-flows",
+      cookies: f.cookies,
+      payload: {
+        name: "全部关联资源流程",
+        targets: [
+          { type: "ssh_connection", id: sshId },
+          { type: "monitor_host", id: sshId },
+        ],
+        nodes: [node],
+      },
+    });
+    expect(owned.statusCode, owned.body).toBe(201);
+    const grouped = await f.app.inject({
+      method: "POST",
+      url: f.base + "/grant-requests",
+      cookies: f.cookies,
+      payload: { kind: "feature", features: { mcp: true, agent: false, webPlugins: false }, targets: [{ type: "environment", id: envId }], reason: "环境单独成组" },
+    });
+    expect(grouped.statusCode, grouped.body).toBe(409);
+    const groups = grouped.json().groups as Array<{ flowId: string; flowName: string; targets: Array<{ type: string; id: string }> }>;
+    const environmentGroup = groups.find((group) => group.targets.length === 1 && group.targets[0].type === "environment");
+    const ownedGroup = groups.find((group) => group.flowId === owned.json().id);
+    expect(environmentGroup?.flowName).toBe("所有连接");
+    expect(ownedGroup).toBeTruthy();
+    const features = { mcp: true, agent: false, webPlugins: false };
+    const withoutFlow = await f.app.inject({
+      method: "POST",
+      url: f.base + "/grant-requests",
+      cookies: f.cookies,
+      payload: { kind: "feature", features, targets: environmentGroup!.targets, reason: "未声明分组仍是初次选择" },
+    });
+    expect(withoutFlow.statusCode, withoutFlow.body).toBe(409);
+    expect(withoutFlow.json().error).toBe("MULTIPLE_APPROVAL_FLOWS");
+    const mismatched = await f.app.inject({
+      method: "POST",
+      url: f.base + "/grant-requests",
+      cookies: f.cookies,
+      payload: { kind: "feature", features, targets: environmentGroup!.targets, flowId: owned.json().id, reason: "目标不属于该流程" },
+    });
+    expect(mismatched.statusCode, mismatched.body).toBe(409);
+    expect(mismatched.json().error).toBe("APPROVAL_FLOW_MISMATCH");
+    const submitted = await f.app.inject({
+      method: "POST",
+      url: f.base + "/grant-requests",
+      cookies: f.cookies,
+      payload: { kind: "feature", features, targets: environmentGroup!.targets, flowId: environmentGroup!.flowId, reason: "按默认组提交" },
+    });
+    expect(submitted.statusCode, submitted.body).toBe(201);
+    const saved = JSON.parse((await f.db.prepare("SELECT targets_json FROM organization_grant_requests WHERE id = ?").get<{ targets_json: string }>(submitted.json().id))!.targets_json) as Array<{ type: string; id: string }>;
+    expect(saved).toEqual(environmentGroup!.targets);
+    expect(saved.some((target) => target.id === sshId && target.type !== "environment")).toBe(false);
+    const approved = await f.app.inject({
+      method: "POST",
+      url: `${f.base}/grant-requests/${submitted.json().id}/decision`,
+      cookies: f.approverCookies,
+      payload: { decision: "approve", comment: "同意" },
+    });
+    expect(approved.statusCode, approved.body).toBe(200);
+    const grant = JSON.parse((await f.db.prepare("SELECT targets_json FROM organization_feature_grants WHERE request_id = ?").get<{ targets_json: string }>(submitted.json().id))!.targets_json) as Array<{ type: string; id: string }>;
+    expect(grant).toEqual(environmentGroup!.targets);
   });
 });

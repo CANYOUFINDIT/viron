@@ -257,9 +257,17 @@ export async function ensureDefaultApprovalFlow(db: EnvmanDatabase, org: string)
   const ready = await defaultFlowId(db, org);
   if (ready) return ready;
   // The flow row and its ledger entry commit together. A ledger failure must not leave the default flow.
+  // Concurrent first reads lock the organization row, then take a current read, so they share one default flow.
   return db.transaction(async () => {
-    const existing = await defaultFlowId(db, org);
-    if (existing) return existing;
+    await db.prepare("UPDATE organizations SET updated_at = updated_at WHERE id = ?").run(org);
+    const existing = await db
+      .prepare(
+        `SELECT id FROM organization_approval_flows WHERE organization_id = ? AND is_default = 1 ORDER BY created_at, id${
+          db.dialect === "mysql" ? " FOR UPDATE" : ""
+        }`,
+      )
+      .get<{ id: string }>(org);
+    if (existing?.id) return existing.id;
     const legacy = await db
       .prepare("SELECT workflow_json FROM organization_approval_workflows WHERE organization_id = ?")
       .get<{ workflow_json: string }>(org);
@@ -510,6 +518,8 @@ export async function submitGrantRequest(
     targets: ResourceRef[];
     durationMs: number | null;
     reason: string;
+    /** 按某一返回分组提交时指定 groups[].flowId。缺省才是初次选择。 */
+    flowId?: string;
   },
 ) {
   const now = serverNow();
@@ -520,9 +530,8 @@ export async function submitGrantRequest(
   const requested = [...new Map(input.targets.map((target) => [resourceKey(target), target])).values()];
   if (!requested.length || requested.some((target) => !catalog.some((item) => sameTarget(item, target))))
     throw new OrganizationPermissionError("INVALID_RESOURCE", 400, "申请目标不存在");
-  // A pure environment selection freezes the same resources as a direct feature grant.
-  // A grouped resubmit already lists those resources, so expanding the environment again would pull the other flows back in.
-  const targets = input.kind === "feature" && requested.every((target) => target.type === "environment")
+  // 初次功能申请若目标都是环境，冻结当时关联资源。分组提交带 flowId，保存该组清单，不再按“是否全是环境”猜测。
+  const targets = !input.flowId && input.kind === "feature" && requested.every((target) => target.type === "environment")
     ? freezeFeatureTargets(catalog, requested)
     : requested;
   if (input.kind === "data") {
@@ -542,6 +551,16 @@ export async function submitGrantRequest(
   if (features?.webPlugins && !targets.some((target) => target.type === "environment"))
     throw new OrganizationPermissionError("INVALID_PLUGIN_SCOPE", 400, "Web 插件只能按环境申请");
   const all = await flows(db, org);
+  if (input.flowId) {
+    const selected = all.find((item) => item.id === input.flowId);
+    if (!selected) throw new OrganizationPermissionError("NOT_FOUND", 404, "审批流程不存在");
+    const foreign = targets.filter((target) => flowFor(all, target).id !== selected.id);
+    if (foreign.length)
+      throw new OrganizationPermissionError("APPROVAL_FLOW_MISMATCH", 409, "这些资源不属于所指定的审批流程", {
+        flowId: selected.id,
+        targets: foreign,
+      });
+  }
   const grouped = new Map<string, ResourceRef[]>();
   for (const target of targets) {
     const flow = flowFor(all, target);
