@@ -139,6 +139,11 @@ function splitSql(sql: string): string[] {
   return statements;
 }
 
+function storedWorkspace(type: unknown, id: unknown): { type: WorkspaceType; id: string } | null {
+  if ((type === "personal" || type === "organization") && typeof id === "string" && id.length > 0) return { type, id };
+  return null;
+}
+
 export class DatabaseTaskManager {
   private readonly tasks = new Map<string, DatabaseTask>();
 
@@ -148,14 +153,28 @@ export class DatabaseTaskManager {
     const rows = await this.app.db.prepare("SELECT * FROM database_tasks ORDER BY created_at DESC LIMIT 200").all() as Record<string, unknown>[];
     for (const row of rows) {
       const status = ["pending", "running"].includes(String(row.status)) ? "error" : String(row.status) as DatabaseTaskStatus;
+      const stored = storedWorkspace(row.workspace_type, row.workspace_id);
+      let workspace = stored;
+      if (!workspace && row.connection_id) {
+        const connection = await this.app.db.prepare("SELECT workspace_type, workspace_id FROM database_connections WHERE id = ?").get(String(row.connection_id)) as { workspace_type?: unknown; workspace_id?: unknown } | undefined;
+        workspace = storedWorkspace(connection?.workspace_type, connection?.workspace_id);
+      }
+      if (!workspace) {
+        if (status === "error" && status !== row.status) {
+          await this.app.db.prepare("UPDATE database_tasks SET status = 'error', error_message = ?, completed_at = ? WHERE id = ?")
+            .run("Viron 重启导致任务中断", new Date().toISOString(), String(row.id));
+        }
+        continue;
+      }
+      const ownerId = String(row.owner_user_id ?? "");
       const details = JSON.parse(String(row.details_json)) as Record<string, unknown>;
       const task: DatabaseTask = {
         id: String(row.id),
-        ownerId: String(row.owner_user_id ?? ""),
+        ownerId,
         executionScope: null,
-        workspaceType: "personal",
-        workspaceId: String(row.owner_user_id ?? ""),
-        workspaceRole: "owner",
+        workspaceType: workspace.type,
+        workspaceId: workspace.id,
+        workspaceRole: workspace.type === "personal" && workspace.id === ownerId ? "owner" : "member",
         channel: "manual",
         type: row.type as DatabaseTaskType,
         connectionId: row.connection_id ? String(row.connection_id) : null,
@@ -173,7 +192,7 @@ export class DatabaseTaskManager {
         active: new Set(),
       };
       this.tasks.set(task.id, task);
-      if (status === "error" && status !== row.status) await this.persist(task);
+      if (!stored || (status === "error" && status !== row.status)) await this.persist(task);
     }
   }
 
@@ -230,6 +249,26 @@ export class DatabaseTaskManager {
   get(id: string, ownerId: string, executionScope: string | null = null): PublicDatabaseTask | undefined {
     const task = this.tasks.get(id);
     return task?.ownerId === ownerId && (!["pending", "running"].includes(task.status) || task.executionScope === executionScope) ? this.publicTask(task) : undefined;
+  }
+
+  /** Status view for the task owner in the workspace that started it. It does not grant connection read. */
+  listOwned(user: AuthenticatedUser, executionScope: string | null = null): PublicDatabaseTask[] {
+    return [...this.tasks.values()]
+      .filter((task) => this.owned(task, user, executionScope))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map((task) => this.publicTask(task));
+  }
+
+  getOwned(id: string, user: AuthenticatedUser, executionScope: string | null = null): PublicDatabaseTask | undefined {
+    const task = this.tasks.get(id);
+    return task && this.owned(task, user, executionScope) ? this.publicTask(task) : undefined;
+  }
+
+  private owned(task: DatabaseTask, user: AuthenticatedUser, executionScope: string | null): boolean {
+    return task.ownerId === user.id
+      && task.workspaceType === user.workspace.type
+      && task.workspaceId === user.workspace.id
+      && (!["pending", "running"].includes(task.status) || task.executionScope === executionScope);
   }
 
   activeCount(ownerId: string, executionScope: string | null): number {
@@ -703,11 +742,11 @@ export class DatabaseTaskManager {
 
   private async persist(task: DatabaseTask, insert = false): Promise<void> {
     if (insert) {
-      await this.app.db.prepare(`INSERT INTO database_tasks (id, owner_user_id, type, connection_id, status, progress, title, details_json, logs_json, output_path, error_message, created_at, started_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(task.id, task.ownerId, task.type, task.connectionId, task.status, task.progress, task.title, JSON.stringify(task.details), JSON.stringify(task.logs), task.outputPath, task.error, task.createdAt, task.startedAt ?? null, task.completedAt ?? null);
+      await this.app.db.prepare(`INSERT INTO database_tasks (id, owner_user_id, type, connection_id, workspace_type, workspace_id, status, progress, title, details_json, logs_json, output_path, error_message, created_at, started_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(task.id, task.ownerId, task.type, task.connectionId, task.workspaceType, task.workspaceId, task.status, task.progress, task.title, JSON.stringify(task.details), JSON.stringify(task.logs), task.outputPath, task.error, task.createdAt, task.startedAt ?? null, task.completedAt ?? null);
     } else {
-      await this.app.db.prepare(`UPDATE database_tasks SET status = ?, progress = ?, title = ?, details_json = ?, logs_json = ?, output_path = ?, error_message = ?, started_at = ?, completed_at = ? WHERE id = ?`)
-        .run(task.status, task.progress, task.title, JSON.stringify(task.details), JSON.stringify(task.logs), task.outputPath, task.error, task.startedAt ?? null, task.completedAt ?? null, task.id);
+      await this.app.db.prepare(`UPDATE database_tasks SET status = ?, progress = ?, title = ?, details_json = ?, logs_json = ?, output_path = ?, error_message = ?, started_at = ?, completed_at = ?, workspace_type = ?, workspace_id = ? WHERE id = ?`)
+        .run(task.status, task.progress, task.title, JSON.stringify(task.details), JSON.stringify(task.logs), task.outputPath, task.error, task.startedAt ?? null, task.completedAt ?? null, task.workspaceType, task.workspaceId, task.id);
     }
   }
 

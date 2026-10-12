@@ -11,7 +11,6 @@ import { defaultDataSyncOptions, defaultStructureSyncOptions, previewDatabaseSyn
 import { databaseSqlActions } from "../../shared/access-permissions.js";
 import { databaseTaskAccessPlan, type DatabaseTaskAction } from "../../shared/database-task-access.js";
 import { writeAudit } from "../audit.js";
-import { filterAsync } from "../async-utils.js";
 import { canAccessConnection, type AuthenticatedUser } from "../access-control.js";
 import { connectDatabase } from "../database-workbench/connector.js";
 import { executionScope } from "../execution-scope.js";
@@ -269,21 +268,18 @@ export async function registerDatabaseOperationRoutes(app: FastifyInstance): Pro
   });
 
   app.get("/api/v1/database-tasks", async (request) => ({
-    items: await filterAsync(
-      app.databaseTasks.list(request.admin!.id, executionScope(request)),
-      (task) => Boolean(task.connectionId) && canAccessConnection(app.db, request.admin!, "database", task.connectionId!),
-    ),
+    items: app.databaseTasks.listOwned(request.admin!, executionScope(request)),
   }));
 
   app.get<{ Params: { id: string } }>("/api/v1/database-tasks/:id", async (request, reply) => {
-    const task = app.databaseTasks.get(request.params.id, request.admin!.id, executionScope(request));
-    if (!task || !task.connectionId || !await canAccessConnection(app.db, request.admin!, "database", task.connectionId)) return reply.code(404).send({ error: "TASK_NOT_FOUND", message: "数据库任务不存在" });
+    const task = app.databaseTasks.getOwned(request.params.id, request.admin!, executionScope(request));
+    if (!task) return reply.code(404).send({ error: "TASK_NOT_FOUND", message: "数据库任务不存在" });
     return { task };
   });
 
   app.delete<{ Params: { id: string } }>("/api/v1/database-tasks/:id", async (request, reply) => {
-    const task = app.databaseTasks.get(request.params.id, request.admin!.id, executionScope(request));
-    if (!task || !task.connectionId || !await canAccessConnection(app.db, request.admin!, "database", task.connectionId)) return reply.code(404).send({ error: "TASK_NOT_FOUND", message: "数据库任务不存在" });
+    const task = app.databaseTasks.getOwned(request.params.id, request.admin!, executionScope(request));
+    if (!task) return reply.code(404).send({ error: "TASK_NOT_FOUND", message: "数据库任务不存在" });
     if (!await app.databaseTasks.cancel(request.params.id, request.admin!.id, executionScope(request))) return reply.code(409).send({ error: "TASK_NOT_RUNNING", message: "任务已经结束或不存在" });
     return reply.code(204).send();
   });

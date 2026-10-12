@@ -1208,6 +1208,8 @@ CREATE TABLE IF NOT EXISTS database_tasks (
   owner_user_id VARCHAR(64) NULL,
   type VARCHAR(16) NOT NULL,
   connection_id VARCHAR(64) NULL,
+  workspace_type VARCHAR(20) NULL,
+  workspace_id VARCHAR(64) NULL,
   status VARCHAR(16) NOT NULL,
   progress INT NOT NULL DEFAULT 0,
   title VARCHAR(512) NOT NULL,

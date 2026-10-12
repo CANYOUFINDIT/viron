@@ -81,14 +81,20 @@ async function fixture() {
   mkdirSync(scratchRoot, { recursive: true });
   const dir = mkdtempSync(join(scratchRoot, "viron-task-"));
   const config = configFor(dir);
-  const db = await openDatabase(config);
-  await ensureAdmin(db, config);
-  const app = await buildApp({ config, db, logger: false });
+  let liveDb = await openDatabase(config);
+  await ensureAdmin(liveDb, config);
+  let liveApp = await buildApp({ config, db: liveDb, logger: false });
   cleanup.push(async () => {
-    await app.close();
+    await liveApp.close();
     rmSync(dir, { recursive: true, force: true });
   });
-  const req = (method: string, url: string, cookies: Record<string, string>, payload?: unknown) => app.inject({ method: method as "GET", url, cookies, payload });
+  async function reopen() {
+    await liveApp.close();
+    liveDb = await openDatabase(config);
+    liveApp = await buildApp({ config, db: liveDb, logger: false });
+    return { app: liveApp, db: liveDb };
+  }
+  const req = (method: string, url: string, cookies: Record<string, string>, payload?: unknown) => liveApp.inject({ method: method as "GET", url, cookies, payload });
   const login = await req("POST", "/api/v1/auth/login", {}, { username: config.adminUsername, password: config.adminPassword });
   const admin = { envman_session: login.cookies[0].value };
   const org = (await req("POST", "/api/v1/organizations", admin, { name: "任务验收组织" })).json().id as string;
@@ -96,12 +102,12 @@ async function fixture() {
   await req("PUT", "/api/v1/auth/workspace", admin, { type: "organization", id: org });
   let client = 1;
   async function member(name: string, codes: string[], targets: Array<{ type: string; id: string }>) {
-    const registered = await app.inject({ method: "POST", url: "/api/v1/auth/register", remoteAddress: `192.0.2.${client++}`, payload: { username: name, password: "fake-review-password" } });
+    const registered = await liveApp.inject({ method: "POST", url: "/api/v1/auth/register", remoteAddress: `192.0.2.${client++}`, payload: { username: name, password: "fake-review-password" } });
     expect(registered.statusCode, registered.body).toBe(201);
     const userId = registered.json().user.id as string;
     const cookies = { envman_session: registered.cookies[0].value };
     const stamp = new Date().toISOString();
-    await db.prepare("INSERT INTO organization_members (organization_id,user_id,role,created_at,updated_at) VALUES (?,?,'member',?,?)").run(org, userId, stamp, stamp);
+    await liveDb.prepare("INSERT INTO organization_members (organization_id,user_id,role,created_at,updated_at) VALUES (?,?,'member',?,?)").run(org, userId, stamp, stamp);
     expect((await req("PUT", "/api/v1/auth/workspace", cookies, { type: "organization", id: org })).statusCode).toBe(200);
     const role = await req("POST", `${base}/roles`, admin, { name, permissionCodes: codes, reason: "任务验收" });
     expect(role.statusCode, role.body).toBe(201);
@@ -116,7 +122,7 @@ async function fixture() {
     expect(response.statusCode, response.body).toBe(201);
     return response.json().id as string;
   }
-  return { app, db, admin, org, base, member, database, req };
+  return { get app() { return liveApp; }, get db() { return liveDb; }, admin, org, base, member, database, req, reopen };
 }
 
 function multipart(database: string, sql: string) {
@@ -258,5 +264,141 @@ describe("database background task permissions", () => {
     expect(statements.some((sql) => sql.startsWith("CREATE DATABASE IF NOT EXISTS `structure_target`"))).toBe(true);
     expect(statements.some((sql) => /^CREATE TABLE /i.test(sql))).toBe(true);
     expect(statements.some((sql) => sql.startsWith("INSERT INTO"))).toBe(false);
+  });
+
+  it("shows and cancels write-only and ddl-only tasks for their owner without granting read or download", async () => {
+    const f = await fixture();
+    const source = await f.database("来源");
+    const target = await f.database("目标");
+    const ref = (id: string) => ({ type: "database_connection", id });
+    const writer = await f.member("status-write", ["database.write"], [ref(target)]);
+    const ddl = await f.member("status-ddl", ["database.ddl"], [ref(target)]);
+    const stranger = await f.member("status-other", ["database.read", "database.write", "database.ddl", "database.export"], [ref(source), ref(target)]);
+    const backupActor = await f.member("status-backup", ["database.read", "database.export"], [ref(source)]);
+    const listed = async (cookies: Record<string, string>, id: string) => {
+      const list = await f.req("GET", "/api/v1/database-tasks", cookies);
+      expect(list.statusCode, list.body).toBe(200);
+      return (list.json().items as Array<{ id: string }>).some((item) => item.id === id);
+    };
+
+    gate.holdConnect = true;
+    const running = await f.app.inject({ method: "POST", url: `/api/v1/database-connections/${target}/restore`, cookies: writer.cookies, ...multipart("data_target", "UPDATE example SET label='owner view' WHERE id=1") });
+    expect(running.statusCode, running.body).toBe(202);
+    const runningId = running.json().task.id as string;
+    await vi.waitFor(() => { expect(gate.releaseConnect.length).toBeGreaterThan(0); }, { timeout: 5_000 });
+    const status = await f.req("GET", `/api/v1/database-tasks/${runningId}`, writer.cookies);
+    expect(status.statusCode, status.body).toBe(200);
+    expect(status.json().task.status).toBe("running");
+    expect(await listed(writer.cookies, runningId)).toBe(true);
+    const hiddenDownload = await f.req("GET", `/api/v1/database-tasks/${runningId}/download`, writer.cookies);
+    expect(hiddenDownload.statusCode).not.toBe(200);
+    const otherStatus = await f.req("GET", `/api/v1/database-tasks/${runningId}`, stranger.cookies);
+    expect(otherStatus.statusCode).toBe(404);
+    expect(await listed(stranger.cookies, runningId)).toBe(false);
+    const otherCancel = await f.app.inject({ method: "DELETE", url: `/api/v1/database-tasks/${runningId}`, cookies: stranger.cookies });
+    expect(otherCancel.statusCode).toBe(404);
+    const cancelled = await f.app.inject({ method: "DELETE", url: `/api/v1/database-tasks/${runningId}`, cookies: writer.cookies });
+    expect(cancelled.statusCode).toBe(204);
+    const afterCancel = await f.req("GET", `/api/v1/database-tasks/${runningId}`, writer.cookies);
+    expect(afterCancel.statusCode, afterCancel.body).toBe(200);
+    expect(afterCancel.json().task).toMatchObject({ status: "cancelled", error: "任务已由管理员取消" });
+    gate.holdConnect = false;
+    for (const release of gate.releaseConnect.splice(0)) release();
+
+    const structure = await f.app.inject({ method: "POST", url: `/api/v1/database-connections/${target}/restore`, cookies: ddl.cookies, ...multipart("structure_target", "CREATE TABLE owner_view(id INT)") });
+    expect(structure.statusCode, structure.body).toBe(202);
+    const structureId = structure.json().task.id as string;
+    expect((await settle(f.app, ddl.userId, structureId))?.status).toBe("success");
+    const structureStatus = await f.req("GET", `/api/v1/database-tasks/${structureId}`, ddl.cookies);
+    expect(structureStatus.statusCode, structureStatus.body).toBe(200);
+    expect(structureStatus.json().task.status).toBe("success");
+    expect(await listed(ddl.cookies, structureId)).toBe(true);
+    expect((await f.req("GET", `/api/v1/database-tasks/${structureId}`, stranger.cookies)).statusCode).toBe(404);
+    expect((await f.req("GET", `/api/v1/database-tasks/${structureId}/download`, ddl.cookies)).statusCode).not.toBe(200);
+
+    const backup = await f.req("POST", `/api/v1/database-connections/${source}/backup`, backupActor.cookies, { database: "src_example", includeData: true });
+    expect(backup.statusCode, backup.body).toBe(202);
+    const backupId = backup.json().task.id as string;
+    expect((await settle(f.app, backupActor.userId, backupId))?.status).toBe("success");
+    expect((await f.req("GET", `/api/v1/database-tasks/${backupId}/download`, backupActor.cookies)).statusCode).toBe(200);
+    const removedExport = await f.req("PUT", `${f.base}/roles/${backupActor.roleId}`, f.admin, { name: "status-backup", description: "", permissionCodes: ["database.read"], enabled: true, reason: "撤销导出" });
+    expect(removedExport.statusCode, removedExport.body).toBe(200);
+    expect((await f.req("GET", `/api/v1/database-tasks/${backupId}`, backupActor.cookies)).json().task.status).toBe("success");
+    expect((await f.req("GET", `/api/v1/database-tasks/${backupId}/download`, backupActor.cookies)).statusCode).toBe(403);
+
+    gate.holdConnect = true;
+    const expiring = await f.app.inject({ method: "POST", url: `/api/v1/database-connections/${target}/restore`, cookies: writer.cookies, ...multipart("data_target", "UPDATE example SET label='still visible' WHERE id=1") });
+    expect(expiring.statusCode, expiring.body).toBe(202);
+    const expiringId = expiring.json().task.id as string;
+    await vi.waitFor(() => { expect(gate.releaseConnect.length).toBeGreaterThan(0); }, { timeout: 5_000 });
+    const revokeWrite = await f.req("PUT", `${f.base}/roles/${writer.roleId}`, f.admin, { name: "status-write", description: "", permissionCodes: ["database.read"], enabled: true, reason: "撤销写入" });
+    expect(revokeWrite.statusCode, revokeWrite.body).toBe(200);
+    await disconnectGrantees(f.app, f.org, [writer.userId]);
+    const expired = await f.req("GET", `/api/v1/database-tasks/${expiringId}`, writer.cookies);
+    expect(expired.statusCode, expired.body).toBe(200);
+    expect(expired.json().task).toMatchObject({ status: "cancelled", error: "授权已到期" });
+    expect(await listed(writer.cookies, expiringId)).toBe(true);
+
+    expect((await f.req("PUT", "/api/v1/auth/workspace", writer.cookies, { type: "personal" })).statusCode).toBe(200);
+    expect((await f.req("GET", `/api/v1/database-tasks/${expiringId}`, writer.cookies)).statusCode).toBe(404);
+    expect(await listed(writer.cookies, expiringId)).toBe(false);
+    expect((await f.req("PUT", "/api/v1/auth/workspace", writer.cookies, { type: "organization", id: f.org })).statusCode).toBe(200);
+    const restoredView = await f.req("GET", `/api/v1/database-tasks/${expiringId}`, writer.cookies);
+    expect(restoredView.statusCode, restoredView.body).toBe(200);
+    expect(restoredView.json().task.error).toBe("授权已到期");
+  });
+
+  it("keeps the originating workspace after restart and hides history with no known workspace", async () => {
+    const f = await fixture();
+    const target = await f.database("重启目标");
+    const writer = await f.member("restart-write", ["database.write"], [{ type: "database_connection", id: target }]);
+    const started = await f.app.inject({ method: "POST", url: `/api/v1/database-connections/${target}/restore`, cookies: writer.cookies, ...multipart("data_target", "UPDATE example SET label='kept workspace' WHERE id=1") });
+    expect(started.statusCode, started.body).toBe(202);
+    const taskId = started.json().task.id as string;
+    expect((await settle(f.app, writer.userId, taskId))?.status).toBe("success");
+
+    await f.reopen();
+    expect((await f.req("GET", `/api/v1/database-tasks/${taskId}`, writer.cookies)).statusCode).toBe(200);
+    expect((await f.req("PUT", "/api/v1/auth/workspace", writer.cookies, { type: "personal" })).statusCode).toBe(200);
+    expect((await f.req("GET", `/api/v1/database-tasks/${taskId}`, writer.cookies)).statusCode).toBe(404);
+    const personalList = await f.req("GET", "/api/v1/database-tasks", writer.cookies);
+    expect(personalList.statusCode).toBe(200);
+    expect((personalList.json().items as Array<{ id: string }>).some((item) => item.id === taskId)).toBe(false);
+    expect((await f.req("PUT", "/api/v1/auth/workspace", writer.cookies, { type: "organization", id: f.org })).statusCode).toBe(200);
+
+    const stored = await f.db.prepare("SELECT workspace_type, workspace_id FROM database_tasks WHERE id = ?").get(taskId) as { workspace_type: string; workspace_id: string };
+    expect(stored).toEqual({ workspace_type: "organization", workspace_id: f.org });
+    await f.db.prepare("DELETE FROM database_connections WHERE id = ?").run(target);
+    await f.reopen();
+    const kept = await f.db.prepare("SELECT workspace_type, workspace_id, connection_id FROM database_tasks WHERE id = ?").get(taskId) as { workspace_type: string; workspace_id: string; connection_id: string | null };
+    expect(kept).toMatchObject({ workspace_type: "organization", workspace_id: f.org, connection_id: null });
+    expect((await f.req("GET", `/api/v1/database-tasks/${taskId}`, writer.cookies)).statusCode).toBe(200);
+
+    const now = new Date().toISOString();
+    await f.db.prepare(`
+      INSERT INTO database_tasks (
+        id, owner_user_id, type, connection_id, workspace_type, workspace_id, status, progress, title, details_json, logs_json, error_message, created_at, completed_at
+      ) VALUES ('unknown-workspace-task', ?, 'restore', NULL, NULL, NULL, 'success', 100, 'unknown', '{}', '[]', '', ?, ?)
+    `).run(writer.userId, now, now);
+    const legacyConnection = await f.database("遗留连接");
+    await f.db.prepare(`
+      INSERT INTO database_tasks (
+        id, owner_user_id, type, connection_id, workspace_type, workspace_id, status, progress, title, details_json, logs_json, error_message, created_at, completed_at
+      ) VALUES ('legacy-connection-task', ?, 'restore', ?, NULL, NULL, 'success', 100, 'legacy', '{}', '[]', '', ?, ?)
+    `).run(writer.userId, legacyConnection, now, now);
+    await f.reopen();
+    expect((await f.req("GET", "/api/v1/database-tasks/unknown-workspace-task", writer.cookies)).statusCode).toBe(404);
+    expect((await f.req("GET", "/api/v1/database-tasks/legacy-connection-task", writer.cookies)).statusCode).toBe(200);
+    const recovered = await f.db.prepare("SELECT workspace_type, workspace_id FROM database_tasks WHERE id = 'legacy-connection-task'").get() as { workspace_type: string; workspace_id: string };
+    expect(recovered).toEqual({ workspace_type: "organization", workspace_id: f.org });
+    expect((await f.req("PUT", "/api/v1/auth/workspace", writer.cookies, { type: "personal" })).statusCode).toBe(200);
+    expect((await f.req("GET", `/api/v1/database-tasks/${taskId}`, writer.cookies)).statusCode).toBe(404);
+    expect((await f.req("GET", "/api/v1/database-tasks/legacy-connection-task", writer.cookies)).statusCode).toBe(404);
+    expect((await f.req("GET", "/api/v1/database-tasks/unknown-workspace-task", writer.cookies)).statusCode).toBe(404);
+    const hiddenList = await f.req("GET", "/api/v1/database-tasks", writer.cookies);
+    const hiddenIds = (hiddenList.json().items as Array<{ id: string }>).map((item) => item.id);
+    expect(hiddenIds).not.toContain(taskId);
+    expect(hiddenIds).not.toContain("legacy-connection-task");
+    expect(hiddenIds).not.toContain("unknown-workspace-task");
   });
 });

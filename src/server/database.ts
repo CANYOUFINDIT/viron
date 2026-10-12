@@ -40,6 +40,9 @@ export async function openDatabase(config: AppConfig): Promise<EnvmanDatabase> {
     await addMysqlColumnIfMissing(db, "database_query_favorites", "database_name", "VARCHAR(255) NOT NULL DEFAULT ''");
     await addMysqlColumnIfMissing(db, "database_connections", "profile_parent_id", "VARCHAR(64) NULL");
     await addMysqlColumnIfMissing(db, "database_connections", "profile_name", "VARCHAR(160) NOT NULL DEFAULT ''");
+    await addMysqlColumnIfMissing(db, "database_tasks", "workspace_type", "VARCHAR(20) NULL");
+    await addMysqlColumnIfMissing(db, "database_tasks", "workspace_id", "VARCHAR(64) NULL");
+    await backfillDatabaseTaskWorkspaces(db);
     await addMysqlColumnIfMissing(db, "ssh_connections", "ssh_key_id", "VARCHAR(64) NULL");
     await addMysqlForeignKeyIfMissing(
       db,
@@ -193,6 +196,9 @@ export async function openDatabase(config: AppConfig): Promise<EnvmanDatabase> {
   addColumnIfMissing(raw, "database_query_favorites", "owner_user_id", "TEXT REFERENCES admin_users(id) ON DELETE CASCADE");
   addColumnIfMissing(raw, "database_query_favorites", "database_name", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(raw, "database_tasks", "owner_user_id", "TEXT REFERENCES admin_users(id) ON DELETE CASCADE");
+  addColumnIfMissing(raw, "database_tasks", "workspace_type", "TEXT CHECK(workspace_type IN ('personal','organization'))");
+  addColumnIfMissing(raw, "database_tasks", "workspace_id", "TEXT");
+  await backfillDatabaseTaskWorkspaces(db);
   addColumnIfMissing(raw, "ssh_terminal_recordings", "owner_user_id", "TEXT REFERENCES admin_users(id) ON DELETE CASCADE");
   addColumnIfMissing(raw, "audit_events", "actor_user_id", "TEXT REFERENCES admin_users(id) ON DELETE SET NULL");
   addColumnIfMissing(raw, "audit_events", "workspace_type", "TEXT");
@@ -324,6 +330,23 @@ function rebuildAccessGovernanceEventTable(db: Database.Database): void {
       CREATE INDEX access_events_grant_idx ON access_governance_events(grant_id, action);
     `);
   })();
+}
+
+async function backfillDatabaseTaskWorkspaces(db: EnvmanDatabase): Promise<void> {
+  await db.prepare(`
+    UPDATE database_tasks
+    SET workspace_type = (
+      SELECT workspace_type FROM database_connections WHERE database_connections.id = database_tasks.connection_id
+    ),
+    workspace_id = (
+      SELECT workspace_id FROM database_connections WHERE database_connections.id = database_tasks.connection_id
+    )
+    WHERE (workspace_type IS NULL OR workspace_id IS NULL OR workspace_id = '')
+      AND connection_id IN (
+        SELECT id FROM database_connections
+        WHERE workspace_type IN ('personal', 'organization') AND workspace_id <> ''
+      )
+  `).run();
 }
 
 async function addMysqlColumnIfMissing(db: EnvmanDatabase, table: string, column: string, definition: string): Promise<void> {

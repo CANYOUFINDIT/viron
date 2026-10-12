@@ -1153,6 +1153,8 @@ CREATE TABLE IF NOT EXISTS database_tasks (
   owner_user_id TEXT REFERENCES admin_users(id) ON DELETE CASCADE,
   type TEXT NOT NULL CHECK(type IN ('backup','restore','transfer','import')),
   connection_id TEXT REFERENCES database_connections(id) ON DELETE SET NULL,
+  workspace_type TEXT CHECK(workspace_type IN ('personal','organization')),
+  workspace_id TEXT,
   status TEXT NOT NULL CHECK(status IN ('pending','running','success','error','cancelled')),
   progress INTEGER NOT NULL DEFAULT 0,
   title TEXT NOT NULL,
