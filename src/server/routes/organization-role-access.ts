@@ -10,6 +10,7 @@ import {
   insertDataGrant,
   insertRole,
   loadOrganizationAccess,
+  freezeFeatureTargets,
   organizationResourceCatalog,
   roleState,
 } from "../organization-rbac.js";
@@ -773,22 +774,7 @@ export async function registerOrganizationRoleAccessRoutes(
               app.db,
               request.params.id,
             );
-            const environments = new Set(
-              body.targets
-                .filter((t) => t.type === "environment")
-                .map((t) => t.id),
-            );
-            const frozen =
-              method === "POST"
-                ? [
-                    ...body.targets,
-                    ...catalog
-                      .filter((t) =>
-                        t.environmentIds.some((id) => environments.has(id)),
-                      )
-                      .map(({ type, id }) => ({ type, id })),
-                  ]
-                : body.targets;
+            const frozen = method === "POST" ? freezeFeatureTargets(catalog, body.targets) : body.targets;
             const targets = await validateTargets(request.params.id, frozen);
             if (
               body.features.webPlugins &&

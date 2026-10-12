@@ -4,6 +4,7 @@ import {
   OrganizationPermissionError,
   insertDataGrant,
   loadOrganizationAccess,
+  freezeFeatureTargets,
   organizationResourceCatalog,
   roleState,
 } from "./organization-rbac.js";
@@ -516,9 +517,14 @@ export async function submitGrantRequest(
   if (!access.allows("authorization.request"))
     throw new OrganizationPermissionError("ACTION_FORBIDDEN", 403, "没有申请授权的权限");
   const catalog = access.catalog;
-  const targets = [...new Map(input.targets.map((target) => [resourceKey(target), target])).values()];
-  if (!targets.length || targets.some((target) => !catalog.some((item) => sameTarget(item, target))))
+  const requested = [...new Map(input.targets.map((target) => [resourceKey(target), target])).values()];
+  if (!requested.length || requested.some((target) => !catalog.some((item) => sameTarget(item, target))))
     throw new OrganizationPermissionError("INVALID_RESOURCE", 400, "申请目标不存在");
+  // A pure environment selection freezes the same resources as a direct feature grant.
+  // A grouped resubmit already lists those resources, so expanding the environment again would pull the other flows back in.
+  const targets = input.kind === "feature" && requested.every((target) => target.type === "environment")
+    ? freezeFeatureTargets(catalog, requested)
+    : requested;
   if (input.kind === "data") {
     if (!input.roleId) throw new OrganizationPermissionError("ROLE_REQUIRED", 400, "数据申请必须选择已经持有的角色");
     const role = access.state.roles.find((item) => item.id === input.roleId);
@@ -541,12 +547,18 @@ export async function submitGrantRequest(
     const flow = flowFor(all, target);
     grouped.set(flow.id, [...(grouped.get(flow.id) ?? []), target]);
   }
-  if (grouped.size > 1)
+  if (grouped.size > 1) {
+    const groups = [...grouped.entries()].map(([flowId, groupTargets]) => {
+      const item = all.find((flow) => flow.id === flowId)!;
+      return { flowId, flowName: item.name, targets: groupTargets };
+    });
     throw new OrganizationPermissionError(
       "MULTIPLE_APPROVAL_FLOWS",
       409,
-      "这些资源分属不同审批流程，请按流程分别提交",
+      `这些资源分属不同审批流程（${groups.map((group) => group.flowName).join("、")}），请按分组分别提交`,
+      { groups },
     );
+  }
   const flow = all.find((item) => item.id === [...grouped.keys()][0])!;
   const blocked = flow.nodes.find(unsupportedNode);
   if (blocked)

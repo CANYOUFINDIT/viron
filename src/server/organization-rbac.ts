@@ -32,6 +32,7 @@ export class OrganizationPermissionError extends Error {
     readonly code: string,
     readonly statusCode: number,
     message: string,
+    readonly details?: Record<string, unknown>,
   ) {
     super(message);
   }
@@ -197,6 +198,21 @@ export async function organizationResourceCatalog(
       ),
     ];
   return result;
+}
+
+/** Same fixed scope as a direct feature grant: an environment keeps itself and the typed resources linked to it now. */
+export function freezeFeatureTargets(
+  catalog: Array<Pick<ResourceCatalogItem, "type" | "id" | "environmentIds">>,
+  targets: ResourceRef[],
+): ResourceRef[] {
+  const environments = new Set(targets.filter((target) => target.type === "environment").map((target) => target.id));
+  const frozen = [
+    ...targets,
+    ...catalog
+      .filter((item) => item.environmentIds.some((id) => environments.has(id)))
+      .map(({ type, id }) => ({ type, id })),
+  ];
+  return [...new Map(frozen.map((target) => [resourceKey(target), target])).values()];
 }
 
 export async function roleState(db: EnvmanDatabase, org: string) {

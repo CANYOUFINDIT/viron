@@ -79,7 +79,7 @@ export async function registerOrganizationPhaseRoutes(app: FastifyInstance): Pro
   app.addHook("preHandler", requireAdmin);
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof OrganizationPermissionError)
-      return reply.code(error.statusCode).send({ error: error.code, message: error.message });
+      return reply.code(error.statusCode).send({ error: error.code, message: error.message, ...(error.details ?? {}) });
     return reply.code(500).send({ error: "REQUEST_FAILED", message: "操作没有完成" });
   });
 
