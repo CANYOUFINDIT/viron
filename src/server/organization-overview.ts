@@ -339,6 +339,23 @@ function namedTarget(access: Awaited<ReturnType<typeof loadOrganizationAccess>>,
   };
 }
 
+function windowReason(record: { enabled: boolean; startsAt: string | null; expiresAt: string | null }, now: number) {
+  if (!record.enabled) return "授权已停用";
+  if (record.startsAt && Date.parse(record.startsAt) > now) return "授权尚未生效";
+  if (record.expiresAt && Date.parse(record.expiresAt) <= now) return "授权已过期";
+  return null;
+}
+
+function explainInvalid(parts: Array<string | null>) {
+  const reasons = parts.filter((part): part is string => Boolean(part));
+  return reasons.length ? reasons.join("；") : null;
+}
+
+async function rowsByIds<T extends { id: string }>(db: EnvmanDatabase, sql: string, ids: string[], leading: string[] = []) {
+  if (!ids.length) return [] as T[];
+  return db.prepare(sql.replace("IN (?)", `IN (${ids.map(() => "?").join(", ")})`)).all<T>(...leading, ...ids);
+}
+
 /** Read-only authorization rows for one resource. Does not return the organization's other records. */
 export async function resourceAuthorization(db: EnvmanDatabase, org: string, userId: string, target: ResourceRef) {
   if (!RESOURCE_TYPES.includes(target.type))
@@ -350,34 +367,89 @@ export async function resourceAuthorization(db: EnvmanDatabase, org: string, use
   if (!access.allows("authorization.view", target))
     throw new OrganizationPermissionError("ACTION_FORBIDDEN", 403, "没有查看该资源授权的权限");
   const key = resourceKey(target);
+  const visibleTarget = (entry: ResourceRef) => resourceKey(entry) === key || access.allows("authorization.view", entry);
+  const matchedFeatures = access.state.featureGrants.filter((grant) => grant.targets.some((entry) => resourceKey(entry) === key));
+  const maintenanceRows = await db.prepare(
+    "SELECT id, actor_id, code, created_at FROM organization_resource_maintenance WHERE organization_id = ? AND target_type = ? AND target_id = ?",
+  ).all<{ id: string; actor_id: string; code: string; created_at: string }>(org, target.type, target.id);
+  const userIds = [...new Set([
+    ...matchedFeatures.filter((grant) => grant.subjectType === "user").map((grant) => grant.subjectId),
+    ...maintenanceRows.map((row) => row.actor_id),
+  ])];
+  const projectIds = [...new Set(matchedFeatures.filter((grant) => grant.subjectType === "project").map((grant) => grant.subjectId))];
+  const organizationIds = [...new Set(matchedFeatures.filter((grant) => grant.subjectType === "organization").map((grant) => grant.subjectId))];
+  const [users, members, projects, organizations] = await Promise.all([
+    rowsByIds<{ id: string; username: string; status: string }>(db, "SELECT id, username, status FROM admin_users WHERE id IN (?)", userIds),
+    rowsByIds<{ id: string }>(db, "SELECT user_id AS id FROM organization_members WHERE organization_id = ? AND user_id IN (?)", userIds, [org]),
+    rowsByIds<{ id: string; name: string }>(db, "SELECT id, name FROM projects WHERE organization_id = ? AND id IN (?)", projectIds, [org]),
+    rowsByIds<{ id: string; name: string }>(db, "SELECT id, name FROM organizations WHERE id IN (?)", organizationIds),
+  ]);
+  const userById = new Map(users.map((row) => [row.id, row]));
+  const memberIds = new Set(members.map((row) => row.id));
+  const projectById = new Map(projects.map((row) => [row.id, row.name]));
+  const organizationById = new Map(organizations.map((row) => [row.id, row.name]));
+  const subjectOf = (type: "user" | "project" | "organization", id: string) => {
+    if (type === "user") {
+      const user = userById.get(id);
+      if (!user) return { name: "", enabled: false, reason: "对象不存在" };
+      if (user.status !== "active") return { name: user.username, enabled: false, reason: "对象已停用" };
+      if (!memberIds.has(id)) return { name: user.username, enabled: false, reason: "对象已离开组织" };
+      return { name: user.username, enabled: true, reason: null };
+    }
+    const name = (type === "project" ? projectById : organizationById).get(id);
+    if (name === undefined || (type === "organization" && id !== org)) return { name: name ?? "", enabled: false, reason: "对象不存在" };
+    return { name, enabled: true, reason: null };
+  };
   const dataGrants = access.state.dataGrants
     .filter((grant) => resourceKey(grant.target) === key)
-    .map((grant) => ({
-      id: grant.id,
-      kind: "data" as const,
-      name: access.state.roles.find((role) => role.id === grant.roleId)?.name ?? "",
-      roleId: grant.roleId,
-      source: grant.source,
-      status: statusOf(grant, now),
-      startsAt: grant.startsAt,
-      expiresAt: grant.expiresAt,
-      targets: [namedTarget(access, grant.target)],
-    }));
-  const featureGrants = access.state.featureGrants
-    .filter((grant) => grant.targets.some((entry) => resourceKey(entry) === key))
-    .map((grant) => ({
+    .map((grant) => {
+      const role = access.state.roles.find((entry) => entry.id === grant.roleId);
+      const roleEnabled = role?.enabled ?? false;
+      return {
+        id: grant.id,
+        kind: "data" as const,
+        name: role?.name ?? "",
+        roleId: grant.roleId,
+        permissionCodes: role?.permissionCodes ?? [],
+        roleEnabled,
+        source: grant.source,
+        status: statusOf(grant, now),
+        invalidReason: explainInvalid([role ? (roleEnabled ? null : "角色已停用") : "角色不存在", windowReason(grant, now)]),
+        startsAt: grant.startsAt,
+        expiresAt: grant.expiresAt,
+        targets: [namedTarget(access, grant.target)],
+      };
+    });
+  const featureGrants = matchedFeatures.map((grant) => {
+    const subject = subjectOf(grant.subjectType, grant.subjectId);
+    return {
       id: grant.id,
       kind: "feature" as const,
       name: grant.reason || "功能授权",
-      source: grant.subjectType === "user" ? "direct" : "inherited",
+      source: grant.subjectType,
       subjectType: grant.subjectType,
       subjectId: grant.subjectId,
+      subjectName: subject.name,
+      subjectEnabled: subject.enabled,
       status: statusOf(grant, now),
+      invalidReason: explainInvalid([subject.reason, windowReason(grant, now)]),
       startsAt: grant.startsAt,
       expiresAt: grant.expiresAt,
       features: grant.features,
-      targets: grant.targets.map((entry) => namedTarget(access, entry)),
-    }));
+      targets: grant.targets.filter(visibleTarget).map((entry) => namedTarget(access, entry)),
+    };
+  });
+  // Configuration maintenance is a creator path, not a role data grant or a feature grant.
+  const configurationMaintenance = maintenanceRows.map((row) => ({
+    id: row.id,
+    kind: "maintenance" as const,
+    code: row.code,
+    actorId: row.actor_id,
+    actorName: userById.get(row.actor_id)?.username ?? "",
+    source: "maintenance" as const,
+    createdAt: row.created_at,
+    target: namedTarget(access, target),
+  }));
   return {
     target: namedTarget(access, target),
     authorization: {
@@ -387,5 +459,6 @@ export async function resourceAuthorization(db: EnvmanDatabase, org: string, use
     },
     dataGrants,
     featureGrants,
+    configurationMaintenance,
   };
 }

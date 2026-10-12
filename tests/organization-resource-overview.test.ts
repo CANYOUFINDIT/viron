@@ -128,12 +128,76 @@ describe("resource overview and first configuration", () => {
     const detail = await f.app.inject({ method: "GET", url: `${f.base}/resource-authorizations/ssh_connection/${sshId}`, cookies: f.cookies });
     expect(detail.statusCode, detail.body).toBe(200);
     expect(detail.json().dataGrants).toHaveLength(1);
-    expect(detail.json().dataGrants[0]).toMatchObject({ name: "连接查看", source: "direct", status: "active", targets: [{ type: "ssh_connection", id: sshId }] });
+    expect(detail.json().dataGrants[0]).toMatchObject({
+      name: "连接查看",
+      source: "direct",
+      status: "active",
+      permissionCodes: ["environment.catalog", "ssh.view"],
+      roleEnabled: true,
+      invalidReason: null,
+      targets: [{ type: "ssh_connection", id: sshId }],
+    });
     expect(detail.json().featureGrants).toEqual([]);
+    expect(detail.json().configurationMaintenance).toEqual([]);
     const otherDetail = await f.app.inject({ method: "GET", url: `${f.base}/resource-authorizations/ssh_connection/${otherId}`, cookies: f.cookies });
     expect(otherDetail.json().dataGrants).toEqual([]);
     const denied = await f.app.inject({ method: "GET", url: `${f.base}/resource-authorizations/ssh_connection/${sshId}`, cookies: catalogCookies });
     expect(denied.statusCode).toBe(403);
+    const feature = await f.app.inject({
+      method: "POST",
+      url: f.base + "/feature-grants",
+      cookies: f.cookies,
+      payload: {
+        subjectType: "user",
+        subjectId: userId,
+        targets: [{ type: "ssh_connection", id: sshId }, { type: "ssh_connection", id: otherId }],
+        features: { mcp: true, agent: false, webPlugins: false },
+        reason: "多目标",
+      },
+    });
+    expect(feature.statusCode, feature.body).toBe(201);
+    const viewer = await f.app.inject({ method: "POST", url: "/api/v1/auth/register", payload: { username: "grant-viewer", password: "member-password" } });
+    const viewerId = viewer.json().user.id as string;
+    const viewerCookies = { envman_session: viewer.cookies[0].value };
+    await f.db.prepare("INSERT INTO organization_members (organization_id,user_id,role,created_at,updated_at) VALUES (?,?,'member',?,?)").run(f.org, viewerId, stamp, stamp);
+    await f.app.inject({ method: "PUT", url: "/api/v1/auth/workspace", cookies: viewerCookies, payload: { type: "organization", id: f.org } });
+    const viewRole = await f.app.inject({
+      method: "POST",
+      url: f.base + "/roles",
+      cookies: f.cookies,
+      payload: { name: "授权查看", permissionCodes: ["environment.catalog", "authorization.view"], reason: "验收" },
+    });
+    expect((await f.app.inject({
+      method: "POST",
+      url: f.base + "/role-assignments",
+      cookies: f.cookies,
+      payload: { roleId: viewRole.json().id, subjectType: "user", subjectId: viewerId, managementScope: { kind: "resources", ids: [], includeChildren: false }, reason: "验收" },
+    })).statusCode).toBe(201);
+    expect((await f.app.inject({
+      method: "POST",
+      url: f.base + "/role-data-grants",
+      cookies: f.cookies,
+      payload: { roleId: viewRole.json().id, targets: [{ type: "ssh_connection", id: sshId }], reason: "仅当前资源" },
+    })).statusCode).toBe(201);
+    const scoped = await f.app.inject({ method: "GET", url: `${f.base}/resource-authorizations/ssh_connection/${sshId}`, cookies: viewerCookies });
+    expect(scoped.statusCode, scoped.body).toBe(200);
+    expect(scoped.json().featureGrants).toHaveLength(1);
+    expect(scoped.json().featureGrants[0].targets.every((entry: { id: string }) => entry.id === sshId)).toBe(true);
+    expect(scoped.json().featureGrants[0]).toMatchObject({ subjectName: "overview-member", source: "user", subjectEnabled: true, status: "active" });
+    expect(scoped.json().dataGrants.find((row: { roleId: string }) => row.roleId === roleId).permissionCodes).toContain("ssh.view");
+    expect((await f.app.inject({ method: "GET", url: `${f.base}/resource-authorizations/ssh_connection/${otherId}`, cookies: viewerCookies })).statusCode).toBe(403);
+    expect((await f.app.inject({
+      method: "PUT",
+      url: f.base + "/roles/" + roleId,
+      cookies: f.cookies,
+      payload: { name: "连接查看", permissionCodes: ["environment.catalog", "ssh.view"], enabled: false, reason: "角色停用" },
+    })).statusCode).toBe(200);
+    const disabled = await f.app.inject({ method: "GET", url: `${f.base}/resource-authorizations/ssh_connection/${sshId}`, cookies: viewerCookies });
+    expect(disabled.json().dataGrants.find((row: { roleId: string }) => row.roleId === roleId)).toMatchObject({
+      roleEnabled: false,
+      status: "active",
+      invalidReason: "角色已停用",
+    });
   });
 
   it("lets the maintain code create and update the first Web entry without granting that path to environment.create", async () => {
@@ -152,6 +216,13 @@ describe("resource overview and first configuration", () => {
     expect(grants).toEqual([]);
     const maintenance = await f.db.prepare("SELECT code, actor_id FROM organization_resource_maintenance WHERE target_id = ?").all<{ code: string; actor_id: string }>(entryId);
     expect(maintenance).toEqual([{ code: "resource.web.configure", actor_id: f.adminId }]);
+    const maintainedDetail = await f.app.inject({ method: "GET", url: `${f.base}/resource-authorizations/web_entry/${entryId}`, cookies: f.cookies });
+    expect(maintainedDetail.statusCode, maintainedDetail.body).toBe(200);
+    expect(maintainedDetail.json().dataGrants).toEqual([]);
+    expect(maintainedDetail.json().featureGrants).toEqual([]);
+    expect(maintainedDetail.json().configurationMaintenance).toEqual([
+      expect.objectContaining({ kind: "maintenance", code: "resource.web.configure", actorId: f.adminId, actorName: "admin", source: "maintenance" }),
+    ]);
     const { loadOrganizationAccess } = await import("../src/server/organization-rbac.js");
     const createdAccess = await loadOrganizationAccess(f.db, f.org, f.adminId);
     expect(createdAccess.allows("web.use", { type: "web_entry", id: entryId })).toBe(false);
