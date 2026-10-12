@@ -536,6 +536,37 @@ export async function registerOrganizationRoleAccessRoutes(
             409,
             "角色仍被申请或审批流程引用",
           );
+        const pendingRole = await app.db
+          .prepare(
+            "SELECT 1 AS present FROM organization_grant_requests WHERE organization_id = ? AND status = 'pending' AND role_id = ?",
+          )
+          .get(request.params.id, before.id);
+        if (pendingRole)
+          throw new OrganizationPermissionError(
+            "ROLE_IN_USE",
+            409,
+            "角色仍有待处理的授权申请，请先处理引用",
+          );
+        const flowNodes = await app.db
+          .prepare(
+            "SELECT nodes_json FROM organization_approval_flows WHERE organization_id = ?",
+          )
+          .all<{ nodes_json: string }>(request.params.id);
+        if (
+          flowNodes.some((row) => {
+            try {
+              const nodes = JSON.parse(row.nodes_json) as Array<{ approverRoleId?: string | null }>;
+              return Array.isArray(nodes) && nodes.some((node) => node?.approverRoleId === before.id);
+            } catch {
+              return false;
+            }
+          })
+        )
+          throw new OrganizationPermissionError(
+            "ROLE_IN_USE",
+            409,
+            "角色仍被审批流程用作审批角色，请先处理引用",
+          );
         await app.db
           .prepare(
             "DELETE FROM organization_roles WHERE organization_id = ? AND id = ?",

@@ -14,11 +14,14 @@ export type FlowMode = "any" | "all" | "sequence" | "auto_approve" | "auto_rejec
 export interface FlowNode {
   id: string;
   name: string;
-  mode: FlowMode;
+  mode: string;
   approverUserIds: string[];
   approverRoleId: string | null;
   allowSelf: boolean;
   requireComment: boolean;
+  /** Set when an imported legacy node must stay untouched and cannot execute. */
+  unsupported?: boolean;
+  legacySnapshot?: unknown;
 }
 export interface FlowSnapshotNode extends FlowNode {
   resolvedApproverIds: string[];
@@ -53,7 +56,71 @@ const parse = <T>(value: unknown, fallback: T): T => {
     return fallback;
   }
 };
-const human = new Set<FlowMode>(["any", "all", "sequence"]);
+const supportedModes = new Set<string>(["any", "all", "sequence", "auto_approve", "auto_reject", "cc"]);
+const human = new Set<string>(["any", "all", "sequence"]);
+
+function unsupportedNode(node: { mode?: string; unsupported?: boolean }) {
+  return node.unsupported === true || !supportedModes.has(String(node.mode ?? ""));
+}
+
+function unsupportedNodeMessage(node: { name?: string; mode?: string }, action: "编辑" | "提交" | "审批") {
+  const name = node.name?.trim() || "未命名节点";
+  const mode = node.mode || "未识别";
+  return action === "编辑"
+    ? `流程包含不支持的旧节点“${name}”（${mode}），已保留原配置，不能编辑或降级为任一人审批`
+    : `节点“${name}”使用不支持的旧模式“${mode}”，已保留原配置，不能${action}`;
+}
+
+function textList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const ids: string[] = [];
+  for (const item of value) if (typeof item === "string" && item && !ids.includes(item)) ids.push(item);
+  return ids;
+}
+
+/** Maps one old workflow document. Unknown modes stay intact and are marked unsupported. */
+function legacyNodesFromWorkflow(raw: string): FlowNode[] {
+  let parsed: unknown = raw;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    parsed = raw;
+  }
+  const record = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+  const stages = Array.isArray(record?.stages) ? record.stages : Array.isArray(record?.nodes) ? record.nodes : null;
+  if (!stages?.length) {
+    return [{
+      id: randomUUID(),
+      name: "未识别的旧流程",
+      mode: "unrecognized",
+      approverUserIds: [],
+      approverRoleId: null,
+      allowSelf: false,
+      requireComment: false,
+      unsupported: true,
+      legacySnapshot: parsed,
+    }];
+  }
+  return stages.map((stage, index) => {
+    const item = stage && typeof stage === "object" ? (stage as Record<string, unknown>) : {};
+    const mode = typeof item.mode === "string" && item.mode ? item.mode : "unrecognized";
+    const role = item.approverRoleId ?? item.roleId;
+    const node: FlowNode = {
+      id: typeof item.id === "string" && item.id ? item.id : randomUUID(),
+      name: typeof item.name === "string" && item.name.trim() ? item.name.trim() : `审批节点 ${index + 1}`,
+      mode,
+      approverUserIds: textList(item.approverUserIds ?? item.approverIds),
+      approverRoleId: typeof role === "string" && role ? role : null,
+      allowSelf: item.allowSelf === true,
+      requireComment: item.requireComment === true,
+    };
+    if (!supportedModes.has(mode)) {
+      node.unsupported = true;
+      node.legacySnapshot = stage;
+    }
+    return node;
+  });
+}
 
 type LedgerActor = { id?: string | null; name?: string | null; username?: string | null };
 
@@ -159,6 +226,8 @@ export async function roleHolderIds(db: EnvmanDatabase, org: string, roleId: str
     projectTree(db, org),
   ]);
   const memberIds = new Set(members.map((member) => member.user_id));
+  const role = state.roles.find((item) => item.id === roleId);
+  if (!role?.enabled) return [];
   const holders = new Set<string>();
   for (const assignment of state.assignments) {
     if (assignment.roleId !== roleId || !validAt(assignment, now)) continue;
@@ -177,20 +246,23 @@ export async function roleHolderIds(db: EnvmanDatabase, org: string, roleId: str
 export async function ensureDefaultApprovalFlow(db: EnvmanDatabase, org: string) {
   const existing = await db
     .prepare(
-      "SELECT id FROM organization_approval_flows WHERE organization_id = ? AND is_default = 1",
+      "SELECT id FROM organization_approval_flows WHERE organization_id = ? AND is_default = 1 ORDER BY created_at, id",
     )
     .get<{ id: string }>(org);
   if (existing) return existing.id;
-  const role = await db
-    .prepare(
-      `SELECT id FROM organization_roles WHERE organization_id = ? AND enabled = 1
-       AND permission_codes_json LIKE ? ORDER BY created_at, id LIMIT 1`,
-    )
-    .get<{ id: string }>(org, '%"approval.approve"%');
-  const now = new Date().toISOString();
-  const id = randomUUID();
-  const nodes: FlowNode[] = [
-    {
+  const legacy = await db
+    .prepare("SELECT workflow_json FROM organization_approval_workflows WHERE organization_id = ?")
+    .get<{ workflow_json: string }>(org);
+  let nodes: FlowNode[];
+  if (legacy) nodes = legacyNodesFromWorkflow(legacy.workflow_json);
+  else {
+    const role = await db
+      .prepare(
+        `SELECT id FROM organization_roles WHERE organization_id = ? AND enabled = 1
+         AND permission_codes_json LIKE ? ORDER BY created_at, id LIMIT 1`,
+      )
+      .get<{ id: string }>(org, '%"approval.approve"%');
+    nodes = [{
       id: randomUUID(),
       name: "组织审批",
       mode: "any",
@@ -198,17 +270,32 @@ export async function ensureDefaultApprovalFlow(db: EnvmanDatabase, org: string)
       approverRoleId: role?.id ?? null,
       allowSelf: false,
       requireComment: false,
-    },
-  ];
-  await db
+    }];
+  }
+  const now = new Date().toISOString();
+  const id = randomUUID();
+  const inserted = await db
     .prepare(
       `INSERT INTO organization_approval_flows (
         id, organization_id, name, is_default, enabled, nodes_json, created_at, updated_at
-      ) VALUES (?, ?, ?, 1, 1, ?, ?, ?)`,
+      )
+      SELECT ?, ?, ?, 1, 1, ?, ?, ?
+      WHERE NOT EXISTS (
+        SELECT 1 FROM organization_approval_flows WHERE organization_id = ? AND is_default = 1
+      )`,
     )
-    .run(id, org, "所有连接", JSON.stringify(nodes), now, now);
-  await recordGrantLedger(db, org, { name: "系统" }, "建立默认审批流程", "承接未分配的资源", {
-    after: { id, name: "所有连接" },
+    .run(id, org, "所有连接", JSON.stringify(nodes), now, now, org);
+  if (!inserted.changes) {
+    const winner = await db
+      .prepare(
+        "SELECT id FROM organization_approval_flows WHERE organization_id = ? AND is_default = 1 ORDER BY created_at, id",
+      )
+      .get<{ id: string }>(org);
+    if (!winner) throw new OrganizationPermissionError("DEFAULT_FLOW_REQUIRED", 409, "组织必须保留一条默认审批流程");
+    return winner.id;
+  }
+  await recordGrantLedger(db, org, { name: "系统" }, "建立默认审批流程", legacy ? "兼容旧审批流程，保留原节点" : "承接未分配的资源", {
+    after: { id, name: "所有连接", legacy: Boolean(legacy) },
   });
   return id;
 }
@@ -276,8 +363,10 @@ export async function saveApprovalFlow(
       throw new OrganizationPermissionError("DEFAULT_FLOW_REQUIRED", 409, "默认流程必须继续承接未分配的资源");
     if (!flow?.isDefault && !targets.length)
       throw new OrganizationPermissionError("FLOW_SCOPE_REQUIRED", 400, "指定流程至少选择一个资源");
-    const modes = new Set<FlowMode>(["any", "all", "sequence", "auto_approve", "auto_reject", "cc"]);
-    if (!input.nodes.length || input.nodes.some((node) => !modes.has(node.mode)))
+    const blocked = flow?.nodes.find(unsupportedNode);
+    if (blocked)
+      throw new OrganizationPermissionError("UNSUPPORTED_APPROVAL_NODE", 409, unsupportedNodeMessage(blocked, "编辑"));
+    if (!input.nodes.length || input.nodes.some((node) => unsupportedNode(node)))
       throw new OrganizationPermissionError("INVALID_APPROVAL_NODE", 400, "审批节点必须保留原有模式，不能降级或留空");
     const conflicts = targets.flatMap((target) => {
       const owner = current.find(
@@ -426,6 +515,9 @@ export async function submitGrantRequest(
     throw new OrganizationPermissionError("INVALID_RESOURCE", 400, "申请目标不存在");
   if (input.kind === "data") {
     if (!input.roleId) throw new OrganizationPermissionError("ROLE_REQUIRED", 400, "数据申请必须选择已经持有的角色");
+    const role = access.state.roles.find((item) => item.id === input.roleId);
+    if (role && !role.enabled)
+      throw new OrganizationPermissionError("ROLE_DISABLED", 409, "角色已停用，不能作为申请或审批角色");
     const holders = await roleHolderIds(db, org, input.roleId, now);
     if (!holders.includes(requesterId))
       throw new OrganizationPermissionError("ROLE_NOT_HELD", 409, "只能为自己已经持有的角色申请数据授权");
@@ -450,6 +542,9 @@ export async function submitGrantRequest(
       "这些资源分属不同审批流程，请按流程分别提交",
     );
   const flow = all.find((item) => item.id === [...grouped.keys()][0])!;
+  const blocked = flow.nodes.find(unsupportedNode);
+  if (blocked)
+    throw new OrganizationPermissionError("UNSUPPORTED_APPROVAL_NODE", 409, unsupportedNodeMessage(blocked, "提交"));
   const snapshotNodes: FlowSnapshotNode[] = [];
   for (const node of flow.nodes)
     snapshotNodes.push(await resolveNode(db, org, node, requesterId, targets));
@@ -468,6 +563,8 @@ export async function submitGrantRequest(
   const decisions: Array<Record<string, unknown>> = [];
   while (stage < snapshotNodes.length && !human.has(snapshotNodes[stage].mode)) {
     const node = snapshotNodes[stage];
+    if (unsupportedNode(node))
+      throw new OrganizationPermissionError("UNSUPPORTED_APPROVAL_NODE", 409, unsupportedNodeMessage(node, "提交"));
     if (node.mode === "auto_reject") {
       status = "rejected";
       decisions.push({ stageIndex: stage, decision: "reject", at: created, automatic: true });
@@ -829,6 +926,9 @@ export async function decideGrantRequest(
 ) {
   const actorId = actor.id ?? "";
   const result = await mutateRequest(db, org, requestId, (row) => assertClosedDecision(db, org, row, actorId, decision), async (row) => {
+    const blocked = nodesOf(row).find(unsupportedNode);
+    if (blocked)
+      throw new OrganizationPermissionError("UNSUPPORTED_APPROVAL_NODE", 409, unsupportedNodeMessage(blocked, "审批"));
     const state = await stageState(db, org, row);
     if (state.paused)
       throw new OrganizationPermissionError("APPROVAL_PAUSED", 409, state.reason);
@@ -867,6 +967,8 @@ export async function decideGrantRequest(
     let stage = Number(row.stage_index) + 1;
     const nodes = nodesOf(row);
     while (stage < nodes.length && !human.has(nodes[stage].mode)) {
+      if (unsupportedNode(nodes[stage]))
+        throw new OrganizationPermissionError("UNSUPPORTED_APPROVAL_NODE", 409, unsupportedNodeMessage(nodes[stage], "审批"));
       if (nodes[stage].mode === "auto_reject")
         return { status: "rejected", stage, decisions: [...decisions, { stageIndex: stage, decision: "reject", automatic: true }] };
       decisions.push({ stageIndex: stage, decision: nodes[stage].mode === "cc" ? "cc" : "approve", automatic: true });
