@@ -8,7 +8,7 @@ import {
   organizationResourceCatalog,
   roleState,
 } from "./organization-rbac.js";
-import { resourceKey, validAt, type ResourceRef } from "../shared/organization-rbac.js";
+import { RESOURCE_TYPE_LABELS, resourceKey, validAt, type ResourceCatalogItem, type ResourceRef } from "../shared/organization-rbac.js";
 import { serverNow } from "./organization-boundary.js";
 
 export type FlowMode = "any" | "all" | "sequence" | "auto_approve" | "auto_reject" | "cc";
@@ -496,6 +496,52 @@ function sameTarget(left: ResourceRef, right: ResourceRef) {
   return left.type === right.type && left.id === right.id;
 }
 
+function displayTargets(catalog: ResourceCatalogItem[], targets: ResourceRef[]): FrozenTargetDisplay[] {
+  const environments = new Map(catalog.filter((item) => item.type === "environment").map((item) => [item.id, item.name]));
+  return targets.map((target) => {
+    const item = catalog.find((entry) => sameTarget(entry, target));
+    const linked = (item?.environmentIds ?? []).flatMap((id) => {
+      const name = environments.get(id)?.trim();
+      return name ? [name] : [];
+    });
+    return {
+      type: target.type,
+      id: target.id,
+      name: item?.name?.trim() ?? "",
+      typeName: RESOURCE_TYPE_LABELS[target.type],
+      environmentName: target.type === "environment" ? (item?.name?.trim() ?? "") : linked.join("、"),
+    };
+  });
+}
+
+function frozenDisplay(snapshot: PermissionSnapshot): FrozenRequestDisplay | null {
+  const display = snapshot.display;
+  if (!display || display.frozen !== true || typeof display.requesterName !== "string") return null;
+  if (!(display.roleName === null || typeof display.roleName === "string")) return null;
+  if (!display.holderNames || typeof display.holderNames !== "object" || Array.isArray(display.holderNames)) return null;
+  if (!Array.isArray(display.targets) || display.targets.length !== snapshot.targets.length) return null;
+  const holderNames: Record<string, string> = {};
+  for (const [id, name] of Object.entries(display.holderNames)) {
+    if (typeof name !== "string") return null;
+    holderNames[id] = name;
+  }
+  const targets: FrozenTargetDisplay[] = [];
+  for (let index = 0; index < display.targets.length; index += 1) {
+    const target = display.targets[index];
+    const stored = snapshot.targets[index];
+    if (!target || !stored || !sameTarget(target, stored)) return null;
+    if (typeof target.name !== "string" || typeof target.typeName !== "string" || typeof target.environmentName !== "string") return null;
+    targets.push({
+      type: stored.type,
+      id: stored.id,
+      name: target.name,
+      typeName: target.typeName,
+      environmentName: target.environmentName,
+    });
+  }
+  return { frozen: true, roleName: display.roleName, requesterName: display.requesterName, holderNames, targets };
+}
+
 function namedLedgerTargets(catalog: Array<ResourceRef & { name?: string }>, targets: ResourceRef[]) {
   return targets.map((target) => {
     const name = catalog.find((item) => sameTarget(item, target))?.name?.trim();
@@ -703,12 +749,40 @@ async function accountNames(db: EnvmanDatabase, userIds: string[]) {
   return names;
 }
 
+interface FrozenTargetDisplay {
+  type: ResourceRef["type"];
+  id: string;
+  name: string;
+  typeName: string;
+  environmentName: string;
+}
+interface FrozenRequestDisplay {
+  frozen: true;
+  roleName: string | null;
+  requesterName: string;
+  holderNames: Record<string, string>;
+  targets: FrozenTargetDisplay[];
+}
 interface PermissionSnapshot {
   permissionCodes: string[];
   holderIds: string[];
   targets: ResourceRef[];
   features: FeatureGrantFeatures | null;
   durationMs: number | null;
+  /** Names saved at submit. Old rows omit this and must not be backfilled with invented history. */
+  display?: FrozenRequestDisplay;
+}
+interface DecisionEvent {
+  stageIndex?: number;
+  userId?: string;
+  decision: string;
+  superseded?: boolean;
+  comment?: string;
+  at?: string;
+  automatic?: boolean;
+  actorName?: string;
+  nameSource?: "snapshot" | "ledger" | "current";
+  recipients?: Array<{ id: string; name: string; nameSource: "snapshot" | "current" }>;
 }
 type FeatureGrantFeatures = { mcp: boolean; agent: boolean; webPlugins: boolean };
 
@@ -791,12 +865,24 @@ export async function submitGrantRequest(
   for (const node of flow.nodes)
     snapshotNodes.push(await resolveNode(db, org, node, requesterId, targets));
   const role = input.roleId ? access.state.roles.find((item) => item.id === input.roleId) : undefined;
+  const holderIds = input.roleId ? await roleHolderIds(db, org, input.roleId, now) : [requesterId];
+  const [holderNames, requesterNames] = await Promise.all([
+    accountNames(db, holderIds),
+    accountNames(db, [requesterId]),
+  ]);
   const permissionSnapshot: PermissionSnapshot = {
     permissionCodes: [...(role?.permissionCodes ?? [])].sort(),
-    holderIds: input.roleId ? await roleHolderIds(db, org, input.roleId, now) : [requesterId],
+    holderIds,
     targets,
     features,
     durationMs: input.durationMs,
+    display: {
+      frozen: true,
+      roleName: role?.name ?? null,
+      requesterName: requesterNames[requesterId] ?? "",
+      holderNames,
+      targets: displayTargets(catalog, targets),
+    },
   };
   const id = randomUUID();
   const created = new Date(now).toISOString();
@@ -809,10 +895,10 @@ export async function submitGrantRequest(
       throw new OrganizationPermissionError("UNSUPPORTED_APPROVAL_NODE", 409, unsupportedNodeMessage(node, "提交"));
     if (node.mode === "auto_reject") {
       status = "rejected";
-      decisions.push({ stageIndex: stage, decision: "reject", at: created, automatic: true });
+      decisions.push({ stageIndex: stage, decision: "reject", at: created, automatic: true, actorName: "系统", nameSource: "snapshot" });
       break;
     }
-    decisions.push({ stageIndex: stage, decision: node.mode === "cc" ? "cc" : "approve", at: created, automatic: true });
+    decisions.push({ stageIndex: stage, decision: node.mode === "cc" ? "cc" : "approve", at: created, automatic: true, actorName: "系统", nameSource: "snapshot" });
     stage += 1;
     if (node.mode === "auto_approve" && stage >= snapshotNodes.length) status = "approved";
   }
@@ -860,6 +946,32 @@ export async function submitGrantRequest(
   })();
 }
 
+/** Read-only grant conditions. Requester membership stays a final check in decide, and this does not write grants. */
+async function grantBusinessBlock(
+  db: EnvmanDatabase,
+  org: string,
+  requesterId: string,
+  kind: "data" | "feature",
+  snapshot: PermissionSnapshot,
+  roleId: string | null,
+  now: number,
+) {
+  const member = await activeMember(db, org, requesterId);
+  if (!member) return { code: "REQUESTER_INACTIVE" as const, message: "申请人已经不是有效组织成员" };
+  const catalog = await organizationResourceCatalog(db, org);
+  if (snapshot.targets.some((target) => !catalog.some((item) => sameTarget(item, target))))
+    return { code: "INVALID_RESOURCE" as const, message: "申请中的资源已经不存在" };
+  if (kind !== "data") return null;
+  if (!roleId) return { code: "ROLE_REQUIRED" as const, message: "数据申请缺少角色" };
+  const holders = await roleHolderIds(db, org, roleId, now);
+  const role = (await roleState(db, org)).roles.find((item) => item.id === roleId);
+  if (!role?.enabled || !holders.includes(requesterId))
+    return { code: "ROLE_NOT_HELD" as const, message: "申请人已经不再持有该角色，不能授予" };
+  if ([...role.permissionCodes].sort().join("\0") !== snapshot.permissionCodes.join("\0") || holders.join("\0") !== snapshot.holderIds.join("\0"))
+    return { code: "ROLE_SNAPSHOT_MISMATCH" as const, message: "角色权限或共享成员已变化，请重新申请" };
+  return null;
+}
+
 async function grantApproved(
   db: EnvmanDatabase,
   org: string,
@@ -872,18 +984,14 @@ async function grantApproved(
   actor: LedgerActor,
   reason: string,
 ) {
+  const block = await grantBusinessBlock(db, org, requesterId, kind, snapshot, roleId, now);
+  if (block) throw new OrganizationPermissionError(block.code, 409, block.message);
   const startsAt = new Date(now).toISOString();
   const expiresAt = snapshot.durationMs === null ? null : new Date(now + snapshot.durationMs).toISOString();
   const ids: string[] = [];
   let batch: string | null = null;
   if (kind === "data") {
     if (!roleId) throw new OrganizationPermissionError("ROLE_REQUIRED", 409, "数据申请缺少角色");
-    const holders = await roleHolderIds(db, org, roleId, now);
-    const role = (await roleState(db, org)).roles.find((item) => item.id === roleId);
-    if (!role?.enabled || !holders.includes(requesterId))
-      throw new OrganizationPermissionError("ROLE_NOT_HELD", 409, "申请人已经不再持有该角色，不能授予");
-    if ([...role.permissionCodes].sort().join("\0") !== snapshot.permissionCodes.join("\0") || holders.join("\0") !== snapshot.holderIds.join("\0"))
-      throw new OrganizationPermissionError("ROLE_SNAPSHOT_MISMATCH", 409, "角色权限或共享成员已变化，请重新申请");
     batch = randomUUID();
     for (const target of snapshot.targets) {
       const id = await insertDataGrant(db, org, roleId, target, batch, startsAt, expiresAt, "审批通过", "request");
@@ -942,7 +1050,7 @@ async function stageState(db: EnvmanDatabase, org: string, row: RequestRow) {
   const nodes = nodesOf(row);
   const stage = Number(row.stage_index);
   const node = nodes[stage];
-  const history = parse<Array<{ stageIndex: number; userId?: string; decision: string; superseded?: boolean }>>(row.decisions_json, []);
+  const history = parse<DecisionEvent[]>(row.decisions_json, []);
   const decisions = history.filter((item) => !item.superseded);
   const targets = snapshotOf(row).targets;
   if (!node || row.status !== "pending")
@@ -952,6 +1060,7 @@ async function stageState(db: EnvmanDatabase, org: string, row: RequestRow) {
       history,
       paused: false,
       approvePaused: false,
+      businessBlock: "",
       reason: row.block_reason,
       qualified: [] as string[],
       canApprove: [] as string[],
@@ -972,12 +1081,14 @@ async function stageState(db: EnvmanDatabase, org: string, row: RequestRow) {
   const approvePaused =
     (node.mode === "all" || node.mode === "sequence") &&
     passIds.some((id) => !canApprove.includes(id) && !approved.has(id));
+  const business = await grantBusinessBlock(db, org, row.requester_id, row.kind, snapshotOf(row), row.role_id, serverNow());
   return {
     node,
     decisions,
     history,
     paused,
     approvePaused,
+    businessBlock: business?.message ?? "",
     qualified,
     canApprove,
     canReject,
@@ -1060,6 +1171,90 @@ async function revisionCandidates(
   return loading;
 }
 
+interface RequestLedgerRow {
+  actor_id: string | null;
+  actor_name: string | null;
+  action: string;
+  reason: string | null;
+  created_at: string;
+}
+
+async function requestLedger(db: EnvmanDatabase, org: string, requestId: string) {
+  return db
+    .prepare(
+      `SELECT actor_id, actor_name, action, reason, created_at FROM organization_grant_ledger
+       WHERE organization_id = ? AND request_id = ? ORDER BY created_at, id`,
+    )
+    .all<RequestLedgerRow>(org, requestId);
+}
+
+async function shownRequestNames(db: EnvmanDatabase, org: string, row: RequestRow, snapshot: PermissionSnapshot) {
+  const frozen = frozenDisplay(snapshot);
+  if (frozen) {
+    return {
+      namesFrozen: true,
+      nameSource: "snapshot" as const,
+      roleName: frozen.roleName,
+      requesterName: frozen.requesterName,
+      holderNames: frozen.holderNames,
+      targets: frozen.targets,
+    };
+  }
+  const [catalog, roles, holderNames, requesterNames] = await Promise.all([
+    organizationResourceCatalog(db, org),
+    row.role_id ? roleState(db, org) : Promise.resolve(null),
+    accountNames(db, snapshot.holderIds),
+    accountNames(db, [row.requester_id]),
+  ]);
+  return {
+    namesFrozen: false,
+    nameSource: "current" as const,
+    roleName: roles?.roles.find((item) => item.id === row.role_id)?.name ?? null,
+    requesterName: requesterNames[row.requester_id] ?? "",
+    holderNames,
+    targets: displayTargets(catalog, snapshot.targets),
+  };
+}
+
+function presentDecisions(
+  history: DecisionEvent[],
+  nodes: FlowSnapshotNode[],
+  ledger: RequestLedgerRow[],
+  currentNames: Record<string, string>,
+) {
+  const used = new Set<number>();
+  return history.map((item) => {
+    const comment = typeof item.comment === "string" ? item.comment : "";
+    const at = typeof item.at === "string" ? item.at : "";
+    let actorName = item.actorName?.trim() ?? "";
+    let nameSource: DecisionEvent["nameSource"] = actorName ? (item.nameSource === "current" || item.nameSource === "ledger" ? item.nameSource : "snapshot") : "ledger";
+    if (!actorName && item.userId && !item.automatic) {
+      const index = ledger.findIndex((row, position) => !used.has(position) && row.actor_id === item.userId && String(row.reason ?? "") === comment);
+      if (index >= 0) {
+        used.add(index);
+        actorName = String(ledger[index]?.actor_name ?? "").trim();
+      }
+    }
+    if (!actorName && item.automatic) {
+      actorName = "系统";
+      nameSource = "snapshot";
+    } else if (!actorName) {
+      actorName = item.userId ? (currentNames[item.userId] ?? "") : "";
+      nameSource = "current";
+    }
+    const node = typeof item.stageIndex === "number" ? nodes[item.stageIndex] : undefined;
+    const recipients = item.decision === "cc" && node
+      ? node.resolvedApproverIds.map((id) => {
+          const frozenName = node.approverNames?.[id];
+          return frozenName
+            ? { id, name: frozenName, nameSource: "snapshot" as const }
+            : { id, name: currentNames[id] ?? "", nameSource: "current" as const };
+        })
+      : undefined;
+    return { ...item, actorName, comment, at, nameSource, ...(recipients ? { recipients } : {}) };
+  });
+}
+
 async function presentRequest(
   db: EnvmanDatabase,
   org: string,
@@ -1070,9 +1265,7 @@ async function presentRequest(
   selectorCache: Map<string, Promise<RevisionCandidate[]>>,
 ) {
   const snapshot = snapshotOf(row);
-  const names = await db
-    .prepare("SELECT id, username FROM admin_users WHERE id = ?")
-    .get<{ id: string; username: string }>(row.requester_id);
+  const shown = await shownRequestNames(db, org, row, snapshot);
   const nodes = nodesOf(row);
   const stageIndex = Number(row.stage_index);
   const current = row.status === "pending" ? state.node : undefined;
@@ -1081,24 +1274,39 @@ async function presentRequest(
   const canAddSign = viewerOperates && nodeAllows(current, "add_sign");
   const canRollback = viewerOperates && nodeAllows(current, "rollback") && stageIndex > 0;
   const approverIds = nodes.flatMap((node) => node.resolvedApproverIds);
+  const ledger = await requestLedger(db, org, row.id);
+  const nameIds = [
+    ...approverIds.filter((id) => nodes.some((node) => node.resolvedApproverIds.includes(id) && !node.approverNames?.[id])),
+    ...state.history.flatMap((item) => (item.userId && !item.actorName ? [item.userId] : [])),
+    ...ledger.flatMap((item) => (item.actor_id && !String(item.actor_name ?? "").trim() ? [item.actor_id] : [])),
+  ];
   const [capabilities, liveNames] = await Promise.all([
     approverCapabilities(db, org, approverIds, snapshot.targets),
-    accountNames(db, nodes.flatMap((node) => node.resolvedApproverIds.filter((id) => !node.approverNames?.[id]))),
+    accountNames(db, nameIds),
   ]);
   const live = new Map(Object.entries(liveNames));
+  const flowPaused = state.paused || state.approvePaused;
+  const pauseReason = [flowPaused ? state.reason : "", state.businessBlock].filter(Boolean).join("；");
+  const approvalBlocked = flowPaused || Boolean(state.businessBlock);
   return {
     id: row.id,
     kind: row.kind,
     status: row.status,
     reason: row.reason,
-    blockReason: state.reason || "",
+    paused: approvalBlocked,
+    pauseReason,
+    blockReason: pauseReason || state.reason || "",
     requesterId: row.requester_id,
-    requesterName: names?.username ?? "",
+    requesterName: shown.requesterName,
+    namesFrozen: shown.namesFrozen,
+    nameSource: shown.nameSource,
     roleId: row.kind === "data" ? row.role_id : null,
+    roleName: row.kind === "data" ? shown.roleName : null,
     features: row.kind === "feature" ? snapshot.features : null,
-    targets: snapshot.targets,
+    targets: shown.targets,
     permissionCodes: snapshot.permissionCodes,
     holderIds: snapshot.holderIds,
+    holderNames: shown.holderNames,
     durationMs: snapshot.durationMs,
     stageIndex,
     requireComment: current?.requireComment === true,
@@ -1115,18 +1323,32 @@ async function presentRequest(
       approverIds: node.resolvedApproverIds,
       approvers: node.resolvedApproverIds.map((id) => {
         const capability = capabilities.get(id);
+        const frozenName = node.approverNames?.[id];
         return {
           id,
-          name: node.approverNames?.[id] || live.get(id) || "",
+          name: frozenName || live.get(id) || "",
+          nameSource: frozenName ? "snapshot" : "current",
           canApprove: capability?.approve === true,
           canReject: capability?.reject === true,
         };
       }),
     })),
-    decisions: state.history,
+    decisions: presentDecisions(state.history, nodes, ledger, liveNames),
+    operations: ledger.map((item) => {
+      const actorName = String(item.actor_name ?? "").trim();
+      const actorId = item.actor_id ?? "";
+      return {
+        actorId,
+        actorName: actorName || (actorId ? liveNames[actorId] ?? "" : ""),
+        action: item.action,
+        comment: item.reason ?? "",
+        at: item.created_at,
+        nameSource: actorName ? "ledger" : "current",
+      };
+    }),
     grantIds: parse<string[]>(row.grant_ids_json, []),
     canDecide: todo && viewerId !== "",
-    canApprove: todo && state.canApprove.includes(viewerId),
+    canApprove: todo && !approvalBlocked && state.canApprove.includes(viewerId),
     canReject: todo && state.canReject.includes(viewerId),
     canTransfer,
     canAddSign,
@@ -1141,6 +1363,20 @@ async function presentRequest(
   };
 }
 
+async function requestParticipant(db: EnvmanDatabase, org: string, row: RequestRow, viewerId: string) {
+  const member = await activeMember(db, org, viewerId);
+  if (!member) return false;
+  const nodes = nodesOf(row);
+  if (nodes.some((node) => node.resolvedApproverIds.includes(viewerId) || (node.passApproverIds ?? []).includes(viewerId)))
+    return true;
+  const history = parse<DecisionEvent[]>(row.decisions_json, []);
+  if (history.some((item) => item.userId === viewerId)) return true;
+  const ledger = await db
+    .prepare("SELECT 1 AS ok FROM organization_grant_ledger WHERE organization_id = ? AND request_id = ? AND actor_id = ? LIMIT 1")
+    .get<{ ok: number }>(org, row.id, viewerId);
+  return Boolean(ledger);
+}
+
 export async function readGrantRequest(db: EnvmanDatabase, org: string, requestId: string, viewerId: string) {
   const row = await db
     .prepare("SELECT * FROM organization_grant_requests WHERE organization_id = ? AND id = ?")
@@ -1151,7 +1387,7 @@ export async function readGrantRequest(db: EnvmanDatabase, org: string, requestI
   const access = await loadOrganizationAccess(db, org, viewerId);
   const targets = snapshotOf(row).targets;
   const covered = access.allows("approval.view") || (targets.length > 0 && targets.every((target) => access.allows("approval.view", target)));
-  if (row.requester_id !== viewerId && !todo && !covered)
+  if (row.requester_id !== viewerId && !todo && !covered && !(await requestParticipant(db, org, row, viewerId)))
     throw new OrganizationPermissionError("NOT_FOUND", 404, "申请不存在或无权查看");
   return presentRequest(db, org, row, viewerId, state, todo && !state.paused, new Map());
 }
@@ -1270,9 +1506,18 @@ export async function decideGrantRequest(
     }
     if (node.requireComment && !comment.trim())
       throw new OrganizationPermissionError("COMMENT_REQUIRED", 400, "这个节点要求填写意见");
-    const decisions: Array<{ stageIndex: number; userId?: string; decision: string; superseded?: boolean; comment?: string; at?: string; automatic?: boolean }> = [
+    const namedActor = await resolveLedgerActor(db, actor);
+    const decisions: DecisionEvent[] = [
       ...state.history,
-      { stageIndex: Number(row.stage_index), userId: actorId, decision, comment, at: new Date().toISOString() },
+      {
+        stageIndex: Number(row.stage_index),
+        userId: actorId,
+        decision,
+        comment,
+        at: new Date().toISOString(),
+        actorName: ledgerActorName(namedActor),
+        nameSource: "snapshot",
+      },
     ];
     if (decision === "reject") return { status: "rejected", stage: Number(row.stage_index), decisions };
     const approvals = decisions.filter((item) => !item.superseded && item.stageIndex === Number(row.stage_index) && item.decision === "approve");
@@ -1290,8 +1535,8 @@ export async function decideGrantRequest(
       if (unsupportedNode(nodes[stage]))
         throw new OrganizationPermissionError("UNSUPPORTED_APPROVAL_NODE", 409, unsupportedNodeMessage(nodes[stage], "审批"));
       if (nodes[stage].mode === "auto_reject")
-        return { status: "rejected", stage, decisions: [...decisions, { stageIndex: stage, decision: "reject", automatic: true }] };
-      decisions.push({ stageIndex: stage, decision: nodes[stage].mode === "cc" ? "cc" : "approve", automatic: true });
+        return { status: "rejected", stage, decisions: [...decisions, { stageIndex: stage, decision: "reject", automatic: true, actorName: "系统", nameSource: "snapshot" }] };
+      decisions.push({ stageIndex: stage, decision: nodes[stage].mode === "cc" ? "cc" : "approve", automatic: true, actorName: "系统", nameSource: "snapshot", at: new Date().toISOString() });
       stage += 1;
     }
     if (stage < nodes.length) return { status: "pending", stage, decisions };
@@ -1299,15 +1544,10 @@ export async function decideGrantRequest(
     const catalog = await organizationResourceCatalog(db, org);
     if (snapshot.targets.some((target) => !catalog.some((item) => sameTarget(item, target))))
       throw new OrganizationPermissionError("INVALID_RESOURCE", 409, "申请中的资源已经不存在");
-    const member = await db
-      .prepare(
-        `SELECT 1 FROM organization_members m JOIN admin_users u ON u.id = m.user_id
-         WHERE m.organization_id = ? AND m.user_id = ? AND u.status = 'active'`,
-      )
-      .get(org, row.requester_id);
+    const member = await activeMember(db, org, row.requester_id);
     if (!member) throw new OrganizationPermissionError("REQUESTER_INACTIVE", 409, "申请人已经不是有效组织成员");
     try {
-      const grantIds = await grantApproved(db, org, row.requester_id, row.kind, snapshot, row.id, serverNow(), row.role_id, await resolveLedgerActor(db, actor), comment || decision);
+      const grantIds = await grantApproved(db, org, row.requester_id, row.kind, snapshot, row.id, serverNow(), row.role_id, namedActor, comment || decision);
       return { status: "approved", stage, decisions, grantIds };
     } catch (error) {
       if (
@@ -1348,8 +1588,16 @@ export async function withdrawGrantRequest(
   const result = await mutateRequest(db, org, requestId, (row) => assertClosedWithdraw(db, org, row, actorId), async (row) => {
     if (row.requester_id !== actorId)
       throw new OrganizationPermissionError("REQUEST_NOT_WITHDRAWABLE", 403, "只能撤回自己的待审批申请");
-    const decisions = parse<unknown[]>(row.decisions_json, []);
-    decisions.push({ decision: "withdraw", userId: actor.id, at: new Date().toISOString(), comment: reason });
+    const decisions = parse<DecisionEvent[]>(row.decisions_json, []);
+    const namedActor = await resolveLedgerActor(db, actor);
+    decisions.push({
+      decision: "withdraw",
+      userId: actor.id ?? undefined,
+      at: new Date().toISOString(),
+      comment: reason,
+      actorName: ledgerActorName(namedActor),
+      nameSource: "snapshot",
+    });
     return { status: "withdrawn", stage: Number(row.stage_index), decisions };
   }, async (row, outcome) => {
     await recordGrantLedger(db, org, await resolveLedgerActor(db, actor), "撤回授权申请", reason, {
@@ -1409,7 +1657,7 @@ export async function reviseGrantRequest(
         node.approverNames = prior.approverNames ? { ...prior.approverNames } : undefined;
       });
       const decisions = state.history.map((item) =>
-        item.stageIndex >= target && !item.superseded ? { ...item, superseded: true } : item,
+        (item.stageIndex ?? -1) >= target && !item.superseded ? { ...item, superseded: true } : item,
       );
       await db
         .prepare(
