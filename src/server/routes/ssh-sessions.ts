@@ -306,7 +306,11 @@ export async function registerSshSessionRoutes(app: FastifyInstance): Promise<vo
         const organizationAccess = request.admin!.organizationAccess;
         if (organizationAccess) {
           const decision = executionDecision(organizationAccess, "agent", "ssh.use", { type: "ssh_connection", id: currentTarget.connectionId });
-          if (!decision.allowed) throw new DesktopReportError(403, decision.error ?? "FEATURE_FORBIDDEN", decision.message);
+          if (!decision.allowed) {
+            target = currentTarget;
+            acceptedDeviceId = deviceId;
+            return;
+          }
         }
         target = currentTarget;
         acceptedDeviceId = deviceId;

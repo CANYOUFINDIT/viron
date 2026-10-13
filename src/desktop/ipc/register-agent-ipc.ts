@@ -175,18 +175,25 @@ export async function executeAgentSshRead(input: {
   if (!agentRuntimeScopeMatches(input.scope, agentRuntimeScope(input.desktopContext))) throw new Error(tr("Viron Agent 诊断现场已经失效"));
   const currentTarget = currentExecutionMode() === "server" ? "server-forwarded" : "desktop-local";
   if (input.executionTarget !== currentTarget) throw new Error(tr("Viron Agent 诊断现场已经失效"));
+  const connectionId = input.desktopContext.workspaceType === "organization"
+    ? await agentSshConnectionId(input.sessionId, input.executionTarget, input.desktopContext)
+    : "";
   const sshGrant = input.desktopContext.workspaceType === "organization"
-    ? await authorizeDesktopAgentSsh(input.desktopContext, await agentSshConnectionId(input.sessionId, input.executionTarget, input.desktopContext), input.command)
+    ? await authorizeDesktopAgentSsh(input.desktopContext, connectionId, input.command)
     : null;
   const stepSummary = input.step && input.maxSteps ? tr("（第 {{0}}/{{1}} 步）", [input.step, input.maxSteps]) : "";
   const targetSummary = input.executionTarget === "server-forwarded" ? tr("服务端转发") : tr("本机直连");
   const write = input.intent === "write";
   desktopAgentAuditStore.append(input.scope, write ? "ssh_write_approved" : "ssh_diagnostic_approved", input.sessionId, tr("按当前 Viron Agent 审批策略执行 {{0}} SSH {{1}}{{2}}", [targetSummary, write ? tr("写命令") : tr("只读诊断命令"), stepSummary]));
-  if (input.executionTarget === "server-forwarded") {
-    const executionScope = executionScopeForEndpoint(input.desktopContext.endpoint);
-    let cancelRequest: Promise<unknown> | undefined;
-    const cancel = () => {
-      cancelRequest ??= signedDesktopOperation({
+  if (input.abortSignal?.aborted) throw new Error(String(input.abortSignal.reason ?? (write ? tr("SSH 写命令已取消") : tr("SSH 只读诊断已取消"))));
+  const linked = linkAbortSignal(input.abortSignal);
+  let channelCancelled = false;
+  const cancelChannel = () => {
+    if (channelCancelled) return;
+    channelCancelled = true;
+    if (input.executionTarget === "server-forwarded") {
+      const executionScope = executionScopeForEndpoint(input.desktopContext.endpoint);
+      void signedDesktopOperation({
         operationId: randomUUID(),
         action: "cancel" as const,
         sessionId: input.sessionId,
@@ -196,11 +203,31 @@ export async function executeAgentSshRead(input: {
         `/api/v1/ssh-sessions/${encodeURIComponent(input.sessionId)}/agent-diagnostics/${encodeURIComponent(input.executionId)}/cancel`,
         { method: "POST", body },
       )).catch(() => undefined);
-    };
-    if (input.abortSignal?.aborted) throw new Error(String(input.abortSignal.reason ?? (write ? tr("SSH 写命令已取消") : tr("SSH 只读诊断已取消"))));
-    input.abortSignal?.addEventListener("abort", cancel, { once: true });
-    if (input.abortSignal?.aborted) cancel();
-    try {
+      return;
+    }
+    try { desktopSshRuntime.cancelAgentDiagnostic(input.executionId, input.desktopContext); }
+    catch { /* The execution may have completed before the abort signal arrived. */ }
+  };
+  const watch = watchOrganizationExecution({
+    context: input.desktopContext,
+    channel: "agent",
+    checks: sshGrant?.checks ?? [],
+    decisions: sshGrant?.decisions ?? [],
+    requestIdentity: {
+      method: "POST",
+      path: `/api/v1/ssh-connections/${connectionId}/commands`,
+      bodyDigest: createHash("sha256").update(JSON.stringify({ command: input.command })).digest("hex"),
+    },
+    cancel: (reason) => {
+      linked.cancel(reason);
+      cancelChannel();
+    },
+  });
+  linked.signal.addEventListener("abort", cancelChannel, { once: true });
+  let outcome: "success" | "failed" | "cancelled" = "failed";
+  try {
+    if (input.executionTarget === "server-forwarded") {
+      const executionScope = executionScopeForEndpoint(input.desktopContext.endpoint);
       const result = await withAgentPurpose(sshGrant, async () => endpointJson<import("../../shared/agent.js").AgentSshDiagnosticResult>(
         `/api/v1/ssh-sessions/${encodeURIComponent(input.sessionId)}/agent-diagnostics`,
         {
@@ -215,7 +242,7 @@ export async function executeAgentSshRead(input: {
           }, input.desktopContext),
         },
       ));
-      await reportDesktopAgentExecution(input.desktopContext, sshGrant ?? { checks: [], decisions: [] }, "success");
+      outcome = "success";
       desktopAgentAuditStore.append(
         input.scope,
         write ? "ssh_write_executed" : "ssh_diagnostic_executed",
@@ -230,28 +257,9 @@ export async function executeAgentSshRead(input: {
         ]),
       );
       return result;
-    } catch (error) {
-      if (input.abortSignal?.aborted) {
-        desktopAgentAuditStore.append(input.scope, write ? "ssh_write_cancelled" : "ssh_diagnostic_cancelled", input.sessionId, tr("服务端转发 SSH {{0}}已取消{{1}}", [write ? tr("写命令") : tr("只读诊断"), stepSummary]));
-      } else {
-        desktopAgentAuditStore.append(input.scope, write ? "ssh_write_rejected" : "ssh_diagnostic_rejected", input.sessionId, error instanceof Error ? error.message : tr("服务端转发 SSH 诊断执行失败"));
-        await reportAgentOutcome(input.desktopContext, sshGrant, "failed");
-      }
-      throw error;
-    } finally {
-      input.abortSignal?.removeEventListener("abort", cancel);
     }
-  }
-  const cancel = () => {
-    try { desktopSshRuntime.cancelAgentDiagnostic(input.executionId, input.desktopContext); }
-    catch { /* The execution may have completed before the abort signal arrived. */ }
-  };
-  if (input.abortSignal?.aborted) throw new Error(String(input.abortSignal.reason ?? (write ? tr("SSH 写命令已取消") : tr("SSH 只读诊断已取消"))));
-  input.abortSignal?.addEventListener("abort", cancel, { once: true });
-  if (input.abortSignal?.aborted) cancel();
-  try {
     const result = await withAgentPurpose(sshGrant, () => desktopSshRuntime.agentDiagnostic(input.executionId, input.sessionId, input.command, input.desktopContext, { allowWrite: write }));
-    await reportAgentOutcome(input.desktopContext, sshGrant, "success");
+    outcome = "success";
     desktopAgentAuditStore.append(
       input.scope,
       write ? "ssh_write_executed" : "ssh_diagnostic_executed",
@@ -267,15 +275,26 @@ export async function executeAgentSshRead(input: {
     );
     return result;
   } catch (error) {
-    if (input.abortSignal?.aborted || error instanceof DesktopSshCommandAbortedError) {
+    const cancelled = linked.signal.aborted || input.abortSignal?.aborted || error instanceof DesktopSshCommandAbortedError;
+    outcome = cancelled ? "cancelled" : "failed";
+    if (input.executionTarget === "server-forwarded") {
+      desktopAgentAuditStore.append(
+        input.scope,
+        cancelled ? (write ? "ssh_write_cancelled" : "ssh_diagnostic_cancelled") : (write ? "ssh_write_rejected" : "ssh_diagnostic_rejected"),
+        input.sessionId,
+        cancelled
+          ? tr("服务端转发 SSH {{0}}已取消{{1}}", [write ? tr("写命令") : tr("只读诊断"), stepSummary])
+          : (error instanceof Error ? error.message : tr("服务端转发 SSH 诊断执行失败")),
+      );
+    } else if (cancelled) {
       desktopAgentAuditStore.append(input.scope, write ? "ssh_write_cancelled" : "ssh_diagnostic_cancelled", input.sessionId, tr("SSH {{0}}已取消{{1}}", [write ? tr("写命令") : tr("只读诊断"), stepSummary]));
     } else {
       desktopAgentAuditStore.append(input.scope, write ? "ssh_write_rejected" : "ssh_diagnostic_rejected", input.sessionId, error instanceof Error ? error.message : tr("SSH 诊断执行失败"));
-      await reportAgentOutcome(input.desktopContext, sshGrant, "failed");
     }
     throw error;
   } finally {
-    input.abortSignal?.removeEventListener("abort", cancel);
+    linked.signal.removeEventListener("abort", cancelChannel);
+    await watch.finish(outcome);
   }
 }
 
@@ -383,6 +402,9 @@ export async function executeAgentSshWorkbenchRead(input: {
   const write = input.request.intent === "write";
   desktopAgentAuditStore.append(input.scope, write ? "ssh_workbench_write_started" : "ssh_workbench_execution_started", input.request.sessionId, tr("在当前 SSH 终端执行{{0}}（第 {{1}}/{{2}} 步）", [write ? tr("写命令") : tr("只读诊断命令"), input.request.step, input.request.maxSteps]));
   let sshGrant: DesktopAgentGrant | null = null;
+  const linked = linkAbortSignal(input.abortSignal);
+  let watch: { finish: (status: "success" | "failed" | "cancelled") => Promise<void> } = { finish: async () => undefined };
+  let outcome: "success" | "failed" | "cancelled" = "failed";
   try {
     const snapshot = input.request.executionTarget === "server-forwarded"
       ? await endpointJson<import("../../shared/agent.js").AgentSshContextSnapshot>(
@@ -399,7 +421,19 @@ export async function executeAgentSshWorkbenchRead(input: {
       )
       : await desktopSshRuntime.agentContext(input.request.sessionId, input.desktopContext);
     sshGrant = await authorizeDesktopAgentSsh(input.desktopContext, snapshot.connectionId, input.request.command);
-    const result = await withAgentPurpose(sshGrant, () => requestAgentWorkbenchExecution(input.request, input.abortSignal));
+    watch = watchOrganizationExecution({
+      context: input.desktopContext,
+      channel: "agent",
+      checks: sshGrant?.checks ?? [],
+      decisions: sshGrant?.decisions ?? [],
+      requestIdentity: {
+        method: "POST",
+        path: `/api/v1/ssh-connections/${snapshot.connectionId}/commands`,
+        bodyDigest: createHash("sha256").update(JSON.stringify({ command: input.request.command })).digest("hex"),
+      },
+      cancel: (reason) => linked.cancel(reason),
+    });
+    const result = await withAgentPurpose(sshGrant, () => requestAgentWorkbenchExecution(input.request, linked.signal));
     if (result.domain !== "ssh") throw new Error(tr("Viron Agent SSH 工作台执行结果无效"));
     if (
       result.connectionId !== snapshot.connectionId
@@ -409,7 +443,7 @@ export async function executeAgentSshWorkbenchRead(input: {
     ) throw new Error(tr("Viron Agent SSH 工作台执行现场已经失效"));
     if (!agentRuntimeScopeMatches(input.scope, agentRuntimeScope(await currentDesktopSshContext()))) throw new Error(tr("Viron Agent 诊断现场已经失效"));
     const output = summarizeAgentSshOutput(result.rawOutput, { maxBytes: 64 * 1024, maxLines: 500 });
-    await reportAgentOutcome(input.desktopContext, sshGrant, "success");
+    outcome = "success";
     desktopAgentAuditStore.append(input.scope, write ? "ssh_workbench_write_completed" : "ssh_workbench_execution_completed", result.connectionId, tr("SSH 终端{{0}}完成，耗时 {{1}} ms，输出脱敏 {{2}} 处{{3}}", [write ? tr("写命令") : tr("只读诊断"), result.durationMs, output.redactionCount, output.truncated || result.truncated ? tr("，结果已截断") : ""]));
     return {
       executionId: input.request.requestId,
@@ -429,9 +463,11 @@ export async function executeAgentSshWorkbenchRead(input: {
       presentation: "workbench",
     };
   } catch (error) {
-    if (!input.abortSignal.aborted) await reportAgentOutcome(input.desktopContext, sshGrant, "failed");
-    desktopAgentAuditStore.append(input.scope, input.abortSignal.aborted ? "ssh_workbench_execution_cancelled" : "ssh_workbench_execution_failed", input.request.sessionId, error instanceof Error ? error.message : tr("SSH 工作台执行失败"));
+    outcome = linked.signal.aborted || input.abortSignal.aborted ? "cancelled" : "failed";
+    desktopAgentAuditStore.append(input.scope, outcome === "cancelled" ? "ssh_workbench_execution_cancelled" : "ssh_workbench_execution_failed", input.request.sessionId, error instanceof Error ? error.message : tr("SSH 工作台执行失败"));
     throw error;
+  } finally {
+    await watch.finish(outcome);
   }
 }
 

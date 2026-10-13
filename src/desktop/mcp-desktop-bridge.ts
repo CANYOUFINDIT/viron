@@ -51,7 +51,7 @@ import {
   touchDesktopDatabaseRequest,
 } from "./execution-router.js";
 import { desktopMcpRequestIdentity, guardDesktopOrganizationMcpRequest } from "./organization-mcp-request.js";
-import { watchOrganizationExecution } from "./organization-execution-watch.js";
+import { linkAbortSignal, watchOrganizationExecution } from "./organization-execution-watch.js";
 import { organizationExecutionChannel } from "./organization-execution.js";
 import { organizationMcpPurpose } from "./organization-mcp-purpose.js";
 import { endpointFetch, endpointJson, type DesktopRequest } from "./http-proxy.js";
@@ -338,11 +338,32 @@ export async function executeDesktopMcpApprovedRequest(input: McpApiRequest): Pr
       if (sshCommand && input.method === "POST") {
         if (!activeEndpoint?.capabilities.desktopLocal?.ssh) throw new Error(tr("当前 Endpoint 未开放桌面 App 本机 SSH 能力，MCP 不会回退到服务端执行"));
         const body = input.body as { command: string; timeoutMs: number; maxBytes: number };
-        const loaded = await connectDesktopSshConnection(sshCommand[1], await currentDesktopSshContext(), localSshCredential);
+        const context = await currentDesktopSshContext();
+        const loaded = await connectDesktopSshConnection(sshCommand[1], context, localSshCredential);
+        const linked = linkAbortSignal();
+        const watch = watchOrganizationExecution({
+          context,
+          channel: organizationExecutionChannel.getStore() ?? "mcp",
+          checks: gate.checks,
+          decisions: gate.decisions,
+          requestIdentity: desktopMcpRequestIdentity(input),
+          cancel: () => linked.cancel(),
+        });
+        let outcome: "success" | "failed" | "cancelled" = "failed";
         try {
-          return mcpJsonResponse(200, await executeDesktopSshCommandOnConnection(loaded.connected, body.command, { timeoutMs: body.timeoutMs, maxBytes: body.maxBytes }));
+          const result = await executeDesktopSshCommandOnConnection(loaded.connected, body.command, {
+            timeoutMs: body.timeoutMs,
+            maxBytes: body.maxBytes,
+            signal: linked.signal,
+          });
+          outcome = "success";
+          return mcpJsonResponse(200, result);
+        } catch (error) {
+          outcome = linked.signal.aborted ? "cancelled" : "failed";
+          throw error;
         } finally {
           loaded.connected.close();
+          await watch.finish(outcome);
         }
       }
       if (isDesktopDatabaseExecutionPath(path)) {
@@ -503,28 +524,54 @@ export async function invokeDesktopMcpTool(toolName: string, arguments_: Record<
       const acquireStarted = Date.now();
       const loaded = await connectDesktopSshConnection(sshBatch[1], context, localSshCredential);
       const transportAcquireDurationMs = Date.now() - acquireStarted;
-      const items = [];
+      const items: Array<Record<string, unknown>> = [];
       let remainingBytes = body.maxBytes;
+      const linked = linkAbortSignal();
+      const watch = watchOrganizationExecution({
+        context,
+        channel: organizationExecutionChannel.getStore() ?? "mcp",
+        checks: gate.checks,
+        decisions: gate.decisions,
+        requestIdentity: desktopMcpRequestIdentity(request),
+        cancel: () => linked.cancel(),
+      });
+      const stopped = tr("组织执行授权已失效，进行中的操作已停止");
+      let outcome: "success" | "failed" | "cancelled" = "success";
       try {
         for (let index = 0; index < body.commands.length; index += 1) {
+          if (linked.signal.aborted) {
+            outcome = "cancelled";
+            items.push({ index, ok: false, executed: false, error: stopped });
+            continue;
+          }
           if (remainingBytes <= 0) {
-            items.push({ index, ok: false, error: tr("SSH 批量响应已达到总输出限制") });
+            outcome = "failed";
+            items.push({ index, ok: false, executed: false, error: tr("SSH 批量响应已达到总输出限制") });
             continue;
           }
           try {
             const result = boundedDesktopSshBatchResult(await executeDesktopSshCommandOnConnection(
               loaded.connected,
               body.commands[index],
-              { timeoutMs: body.timeoutMs, maxBytes: Math.max(1024, remainingBytes) },
+              { timeoutMs: body.timeoutMs, maxBytes: Math.max(1024, remainingBytes), signal: linked.signal },
             ), remainingBytes);
             remainingBytes -= Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr);
-            items.push({ index, ok: true, ...result });
+            items.push({ index, ok: true, executed: true, ...result });
           } catch (error) {
-            items.push({ index, ok: false, error: error instanceof Error ? error.message : tr("SSH 命令执行失败") });
+            const cancelled = linked.signal.aborted;
+            if (cancelled) outcome = "cancelled";
+            else outcome = "failed";
+            items.push({
+              index,
+              ok: false,
+              executed: !cancelled,
+              error: error instanceof Error ? error.message : tr("SSH 命令执行失败"),
+            });
           }
         }
       } finally {
         loaded.connected.close();
+        await watch.finish(outcome);
       }
       const durationMs = Date.now() - started;
       await reportDesktopSshExecution({
@@ -535,6 +582,8 @@ export async function invokeDesktopMcpTool(toolName: string, arguments_: Record<
         details: {
           commandCount: body.commands.length,
           failedCount: items.filter((item) => !item.ok).length,
+          executedCount: items.filter((item) => item.executed === true).length,
+          notExecutedCount: items.filter((item) => item.executed === false).length,
           outputBytes: body.maxBytes - remainingBytes,
           durationMs,
           transportAcquireDurationMs,
