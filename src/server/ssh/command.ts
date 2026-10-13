@@ -58,8 +58,8 @@ export async function executeSshCommandOnConnection(
         reject(error);
       };
       const abort = () => {
-        channel?.close();
         rejectOnce(new SshCommandAbortedError());
+        channel?.close();
       };
       const timer = setTimeout(() => {
         channel?.close();

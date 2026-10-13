@@ -6,7 +6,18 @@ import { listMcpBusinessOperations, MCP_BUSINESS_OPERATION_MODES } from "../../s
 import { VIRON_MCP_TOOL_NAMES } from "../../shared/mcp-tools.js";
 import { parseStoredLogFilePaths, buildSshLogSnapshotCommand } from "../../shared/environment-log.js";
 import { executionScope } from "../execution-scope.js";
-import { executeSshCommand, executeSshCommandOnConnection, type SshCommandResult } from "../ssh/command.js";
+import { executeSshCommand, executeSshCommandOnConnection, SshCommandAbortedError, type SshCommandResult } from "../ssh/command.js";
+import { trustedExecutionChannel, serverNow, type ExecutionChannel } from "../organization-boundary.js";
+import { loadOrganizationAccess } from "../organization-rbac.js";
+import {
+  abortWhenRequestDisconnects,
+  decideCheck,
+  emptyExecutionBasis,
+  recordOrganizationExecutionResult,
+  watchOrganizationExecution,
+} from "../organization-execution-basis.js";
+import type { DesktopExecutionAuthorizationBasis } from "../../shared/desktop-execution-authorization.js";
+import type { ResourceRef } from "../../shared/organization-rbac.js";
 import { connectSsh } from "../ssh/connector.js";
 import { sshCommandRiskLevel } from "../../shared/ssh-command-risk.js";
 import { parseBody } from "../validation.js";
@@ -46,6 +57,73 @@ function boundedSshBatchResult(result: SshCommandResult, maxBytes: number): SshC
     stderr: boundedStderr.toString("utf8"),
     truncated: result.truncated || boundedStdout.length < stdout.length || boundedStderr.length < stderr.length,
   };
+}
+
+interface TrackedSshExecution {
+  channel: ExecutionChannel;
+  signal: AbortSignal;
+  basis: DesktopExecutionAuthorizationBasis;
+  stop: () => void;
+  organizationId: string | null;
+}
+
+async function trackSshExecution(
+  app: FastifyInstance,
+  request: Parameters<typeof abortWhenRequestDisconnects>[0],
+  codes: string[],
+  target: ResourceRef,
+): Promise<TrackedSshExecution> {
+  const channel = trustedExecutionChannel(request);
+  const controller = new AbortController();
+  const unlink = abortWhenRequestDisconnects(request, controller);
+  const admin = request.admin;
+  const organizationId = admin?.workspace.type === "organization" ? admin.workspace.id : null;
+  let basis = emptyExecutionBasis();
+  let stopWatch = () => {};
+  if (organizationId && admin && channel !== "manual") {
+    const now = serverNow();
+    const access = admin.organizationAccess ?? await loadOrganizationAccess(app.db, organizationId, admin.id, now);
+    const desktopChannel = channel === "agent" ? "agent" : "mcp";
+    basis = decideCheck(access, desktopChannel, codes[0] ?? "ssh.use", target, now).basis;
+    stopWatch = watchOrganizationExecution({
+      db: app.db,
+      organizationId,
+      userId: admin.id,
+      channel,
+      codes,
+      target,
+      controller,
+    });
+  }
+  return {
+    channel,
+    signal: controller.signal,
+    basis,
+    organizationId,
+    stop: () => {
+      stopWatch();
+      unlink();
+    },
+  };
+}
+
+async function recordSshOutcome(
+  app: FastifyInstance,
+  request: { admin?: { id: string; username: string } | null },
+  tracked: TrackedSshExecution,
+  code: string,
+  target: ResourceRef,
+  status: "success" | "failed" | "cancelled",
+): Promise<void> {
+  const admin = request.admin;
+  if (!tracked.organizationId || !admin || tracked.channel === "manual") return;
+  await recordOrganizationExecutionResult(app.db, tracked.organizationId, admin, {
+    channel: tracked.channel,
+    status,
+    code,
+    target,
+    basis: tracked.basis,
+  });
 }
 
 const webActionSchema = z.object({
@@ -95,8 +173,12 @@ export async function registerMcpActionRoutes(app: FastifyInstance): Promise<voi
       return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "角色未获得这项资源操作权限" });
     }
     const connection = await app.db.prepare("SELECT name FROM ssh_connections WHERE id = ?").get(request.params.id) as { name: string } | undefined;
+    const target = { type: "ssh_connection" as const, id: request.params.id };
+    const codes = ["ssh.use", ...(sshCommandRiskLevel(body.command) === "low" ? [] : ["ssh.upload"])];
+    const tracked = await trackSshExecution(app, request, codes, target);
     try {
-      const result = await executeSshCommand(app, request.params.id, body.command, { timeoutMs: body.timeoutMs, maxBytes: body.maxBytes });
+      const result = await executeSshCommand(app, request.params.id, body.command, { timeoutMs: body.timeoutMs, maxBytes: body.maxBytes, signal: tracked.signal });
+      await recordSshOutcome(app, request, tracked, "ssh.use", target, "success");
       await writeAudit(app.db, {
         action: "mcp.ssh_command_executed",
         resourceType: "ssh_connection",
@@ -107,6 +189,7 @@ export async function registerMcpActionRoutes(app: FastifyInstance): Promise<voi
       });
       return result;
     } catch (error) {
+      await recordSshOutcome(app, request, tracked, "ssh.use", target, error instanceof SshCommandAbortedError ? "cancelled" : "failed");
       await writeAudit(app.db, {
         action: "mcp.ssh_command_failed",
         resourceType: "ssh_connection",
@@ -115,7 +198,13 @@ export async function registerMcpActionRoutes(app: FastifyInstance): Promise<voi
         details: { commandLength: body.command.length },
         request,
       });
-      return reply.code(502).send({ error: "SSH_COMMAND_FAILED", message: error instanceof Error ? error.message : "SSH 命令执行失败" });
+      const cancelled = error instanceof SshCommandAbortedError;
+      return reply.code(cancelled ? 409 : 502).send({
+        error: cancelled ? "SSH_COMMAND_ABORTED" : "SSH_COMMAND_FAILED",
+        message: error instanceof Error ? error.message : "SSH 命令执行失败",
+      });
+    } finally {
+      tracked.stop();
     }
   });
 
@@ -146,8 +235,19 @@ export async function registerMcpActionRoutes(app: FastifyInstance): Promise<voi
       return reply.code(502).send({ error: "SSH_COMMAND_FAILED", message: error instanceof Error ? error.message : "SSH 连接失败" });
     }
     const transportAcquireDurationMs = Date.now() - acquireStarted;
+    const target = { type: "ssh_connection" as const, id: request.params.id };
+    const tracked = await trackSshExecution(app, request, ["ssh.use"], target);
+    let recordedStop = false;
     try {
       for (let index = 0; index < body.commands.length; index += 1) {
+        if (tracked.signal.aborted) {
+          items.push({ index, ok: false, error: "SSH 诊断命令已取消" });
+          if (!recordedStop) {
+            recordedStop = true;
+            await recordSshOutcome(app, request, tracked, "ssh.use", target, "cancelled");
+          }
+          continue;
+        }
         if (remainingBytes <= 0) {
           items.push({ index, ok: false, error: "SSH 批量响应已达到总输出限制" });
           continue;
@@ -156,15 +256,29 @@ export async function registerMcpActionRoutes(app: FastifyInstance): Promise<voi
           const result = boundedSshBatchResult(await executeSshCommandOnConnection(
             connected,
             body.commands[index],
-            { timeoutMs: body.timeoutMs, maxBytes: Math.max(1024, remainingBytes) },
+            { timeoutMs: body.timeoutMs, maxBytes: Math.max(1024, remainingBytes), signal: tracked.signal },
           ), remainingBytes);
           remainingBytes -= Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr);
           items.push({ index, ok: true, ...result });
+          await recordSshOutcome(app, request, tracked, "ssh.use", target, "success");
         } catch (error) {
+          const cancelled = error instanceof SshCommandAbortedError;
           items.push({ index, ok: false, error: error instanceof Error ? error.message : "SSH 命令执行失败" });
+          if (cancelled) {
+            if (!recordedStop) {
+              recordedStop = true;
+              await recordSshOutcome(app, request, tracked, "ssh.use", target, "cancelled");
+            }
+            for (let rest = index + 1; rest < body.commands.length; rest += 1) {
+              items.push({ index: rest, ok: false, error: "SSH 诊断命令已取消" });
+            }
+            break;
+          }
+          await recordSshOutcome(app, request, tracked, "ssh.use", target, "failed");
         }
       }
     } finally {
+      tracked.stop();
       connected.close();
     }
     await writeAudit(app.db, {

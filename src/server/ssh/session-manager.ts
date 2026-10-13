@@ -179,7 +179,7 @@ export class SshSessionManager {
     command: string,
     user: AuthenticatedUser,
     executionScope: string | null,
-    options?: { allowWrite?: boolean },
+    options?: { allowWrite?: boolean; signal?: AbortSignal },
   ): Promise<AgentSshDiagnosticResult> {
     const session = this.sessionForAgent(sessionId, user, executionScope);
     const normalizedCommand = normalizeAgentSshCommand(command);
@@ -195,6 +195,11 @@ export class SshSessionManager {
       throw new Error("SSH 诊断执行 ID 已存在");
     }
     const controller = new AbortController();
+    const abortFromCaller = () => controller.abort();
+    if (options?.signal) {
+      if (options.signal.aborted) controller.abort();
+      else options.signal.addEventListener("abort", abortFromCaller, { once: true });
+    }
     const active = { sessionId, ownerId: user.id, executionScope, controller };
     this.agentDiagnostics.set(executionId, active);
     session.lastActivityAt = Date.now();
@@ -224,6 +229,7 @@ export class SshSessionManager {
         redactionCount: stdout.redactionCount + stderr.redactionCount,
       };
     } finally {
+      options?.signal?.removeEventListener("abort", abortFromCaller);
       if (this.agentDiagnostics.get(executionId) === active) this.agentDiagnostics.delete(executionId);
     }
   }

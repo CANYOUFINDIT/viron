@@ -1,83 +1,22 @@
 import type { FastifyInstance } from "fastify";
-import { executionDecision, intersectWindows, serverNow, unionWindow } from "../organization-boundary.js";
+import { intersectWindows, serverNow } from "../organization-boundary.js";
 import { recordGrantLedger } from "../organization-approval.js";
-import { loadOrganizationAccess, type OrganizationAccess } from "../organization-rbac.js";
+import { loadOrganizationAccess } from "../organization-rbac.js";
+import { decideCheck, emptyExecutionBasis } from "../organization-execution-basis.js";
 import { acceptDesktopReport, DesktopReportError } from "../desktop-report.js";
 import { requireAdmin } from "./auth.js";
-import { resourceKey, validAt, type ResourceRef } from "../../shared/organization-rbac.js";
 import {
   DESKTOP_EXECUTION_AUTHORIZATION_KIND,
   DESKTOP_EXECUTION_RESULT_KIND,
   desktopExecutionAuthorizationPayloadSchema,
   desktopExecutionResultPayloadSchema,
-  type DesktopExecutionAuthorizationBasis,
   type DesktopExecutionAuthorizationPayload,
   type DesktopExecutionAuthorizationResult,
-  type DesktopExecutionChannel,
   type DesktopExecutionCheckResult,
   type DesktopExecutionWindow,
 } from "../../shared/desktop-execution-authorization.js";
 
 const OPEN_WINDOW: DesktopExecutionWindow = { allowed: true, permanent: true, expiresAt: null };
-
-function emptyBasis(window: DesktopExecutionWindow = { allowed: false, permanent: false, expiresAt: null }): DesktopExecutionAuthorizationBasis {
-  return { roles: [], featureGrantIds: [], operation: window, feature: window };
-}
-
-function sameRoleBasis(access: OrganizationAccess, code: string, target: ResourceRef, now: number): DesktopExecutionAuthorizationBasis["roles"] {
-  const key = resourceKey(target);
-  const roles: DesktopExecutionAuthorizationBasis["roles"] = [];
-  for (const assignment of access.state.assignments) {
-    if (!validAt(assignment, now) || !access.applies(assignment.subjectType, assignment.subjectId)) continue;
-    const role = access.state.roles.find((item) => item.id === assignment.roleId && item.enabled);
-    if (!role?.permissionCodes.includes(code)) continue;
-    for (const grant of access.state.dataGrants) {
-      if (grant.roleId !== role.id || !validAt(grant, now) || resourceKey(grant.target) !== key) continue;
-      roles.push({ roleId: role.id, roleName: role.name, assignmentId: assignment.id, dataGrantId: grant.id });
-    }
-  }
-  return roles;
-}
-
-function currentFeatureGrantIds(access: OrganizationAccess, channel: DesktopExecutionChannel, target: ResourceRef, now: number): string[] {
-  const feature = channel === "mcp" ? "mcp" : "agent";
-  const key = resourceKey(target);
-  return access.state.featureGrants
-    .filter((grant) => validAt(grant, now)
-      && access.applies(grant.subjectType, grant.subjectId)
-      && grant.features[feature]
-      && grant.targets.some((item) => resourceKey(item) === key))
-    .map((grant) => grant.id);
-}
-
-function decideCheck(
-  access: OrganizationAccess,
-  channel: DesktopExecutionChannel,
-  code: string,
-  target: ResourceRef,
-  now: number,
-): DesktopExecutionCheckResult {
-  const listed = access.catalog.some((item) => resourceKey(item) === resourceKey(target));
-  const decision = executionDecision(access, channel, code, target);
-  const operation = unionWindow(access.operationPaths(code, target));
-  const feature = unionWindow(access.featurePaths(channel === "mcp" ? "mcp" : "agent", target));
-  const allowed = listed && decision.allowed;
-  const basis: DesktopExecutionAuthorizationBasis = {
-    roles: listed && operation.allowed ? sameRoleBasis(access, code, target, now) : [],
-    featureGrantIds: listed && feature.allowed ? currentFeatureGrantIds(access, channel, target, now) : [],
-    operation: listed ? operation : emptyBasis().operation,
-    feature: listed ? feature : emptyBasis().feature,
-  };
-  return {
-    target,
-    code,
-    allowed,
-    error: allowed ? null : (decision.error ?? "ACTION_FORBIDDEN"),
-    message: allowed ? "" : (listed ? decision.message : "角色未获得这项资源操作权限"),
-    window: allowed ? decision.window : { allowed: false, permanent: false, expiresAt: null },
-    basis,
-  };
-}
 
 function overall(checks: DesktopExecutionCheckResult[]): { window: DesktopExecutionWindow; error: DesktopExecutionCheckResult["error"]; message: string } {
   const denied = checks.find((check) => !check.allowed);
@@ -97,7 +36,7 @@ function personalResult(payload: DesktopExecutionAuthorizationPayload, duplicate
     error: null,
     message: "",
     window: OPEN_WINDOW,
-    basis: emptyBasis(OPEN_WINDOW),
+    basis: emptyExecutionBasis(OPEN_WINDOW),
   }));
   return {
     allowed: true,

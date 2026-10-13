@@ -13,7 +13,14 @@ import { ConnectionLimitError } from "../active-connections.js";
 import { auditLikePattern, auditRetentionCutoff, parseAuditListQuery, type AuditListQuery } from "../audit-query.js";
 import { SshCommandAbortedError } from "../ssh/command.js";
 import { acceptDesktopReport, DesktopReportError } from "../desktop-report.js";
-import { executionDecision } from "../organization-boundary.js";
+import { executionDecision, serverNow, trustedExecutionChannel } from "../organization-boundary.js";
+import { loadOrganizationAccess } from "../organization-rbac.js";
+import {
+  abortWhenRequestDisconnects,
+  decideCheck,
+  recordOrganizationExecutionResult,
+  watchOrganizationExecution,
+} from "../organization-execution-basis.js";
 
 const createSessionSchema = z.object({
   connectionId: z.string().uuid(),
@@ -250,7 +257,65 @@ export async function registerSshSessionRoutes(app: FastifyInstance): Promise<vo
         return reply.code(409).send({ error: "AGENT_AUTHORIZATION_REPLAYED", message: "Viron Agent 授权已被使用" });
       }
       target = approvedTarget;
-      const result = await app.sshSessions.agentDiagnostic(payload.operationId, request.params.id, payload.command, request.admin, scope, { allowWrite: payload.intent === "write" });
+      const code = payload.intent === "write" ? "ssh.upload" : "ssh.use";
+      const resource = { type: "ssh_connection" as const, id: approvedTarget.connectionId };
+      const channel = trustedExecutionChannel(request);
+      const organizationId = request.admin.workspace.type === "organization" ? request.admin.workspace.id : null;
+      const watched = Boolean(organizationId && channel !== "manual");
+      const execution = new AbortController();
+      const unlinkRequest = abortWhenRequestDisconnects(request, execution);
+      let stopWatch = () => {};
+      const now = serverNow();
+      const basis = watched
+        ? decideCheck(
+          request.admin.organizationAccess ?? await loadOrganizationAccess(app.db, organizationId!, request.admin.id, now),
+          channel === "mcp" ? "mcp" : "agent",
+          code,
+          resource,
+          now,
+        ).basis
+        : null;
+      if (watched && organizationId) {
+        stopWatch = watchOrganizationExecution({
+          db: app.db,
+          organizationId,
+          userId: request.admin.id,
+          channel,
+          codes: [code],
+          target: resource,
+          controller: execution,
+        });
+      }
+      let result: Awaited<ReturnType<typeof app.sshSessions.agentDiagnostic>>;
+      try {
+        result = await app.sshSessions.agentDiagnostic(payload.operationId, request.params.id, payload.command, request.admin, scope, {
+          allowWrite: payload.intent === "write",
+          signal: watched ? execution.signal : undefined,
+        });
+        if (watched && organizationId && basis) {
+          await recordOrganizationExecutionResult(app.db, organizationId, request.admin, {
+            channel,
+            status: "success",
+            code,
+            target: resource,
+            basis,
+          });
+        }
+      } catch (error) {
+        if (watched && organizationId && basis) {
+          await recordOrganizationExecutionResult(app.db, organizationId, request.admin, {
+            channel,
+            status: error instanceof SshCommandAbortedError ? "cancelled" : "failed",
+            code,
+            target: resource,
+            basis,
+          });
+        }
+        throw error;
+      } finally {
+        stopWatch();
+        unlinkRequest();
+      }
       await writeAudit(app.db, {
         action: "agent.ssh_diagnostic_executed",
         resourceType: "ssh_connection",
