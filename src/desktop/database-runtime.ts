@@ -1246,6 +1246,13 @@ export class DesktopDatabaseRuntime {
     return publicJob(job);
   }
 
+  /** Query identity stored for this user and workspace. It does not read result rows. */
+  ownedQuery(id: string, context: DesktopSshContext): { connectionId: string; sql: string } | null {
+    const job = this.jobs.get(id);
+    if (!job || contextKey(job.context) !== contextKey(context)) return null;
+    return { connectionId: job.connectionId, sql: job.sql };
+  }
+
   private getQuery(id: string, context: DesktopSshContext): DesktopDatabaseQueryJob {
     const job = this.jobs.get(id);
     if (!job || contextKey(job.context) !== contextKey(context)) {

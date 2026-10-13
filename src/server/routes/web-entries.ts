@@ -346,6 +346,22 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
     },
   );
 
+  app.get<{ Params: { id: string } }>(
+    "/api/v1/web-credentials/:id/entry-ref",
+    { preHandler: requireAdmin },
+    async (request, reply) => {
+      const row = await app.db.prepare(`
+        SELECT w.id AS entry_id
+        FROM web_credentials c
+        JOIN web_entries w ON w.id = c.web_entry_id
+        JOIN environments e ON e.id = w.environment_id
+        WHERE c.id = ? AND e.workspace_type = ? AND e.workspace_id = ?
+      `).get(request.params.id, request.admin!.workspace.type, request.admin!.workspace.id) as { entry_id: string } | undefined;
+      if (!row) return reply.code(404).send({ error: "NOT_FOUND", message: "登录账号不存在" });
+      return { entryId: row.entry_id };
+    },
+  );
+
   app.put<{ Params: { id: string } }>(
     "/api/v1/web-credentials/:id",
     { preHandler: requireAdmin },

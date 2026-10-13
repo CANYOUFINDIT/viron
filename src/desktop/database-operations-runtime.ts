@@ -883,6 +883,13 @@ export class DesktopDatabaseOperationRuntime {
     }
   }
 
+  /** Connection ids stored for this user and workspace. It does not open the database or return the backup file. */
+  ownedAccess(id: string, context: DesktopSshContext): { type: DatabaseTaskType; connectionId: string | null; details: Record<string, unknown> } | null {
+    const task = this.tasks.get(id);
+    if (!task || contextKey(task.context) !== contextKey(context)) return null;
+    return { type: task.type, connectionId: task.connectionId, details: task.details };
+  }
+
   private list(context: DesktopSshContext): PublicDatabaseTask[] {
     const key = contextKey(context);
     return [...this.tasks.values()]

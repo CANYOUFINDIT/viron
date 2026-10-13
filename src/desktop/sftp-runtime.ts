@@ -608,6 +608,13 @@ export class DesktopSftpRuntime {
     return this.publicTask(task);
   }
 
+  /** Endpoints stored for this user and workspace. A retry cannot substitute ids from the request body. */
+  ownedTransfer(taskId: string, context: DesktopSshContext): { sourceConnectionId: string; targetConnectionId: string } | null {
+    const task = this.transfers.get(taskId);
+    if (!task || contextKey(task.context) !== contextKey(context)) return null;
+    return { sourceConnectionId: task.sourceConnectionId, targetConnectionId: task.targetConnectionId };
+  }
+
   listTransfers(context: DesktopSshContext): DesktopSftpTransferTask[] {
     const key = contextKey(context);
     return [...this.transfers.values()]
