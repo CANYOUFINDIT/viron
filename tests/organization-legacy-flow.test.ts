@@ -59,8 +59,8 @@ describe("legacy approval flow compatibility", () => {
     const legacy = {
       name: "虚构旧流程",
       stages: [
-        { name: "旧会签", mode: "all", approverIds: [approver], approverRoleId: roleId, allowSelf: false, requireComment: true },
-        { name: "旧自定义", mode: "department_head", approverIds: [approver], approverRoleId: roleId, allowSelf: true, requireComment: true },
+        { name: "旧会签", mode: "all", approverIds: [approver], approverRoleId: roleId, allowSelf: false, requireComment: true, allowTransfer: false },
+        { name: "旧自定义", mode: "department_head", approverIds: [approver], approverRoleId: roleId, allowSelf: true, requireComment: true, allowRollback: false },
       ],
     };
     await f.db.prepare("INSERT INTO organization_approval_workflows (organization_id, workflow_json, updated_at) VALUES (?,?,?)")
@@ -71,15 +71,20 @@ describe("legacy approval flow compatibility", () => {
     expect(defaults).toHaveLength(1);
     const nodes = defaults[0].nodes;
     expect(nodes.map((node: { mode: string }) => node.mode)).toEqual(["all", "department_head"]);
-    expect(nodes[0]).toMatchObject({ approverUserIds: [approver], approverRoleId: roleId, allowSelf: false, requireComment: true });
+    expect(nodes[0]).toMatchObject({ approverUserIds: [approver], approverRoleId: roleId, allowSelf: false, requireComment: true, allowTransfer: false });
+    expect(nodes[0]).not.toHaveProperty("allowAddSign");
+    expect(nodes[0]).not.toHaveProperty("allowRollback");
     expect(nodes[1]).toMatchObject({
       unsupported: true,
       approverUserIds: [approver],
       approverRoleId: roleId,
       allowSelf: true,
       requireComment: true,
+      allowRollback: false,
       legacySnapshot: legacy.stages[1],
     });
+    expect(nodes[1]).not.toHaveProperty("allowTransfer");
+    expect(nodes[1]).not.toHaveProperty("allowAddSign");
     expect(nodes[1].mode).not.toBe("any");
     const again = await f.app.inject({ method: "GET", url: f.base + "/approval-flows", cookies: f.cookies });
     expect(again.json().items.filter((item: { isDefault: boolean }) => item.isDefault)).toEqual([

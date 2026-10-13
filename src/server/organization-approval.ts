@@ -20,6 +20,13 @@ export interface FlowNode {
   approverRoleId: string | null;
   allowSelf: boolean;
   requireComment: boolean;
+  /**
+   * 缺省表示沿用原先“当前审批人可以操作”。只有明确 false 才关闭。
+   * 新保存的流程会写成明确布尔值；已提交申请仍读自己的快照。
+   */
+  allowTransfer?: boolean;
+  allowAddSign?: boolean;
+  allowRollback?: boolean;
   /** Set when an imported legacy node must stay untouched and cannot execute. */
   unsupported?: boolean;
   legacySnapshot?: unknown;
@@ -29,6 +36,8 @@ export interface FlowSnapshotNode extends FlowNode {
   /** Members who held approval.approve for these targets when the request was submitted. */
   passApproverIds: string[];
   resolution: string;
+  /** Usernames frozen when these members entered the request snapshot. */
+  approverNames?: Record<string, string>;
 }
 interface RequestRow {
   id: string;
@@ -79,6 +88,28 @@ function textList(value: unknown): string[] {
   return ids;
 }
 
+type NodeOperation = "transfer" | "add_sign" | "rollback";
+
+function assignStoredFlag(node: FlowNode, key: "allowTransfer" | "allowAddSign" | "allowRollback", value: unknown) {
+  if (value === true || value === false) node[key] = value;
+}
+
+/** Missing stays allowed. An explicit false is the only stored off switch. */
+function nodeAllows(node: FlowNode | undefined, operation: NodeOperation) {
+  if (!node) return false;
+  const value = operation === "transfer" ? node.allowTransfer : operation === "add_sign" ? node.allowAddSign : node.allowRollback;
+  return value !== false;
+}
+
+function storedSwitches(node: FlowNode): FlowNode {
+  return {
+    ...node,
+    allowTransfer: node.allowTransfer !== false,
+    allowAddSign: node.allowAddSign !== false,
+    allowRollback: node.allowRollback !== false,
+  };
+}
+
 /** Maps one old workflow document. Unknown modes stay intact and are marked unsupported. */
 function legacyNodesFromWorkflow(raw: string): FlowNode[] {
   let parsed: unknown = raw;
@@ -115,6 +146,9 @@ function legacyNodesFromWorkflow(raw: string): FlowNode[] {
       allowSelf: item.allowSelf === true,
       requireComment: item.requireComment === true,
     };
+    assignStoredFlag(node, "allowTransfer", item.allowTransfer);
+    assignStoredFlag(node, "allowAddSign", item.allowAddSign);
+    assignStoredFlag(node, "allowRollback", item.allowRollback);
     if (!supportedModes.has(mode)) {
       node.unsupported = true;
       node.legacySnapshot = stage;
@@ -314,6 +348,9 @@ export async function ensureDefaultApprovalFlow(db: EnvmanDatabase, org: string)
         approverRoleId: role?.id ?? null,
         allowSelf: false,
         requireComment: false,
+        allowTransfer: true,
+        allowAddSign: true,
+        allowRollback: true,
       }];
     }
     const now = new Date().toISOString();
@@ -423,12 +460,13 @@ export async function saveApprovalFlow(
       );
     const now = new Date().toISOString();
     const id = flow?.id ?? randomUUID();
+    const nodes = input.nodes.map(storedSwitches);
     if (flow)
       await db
         .prepare(
           "UPDATE organization_approval_flows SET name = ?, nodes_json = ?, version = version + 1, updated_at = ? WHERE id = ?",
         )
-        .run(input.name, JSON.stringify(input.nodes), now, id);
+        .run(input.name, JSON.stringify(nodes), now, id);
     else
       await db
         .prepare(
@@ -436,7 +474,7 @@ export async function saveApprovalFlow(
             id, organization_id, name, is_default, enabled, nodes_json, created_at, updated_at
           ) VALUES (?, ?, ?, 0, 1, ?, ?, ?)`,
         )
-        .run(id, org, input.name, JSON.stringify(input.nodes), now, now);
+        .run(id, org, input.name, JSON.stringify(nodes), now, now);
     if (!flow?.isDefault) {
       await db.prepare("DELETE FROM organization_approval_flow_targets WHERE organization_id = ? AND flow_id = ?").run(org, id);
       for (const target of targets)
@@ -521,7 +559,23 @@ async function resolveNode(
   const passApproverIds = capabilities ? resolved.filter((id) => capabilities.get(id)?.approve) : [];
   if (human.has(node.mode) && !resolved.length)
     throw new OrganizationPermissionError("APPROVER_UNAVAILABLE", 409, `节点“${node.name}”没有可审批的人，不能提交`);
-  return { ...node, resolvedApproverIds: resolved, passApproverIds, resolution: resolution || node.mode };
+  return {
+    ...node,
+    resolvedApproverIds: resolved,
+    passApproverIds,
+    resolution: resolution || node.mode,
+    approverNames: await accountNames(db, resolved),
+  };
+}
+
+async function accountNames(db: EnvmanDatabase, userIds: string[]) {
+  const names: Record<string, string> = {};
+  for (const userId of [...new Set(userIds)]) {
+    const row = await db.prepare("SELECT username FROM admin_users WHERE id = ?").get<{ username: string | null }>(userId);
+    const name = row?.username?.trim();
+    if (name) names[userId] = name;
+  }
+  return names;
 }
 
 interface PermissionSnapshot {
@@ -818,6 +872,7 @@ export async function listGrantRequests(
       "SELECT * FROM organization_grant_requests WHERE organization_id = ? ORDER BY created_at DESC, id DESC",
     )
     .all<RequestRow>(org);
+  const selectorCache = new Map<string, Promise<RevisionCandidate[]>>();
   const access = view === "all" ? await loadOrganizationAccess(db, org, viewerId) : null;
   const orgWideView = access?.allows("approval.view") ?? false;
   if (view === "all" && access && !orgWideView && !access.catalog.some((item) => access.allows("approval.view", item)))
@@ -836,23 +891,76 @@ export async function listGrantRequests(
       const covered = targets.length > 0 && targets.every((target) => access?.allows("approval.view", target));
       if (!mine && !covered) continue;
     }
-    items.push(await presentRequest(db, org, row, viewerId, state, todo));
+    items.push(await presentRequest(db, org, row, viewerId, state, todo, selectorCache));
   }
   return { items };
 }
 
+interface RevisionCandidate {
+  userId: string;
+  name: string;
+  canApprove: boolean;
+  canReject: boolean;
+}
+
+async function loadRevisionCandidates(db: EnvmanDatabase, org: string, targets: ResourceRef[]): Promise<RevisionCandidate[]> {
+  const members = await db
+    .prepare(
+      `SELECT u.id, u.username FROM organization_members m JOIN admin_users u ON u.id = m.user_id
+       WHERE m.organization_id = ? AND u.status = 'active' ORDER BY u.username, u.id`,
+    )
+    .all<{ id: string; username: string }>(org);
+  const unique = [...new Map(members.map((member) => [member.id, member])).values()];
+  const capabilities = await approverCapabilities(db, org, unique.map((member) => member.id), targets);
+  return unique.flatMap((member) => {
+    const capability = capabilities.get(member.id);
+    if (!capability) return [];
+    const name = member.username?.trim();
+    if (!name) return [];
+    return [{ userId: member.id, name, canApprove: capability.approve, canReject: capability.reject }];
+  });
+}
+
+async function revisionCandidates(
+  db: EnvmanDatabase,
+  org: string,
+  targets: ResourceRef[],
+  cache: Map<string, Promise<RevisionCandidate[]>>,
+) {
+  const key = targets.map((target) => resourceKey(target)).sort().join("\n");
+  const cached = cache.get(key);
+  if (cached) return cached;
+  const loading = loadRevisionCandidates(db, org, targets);
+  cache.set(key, loading);
+  return loading;
+}
+
 async function presentRequest(
   db: EnvmanDatabase,
-  _org: string,
+  org: string,
   row: RequestRow,
   viewerId: string,
   state: Awaited<ReturnType<typeof stageState>>,
   todo: boolean,
+  selectorCache: Map<string, Promise<RevisionCandidate[]>>,
 ) {
   const snapshot = snapshotOf(row);
   const names = await db
     .prepare("SELECT id, username FROM admin_users WHERE id = ?")
     .get<{ id: string; username: string }>(row.requester_id);
+  const nodes = nodesOf(row);
+  const stageIndex = Number(row.stage_index);
+  const current = row.status === "pending" ? state.node : undefined;
+  const viewerOperates = Boolean(current && viewerId && state.qualified.includes(viewerId));
+  const canTransfer = viewerOperates && nodeAllows(current, "transfer");
+  const canAddSign = viewerOperates && nodeAllows(current, "add_sign");
+  const canRollback = viewerOperates && nodeAllows(current, "rollback") && stageIndex > 0;
+  const approverIds = nodes.flatMap((node) => node.resolvedApproverIds);
+  const [capabilities, liveNames] = await Promise.all([
+    approverCapabilities(db, org, approverIds, snapshot.targets),
+    accountNames(db, nodes.flatMap((node) => node.resolvedApproverIds.filter((id) => !node.approverNames?.[id]))),
+  ]);
+  const live = new Map(Object.entries(liveNames));
   return {
     id: row.id,
     kind: row.kind,
@@ -867,18 +975,42 @@ async function presentRequest(
     permissionCodes: snapshot.permissionCodes,
     holderIds: snapshot.holderIds,
     durationMs: snapshot.durationMs,
-    stageIndex: Number(row.stage_index),
-    nodes: nodesOf(row).map(({ resolvedApproverIds, name, mode, allowSelf }) => ({
-      name,
-      mode,
-      allowSelf,
-      approverIds: resolvedApproverIds,
+    stageIndex,
+    requireComment: current?.requireComment === true,
+    nodes: nodes.map((node) => ({
+      id: node.id,
+      name: node.name,
+      mode: node.mode,
+      resolution: node.resolution || "",
+      allowSelf: node.allowSelf === true,
+      requireComment: node.requireComment === true,
+      allowTransfer: node.allowTransfer !== false,
+      allowAddSign: node.allowAddSign !== false,
+      allowRollback: node.allowRollback !== false,
+      approverIds: node.resolvedApproverIds,
+      approvers: node.resolvedApproverIds.map((id) => {
+        const capability = capabilities.get(id);
+        return {
+          id,
+          name: node.approverNames?.[id] || live.get(id) || "",
+          canApprove: capability?.approve === true,
+          canReject: capability?.reject === true,
+        };
+      }),
     })),
     decisions: state.history,
     grantIds: parse<string[]>(row.grant_ids_json, []),
     canDecide: todo && viewerId !== "",
     canApprove: todo && state.canApprove.includes(viewerId),
     canReject: todo && state.canReject.includes(viewerId),
+    canTransfer,
+    canAddSign,
+    canRollback,
+    rollbackTargets: canRollback
+      ? nodes.slice(0, stageIndex).map((node, index) => ({ stageIndex: index, id: node.id, name: node.name, mode: node.mode }))
+      : [],
+    revisionCandidates: (canTransfer || canAddSign ? await revisionCandidates(db, org, snapshot.targets, selectorCache) : [])
+      .filter((candidate) => current?.allowSelf === true || candidate.userId !== row.requester_id),
     canWithdraw: row.status === "pending" && row.requester_id === viewerId,
     version: Number(row.version),
   };
@@ -896,7 +1028,7 @@ export async function readGrantRequest(db: EnvmanDatabase, org: string, requestI
   const covered = access.allows("approval.view") || (targets.length > 0 && targets.every((target) => access.allows("approval.view", target)));
   if (row.requester_id !== viewerId && !todo && !covered)
     throw new OrganizationPermissionError("NOT_FOUND", 404, "申请不存在或无权查看");
-  return presentRequest(db, org, row, viewerId, state, todo && !state.paused);
+  return presentRequest(db, org, row, viewerId, state, todo && !state.paused, new Map());
 }
 
 async function activeMember(db: EnvmanDatabase, org: string, userId: string) {
@@ -1127,17 +1259,29 @@ export async function reviseGrantRequest(
       flowName: "",
       nodes: [],
     });
-    const before = workflow.nodes.map((node) => ({ ...node }));
+    const before = workflow.nodes.map((node) => ({
+      ...node,
+      resolvedApproverIds: [...node.resolvedApproverIds],
+      passApproverIds: node.passApproverIds ? [...node.passApproverIds] : node.passApproverIds,
+      approverNames: node.approverNames ? { ...node.approverNames } : undefined,
+    }));
     const stage = Number(row.stage_index);
+    const current = workflow.nodes[stage];
+    if (!current || !nodeAllows(current, revision.type)) {
+      const action = revision.type === "transfer" ? "转交" : revision.type === "add_sign" ? "加签" : "回退";
+      throw new OrganizationPermissionError("NODE_OPERATION_DISABLED", 400, `当前节点不允许${action}`);
+    }
     if (revision.type === "rollback") {
       const target = revision.stageIndex ?? stage - 1;
-      if (target < 0 || target > stage)
-        throw new OrganizationPermissionError("INVALID_ROLLBACK", 400, "只能回退到当前或更早的节点");
+      const destination = workflow.nodes[target];
+      if (!Number.isInteger(target) || target < 0 || target >= stage || !destination)
+        throw new OrganizationPermissionError("INVALID_ROLLBACK", 400, "只能回退到当前节点之前的真实节点");
       workflow.nodes.forEach((node, index) => {
         const prior = before[index];
         if (index < target || !prior) return;
-        node.resolvedApproverIds = prior.resolvedApproverIds;
+        node.resolvedApproverIds = [...prior.resolvedApproverIds];
         if (prior.passApproverIds) node.passApproverIds = [...prior.passApproverIds];
+        node.approverNames = prior.approverNames ? { ...prior.approverNames } : undefined;
       });
       const decisions = state.history.map((item) =>
         item.stageIndex >= target && !item.superseded ? { ...item, superseded: true } : item,
@@ -1153,6 +1297,8 @@ export async function reviseGrantRequest(
       const capabilities = await approverCapabilities(db, org, [revision.userId], targets);
       if (!capabilities.has(revision.userId)) throw new OrganizationPermissionError("APPROVER_REQUIRED", 409, "对象没有当前范围的审批权限");
       const node = workflow.nodes[stage];
+      if (revision.userId === row.requester_id && node.allowSelf !== true)
+        throw new OrganizationPermissionError("SELF_APPROVAL_FORBIDDEN", 409, "这个节点不允许申请人本人审批");
       const nextId = revision.userId;
       if (revision.type === "transfer") {
         node.resolvedApproverIds = node.resolvedApproverIds.map((id) => (id === actor.id ? nextId : id));
@@ -1163,6 +1309,7 @@ export async function reviseGrantRequest(
         if (node.passApproverIds && capabilities.get(nextId)?.approve && !node.passApproverIds.includes(nextId))
           node.passApproverIds = [...node.passApproverIds, nextId];
       }
+      node.approverNames = { ...(node.approverNames ?? {}), ...(await accountNames(db, [nextId])) };
       await db
         .prepare(
           "UPDATE organization_grant_requests SET workflow_snapshot_json = ?, version = version + 1, updated_at = ? WHERE id = ?",

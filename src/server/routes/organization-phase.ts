@@ -31,6 +31,10 @@ const nodeSchema = z
     approverRoleId: z.string().uuid().nullable().default(null),
     allowSelf: z.boolean().default(false),
     requireComment: z.boolean().default(false),
+    // 缺省保持原先可操作；请求里的明确 true/false 会原样保存。
+    allowTransfer: z.boolean().default(true),
+    allowAddSign: z.boolean().default(true),
+    allowRollback: z.boolean().default(true),
   })
   .strict();
 const flowSchema = z
