@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { join as nativeJoin, posix } from "node:path";
 import { once } from "node:events";
 import { pipeline } from "node:stream/promises";
-import type { Writable } from "node:stream";
+import { type Readable, type Writable } from "node:stream";
 import { createReadStream, createWriteStream, type Stats as LocalStats } from "node:fs";
 import { chmod, lstat as localLstat, mkdir, readdir as localReaddir, rename as localRename, rmdir, stat as localStat, unlink } from "node:fs/promises";
 import type { FileEntryWithStats, SFTPWrapper, Stats } from "ssh2";
@@ -157,7 +157,7 @@ interface SftpFileSystem extends SftpPlanFileSystem {
   rmdir(path: string): Promise<void>;
   unlink(path: string): Promise<void>;
   chmod(path: string, mode: number): Promise<void>;
-  createReadStream(path: string): NodeJS.ReadableStream;
+  createReadStream(path: string): Readable;
   createWriteStream(path: string, options: { flags: "w"; mode: number }): Writable;
   close(): void;
 }
@@ -195,6 +195,28 @@ function modifiedAt(attributes: FileAttributes): string {
 
 function sftpAction(run: (callback: (error?: Error | null) => void) => void): Promise<void> {
   return new Promise((resolve, reject) => run((error) => error ? reject(error) : resolve()));
+}
+
+function abortError(signal: AbortSignal): Error {
+  return signal.reason instanceof Error ? signal.reason : new Error(tr("任务已由用户取消"));
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw abortError(signal);
+}
+
+function bindOwnedClientAbort(signal: AbortSignal | undefined, owned: Set<ConnectedDesktopSsh>, onAbort?: () => void): () => void {
+  if (!signal) return () => undefined;
+  const abortOwned = () => {
+    onAbort?.();
+    for (const connected of owned) connected.client.destroy();
+  };
+  if (signal.aborted) {
+    abortOwned();
+    return () => undefined;
+  }
+  signal.addEventListener("abort", abortOwned, { once: true });
+  return () => signal.removeEventListener("abort", abortOwned);
 }
 
 function lstat(sftp: SFTPWrapper, path: string): Promise<Stats> {
@@ -240,7 +262,7 @@ class SshSftpFileSystem implements SftpFileSystem {
     return sftpAction((callback) => this.sftp.chmod(path, mode, callback));
   }
 
-  createReadStream(path: string): NodeJS.ReadableStream {
+  createReadStream(path: string): Readable {
     return this.sftp.createReadStream(path);
   }
 
@@ -287,7 +309,7 @@ class LocalSftpFileSystem implements SftpFileSystem {
     return chmod(path, mode);
   }
 
-  createReadStream(path: string): NodeJS.ReadableStream {
+  createReadStream(path: string): Readable {
     return createReadStream(path);
   }
 
@@ -493,25 +515,41 @@ export class DesktopSftpRuntime {
     return { files, temporary: true };
   }
 
-  async download(connectionId: string, pathValue: string, maxBytes = 8 * 1024 * 1024): Promise<{ filename: string; data: Buffer }> {
+  async download(connectionId: string, pathValue: string, maxBytes = 8 * 1024 * 1024, signal?: AbortSignal): Promise<{ filename: string; data: Buffer }> {
+    throwIfAborted(signal);
     const path = remotePath(pathValue);
-    return this.withFileSystem(connectionId, async (fileSystem) => {
-      const attributes = await fileSystem.lstat(path);
-      if (attributes.isDirectory()) throw new Error(tr("请进入目录后逐个下载文件"));
-      if (attributes.size > maxBytes) throw new Error(tr("MCP 单次读取文件不能超过 {{0}} MiB", [Math.floor(maxBytes / 1024 / 1024)]));
-      const chunks: Buffer[] = [];
-      let size = 0;
-      for await (const chunk of fileSystem.createReadStream(path) as AsyncIterable<Buffer | string>) {
-        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        size += buffer.length;
-        if (size > maxBytes) throw new Error(tr("MCP 单次读取文件不能超过 {{0}} MiB", [Math.floor(maxBytes / 1024 / 1024)]));
-        chunks.push(buffer);
-      }
-      return { filename: posix.basename(path), data: Buffer.concat(chunks) };
+    const owned = new Set<ConnectedDesktopSsh>();
+    let stream: Readable | undefined;
+    const unbind = bindOwnedClientAbort(signal, owned, () => {
+      stream?.destroy(signal ? abortError(signal) : new Error(tr("任务已由用户取消")));
     });
+    try {
+      return await this.withFileSystem(connectionId, async (fileSystem) => {
+        throwIfAborted(signal);
+        const attributes = await fileSystem.lstat(path);
+        throwIfAborted(signal);
+        if (attributes.isDirectory()) throw new Error(tr("请进入目录后逐个下载文件"));
+        if (attributes.size > maxBytes) throw new Error(tr("MCP 单次读取文件不能超过 {{0}} MiB", [Math.floor(maxBytes / 1024 / 1024)]));
+        const chunks: Buffer[] = [];
+        let size = 0;
+        stream = fileSystem.createReadStream(path);
+        throwIfAborted(signal);
+        for await (const chunk of stream as AsyncIterable<Buffer | string>) {
+          throwIfAborted(signal);
+          const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          size += buffer.length;
+          if (size > maxBytes) throw new Error(tr("MCP 单次读取文件不能超过 {{0}} MiB", [Math.floor(maxBytes / 1024 / 1024)]));
+          chunks.push(buffer);
+        }
+        return { filename: posix.basename(path), data: Buffer.concat(chunks) };
+      }, owned, signal);
+    } finally {
+      unbind();
+    }
   }
 
-  async preview(options: Omit<DesktopSftpTransferOptions, "conflict">): Promise<DesktopSftpTransferPreview> {
+  async preview(options: Omit<DesktopSftpTransferOptions, "conflict">, signal?: AbortSignal): Promise<DesktopSftpTransferPreview> {
+    throwIfAborted(signal);
     const sourcePaths = normalizedSourcePaths(options);
     const targetDirectory = remotePath(options.targetDirectory);
     if (!sourcePaths.length) throw new Error(tr("请选择要传输的文件或目录"));
@@ -522,17 +560,26 @@ export class DesktopSftpRuntime {
       this.connectionInfoIfRemote(options.targetConnectionId, expectedContext),
     ]);
     if (sourceLoaded && targetLoaded && contextKey(sourceLoaded.context) !== contextKey(targetLoaded.context)) throw new Error(tr("来源和目标连接不属于当前工作空间"));
-    const [source, target] = await Promise.all([
-      this.openFileSystem(options.sourceConnectionId, expectedContext),
-      this.openFileSystem(options.targetConnectionId, expectedContext),
-    ]);
+    const owned = new Set<ConnectedDesktopSsh>();
+    const unbind = bindOwnedClientAbort(signal, owned);
+    let source: SftpFileSystem | undefined;
+    let target: SftpFileSystem | undefined;
     try {
-      const plans = await Promise.all(sourcePaths.map((sourcePath) => buildSftpPlan(source, sourcePath, undefined, tr)));
+      const opened = await Promise.all([
+        this.openFileSystem(options.sourceConnectionId, expectedContext, owned, signal),
+        this.openFileSystem(options.targetConnectionId, expectedContext, owned, signal),
+      ]);
+      const openedSource = opened[0];
+      const openedTarget = opened[1];
+      source = openedSource;
+      target = openedTarget;
+      throwIfAborted(signal);
+      const plans = await Promise.all(sourcePaths.map((sourcePath) => buildSftpPlan(openedSource, sourcePath, signal, tr)));
       const conflicts: DesktopSftpTransferConflictItem[] = [];
       for (const [index, sourcePath] of sourcePaths.entries()) {
         const targetPath = posix.join(targetDirectory, posix.basename(sourcePath));
         this.assertSafeDestination(options.sourceConnectionId, options.targetConnectionId, sourcePath, targetPath, plans[index].sourceType);
-        await collectSftpConflicts(source, target, sourcePath, targetPath, conflicts, undefined, tr, desktopSftpMissingFile);
+        await collectSftpConflicts(openedSource, openedTarget, sourcePath, targetPath, conflicts, signal, tr, desktopSftpMissingFile);
       }
       const sourcePath = sourcePaths[0];
       const plan = plans[0];
@@ -549,8 +596,9 @@ export class DesktopSftpRuntime {
         conflicts,
       };
     } finally {
-      source.close();
-      target.close();
+      unbind();
+      source?.close();
+      target?.close();
     }
   }
 
@@ -705,18 +753,28 @@ export class DesktopSftpRuntime {
     await Promise.allSettled([...this.transfers.values()].map((task) => task.runPromise).filter((run): run is Promise<void> => Boolean(run)));
   }
 
-  private async withSftp<T>(connectionId: string, action: (sftp: SFTPWrapper) => Promise<T>): Promise<T> {
+  private async withSftp<T>(connectionId: string, action: (sftp: SFTPWrapper) => Promise<T>, signal?: AbortSignal): Promise<T> {
+    throwIfAborted(signal);
     const loaded = await this.openConnection(connectionId);
     const connected = loaded.connected;
+    const owned = new Set<ConnectedDesktopSsh>([connected]);
+    const unbind = bindOwnedClientAbort(signal, owned);
     try {
+      throwIfAborted(signal);
       return await action(await openDesktopSftp(connected.client));
     } finally {
+      unbind();
       connected.close();
     }
   }
 
-  private async withFileSystem<T>(connectionId: string, action: (fileSystem: SftpFileSystem) => Promise<T>): Promise<T> {
-    const fileSystem = await this.openFileSystem(connectionId);
+  private async withFileSystem<T>(
+    connectionId: string,
+    action: (fileSystem: SftpFileSystem) => Promise<T>,
+    owned?: Set<ConnectedDesktopSsh>,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    const fileSystem = await this.openFileSystem(connectionId, undefined, owned, signal);
     try {
       return await action(fileSystem);
     } finally {
@@ -741,11 +799,22 @@ export class DesktopSftpRuntime {
     return connectDesktopSshConnection(connectionId, expectedContext ?? await this.currentContext(), this.loadCredential);
   }
 
-  private async openFileSystem(connectionId: string, expectedContext?: DesktopSshContext, owned?: Set<ConnectedDesktopSsh>): Promise<SftpFileSystem> {
+  private async openFileSystem(
+    connectionId: string,
+    expectedContext?: DesktopSshContext,
+    owned?: Set<ConnectedDesktopSsh>,
+    signal?: AbortSignal,
+  ): Promise<SftpFileSystem> {
+    throwIfAborted(signal);
     if (isLocalConnection(connectionId)) return new LocalSftpFileSystem();
     const loaded = await this.openConnection(connectionId, expectedContext);
     const connected = loaded.connected;
     owned?.add(connected);
+    if (signal?.aborted) {
+      connected.client.destroy();
+      owned?.delete(connected);
+      throw abortError(signal);
+    }
     try {
       return new SshSftpFileSystem(await openDesktopSftp(connected.client), connected);
     } catch (error) {

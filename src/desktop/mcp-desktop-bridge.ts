@@ -358,9 +358,10 @@ async function runWatchedDesktopSftp<T>(
   context: Awaited<ReturnType<typeof currentDesktopSshContext>>,
   gate: { checks: Parameters<typeof watchOrganizationExecution>[0]["checks"]; decisions: Parameters<typeof watchOrganizationExecution>[0]["decisions"] },
   cancel: (reason: string) => void,
-  action: () => Promise<T>,
+  action: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
   let cancelled = false;
+  const linked = linkAbortSignal();
   const watch = watchOrganizationExecution({
     context,
     channel: organizationExecutionChannel.getStore() ?? "mcp",
@@ -370,15 +371,20 @@ async function runWatchedDesktopSftp<T>(
     cancel: (reason) => {
       cancelled = true;
       cancel(reason);
+      linked.cancel(reason);
     },
   });
   let outcome: "success" | "failed" | "cancelled" = "failed";
   try {
-    const result = await action();
-    outcome = cancelled ? "cancelled" : "success";
+    if (linked.signal.aborted) {
+      cancelled = true;
+      cancel(linked.signal.reason instanceof Error ? linked.signal.reason.message : String(linked.signal.reason ?? ""));
+    }
+    const result = await action(linked.signal);
+    outcome = cancelled || linked.signal.aborted ? "cancelled" : "success";
     return result;
   } catch (error) {
-    outcome = cancelled ? "cancelled" : "failed";
+    outcome = cancelled || linked.signal.aborted ? "cancelled" : "failed";
     throw error;
   } finally {
     await watch.finish(outcome);
@@ -506,9 +512,13 @@ export async function executeDesktopMcpApprovedRequest(input: McpApiRequest): Pr
           if (uploadId) {
             try { desktopSftpRuntime.cancelUpload(uploadId, context); } catch { /* Upload may already be closed. */ }
           }
-        }, async () => {
+        }, async (signal) => {
           const started = await desktopSftpRuntime.startUpload(sftpUpload[1], url.searchParams.get("path") ?? "/", file.name, context);
           uploadId = started.uploadId;
+          if (signal.aborted) {
+            try { desktopSftpRuntime.cancelUpload(started.uploadId, context); } catch { /* Upload may already be closed. */ }
+            throw signal.reason instanceof Error ? signal.reason : new Error(tr("任务已由用户取消"));
+          }
           try {
             await desktopSftpRuntime.uploadChunk(started.uploadId, context, file.data);
             return await desktopSftpRuntime.completeUpload(started.uploadId, context);
@@ -751,14 +761,14 @@ export async function invokeDesktopMcpTool(toolName: string, arguments_: Record<
       if (!activeEndpoint.capabilities.desktopLocal?.sftp) throw new Error(tr("当前 Endpoint 未开放桌面 App 本机 SFTP 能力，MCP 不会回退到服务端执行"));
       const body = request.body as Omit<DesktopSftpTransferOptions, "conflict">;
       const context = await currentDesktopSshContext();
-      return mcpJsonResponse(200, await runWatchedDesktopSftp(request, context, gate, () => undefined, () => desktopSftpRuntime.preview(body)));
+      return mcpJsonResponse(200, await runWatchedDesktopSftp(request, context, gate, () => undefined, (signal) => desktopSftpRuntime.preview(body, signal)));
     }
     const sftpDownload = new URL(path, "http://desktop.local").pathname.match(/^\/api\/v1\/ssh-connections\/([0-9a-f-]+)\/sftp\/download$/i);
     if (sftpDownload && (request.method ?? "GET") === "GET") {
       if (!activeEndpoint.capabilities.desktopLocal?.sftp) throw new Error(tr("当前 Endpoint 未开放桌面 App 本机 SFTP 能力，MCP 不会回退到服务端执行"));
       const url = new URL(path, "http://desktop.local");
       const context = await currentDesktopSshContext();
-      const download = await runWatchedDesktopSftp(request, context, gate, () => undefined, () => desktopSftpRuntime.download(sftpDownload[1], url.searchParams.get("path") ?? "/"));
+      const download = await runWatchedDesktopSftp(request, context, gate, () => undefined, (signal) => desktopSftpRuntime.download(sftpDownload[1], url.searchParams.get("path") ?? "/", undefined, signal));
       return mcpJsonResponse(200, {
         filename: download.filename,
         contentType: "application/octet-stream",

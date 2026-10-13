@@ -631,4 +631,37 @@ describe("desktop SSH runtime", () => {
     expect((await runtime.list("left", "/")).items.some((item) => item.name === "uploads")).toBe(false);
     await runtime.closeAll();
   }, 20_000);
+
+  it("destroys owned SFTP preview clients when aborted and leaves other SSH work usable", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "viron-desktop-sftp-owned-cancel-"));
+    directories.push(directory);
+    const leftRoot = join(directory, "left");
+    const rightRoot = join(directory, "right");
+    mkdirSync(join(leftRoot, "source"), { recursive: true });
+    mkdirSync(join(rightRoot, "target"), { recursive: true });
+    for (let index = 0; index < 80; index += 1) writeFileSync(join(leftRoot, "source", `file-${index}.txt`), "held");
+    const leftFixture = await startSshFixture(leftRoot);
+    const rightFixture = await startSshFixture(rightRoot);
+    const credentials = new Map<string, DesktopSshCredential>([
+      ["left", { connection: sshConnection("left", leftFixture.port), jumpConnection: null }],
+      ["right", { connection: sshConnection("right", rightFixture.port), jumpConnection: null }],
+    ]);
+    const runtime = new DesktopSftpRuntime(async (connectionId) => {
+      const credential = credentials.get(connectionId);
+      if (!credential) throw new Error("fixture credential missing");
+      return { context, credential };
+    }, async () => context);
+    const controller = new AbortController();
+    const preview = runtime.preview({
+      sourceConnectionId: "left",
+      targetConnectionId: "right",
+      sourcePath: "/source",
+      targetDirectory: "/target",
+    }, controller.signal);
+    await new Promise((resolveWait) => setImmediate(resolveWait));
+    controller.abort(new Error("owned preview cancelled"));
+    await expect(preview).rejects.toThrow();
+    expect((await runtime.list("left", "/")).items.some((item) => item.name === "source")).toBe(true);
+    await runtime.closeAll();
+  }, 20_000);
 });
