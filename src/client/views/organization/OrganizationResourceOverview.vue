@@ -601,6 +601,9 @@ function environmentNames(item: Item) {
           <p v-if="!(viewDetail.configurationMaintenance ?? []).length" class="browser-empty">没有配置维护记录</p>
         </template>
       </div>
+      <template #footer>
+        <el-button @click="viewOpen = false">关闭</el-button>
+      </template>
     </el-dialog>
     <el-dialog v-model="quickOpen" :title="quickMode === 'revoke' ? '撤销当前资源授权' : (quickRow?.enabled ? '停用当前资源授权' : '启用当前资源授权')" width="420px" append-to-body align-center>
       <el-alert v-if="quickError" :title="quickError" type="error" :closable="false" />

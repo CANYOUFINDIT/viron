@@ -153,5 +153,8 @@ watch(() => [props.modelValue, props.memberId] as const, async ([value]) => {
         <p v-if="!state.featureGrants.length">没有功能授权</p>
       </template>
     </div>
+    <template #footer>
+      <el-button @click="open = false">关闭</el-button>
+    </template>
   </el-dialog>
 </template>

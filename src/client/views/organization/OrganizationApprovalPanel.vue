@@ -596,6 +596,9 @@ function when(value: string) {
         <div><dt>变更前</dt><dd><pre class="access-reference">{{ snapshotText(selectedLedger.before) }}</pre></dd></div>
         <div><dt>变更后</dt><dd><pre class="access-reference">{{ snapshotText(selectedLedger.after) }}</pre></dd></div>
       </dl>
+      <template #footer>
+        <el-button @click="selectedLedger = null">关闭</el-button>
+      </template>
     </el-dialog>
   </section>
 </template>
