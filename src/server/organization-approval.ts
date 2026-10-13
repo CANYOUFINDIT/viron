@@ -496,6 +496,39 @@ function sameTarget(left: ResourceRef, right: ResourceRef) {
   return left.type === right.type && left.id === right.id;
 }
 
+function namedLedgerTargets(catalog: Array<ResourceRef & { name?: string }>, targets: ResourceRef[]) {
+  return targets.map((target) => {
+    const name = catalog.find((item) => sameTarget(item, target))?.name?.trim();
+    return name ? { type: target.type, id: target.id, name } : { type: target.type, id: target.id };
+  });
+}
+
+/** Freezes the node configuration that was stored, plus the member and role names at this moment. */
+async function freezeLedgerNodes(db: EnvmanDatabase, org: string, nodes: FlowNode[]) {
+  const [names, roles] = await Promise.all([
+    accountNames(db, nodes.flatMap((node) => node.approverUserIds)),
+    roleState(db, org),
+  ]);
+  const roleName = new Map(roles.roles.map((role) => [role.id, role.name]));
+  return nodes.map((node) => {
+    const snapshot: Record<string, unknown> = {
+      id: node.id,
+      name: node.name,
+      mode: node.mode,
+      approverUserIds: [...node.approverUserIds],
+      approverNames: Object.fromEntries(node.approverUserIds.flatMap((id) => (names[id] ? [[id, names[id]]] : []))),
+      approverRoleId: node.approverRoleId,
+      approverRoleName: node.approverRoleId ? roleName.get(node.approverRoleId)?.trim() || "" : null,
+      allowSelf: node.allowSelf === true,
+      requireComment: node.requireComment === true,
+    };
+    if (node.allowTransfer === true || node.allowTransfer === false) snapshot.allowTransfer = node.allowTransfer;
+    if (node.allowAddSign === true || node.allowAddSign === false) snapshot.allowAddSign = node.allowAddSign;
+    if (node.allowRollback === true || node.allowRollback === false) snapshot.allowRollback = node.allowRollback;
+    return snapshot;
+  });
+}
+
 export async function saveApprovalFlow(
   db: EnvmanDatabase,
   org: string,
@@ -567,9 +600,18 @@ export async function saveApprovalFlow(
           )
           .run(org, target.type, target.id, id);
     }
+    const frozenNodes = await freezeLedgerNodes(db, org, [...(flow?.nodes ?? []), ...nodes]);
+    const previousCount = flow?.nodes.length ?? 0;
     await recordGrantLedger(db, org, actor, flow ? "修改审批流程" : "新增审批流程", "审批范围与保存同一事务", {
-      before: flow ?? null,
-      after: { id, name: input.name, targets },
+      before: flow
+        ? { ...flow, nodes: frozenNodes.slice(0, previousCount), targets: namedLedgerTargets(catalog, flow.targets) }
+        : null,
+      after: {
+        id,
+        name: input.name,
+        nodes: frozenNodes.slice(previousCount),
+        targets: namedLedgerTargets(catalog, flow?.isDefault ? flow.targets : targets),
+      },
       targets,
     });
     return { id };
@@ -1456,6 +1498,15 @@ function snapshotFacts(before: unknown, after: unknown) {
       if (!names.has(key)) names.set(key, record.name);
     }
     if (typeof record.roleName === "string" && record.roleName && !roles.includes(record.roleName)) roles.push(record.roleName);
+    // A role snapshot has a name and permission codes, and no resource target. The ledger list uses this role field.
+    const roleLabel = typeof record.name === "string" ? record.name.trim() : "";
+    if (
+      roleLabel &&
+      Array.isArray(record.permissionCodes) &&
+      record.permissionCodes.every((code) => typeof code === "string") &&
+      !roles.includes(roleLabel)
+    )
+      roles.push(roleLabel);
     if (typeof record.subjectName === "string" && record.subjectName && !subjects.includes(record.subjectName)) subjects.push(record.subjectName);
     if (typeof record.source === "string" && record.source && !sources.includes(record.source)) sources.push(record.source);
     Object.values(record).forEach(visit);

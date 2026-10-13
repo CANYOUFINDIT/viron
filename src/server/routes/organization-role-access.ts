@@ -480,7 +480,7 @@ export async function registerOrganizationRoleAccessRoutes(
             await app.db
               .prepare("UPDATE organization_roles SET enabled = 0 WHERE id = ?")
               .run(id);
-          return { id, after: body };
+          return { id, after: { ...body, id } };
         },
       );
       return reply.code(201).send(result);

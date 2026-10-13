@@ -1011,4 +1011,136 @@ describe("approval permission boundaries", () => {
     expect(restored.json()).toMatchObject({ status: "pending", stageIndex: 0 });
     expect(restored.json().decisions.some((item: { decision: string; superseded?: boolean }) => item.decision === "approve" && item.superseded)).toBe(true);
   });
+
+  it("keeps saved node snapshots immutable and shows a created role name", async () => {
+    const f = await fixture();
+    const approver = await f.person("当时审批人");
+    const role = await f.app.inject({
+      method: "POST",
+      url: f.base + "/roles",
+      cookies: f.cookies,
+      payload: { name: "当时审批角色", permissionCodes: ["approval.approve"], reason: "节点角色" },
+    });
+    expect(role.statusCode, role.body).toBe(201);
+    const roleId = role.json().id as string;
+    const target = { type: "ssh_connection" as const, id: f.sshA };
+    const createdNode = {
+      id: randomUUID(),
+      name: "新增节点",
+      mode: "all",
+      approverUserIds: [approver.userId],
+      approverRoleId: roleId,
+      allowSelf: true,
+      requireComment: true,
+      allowTransfer: false,
+      allowAddSign: true,
+      allowRollback: false,
+    };
+    const created = await f.app.inject({
+      method: "POST",
+      url: f.base + "/approval-flows",
+      cookies: f.cookies,
+      payload: { name: "节点台账流程", nodes: [createdNode], targets: [target] },
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const flowId = created.json().id as string;
+    const ledgerRows = () => f.db.prepare(
+      "SELECT action, before_json, after_json FROM organization_grant_ledger WHERE organization_id = ? AND action IN ('新增审批流程', '修改审批流程') ORDER BY created_at, id",
+    ).all<{ action: string; before_json: string | null; after_json: string | null }>(f.org);
+    const createdRow = (await ledgerRows()).find((row) => row.action === "新增审批流程");
+    const createdAfter = JSON.parse(createdRow!.after_json!) as {
+      nodes: Array<Record<string, unknown>>;
+      targets: Array<{ type: string; id: string; name?: string }>;
+    };
+    expect(createdAfter.nodes[0]).toMatchObject({
+      id: createdNode.id,
+      name: "新增节点",
+      mode: "all",
+      approverUserIds: [approver.userId],
+      approverNames: { [approver.userId]: "当时审批人" },
+      approverRoleId: roleId,
+      approverRoleName: "当时审批角色",
+      allowSelf: true,
+      requireComment: true,
+      allowTransfer: false,
+      allowAddSign: true,
+      allowRollback: false,
+    });
+    expect(createdAfter.targets).toEqual([{ type: "ssh_connection", id: f.sshA, name: "连接A" }]);
+    const editedNode = {
+      id: createdNode.id,
+      name: "修改后节点",
+      mode: "any",
+      approverUserIds: [f.adminId],
+      approverRoleId: null,
+      allowSelf: false,
+      requireComment: false,
+      allowTransfer: true,
+      allowAddSign: false,
+      allowRollback: true,
+    };
+    const edited = await f.app.inject({
+      method: "POST",
+      url: f.base + "/approval-flows",
+      cookies: f.cookies,
+      payload: { id: flowId, name: "节点台账流程已改", nodes: [editedNode], targets: [target] },
+    });
+    expect(edited.statusCode, edited.body).toBe(200);
+    const afterEdit = await ledgerRows();
+    const stillCreated = afterEdit.find((row) => row.action === "新增审批流程");
+    const updated = afterEdit.find((row) => row.action === "修改审批流程");
+    expect(stillCreated?.after_json).toBe(createdRow!.after_json);
+    const before = JSON.parse(updated!.before_json!) as { nodes: Array<Record<string, unknown>> };
+    const after = JSON.parse(updated!.after_json!) as { nodes: Array<Record<string, unknown>> };
+    expect(before.nodes[0]).toMatchObject({
+      name: "新增节点",
+      mode: "all",
+      approverUserIds: [approver.userId],
+      approverNames: { [approver.userId]: "当时审批人" },
+      approverRoleName: "当时审批角色",
+      allowTransfer: false,
+      allowAddSign: true,
+      allowRollback: false,
+    });
+    expect(after.nodes[0]).toMatchObject({
+      name: "修改后节点",
+      mode: "any",
+      approverUserIds: [f.adminId],
+      approverNames: { [f.adminId]: "admin" },
+      approverRoleId: null,
+      approverRoleName: null,
+      allowSelf: false,
+      requireComment: false,
+      allowTransfer: true,
+      allowAddSign: false,
+      allowRollback: true,
+    });
+    expect(before.nodes[0]).not.toEqual(after.nodes[0]);
+    await f.db.prepare("UPDATE admin_users SET username = ? WHERE id = ?").run("改名后的审批人", approver.userId);
+    await f.db.prepare("UPDATE organization_roles SET name = ? WHERE id = ?").run("改名后的角色", roleId);
+    const frozen = await ledgerRows();
+    expect(frozen.find((row) => row.action === "新增审批流程")?.after_json).toBe(createdRow!.after_json);
+    expect(frozen.find((row) => row.action === "修改审批流程")?.before_json).toBe(updated!.before_json);
+    expect(frozen.find((row) => row.action === "修改审批流程")?.after_json).toBe(updated!.after_json);
+    const listed = await f.app.inject({ method: "GET", url: f.base + "/grant-ledger", cookies: f.cookies });
+    const listedCreate = listed.json().items.find((item: { action: string; after?: { id?: string } }) => item.action === "新增审批流程" && item.after?.id === flowId);
+    expect(listedCreate.after.nodes[0].approverRoleName).toBe("当时审批角色");
+    expect(listedCreate.after.nodes[0].approverNames[approver.userId]).toBe("当时审批人");
+    const visible = await f.app.inject({
+      method: "POST",
+      url: f.base + "/roles",
+      cookies: f.cookies,
+      payload: { name: "台账可见角色", permissionCodes: ["ssh.view"], reason: "角色名进台账" },
+    });
+    expect(visible.statusCode, visible.body).toBe(201);
+    const roleLedger = await f.app.inject({
+      method: "GET",
+      url: `${f.base}/grant-ledger?action=${encodeURIComponent("创建角色")}&target=${encodeURIComponent("台账可见角色")}`,
+      cookies: f.cookies,
+    });
+    expect(roleLedger.statusCode, roleLedger.body).toBe(200);
+    const roleRow = roleLedger.json().items.find((item: { after?: { name?: string } }) => item.after?.name === "台账可见角色");
+    expect(roleRow.targets).toEqual([]);
+    expect(roleRow.role).toBe("台账可见角色");
+  });
 });
