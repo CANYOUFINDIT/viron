@@ -322,6 +322,29 @@ function retainDesktopQueryWatch(
   });
 }
 
+function retainDesktopTransferWatch(
+  input: McpApiRequest,
+  context: Awaited<ReturnType<typeof currentDesktopSshContext>>,
+  gate: { checks: Parameters<typeof watchOrganizationExecution>[0]["checks"]; decisions: Parameters<typeof watchOrganizationExecution>[0]["decisions"] },
+  taskId: string,
+): void {
+  if (!taskId || !gate.decisions.length) return;
+  const watch = watchOrganizationExecution({
+    context,
+    channel: organizationExecutionChannel.getStore() ?? "mcp",
+    checks: gate.checks,
+    decisions: gate.decisions,
+    requestIdentity: desktopMcpRequestIdentity(input),
+    cancel: () => {
+      try { desktopSftpRuntime.cancelTransfer(taskId, context); } catch { /* The transfer already left pending or running. */ }
+    },
+  });
+  desktopSftpRuntime.bindTransferFinished(taskId, context, (status) => {
+    const outcome = status === "success" ? "success" as const : status === "cancelled" ? "cancelled" as const : "failed" as const;
+    void watch.finish(outcome);
+  });
+}
+
 export async function executeDesktopMcpApprovedRequest(input: McpApiRequest): Promise<McpApiResponse> {
   if (!desktopDeviceAuthorizationContext.getStore()) {
     const authorization = await currentDeviceAuthorization();
@@ -400,7 +423,10 @@ export async function executeDesktopMcpApprovedRequest(input: McpApiRequest): Pr
       }
       if (url.pathname === "/api/v1/sftp-transfers" && input.method === "POST") {
         if (!activeEndpoint?.capabilities.desktopLocal?.sftp) throw new Error(tr("当前 Endpoint 未开放桌面 App 本机 SFTP 能力，MCP 不会回退到服务端执行"));
-        return mcpJsonResponse(201, { task: await desktopSftpRuntime.create(await currentDesktopSshContext(), input.body as DesktopSftpTransferOptions) });
+        const context = await currentDesktopSshContext();
+        const task = await desktopSftpRuntime.create(context, input.body as DesktopSftpTransferOptions);
+        retainDesktopTransferWatch(input, context, gate, task.id);
+        return mcpJsonResponse(201, { task });
       }
       const sftpUpload = url.pathname.match(/^\/api\/v1\/ssh-connections\/([0-9a-f-]+)\/sftp\/upload$/i);
       if (sftpUpload && input.method === "POST") {
@@ -419,7 +445,10 @@ export async function executeDesktopMcpApprovedRequest(input: McpApiRequest): Pr
       const sftpRetry = url.pathname.match(/^\/api\/v1\/sftp-transfers\/([0-9a-f-]+)\/retry$/i);
       if (sftpRetry && input.method === "POST") {
         if (!activeEndpoint?.capabilities.desktopLocal?.sftp) throw new Error(tr("当前 Endpoint 未开放桌面 App 本机 SFTP 能力，MCP 不会回退到服务端执行"));
-        return mcpJsonResponse(201, { task: await desktopSftpRuntime.retryTransfer(sftpRetry[1], await currentDesktopSshContext()) });
+        const context = await currentDesktopSshContext();
+        const task = await desktopSftpRuntime.retryTransfer(sftpRetry[1], context);
+        retainDesktopTransferWatch(input, context, gate, task.id);
+        return mcpJsonResponse(201, { task });
       }
       const webAction = url.pathname.match(/^\/api\/v1\/mcp\/web-credentials\/([0-9a-f-]+)\/action$/i);
       if (webAction && input.method === "POST") {
@@ -668,7 +697,27 @@ export async function invokeDesktopMcpTool(toolName: string, arguments_: Record<
       const response = await endpointJson<{ items: DesktopEnvironmentLog[] }>(`/api/v1/environments/${encodeURIComponent(await environmentIdForLog(logSnapshot[1]))}/logs`);
       const log = response.items.find((item) => item.id === logSnapshot[1]);
       if (!log || !log.connectionAvailable) throw new Error(tr("日志配置不存在或关联 SSH 连接不可用"));
-      return mcpJsonResponse(200, await desktopLogRuntime.snapshot({ logId: log.id, logName: log.name, sshConnectionId: log.sshConnectionId, filePaths: log.filePaths, initialLines: body.initialLines }, body.maxBytes));
+      const context = await currentDesktopSshContext();
+      const linked = linkAbortSignal();
+      const watch = watchOrganizationExecution({
+        context,
+        channel: organizationExecutionChannel.getStore() ?? "mcp",
+        checks: gate.checks,
+        decisions: gate.decisions,
+        requestIdentity: desktopMcpRequestIdentity(request),
+        cancel: () => linked.cancel(),
+      });
+      let outcome: "success" | "failed" | "cancelled" = "failed";
+      try {
+        const snapshot = await desktopLogRuntime.snapshot({ logId: log.id, logName: log.name, sshConnectionId: log.sshConnectionId, filePaths: log.filePaths, initialLines: body.initialLines }, body.maxBytes, linked.signal);
+        outcome = "success";
+        return mcpJsonResponse(200, snapshot);
+      } catch (error) {
+        outcome = linked.signal.aborted ? "cancelled" : "failed";
+        throw error;
+      } finally {
+        await watch.finish(outcome);
+      }
     }
     const webSnapshot = new URL(path, "http://desktop.local").pathname.match(/^\/api\/v1\/mcp\/web-credentials\/([0-9a-f-]+)\/snapshot$/i);
     if (webSnapshot && request.method === "POST") {

@@ -131,7 +131,7 @@ export class DesktopLogRuntime {
     }
   }
 
-  async snapshot(definition: DesktopLogDefinition, maxBytes: number): Promise<{
+  async snapshot(definition: DesktopLogDefinition, maxBytes: number, signal?: AbortSignal): Promise<{
     logId: string;
     name: string;
     filePaths: string[];
@@ -147,7 +147,7 @@ export class DesktopLogRuntime {
       const result = await executeDesktopSshCommandOnConnection(
         loaded.connected,
         buildSshLogSnapshotCommand(definition.filePaths, definition.initialLines),
-        { timeoutMs: 30_000, maxBytes },
+        { timeoutMs: 30_000, maxBytes, signal },
       );
       return { logId: definition.logId, name: definition.logName, filePaths: [...definition.filePaths], ...result };
     } finally {

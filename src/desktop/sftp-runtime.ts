@@ -365,6 +365,7 @@ async function materializeEntry(fileSystem: SftpFileSystem, sourcePath: string, 
 export class DesktopSftpRuntime {
   private readonly uploads = new Map<string, ManagedUpload>();
   private readonly transfers = new Map<string, ManagedTransfer>();
+  private readonly transferFinished = new Map<string, (status: DesktopSftpTransferTask["status"]) => void>();
 
   constructor(
     private readonly loadCredential: (connectionId: string) => Promise<CredentialResult>,
@@ -608,6 +609,17 @@ export class DesktopSftpRuntime {
     return this.publicTask(task);
   }
 
+  /** Runs after this transfer leaves pending or running. The listener sees the stored status. */
+  bindTransferFinished(id: string, context: DesktopSshContext, listener: (status: DesktopSftpTransferTask["status"]) => void): void {
+    const task = this.transfers.get(id);
+    if (!task || contextKey(task.context) !== contextKey(context)) return;
+    if (!["pending", "running"].includes(task.status)) {
+      listener(task.status);
+      return;
+    }
+    this.transferFinished.set(id, listener);
+  }
+
   /** Endpoints stored for this user and workspace. A retry cannot substitute ids from the request body. */
   ownedTransfer(taskId: string, context: DesktopSshContext): { sourceConnectionId: string; targetConnectionId: string } | null {
     const task = this.transfers.get(taskId);
@@ -729,13 +741,15 @@ export class DesktopSftpRuntime {
     return connectDesktopSshConnection(connectionId, expectedContext ?? await this.currentContext(), this.loadCredential);
   }
 
-  private async openFileSystem(connectionId: string, expectedContext?: DesktopSshContext): Promise<SftpFileSystem> {
+  private async openFileSystem(connectionId: string, expectedContext?: DesktopSshContext, owned?: Set<ConnectedDesktopSsh>): Promise<SftpFileSystem> {
     if (isLocalConnection(connectionId)) return new LocalSftpFileSystem();
     const loaded = await this.openConnection(connectionId, expectedContext);
     const connected = loaded.connected;
+    owned?.add(connected);
     try {
       return new SshSftpFileSystem(await openDesktopSftp(connected.client), connected);
     } catch (error) {
+      owned?.delete(connected);
       connected.close();
       throw error;
     }
@@ -760,7 +774,19 @@ export class DesktopSftpRuntime {
     return task;
   }
 
+  private notifyTransferFinished(task: ManagedTransfer): void {
+    const listener = this.transferFinished.get(task.id);
+    this.transferFinished.delete(task.id);
+    listener?.(task.status);
+  }
+
   private async runTransfer(task: ManagedTransfer): Promise<void> {
+    if (task.status === "cancelled" || task.abortController.signal.aborted) {
+      task.status = "cancelled";
+      task.completedAt ??= new Date().toISOString();
+      this.notifyTransferFinished(task);
+      return;
+    }
     task.status = "running";
     task.lastActivityAt = Date.now();
     task.startedAt = new Date().toISOString();
@@ -774,8 +800,8 @@ export class DesktopSftpRuntime {
       ]);
       if ((sourceLoaded && contextKey(sourceLoaded.context) !== contextKey(task.context)) || (targetLoaded && contextKey(targetLoaded.context) !== contextKey(task.context))) throw new Error(tr("连接访问权限已经失效"));
       [source, target] = await Promise.all([
-        this.openFileSystem(task.sourceConnectionId, task.context),
-        this.openFileSystem(task.targetConnectionId, task.context),
+        this.openFileSystem(task.sourceConnectionId, task.context, task.activeConnections),
+        this.openFileSystem(task.targetConnectionId, task.context, task.activeConnections),
       ]);
       const sourceFileSystem = source;
       const targetFileSystem = target;
@@ -814,6 +840,7 @@ export class DesktopSftpRuntime {
       source?.close();
       target?.close();
       task.activeConnections.clear();
+      this.notifyTransferFinished(task);
     }
   }
 
