@@ -27,6 +27,7 @@ import { registerDatabaseAdminRoutes } from "./routes/database-admin.js";
 import { registerRedisConnectionRoutes } from "./routes/redis-connections.js";
 import { registerRedisWorkbenchRoutes } from "./routes/redis-workbench.js";
 import { registerDesktopDeviceRoutes } from "./routes/desktop-devices.js";
+import { registerDesktopExecutionAuthorizationRoutes } from "./routes/desktop-execution-authorization.js";
 import { registerEnvironmentLogRoutes } from "./routes/environment-logs.js";
 import { registerEnvironmentRoutes } from "./routes/environments.js";
 import { registerKnowledgeBaseRoutes } from "./routes/knowledge-base.js";
@@ -168,6 +169,7 @@ export async function buildApp(options: BuildAppOptions) {
   await app.register(registerMonitoringRoutes);
   await app.register(registerMonitorAlertRoutes);
   await app.register(registerDesktopDeviceRoutes);
+  await app.register(registerDesktopExecutionAuthorizationRoutes);
   await app.register(registerWebEntryRoutes);
   if (webClientEnabled) await app.register(registerWebAccountViewRoutes);
   await app.register(registerConnectionRoutes);
