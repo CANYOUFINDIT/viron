@@ -124,7 +124,12 @@ async function mappedOperation(request: FastifyRequest, channel: ExecutionChanne
   if (/\/mcp\/ssh-connections\/[^/]+/.test(path) && id) return operation("ssh.use", "ssh_connection", id);
   if (/\/desktop\/ssh-connections\/[^/]+\/envelope$/.test(path) && desktopConnectionId) {
     if (bodyRecord(request.body).auditSource === "mcp") return null;
-    return operation("ssh.use", "ssh_connection", desktopConnectionId);
+    return {
+      codes: ["ssh.use", "ssh.browse", "ssh.upload", "ssh.download", "ssh.delete"],
+      match: "any",
+      type: "ssh_connection",
+      id: desktopConnectionId,
+    };
   }
   if (/\/desktop\/database-connections\/[^/]+\/envelope$/.test(path) && desktopConnectionId)
     return {
@@ -140,9 +145,9 @@ async function mappedOperation(request: FastifyRequest, channel: ExecutionChanne
     if (/\/backup$/.test(path) && request.method === "POST") return planOperation(id, "backup", bodyRecord(request.body));
     if (/\/restore$/.test(path) && request.method === "POST") {
       const details = bodyRecord(request.body);
-      const planned = planOperation(id, "restore", details);
-      if (planned) return planned;
-      return { codes: ["database.write", "database.ddl"], type: "database_connection", id };
+      const hasPlan = typeof details.restoreSql === "string" || Array.isArray(details.restoreActions);
+      if (hasPlan) return planOperation(id, "restore", details);
+      return { codes: ["database.write", "database.ddl"], match: "any", type: "database_connection", id };
     }
     if (request.method === "GET" && /\/(schemas|objects|completion-metadata|ddl|table-design|table-data(?:\/suggestions)?)$/.test(path))
       return operation("database.read", "database_connection", id);

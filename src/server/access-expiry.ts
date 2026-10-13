@@ -97,6 +97,13 @@ export async function sweepExpiredAccess(app: FastifyInstance): Promise<void> {
         userId: task.ownerId,
       });
   }
+  for (const task of app.sftpTransfers.runningTasks()) {
+    if (task.workspaceType === "organization")
+      owners.set(`${task.workspaceId}:${task.ownerId}`, {
+        organizationId: task.workspaceId,
+        userId: task.ownerId,
+      });
+  }
   const operations = (await app.db
     .prepare(
       `
@@ -234,6 +241,12 @@ async function closeDisallowed(
         (action) => !access.allowsConnection("database", task.accessPlan.targetConnectionId!, action),
       );
     if (sourceDenied || targetDenied) await app.databaseTasks.closeTask(task.id, REASON);
+  }
+  for (const task of app.sftpTransfers.runningTasks()) {
+    if (task.ownerId !== userId || task.workspaceId !== organizationId) continue;
+    const sourceDenied = !access.allowsConnection("ssh", task.sourceConnectionId, "download");
+    const targetDenied = !access.allowsConnection("ssh", task.targetConnectionId, "upload");
+    if (sourceDenied || targetDenied) await app.sftpTransfers.closeTask(task.id, REASON);
   }
 }
 

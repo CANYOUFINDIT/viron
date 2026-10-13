@@ -353,6 +353,38 @@ function retainDesktopDatabaseTaskWatch(
   });
 }
 
+async function runWatchedDesktopSftp<T>(
+  input: McpApiRequest,
+  context: Awaited<ReturnType<typeof currentDesktopSshContext>>,
+  gate: { checks: Parameters<typeof watchOrganizationExecution>[0]["checks"]; decisions: Parameters<typeof watchOrganizationExecution>[0]["decisions"] },
+  cancel: (reason: string) => void,
+  action: () => Promise<T>,
+): Promise<T> {
+  let cancelled = false;
+  const watch = watchOrganizationExecution({
+    context,
+    channel: organizationExecutionChannel.getStore() ?? "mcp",
+    checks: gate.checks,
+    decisions: gate.decisions,
+    requestIdentity: desktopMcpRequestIdentity(input),
+    cancel: (reason) => {
+      cancelled = true;
+      cancel(reason);
+    },
+  });
+  let outcome: "success" | "failed" | "cancelled" = "failed";
+  try {
+    const result = await action();
+    outcome = cancelled ? "cancelled" : "success";
+    return result;
+  } catch (error) {
+    outcome = cancelled ? "cancelled" : "failed";
+    throw error;
+  } finally {
+    await watch.finish(outcome);
+  }
+}
+
 function retainDesktopTransferWatch(
   input: McpApiRequest,
   context: Awaited<ReturnType<typeof currentDesktopSshContext>>,
@@ -444,15 +476,17 @@ export async function executeDesktopMcpApprovedRequest(input: McpApiRequest): Pr
       if (sftp && input.method === "POST") {
         if (!activeEndpoint?.capabilities.desktopLocal?.sftp) throw new Error(tr("当前 Endpoint 未开放桌面 App 本机 SFTP 能力，MCP 不会回退到服务端执行"));
         const body = input.body as { path: string; newPath?: string; mode?: string };
-        if (sftp[2] === "mkdir") return mcpJsonResponse(201, await desktopSftpRuntime.mkdir(sftp[1], body.path));
-        if (sftp[2] === "rename") return mcpJsonResponse(200, await desktopSftpRuntime.rename(sftp[1], body.path, body.newPath ?? ""));
-        await desktopSftpRuntime.chmod(sftp[1], body.path, body.mode ?? "");
+        const context = await currentDesktopSshContext();
+        if (sftp[2] === "mkdir") return mcpJsonResponse(201, await runWatchedDesktopSftp(input, context, gate, () => undefined, () => desktopSftpRuntime.mkdir(sftp[1], body.path)));
+        if (sftp[2] === "rename") return mcpJsonResponse(200, await runWatchedDesktopSftp(input, context, gate, () => undefined, () => desktopSftpRuntime.rename(sftp[1], body.path, body.newPath ?? "")));
+        await runWatchedDesktopSftp(input, context, gate, () => undefined, () => desktopSftpRuntime.chmod(sftp[1], body.path, body.mode ?? ""));
         return mcpJsonResponse(200, { ok: true });
       }
       const sftpDelete = url.pathname.match(/^\/api\/v1\/ssh-connections\/([0-9a-f-]+)\/sftp$/i);
       if (sftpDelete && input.method === "DELETE") {
         if (!activeEndpoint?.capabilities.desktopLocal?.sftp) throw new Error(tr("当前 Endpoint 未开放桌面 App 本机 SFTP 能力，MCP 不会回退到服务端执行"));
-        await desktopSftpRuntime.delete(sftpDelete[1], String((input.body as { path?: unknown }).path ?? ""));
+        const context = await currentDesktopSshContext();
+        await runWatchedDesktopSftp(input, context, gate, () => undefined, () => desktopSftpRuntime.delete(sftpDelete[1], String((input.body as { path?: unknown }).path ?? "")));
         return mcpJsonResponse(204, null);
       }
       if (url.pathname === "/api/v1/sftp-transfers" && input.method === "POST") {
@@ -467,14 +501,22 @@ export async function executeDesktopMcpApprovedRequest(input: McpApiRequest): Pr
         if (!activeEndpoint?.capabilities.desktopLocal?.sftp) throw new Error(tr("当前 Endpoint 未开放桌面 App 本机 SFTP 能力，MCP 不会回退到服务端执行"));
         const file = mcpFormFile(input);
         const context = await currentDesktopSshContext();
-        const started = await desktopSftpRuntime.startUpload(sftpUpload[1], url.searchParams.get("path") ?? "/", file.name, context);
-        try {
-          await desktopSftpRuntime.uploadChunk(started.uploadId, context, file.data);
-          return mcpJsonResponse(201, await desktopSftpRuntime.completeUpload(started.uploadId, context));
-        } catch (error) {
-          try { desktopSftpRuntime.cancelUpload(started.uploadId, context); } catch { /* Upload may already be closed. */ }
-          throw error;
-        }
+        let uploadId = "";
+        return mcpJsonResponse(201, await runWatchedDesktopSftp(input, context, gate, () => {
+          if (uploadId) {
+            try { desktopSftpRuntime.cancelUpload(uploadId, context); } catch { /* Upload may already be closed. */ }
+          }
+        }, async () => {
+          const started = await desktopSftpRuntime.startUpload(sftpUpload[1], url.searchParams.get("path") ?? "/", file.name, context);
+          uploadId = started.uploadId;
+          try {
+            await desktopSftpRuntime.uploadChunk(started.uploadId, context, file.data);
+            return await desktopSftpRuntime.completeUpload(started.uploadId, context);
+          } catch (error) {
+            try { desktopSftpRuntime.cancelUpload(started.uploadId, context); } catch { /* Upload may already be closed. */ }
+            throw error;
+          }
+        }));
       }
       const sftpRetry = url.pathname.match(/^\/api\/v1\/sftp-transfers\/([0-9a-f-]+)\/retry$/i);
       if (sftpRetry && input.method === "POST") {
@@ -698,7 +740,8 @@ export async function invokeDesktopMcpTool(toolName: string, arguments_: Record<
     const sftpList = new URL(path, "http://desktop.local").pathname.match(/^\/api\/v1\/ssh-connections\/([0-9a-f-]+)\/sftp$/i);
     if (sftpList && (request.method ?? "GET") === "GET") {
       if (!activeEndpoint.capabilities.desktopLocal?.sftp) throw new Error(tr("当前 Endpoint 未开放桌面 App 本机 SFTP 能力，MCP 不会回退到服务端执行"));
-      return mcpJsonResponse(200, await desktopSftpRuntime.list(sftpList[1], new URL(path, "http://desktop.local").searchParams.get("path") ?? "/"));
+      const context = await currentDesktopSshContext();
+      return mcpJsonResponse(200, await runWatchedDesktopSftp(request, context, gate, () => undefined, () => desktopSftpRuntime.list(sftpList[1], new URL(path, "http://desktop.local").searchParams.get("path") ?? "/")));
     }
     if (path === "/api/v1/sftp-transfers") {
       if (!activeEndpoint.capabilities.desktopLocal?.sftp) throw new Error(tr("当前 Endpoint 未开放桌面 App 本机 SFTP 能力，MCP 不会回退到服务端执行"));
@@ -707,13 +750,15 @@ export async function invokeDesktopMcpTool(toolName: string, arguments_: Record<
     if (path === "/api/v1/sftp-transfers/preview" && request.method === "POST") {
       if (!activeEndpoint.capabilities.desktopLocal?.sftp) throw new Error(tr("当前 Endpoint 未开放桌面 App 本机 SFTP 能力，MCP 不会回退到服务端执行"));
       const body = request.body as Omit<DesktopSftpTransferOptions, "conflict">;
-      return mcpJsonResponse(200, await desktopSftpRuntime.preview(body));
+      const context = await currentDesktopSshContext();
+      return mcpJsonResponse(200, await runWatchedDesktopSftp(request, context, gate, () => undefined, () => desktopSftpRuntime.preview(body)));
     }
     const sftpDownload = new URL(path, "http://desktop.local").pathname.match(/^\/api\/v1\/ssh-connections\/([0-9a-f-]+)\/sftp\/download$/i);
     if (sftpDownload && (request.method ?? "GET") === "GET") {
       if (!activeEndpoint.capabilities.desktopLocal?.sftp) throw new Error(tr("当前 Endpoint 未开放桌面 App 本机 SFTP 能力，MCP 不会回退到服务端执行"));
       const url = new URL(path, "http://desktop.local");
-      const download = await desktopSftpRuntime.download(sftpDownload[1], url.searchParams.get("path") ?? "/");
+      const context = await currentDesktopSshContext();
+      const download = await runWatchedDesktopSftp(request, context, gate, () => undefined, () => desktopSftpRuntime.download(sftpDownload[1], url.searchParams.get("path") ?? "/"));
       return mcpJsonResponse(200, {
         filename: download.filename,
         contentType: "application/octet-stream",

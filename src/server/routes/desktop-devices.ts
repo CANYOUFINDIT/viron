@@ -34,6 +34,19 @@ const registrationSchema = z.object({
 
 const proofSchema = z.object({ proof: challengeProofSchema });
 
+const SSH_TRANSPORT_ACTIONS = ["use", "browse", "upload", "download", "delete"] as const;
+
+async function canAccessSshTransport(app: FastifyInstance, user: AuthenticatedUser, connectionId: string): Promise<boolean> {
+  for (const action of SSH_TRANSPORT_ACTIONS) {
+    if (await canAccessConnection(app.db, user, "ssh", connectionId, action)) return true;
+  }
+  return false;
+}
+
+async function sshConnectionVisible(app: FastifyInstance, user: AuthenticatedUser, connectionId: string): Promise<boolean> {
+  return await canAccessConnection(app.db, user, "ssh", connectionId, "view") || await canAccessSshTransport(app, user, connectionId);
+}
+
 const envelopeRequestSchema = z.object({
   deviceId: deviceIdSchema,
   requestId: z.string().uuid(),
@@ -600,16 +613,8 @@ export async function registerDesktopDeviceRoutes(app: FastifyInstance): Promise
       `).get(body.deviceId, request.admin!.id) as StoredDevice | undefined;
       if (!device) return reply.code(404).send({ error: "DEVICE_NOT_FOUND", message: "当前设备尚未注册" });
       if (device.status !== "active") return reply.code(403).send({ error: "DEVICE_REVOKED", message: "当前设备已被撤销" });
-      const organizationPurpose = body.auditSource === "mcp" && Boolean(request.admin?.organizationAccess);
-      if (!organizationPurpose && !await canAccessConnection(app.db, request.admin!, "ssh", connectionId.data, "view")) {
-        return reply.code(404).send({ error: "NOT_FOUND", message: "SSH 连接不存在" });
-      }
-      if (organizationPurpose) {
-        const purpose = await authorizeSignedSshCredentialPurpose(request, connectionId.data);
-        if (!purpose.allowed) return reply.code(purpose.status).send({ error: purpose.error, message: purpose.message });
-      } else if (!await canAccessConnection(app.db, request.admin!, "ssh", connectionId.data, "use")) {
-        return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有这项操作权限" });
-      }
+      const organization = Boolean(request.admin?.organizationAccess);
+      const mcpPurpose = body.auditSource === "mcp" && organization;
       const connection = await app.db.prepare(`
         SELECT id, workspace_type, workspace_id, name, host, port, username, auth_type, ssh_key_id, credential_ciphertext,
           jump_connection_id, options_json, source_deleted, updated_at
@@ -617,6 +622,19 @@ export async function registerDesktopDeviceRoutes(app: FastifyInstance): Promise
       `).get(connectionId.data) as SshEnvelopeRow | undefined;
       if (!connection || connection.source_deleted || connection.workspace_type !== request.admin!.workspace.type || connection.workspace_id !== request.admin!.workspace.id) {
         return reply.code(404).send({ error: "NOT_FOUND", message: "SSH 连接不存在" });
+      }
+      if (!mcpPurpose && !await sshConnectionVisible(app, request.admin!, connectionId.data)) {
+        return reply.code(404).send({ error: "NOT_FOUND", message: "SSH 连接不存在" });
+      }
+      if (mcpPurpose || (organization && body.purpose)) {
+        const purpose = await authorizeSignedSshCredentialPurpose(request, connectionId.data);
+        if (!purpose.allowed) return reply.code(purpose.status).send({ error: purpose.error, message: purpose.message });
+      } else if (organization && connection.ssh_key_id) {
+        return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "连接使用不自动授权私钥读取" });
+      } else if (!organization && !await canAccessConnection(app.db, request.admin!, "ssh", connectionId.data, "use")) {
+        return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有这项操作权限" });
+      } else if (organization && !await canAccessSshTransport(app, request.admin!, connectionId.data)) {
+        return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有这项操作权限" });
       }
       let jumpConnections: SshEnvelopeRow[];
       try {

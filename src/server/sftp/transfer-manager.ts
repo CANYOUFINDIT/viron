@@ -326,6 +326,26 @@ export class SftpTransferManager {
     return this.create(user, { ...task.options, originEnvironmentId }, executionScope);
   }
 
+  runningTasks(): Array<{ id: string; ownerId: string; sourceConnectionId: string; targetConnectionId: string; workspaceType: WorkspaceType; workspaceId: string }> {
+    return [...this.tasks.values()]
+      .filter((task) => task.status === "pending" || task.status === "running")
+      .map((task) => ({
+        id: task.id,
+        ownerId: task.ownerId,
+        sourceConnectionId: task.sourceConnectionId,
+        targetConnectionId: task.targetConnectionId,
+        workspaceType: task.workspaceType,
+        workspaceId: task.workspaceId,
+      }));
+  }
+
+  async closeTask(id: string, reason: string): Promise<void> {
+    const task = this.tasks.get(id);
+    if (!task || !["pending", "running"].includes(task.status)) return;
+    this.cancelTask(task, reason);
+    if (task.runPromise) await task.runPromise.catch(() => undefined);
+  }
+
   cancel(id: string, user: AuthenticatedUser, executionScope: string | null = null): boolean {
     const task = this.taskForUser(id, user, executionScope);
     if (!task || !["pending", "running"].includes(task.status)) return false;

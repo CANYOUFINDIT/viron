@@ -22,6 +22,14 @@ import {
   trackDesktopRuntime,
 } from "../execution-router.js";
 import { desktopBinary, requireDesktopInput, requireDesktopString } from "./desktop-ipc-parse.js";
+import { organizationMcpPurpose, type SshCredentialPurpose } from "../organization-mcp-purpose.js";
+
+function withSshCredentialPurpose<T>(connectionId: string, code: SshCredentialPurpose["code"], run: () => Promise<T>): Promise<T> {
+  return organizationMcpPurpose.run([{ target: { type: "ssh_connection", id: connectionId }, code }], async () => {
+    await localSshCredential(connectionId);
+    return run();
+  });
+}
 
 export function registerDesktopSshIpc(): void {
   ipcMain.handle("viron:ssh:list", async (event) => {
@@ -37,7 +45,7 @@ export function registerDesktopSshIpc(): void {
     const rows = Number(input?.rows ?? 32);
     const originEnvironmentId = typeof input?.originEnvironmentId === "string" ? input.originEnvironmentId : undefined;
     if (!Number.isInteger(cols) || !Number.isInteger(rows)) throw new Error(tr("终端尺寸无效"));
-    const loaded = await localSshCredential(connectionId);
+    const loaded = await withSshCredentialPurpose(connectionId, "ssh.use", () => localSshCredential(connectionId));
     const registrationId = await reserveDesktopRuntime("ssh", connectionId, undefined, originEnvironmentId);
     try {
       const opened = await desktopSshRuntime.create(loaded.context, loaded.credential, cols, rows);
@@ -123,34 +131,40 @@ export function registerDesktopSshIpc(): void {
 
   ipcMain.handle("viron:sftp:list", async (event, input: { connectionId?: unknown; path?: unknown }) => {
     trustedSender(event);
-    return desktopSftpRuntime.list(requireDesktopString(input?.connectionId, tr("SSH 连接 ID")), typeof input?.path === "string" ? input.path : "/");
+    const connectionId = requireDesktopString(input?.connectionId, tr("SSH 连接 ID"));
+    return withSshCredentialPurpose(connectionId, "ssh.browse", () => desktopSftpRuntime.list(connectionId, typeof input?.path === "string" ? input.path : "/"));
   });
 
   ipcMain.handle("viron:sftp:action", async (event, input: { type?: unknown; connectionId?: unknown; path?: unknown; newPath?: unknown; mode?: unknown }) => {
     trustedSender(event);
     const connectionId = requireDesktopString(input?.connectionId, tr("SSH 连接 ID"));
     const path = requireDesktopString(input?.path, tr("远程路径"));
-    if (input.type === "mkdir") return desktopSftpRuntime.mkdir(connectionId, path);
-    if (input.type === "rename") return desktopSftpRuntime.rename(connectionId, path, requireDesktopString(input.newPath, tr("新路径")));
-    if (input.type === "chmod") {
-      await desktopSftpRuntime.chmod(connectionId, path, requireDesktopString(input.mode, tr("权限")));
-      return { ok: true as const };
-    }
-    if (input.type === "delete") {
-      await desktopSftpRuntime.delete(connectionId, path);
-      return { deleted: true as const };
-    }
-    throw new Error(tr("不支持的 SFTP 操作"));
+    const code: SshCredentialPurpose["code"] = input.type === "mkdir" ? "ssh.upload" : "ssh.delete";
+    return withSshCredentialPurpose(connectionId, code, async () => {
+      if (input.type === "mkdir") return desktopSftpRuntime.mkdir(connectionId, path);
+      if (input.type === "rename") return desktopSftpRuntime.rename(connectionId, path, requireDesktopString(input.newPath, tr("新路径")));
+      if (input.type === "chmod") {
+        await desktopSftpRuntime.chmod(connectionId, path, requireDesktopString(input.mode, tr("权限")));
+        return { ok: true as const };
+      }
+      if (input.type === "delete") {
+        await desktopSftpRuntime.delete(connectionId, path);
+        return { deleted: true as const };
+      }
+      throw new Error(tr("不支持的 SFTP 操作"));
+    });
   });
 
   ipcMain.handle("viron:sftp:upload-start", async (event, input: { connectionId?: unknown; directory?: unknown; filename?: unknown }) => {
     trustedSender(event);
-    return desktopSftpRuntime.startUpload(
-      requireDesktopString(input?.connectionId, tr("SSH 连接 ID")),
+    const connectionId = requireDesktopString(input?.connectionId, tr("SSH 连接 ID"));
+    const context = await currentDesktopSshContext();
+    return withSshCredentialPurpose(connectionId, "ssh.upload", () => desktopSftpRuntime.startUpload(
+      connectionId,
       requireDesktopString(input?.directory, tr("远程目录")),
       requireDesktopString(input?.filename, tr("上传文件名")),
-      await currentDesktopSshContext(),
-    );
+      context,
+    ));
   });
 
   ipcMain.handle("viron:sftp:upload-chunk", async (event, uploadId: unknown, data: unknown) => {
@@ -177,7 +191,7 @@ export function registerDesktopSshIpc(): void {
     const filename = typeof input?.filename === "string" ? basename(input.filename) : basename(path);
     const target = await dialog.showSaveDialog(mainWindow!, { defaultPath: join(app.getPath("downloads"), filename || "download") });
     if (target.canceled || !target.filePath) return { saved: false as const };
-    await desktopSftpRuntime.downloadTo(connectionId, path, target.filePath);
+    await withSshCredentialPurpose(connectionId, "ssh.download", () => desktopSftpRuntime.downloadTo(connectionId, path, target.filePath));
     return { saved: true as const, filePath: target.filePath };
   });
 
@@ -187,7 +201,7 @@ export function registerDesktopSshIpc(): void {
     const paths = Array.isArray(input?.paths) ? input.paths.map((path) => requireDesktopString(path, tr("来源路径"))) : [];
     if (!paths.length) throw new Error(tr("请选择要拖出的文件或目录"));
     const temporaryDirectory = join(app.getPath("temp"), "viron-sftp-drag", randomUUID());
-    const materialized = await desktopSftpRuntime.materializeForNativeDrag(connectionId, paths, temporaryDirectory);
+    const materialized = await withSshCredentialPurpose(connectionId, "ssh.download", () => desktopSftpRuntime.materializeForNativeDrag(connectionId, paths, temporaryDirectory));
     const icon = await app.getFileIcon(materialized.files[0], { size: "small" });
     event.sender.startDrag({ file: materialized.files[0], files: materialized.files, icon });
     if (materialized.temporary) {
@@ -207,13 +221,18 @@ export function registerDesktopSshIpc(): void {
     const sourcePaths = Array.isArray(input?.sourcePaths)
       ? input.sourcePaths.map((path) => requireDesktopString(path, tr("来源路径")))
       : undefined;
-    return desktopSftpRuntime.preview({
-      sourceConnectionId: requireDesktopString(input?.sourceConnectionId, tr("来源 SSH 连接 ID")),
-      targetConnectionId: requireDesktopString(input?.targetConnectionId, tr("目标 SSH 连接 ID")),
+    const sourceConnectionId = requireDesktopString(input?.sourceConnectionId, tr("来源 SSH 连接 ID"));
+    const targetConnectionId = requireDesktopString(input?.targetConnectionId, tr("目标 SSH 连接 ID"));
+    return organizationMcpPurpose.run([
+      { target: { type: "ssh_connection", id: sourceConnectionId }, code: "ssh.download" },
+      { target: { type: "ssh_connection", id: targetConnectionId }, code: "ssh.upload" },
+    ], () => desktopSftpRuntime.preview({
+      sourceConnectionId,
+      targetConnectionId,
       sourcePath: typeof input?.sourcePath === "string" ? requireDesktopString(input.sourcePath, tr("来源路径")) : undefined,
       sourcePaths,
       targetDirectory: requireDesktopString(input?.targetDirectory, tr("目标目录")),
-    });
+    }));
   });
 
   ipcMain.handle("viron:sftp-transfers:create", async (event, input: DesktopSftpTransferOptions) => {
@@ -233,7 +252,10 @@ export function registerDesktopSshIpc(): void {
     const registrationId = await reserveDesktopRuntime("sftp", reservation.resourceId, reservation.relatedResourceId, input.originEnvironmentId, reservation.sftpAction);
     try {
       const context = await currentDesktopSshContext();
-      const task = await desktopSftpRuntime.create(context, {
+      const task = await organizationMcpPurpose.run([
+        { target: { type: "ssh_connection", id: sourceConnectionId }, code: "ssh.download" },
+        { target: { type: "ssh_connection", id: targetConnectionId }, code: "ssh.upload" },
+      ], () => desktopSftpRuntime.create(context, {
       sourceConnectionId,
       targetConnectionId,
       sourcePath: typeof input?.sourcePath === "string" ? requireDesktopString(input.sourcePath, tr("来源路径")) : undefined,
@@ -241,7 +263,7 @@ export function registerDesktopSshIpc(): void {
       targetDirectory: requireDesktopString(input?.targetDirectory, tr("目标目录")),
       conflict,
       conflictDecisions,
-      });
+      }));
       trackDesktopRuntime({
         id: registrationId,
         localId: task.id,

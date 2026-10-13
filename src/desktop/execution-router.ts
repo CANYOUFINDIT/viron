@@ -318,12 +318,12 @@ export async function localSshCredential(connectionId: string): Promise<{ contex
   pendingCredentialRequests.add(requestId);
   try {
     const auditSource = desktopAuditSourceContext.getStore() ?? "manual";
-    const purpose = auditSource === "mcp" ? sshCredentialPurpose(connectionId) : undefined;
+    const purpose = sshCredentialPurpose(connectionId);
     const signedPurpose = purpose
       ? await signedDesktopOperation({
         operationId: randomUUID(),
         connectionId,
-        channel: organizationExecutionChannel.getStore() ?? "mcp",
+        channel: organizationExecutionChannel.getStore() ?? (auditSource === "mcp" ? "mcp" : "manual"),
         code: purpose.code,
         targetType: purpose.targetType,
         targetId: purpose.targetId,

@@ -6,7 +6,7 @@ export const SSH_CREDENTIAL_PURPOSE_CODES = ["ssh.use", "ssh.browse", "ssh.downl
 export const sshCredentialPurposePayloadSchema = z.object({
   operationId: z.string().uuid(),
   connectionId: z.string().uuid(),
-  channel: z.enum(["mcp", "agent"]),
+  channel: z.enum(["mcp", "agent", "manual"]),
   code: z.enum(SSH_CREDENTIAL_PURPOSE_CODES),
   targetType: z.enum(["ssh_connection", "environment_log"]),
   targetId: z.string().uuid(),
