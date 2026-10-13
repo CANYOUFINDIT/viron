@@ -8,6 +8,8 @@ import { redisCommandAccess } from "../shared/redis.js";
 
 interface MappedOperation {
   codes: string[];
+  /** Envelope transport accepts any one complete code. SQL and other routes still require every code. */
+  match?: "any";
   sql?: string;
   type: ResourceRef["type"];
   id: string;
@@ -47,7 +49,12 @@ function mappedOperation(request: FastifyRequest, channel: ExecutionChannel): Ma
   if (/\/desktop\/ssh-connections\/[^/]+\/envelope$/.test(path) && desktopConnectionId)
     return operation("ssh.use", "ssh_connection", desktopConnectionId);
   if (/\/desktop\/database-connections\/[^/]+\/envelope$/.test(path) && desktopConnectionId)
-    return operation("database.read", "database_connection", desktopConnectionId);
+    return {
+      codes: ["database.read", "database.write", "database.ddl"],
+      match: "any",
+      type: "database_connection",
+      id: desktopConnectionId,
+    };
   if (/\/desktop\/redis-connections\/[^/]+\/envelope$/.test(path) && desktopConnectionId)
     return operation("redis.view", "redis_connection", desktopConnectionId);
   if (/\/database-connections\//.test(path) && id) {
@@ -136,6 +143,14 @@ export async function organizationExecutionFence(request: FastifyRequest, reply:
       }
       return;
     }
+    if (mapped.match === "any") {
+      const allowed = mapped.codes.some((code) => executionDecision(access, channel, code, target).allowed);
+      if (!allowed) {
+        const decision = executionDecision(access, channel, mapped.codes[0] ?? "", target);
+        await deny(request, reply, decision.error ?? "FEATURE_FORBIDDEN", decision.message, { channel, code: mapped.codes[0], target });
+      }
+      return;
+    }
     for (const code of mapped.codes) {
       const decision = executionDecision(access, channel, code, target);
       if (!decision.allowed) {
@@ -154,6 +169,12 @@ export async function organizationExecutionFence(request: FastifyRequest, reply:
   if (mapped.sql !== undefined) {
     const missing = await missingDatabaseSqlPermission(mapped.sql, (code) => access.allows(code, target));
     if (missing) await deny(request, reply, "ACTION_FORBIDDEN", "角色未获得这项资源操作权限", { code: missing, target, channel: "manual" });
+    return;
+  }
+  if (mapped.match === "any") {
+    if (!mapped.codes.some((code) => access.allows(code, target))) {
+      await deny(request, reply, "ACTION_FORBIDDEN", "角色未获得这项资源操作权限", { code: mapped.codes[0], target, channel: "manual" });
+    }
     return;
   }
   for (const code of mapped.codes) {

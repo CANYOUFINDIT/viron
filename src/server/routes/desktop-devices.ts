@@ -12,7 +12,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { databaseTaskAccessPlan, type DatabaseTaskAction } from "../../shared/database-task-access.js";
 import { canAccessConnection, canAccessWebCredential, canManageWorkspace, type AuthenticatedUser } from "../access-control.js";
-import { sqlRequiresWrite } from "../../shared/access-permissions.js";
+import { missingDatabaseSqlPermission } from "../../shared/access-permissions.js";
 import { writeAudit } from "../audit.js";
 import { decryptDatabaseCredential, hydrateDatabaseOptions } from "../database-credentials.js";
 import { isUniqueConstraintError } from "../database-errors.js";
@@ -344,6 +344,23 @@ async function requireDesktopTaskConnection(app: FastifyInstance, user: Authenti
   }
 }
 
+async function connectionVisible(app: FastifyInstance, user: AuthenticatedUser, connectionId: string, actions: readonly string[]): Promise<boolean> {
+  const row = await app.db.prepare("SELECT workspace_type, workspace_id FROM database_connections WHERE id = ?").get(connectionId) as { workspace_type: string; workspace_id: string } | undefined;
+  if (!row || row.workspace_type !== user.workspace.type || row.workspace_id !== user.workspace.id) return false;
+  for (const action of actions) {
+    if (await canAccessConnection(app.db, user, "database", connectionId, action)) return true;
+  }
+  return false;
+}
+
+async function requireDesktopQueryReport(app: FastifyInstance, user: AuthenticatedUser, connectionId: string, sql: string): Promise<void> {
+  if (!await connectionVisible(app, user, connectionId, ["read", "write", "ddl", "export"])) {
+    throw new DesktopReportError(404, "NOT_FOUND", "数据库连接不存在");
+  }
+  const missing = await missingDatabaseSqlPermission(sql, (code) => canAccessConnection(app.db, user, "database", connectionId, code.slice("database.".length)));
+  if (missing) throw new DesktopReportError(403, "ACTION_FORBIDDEN", "没有这项操作权限");
+}
+
 export async function registerDesktopDeviceRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Params: { deviceId: string } }>(
     "/api/v1/desktop/devices/:deviceId",
@@ -665,7 +682,7 @@ export async function registerDesktopDeviceRoutes(app: FastifyInstance): Promise
       `).get(body.deviceId, request.admin!.id) as StoredDevice | undefined;
       if (!device) return reply.code(404).send({ error: "DEVICE_NOT_FOUND", message: "当前设备尚未注册" });
       if (device.status !== "active") return reply.code(403).send({ error: "DEVICE_REVOKED", message: "当前设备已被撤销" });
-      if (!await canAccessConnection(app.db, request.admin!, "database", connectionId.data)) {
+      if (!await connectionVisible(app, request.admin!, connectionId.data, ["read", "write", "ddl"])) {
         return reply.code(404).send({ error: "NOT_FOUND", message: "数据库连接不存在" });
       }
       const connection = await app.db.prepare(`
@@ -948,12 +965,12 @@ export async function registerDesktopDeviceRoutes(app: FastifyInstance): Promise
             const plan = databaseTaskAccessPlan(kind, body.details);
             await requireDesktopTaskConnection(app, admin, body.connectionId, plan.operations);
             if (plan.targetConnectionId) await requireDesktopTaskConnection(app, admin, plan.targetConnectionId, plan.targetOperations);
+          } else if (body.kind === "query") {
+            await requireDesktopQueryReport(app, admin, body.connectionId, body.sql);
           } else if (!await canAccessConnection(app.db, admin, "database", body.connectionId)) {
             throw new DesktopReportError(404, "NOT_FOUND", "数据库连接不存在");
           }
-          const databaseWrite = body.kind === "query"
-            ? sqlRequiresWrite(body.sql)
-            : ["table_data_changed", "table_imported"].includes(body.action);
+          const databaseWrite = body.kind === "operation" && ["table_data_changed", "table_imported"].includes(body.action);
           if (databaseWrite && !await canAccessConnection(app.db, admin, "database", body.connectionId, "write")) {
             throw new DesktopReportError(403, "ACTION_FORBIDDEN", "没有这项操作权限");
           }
