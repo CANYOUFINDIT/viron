@@ -1,3 +1,4 @@
+import { readApiErrorBody } from "./api-error";
 import { currentLocale, localizeMessage, translate as tr } from "./i18n";
 import { desktopRequest, isDesktopApp } from "./desktop";
 import { dispatchConnectionLimit } from "./connection-limit";
@@ -10,6 +11,7 @@ export class ApiError extends Error {
     public status: number,
     public code?: string,
     public retryAfterMs?: number,
+    public details: Record<string, unknown> = {},
   ) {
     super(message);
   }
@@ -75,12 +77,11 @@ async function requestApiOnce<T>(path: string, init: RequestInit = {}): Promise<
     const response = await desktopRequest(path, { ...init, headers });
     recordConnectionQualityTraffic("download", connectionQualityByteLength(response.body));
     if (response.status < 200 || response.status >= 300) {
-      let body: { message?: string; error?: string } = {};
-      try { body = JSON.parse(response.body) as typeof body; } catch { /* Use the HTTP fallback below. */ }
-      const message = body.message ? localizeMessage(body.message) : tr("请求失败（{{0}}）", [response.status]);
-      if (body.error === "USER_CONNECTION_LIMIT") dispatchConnectionLimit(message);
-      notifyAuthenticationRequired(response.status, body.error);
-      throw new ApiError(message, response.status, body.error, retryAfterMilliseconds(new Headers(response.headers).get("retry-after")));
+      const parsed = readApiErrorBody(response.body);
+      const message = parsed.message ? localizeMessage(parsed.message) : tr("请求失败（{{0}}）", [response.status]);
+      if (parsed.code === "USER_CONNECTION_LIMIT") dispatchConnectionLimit(message);
+      notifyAuthenticationRequired(response.status, parsed.code);
+      throw new ApiError(message, response.status, parsed.code, retryAfterMilliseconds(new Headers(response.headers).get("retry-after")), parsed.details);
     }
     if (response.status === 204 || !response.body) return undefined as T;
     return JSON.parse(response.body) as T;
@@ -92,11 +93,11 @@ async function requestApiOnce<T>(path: string, init: RequestInit = {}): Promise<
   });
 
   if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    const message = body.message ? localizeMessage(body.message) : tr("请求失败（{{0}}）", [response.status]);
-    if (body.error === "USER_CONNECTION_LIMIT") dispatchConnectionLimit(message);
-    notifyAuthenticationRequired(response.status, body.error);
-    throw new ApiError(message, response.status, body.error, retryAfterMilliseconds(response.headers.get("retry-after")));
+    const parsed = readApiErrorBody(await response.text());
+    const message = parsed.message ? localizeMessage(parsed.message) : tr("请求失败（{{0}}）", [response.status]);
+    if (parsed.code === "USER_CONNECTION_LIMIT") dispatchConnectionLimit(message);
+    notifyAuthenticationRequired(response.status, parsed.code);
+    throw new ApiError(message, response.status, parsed.code, retryAfterMilliseconds(response.headers.get("retry-after")), parsed.details);
   }
 
   if (response.status === 204) return undefined as T;

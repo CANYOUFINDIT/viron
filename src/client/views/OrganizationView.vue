@@ -13,13 +13,15 @@ import OrganizationResourceOverview from "./organization/OrganizationResourceOve
 import OrganizationMinePanel from "./organization/OrganizationMinePanel.vue";
 import OrganizationApprovalPanel from "./organization/OrganizationApprovalPanel.vue";
 import { useOrganizationController } from "./organization/use-organization-controller";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { watch } from "vue";
 
 const context = useOrganizationController();
 provideOrganizationContext(context);
 const route = useRoute();
+const router = useRouter();
 const panels = ["structure", "resources", "roles", "approval", "mine", "requests", "todo", "access", "invitations", "platform"] as const;
+const personalPanels = ["mine", "requests", "todo"] as const;
 const {
   activateWorkspace, activePanel, availableParentProjects, canManageOrganization,
   copiedInvitationKey, copyInvitationLink, createInvitation, createOrganization,
@@ -37,6 +39,12 @@ const {
 watch(() => route.query.section, (section) => {
   if (typeof section === "string" && (panels as readonly string[]).includes(section)) context.activePanel.value = section as typeof context.activePanel.value;
 }, { immediate: true });
+function openPanel(panel: "structure" | "resources" | "roles" | "approval" | "mine" | "requests" | "todo" | "platform") {
+  context.activePanel.value = panel;
+  const section = route.query.section;
+  if (section === panel) return;
+  void router.replace({ query: { ...route.query, section: panel } });
+}
 function selectOrganization(organizationId: string) {
   const organization = organizations.value.find((item) => item.id === organizationId);
   if (!organization) return;
@@ -77,25 +85,22 @@ function selectOrganization(organizationId: string) {
             <div><span>{{ detail.organization.role === 'admin' ? 'MANAGED WORKSPACE' : 'ORGANIZATION WORKSPACE' }}</span><h2>{{ detail.organization.name }}</h2><p v-if="detail.organization.description">{{ detail.organization.description }}</p></div>
             <em>{{ detail.organization.role === 'admin' ? $t('管理员') : $t('成员') }}</em>
           </header>
+          <OrganizationMinePanel v-if="(personalPanels as readonly string[]).includes(activePanel)" @open-organization="openPanel" />
+          <template v-else>
           <nav class="console-tabs" :aria-label="$t('组织管理模块')">
-            <button type="button" :class="{ 'is-active': activePanel === 'structure' }" @click="activePanel = 'structure'"><Network :size="16" />{{ $t('组织架构') }}</button>
-            <button type="button" :class="{ 'is-active': activePanel === 'resources' }" @click="activePanel = 'resources'"><Network :size="16" />资源总览</button>
-            <button type="button" :class="{ 'is-active': activePanel === 'roles' }" @click="activePanel = 'roles'"><ShieldCheck :size="16" />角色</button>
-            <button type="button" :class="{ 'is-active': activePanel === 'approval' }" @click="activePanel = 'approval'"><ShieldCheck :size="16" />审批与台账</button>
-            <button type="button" :class="{ 'is-active': activePanel === 'mine' }" @click="activePanel = 'mine'">我的授权</button>
-            <button type="button" :class="{ 'is-active': activePanel === 'requests' }" @click="activePanel = 'requests'">我的申请</button>
-            <button type="button" :class="{ 'is-active': activePanel === 'todo' }" @click="activePanel = 'todo'">待我审批</button>
-            <button v-if="session.user?.isPlatformAdmin" type="button" :class="{ 'is-active': activePanel === 'platform' }" @click="activePanel = 'platform'"><KeyRound :size="16" />{{ $t('平台账号') }}</button>
+            <button type="button" :class="{ 'is-active': activePanel === 'structure' }" @click="openPanel('structure')"><Network :size="16" />{{ $t('组织架构') }}</button>
+            <button type="button" :class="{ 'is-active': activePanel === 'resources' }" @click="openPanel('resources')"><Network :size="16" />资源总览</button>
+            <button type="button" :class="{ 'is-active': activePanel === 'roles' }" @click="openPanel('roles')"><ShieldCheck :size="16" />角色</button>
+            <button type="button" :class="{ 'is-active': activePanel === 'approval' }" @click="openPanel('approval')"><ShieldCheck :size="16" />审批与台账</button>
+            <button v-if="session.user?.isPlatformAdmin" type="button" :class="{ 'is-active': activePanel === 'platform' }" @click="openPanel('platform')"><KeyRound :size="16" />{{ $t('平台账号') }}</button>
           </nav>
           <OrganizationStructurePanel v-if="activePanel === 'structure' || activePanel === 'invitations'" />
           <OrganizationResourceOverview v-else-if="activePanel === 'resources'" />
           <OrganizationRolesPanel v-else-if="activePanel === 'roles'" />
           <OrganizationApprovalPanel v-else-if="activePanel === 'approval'" />
-          <OrganizationMinePanel v-else-if="activePanel === 'mine'" view="grants" />
-          <OrganizationMinePanel v-else-if="activePanel === 'requests'" view="requests" />
-          <OrganizationMinePanel v-else-if="activePanel === 'todo'" view="todo" />
           <OrganizationAccessPanel v-else-if="activePanel === 'access'" />
           <OrganizationPlatformPanel v-else-if="activePanel === 'platform' && session.user?.isPlatformAdmin" />
+          </template>
         </template>
 
         <template v-else>

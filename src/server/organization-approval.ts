@@ -1046,6 +1046,10 @@ function nodesOf(row: RequestRow): FlowSnapshotNode[] {
   return parse<{ nodes: FlowSnapshotNode[] }>(row.workflow_snapshot_json, { nodes: [] }).nodes;
 }
 
+function flowOf(row: RequestRow) {
+  return parse<{ flowId: string; flowName: string }>(row.workflow_snapshot_json, { flowId: "", flowName: "" });
+}
+
 async function stageState(db: EnvmanDatabase, org: string, row: RequestRow) {
   const nodes = nodesOf(row);
   const stage = Number(row.stage_index);
@@ -1293,6 +1297,8 @@ async function presentRequest(
     kind: row.kind,
     status: row.status,
     reason: row.reason,
+    flowId: flowOf(row).flowId,
+    flowName: flowOf(row).flowName,
     paused: approvalBlocked,
     pauseReason,
     blockReason: pauseReason || state.reason || "",

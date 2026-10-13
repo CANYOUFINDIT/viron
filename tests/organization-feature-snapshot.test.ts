@@ -299,4 +299,92 @@ describe("feature request scope snapshots", () => {
     const grant = JSON.parse((await f.db.prepare("SELECT targets_json FROM organization_feature_grants WHERE request_id = ?").get<{ targets_json: string }>(submitted.json().id))!.targets_json) as Array<{ type: string; id: string }>;
     expect(grant).toEqual(environmentGroup!.targets);
   });
+
+  it("submits web plugins only on the environment group and mcp or agent on the connection group", async () => {
+    const f = await fixture();
+    const environment = await f.app.inject({ method: "POST", url: "/api/v1/environments", cookies: f.cookies, payload: { name: "插件分组环境" } });
+    const envId = environment.json().id as string;
+    const ssh = await f.app.inject({ method: "POST", url: "/api/v1/ssh-connections", cookies: f.cookies, payload: connection("插件分组连接", envId) });
+    const sshId = ssh.json().id as string;
+    const node = { id: randomUUID(), name: "审批", mode: "any", approverUserIds: [f.approverId], approverRoleId: null, allowSelf: false, requireComment: false };
+    const owned = await f.app.inject({
+      method: "POST",
+      url: f.base + "/approval-flows",
+      cookies: f.cookies,
+      payload: {
+        name: "连接组流程",
+        targets: [
+          { type: "ssh_connection", id: sshId },
+          { type: "monitor_host", id: sshId },
+        ],
+        nodes: [node],
+      },
+    });
+    expect(owned.statusCode, owned.body).toBe(201);
+    const grouped = await f.app.inject({
+      method: "POST",
+      url: f.base + "/grant-requests",
+      cookies: f.cookies,
+      payload: {
+        kind: "feature",
+        features: { mcp: true, agent: true, webPlugins: true },
+        targets: [{ type: "environment", id: envId }],
+        reason: "混合功能初次选择",
+      },
+    });
+    expect(grouped.statusCode, grouped.body).toBe(409);
+    expect(grouped.json().error).toBe("MULTIPLE_APPROVAL_FLOWS");
+    const groups = grouped.json().groups as Array<{ flowId: string; flowName: string; targets: Array<{ type: string; id: string }> }>;
+    const environmentGroup = groups.find((group) => group.targets.some((target) => target.type === "environment"));
+    const connectionGroup = groups.find((group) => group.flowId === owned.json().id);
+    expect(environmentGroup?.targets).toEqual([{ type: "environment", id: envId }]);
+    expect(connectionGroup?.targets.every((target) => target.type !== "environment")).toBe(true);
+    expect(connectionGroup?.targets).toEqual(expect.arrayContaining([{ type: "ssh_connection", id: sshId }]));
+    const pluginOnConnection = await f.app.inject({
+      method: "POST",
+      url: f.base + "/grant-requests",
+      cookies: f.cookies,
+      payload: {
+        kind: "feature",
+        features: { mcp: true, agent: true, webPlugins: true },
+        targets: connectionGroup!.targets,
+        flowId: connectionGroup!.flowId,
+        reason: "连接组不能带插件",
+      },
+    });
+    expect(pluginOnConnection.statusCode, pluginOnConnection.body).toBe(400);
+    expect(pluginOnConnection.json().error).toBe("INVALID_PLUGIN_SCOPE");
+    const connectionOnly = await f.app.inject({
+      method: "POST",
+      url: f.base + "/grant-requests",
+      cookies: f.cookies,
+      payload: {
+        kind: "feature",
+        features: { mcp: true, agent: true, webPlugins: false },
+        targets: connectionGroup!.targets,
+        flowId: connectionGroup!.flowId,
+        reason: "连接组只提交 MCP 和 Agent",
+      },
+    });
+    expect(connectionOnly.statusCode, connectionOnly.body).toBe(201);
+    const savedConnections = JSON.parse((await f.db.prepare("SELECT targets_json FROM organization_grant_requests WHERE id = ?").get<{ targets_json: string }>(connectionOnly.json().id))!.targets_json) as Array<{ type: string; id: string }>;
+    expect(savedConnections).toEqual(connectionGroup!.targets);
+    expect(savedConnections.some((target) => target.type === "environment")).toBe(false);
+    const pluginsOnly = await f.app.inject({
+      method: "POST",
+      url: f.base + "/grant-requests",
+      cookies: f.cookies,
+      payload: {
+        kind: "feature",
+        features: { mcp: false, agent: false, webPlugins: true },
+        targets: environmentGroup!.targets,
+        flowId: environmentGroup!.flowId,
+        reason: "环境组只提交 Web 插件",
+      },
+    });
+    expect(pluginsOnly.statusCode, pluginsOnly.body).toBe(201);
+    const savedEnvironment = await f.db.prepare("SELECT targets_json, permission_snapshot_json FROM organization_grant_requests WHERE id = ?").get<{ targets_json: string; permission_snapshot_json: string }>(pluginsOnly.json().id);
+    expect(JSON.parse(savedEnvironment!.targets_json)).toEqual(environmentGroup!.targets);
+    expect(JSON.parse(savedEnvironment!.permission_snapshot_json).features).toEqual({ mcp: false, agent: false, webPlugins: true });
+  });
 });

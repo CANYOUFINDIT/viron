@@ -365,7 +365,6 @@ onBeforeUnmount(() => {
               </span>
               <ChevronsUpDown class="workspace-switcher__chevrons sidebar-label" :size="14" />
             </button>
-            <button v-if="session.workspace?.type === 'organization'" class="sidebar-label" type="button" @click="router.push({ name: 'organization', query: { section: 'mine' } })">我的授权</button>
             <template #dropdown>
               <el-dropdown-menu class="workspace-menu">
                 <li class="workspace-menu__heading" role="presentation">{{ $t('个人空间') }}</li>
@@ -399,6 +398,17 @@ onBeforeUnmount(() => {
               </el-dropdown-menu>
             </template>
           </el-dropdown>
+          <button
+            v-if="session.workspace?.type === 'organization'"
+            class="primary-menu__item mine-entry"
+            :class="{ 'is-active': route.name === 'organization' && ['mine', 'requests', 'todo'].includes(String(route.query.section || '')) }"
+            type="button"
+            aria-label="打开我的授权、申请和待办"
+            @click="router.push({ name: 'organization', query: { section: 'mine' } })"
+          >
+            <span class="sidebar-menu-icon"><UserRound :size="16" /></span>
+            <span class="sidebar-label-wrap"><span class="sidebar-label">我的</span></span>
+          </button>
         </div>
 
         <nav id="envman-primary-menu" class="primary-menu" :aria-label="$t('主导航')">

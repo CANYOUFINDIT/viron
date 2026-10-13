@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { BookOpen, Boxes, ChevronDown, Database, FileText, Folder, FolderTree, Globe2, KeyRound, MemoryStick, Search, Server, ShieldCheck, Star, TerminalSquare } from "@lucide/vue";
 import { ApiError, api } from "../../api";
@@ -8,6 +9,7 @@ import { RESOURCE_TYPE_LABELS, RESOURCE_TYPES, type ResourceType } from "../../.
 import { useOrganizationContext } from "./context";
 import OrganizationResourceAuthorizationDialog from "./OrganizationResourceAuthorizationDialog.vue";
 import RolePermissionList from "./RolePermissionList.vue";
+import { pendingResourceGrant } from "./grant-selection";
 import {
   authorizationOriginText,
   authorizationStatusText,
@@ -16,7 +18,9 @@ import {
 } from "./authorization-target";
 
 const props = defineProps<{ projectId?: string }>();
-const { currentOrganizationId } = useOrganizationContext();
+const { activePanel, currentOrganizationId } = useOrganizationContext();
+const route = useRoute();
+const router = useRouter();
 const labels = [
   { id: "environments", label: "环境总览" },
   { id: "credentials", label: "密钥与证书" },
@@ -39,7 +43,6 @@ const openedEnvironmentId = ref<string | null>(null);
 const previewId = ref<string | null>(null);
 const grantOpen = ref(false);
 const grantTargets = ref<Array<{ type: ResourceType; id: string }>>([]);
-const requestNotice = ref(false);
 const viewOpen = ref(false);
 const viewLoading = ref(false);
 const viewError = ref("");
@@ -156,7 +159,11 @@ function openMaintain(item: Item) {
   grantOpen.value = true;
 }
 function openRequest(item: Item) {
-  if (item.authorization?.request && !item.authorization?.maintain) requestNotice.value = true;
+  const target = resourceRef(item);
+  if (!target || !item.authorization?.request) return;
+  pendingResourceGrant.value = target;
+  activePanel.value = "requests";
+  void router.replace({ query: { ...route.query, section: "requests" } });
 }
 async function reloadView() {
   const target = viewTarget.value;
@@ -548,10 +555,6 @@ function environmentNames(item: Item) {
 
     <OrganizationResourceAuthorizationDialog v-if="grantOpen && currentOrganizationId" v-model="grantOpen" :organization-id="currentOrganizationId" :targets="grantTargets" @saved="refreshSurfaces" />
     <OrganizationResourceAuthorizationDialog v-if="editOpen && editGrant && currentOrganizationId" v-model="editOpen" :organization-id="currentOrganizationId" :single-target="editGrant" @refresh="refreshEdit" />
-    <el-dialog v-model="requestNotice" title="申请授权" width="420px" append-to-body align-center>
-      <p>申请提交随审批阶段开放，当前不能提交。</p>
-      <template #footer><el-button type="primary" @click="requestNotice = false">知道了</el-button></template>
-    </el-dialog>
     <el-dialog v-model="viewOpen" title="查看授权" width="min(760px, calc(100% - 32px))" append-to-body align-center class="envman-dialog">
       <div v-loading="viewLoading">
         <el-alert v-if="viewError" :title="viewError" type="error" :closable="false" />

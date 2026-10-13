@@ -5,6 +5,8 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { api } from "../../api";
 import { workspaceCan } from "../../session";
 import { RESOURCE_TYPE_LABELS, resourceKey, type ResourceRef, type ResourceType } from "../../../shared/organization-rbac";
+import { linkedEnvironmentState, linkedResources as catalogLinkedResources, toggleLinkedEnvironment, toggleResource } from "./grant-selection";
+import GrantRequestDetail from "./GrantRequestDetail.vue";
 import { useOrganizationContext } from "./context";
 
 interface CatalogItem {
@@ -112,6 +114,8 @@ const draftName = ref("");
 const draftNodes = ref<FlowNode[]>([]);
 const draftTargets = ref<ResourceRef[]>([]);
 const selectedLedger = ref<LedgerRow | null>(null);
+const requestDetailId = ref("");
+const requestDetailOpen = ref(false);
 const ledgerQuery = reactive({ action: "", type: "" as "" | ResourceType, actor: "", target: "", from: "", to: "" });
 
 const canMaintain = computed(() => workspaceCan("approval.workflow"));
@@ -141,41 +145,19 @@ function targetText(target: ResourceRef & { name?: string }) {
   return name ? `${label} · ${name}` : `${label} · ${target.id}`;
 }
 function linkedResources(environmentId: string) {
-  return catalog.value.filter((item) => item.type !== "environment" && item.environmentIds.includes(environmentId));
+  return catalogLinkedResources(catalog.value, environmentId);
 }
 function selectedKeys() {
   return new Set(draftTargets.value.map(resourceKey));
 }
 function environmentState(environmentId: string) {
-  const linked = linkedResources(environmentId);
-  if (!linked.length) return "empty" as const;
-  const selected = selectedKeys();
-  const hits = linked.filter((item) => selected.has(resourceKey(item))).length;
-  if (hits === 0) return "off" as const;
-  if (hits === linked.length) return "on" as const;
-  return "partial" as const;
-}
-function addTargets(items: Array<Pick<CatalogItem, "type" | "id">>) {
-  const map = new Map(draftTargets.value.map((target) => [resourceKey(target), target]));
-  for (const item of items) map.set(resourceKey(item), { type: item.type, id: item.id });
-  draftTargets.value = [...map.values()];
+  return linkedEnvironmentState(catalog.value, draftTargets.value, environmentId);
 }
 function toggleEnvironment(environmentId: string, checked: boolean) {
-  const linked = linkedResources(environmentId);
-  if (checked) {
-    addTargets(linked);
-    return;
-  }
-  const remove = new Set(linked.map(resourceKey));
-  for (const environment of environments.value) {
-    if (environment.id === environmentId || environmentState(environment.id) !== "on") continue;
-    for (const item of linkedResources(environment.id)) remove.delete(resourceKey(item));
-  }
-  draftTargets.value = draftTargets.value.filter((target) => !remove.has(resourceKey(target)));
+  draftTargets.value = toggleLinkedEnvironment(catalog.value, draftTargets.value, environmentId, checked);
 }
 function toggleTarget(target: ResourceRef, checked: boolean) {
-  if (checked) addTargets([target]);
-  else draftTargets.value = draftTargets.value.filter((item) => resourceKey(item) !== resourceKey(target));
+  draftTargets.value = toggleResource(draftTargets.value, target, checked);
 }
 function matchesQuery(name: string) {
   const query = resourceQuery.value.trim().toLowerCase();
@@ -453,18 +435,19 @@ function when(value: string) {
     </template>
 
     <template v-else-if="tab === 'requests'">
-      <p class="approval-note">这里列出当前有权查看的组织申请。申请详情与办理随后接入，此页不新建申请。</p>
+      <p class="approval-note">这里列出当前有权查看的组织申请。打开同一份详情处理；此页不新建申请。</p>
       <p v-if="requestsError" class="approval-error">{{ requestsError }}</p>
       <div v-else-if="requests.length" class="access-ledger">
         <div class="access-ledger__head approval-request-grid"><span>申请</span><span>类型</span><span>状态</span><span>目标</span></div>
-        <article v-for="item in requests" :key="item.id" class="access-ledger__row approval-request-grid">
+        <button v-for="item in requests" :key="item.id" type="button" class="access-ledger__row approval-request-grid" @click="requestDetailId = item.id; requestDetailOpen = true">
           <span class="access-identity"><strong>{{ item.requesterName || "申请人" }}</strong><small>{{ item.reason }}</small></span>
           <span>{{ item.kind === "data" ? "数据授权" : "功能授权" }}</span>
           <span>{{ requestStatus[item.status] ?? item.status }}</span>
           <span>{{ item.targets.map(targetText).join("、") || "未记录目标" }}</span>
-        </article>
+        </button>
       </div>
       <p v-else class="access-empty">暂无授权申请</p>
+      <GrantRequestDetail v-if="requestDetailOpen && currentOrganizationId" v-model="requestDetailOpen" :organization-id="currentOrganizationId" :request-id="requestDetailId" @changed="loadRequests" />
     </template>
 
     <template v-else>

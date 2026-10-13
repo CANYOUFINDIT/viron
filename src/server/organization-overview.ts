@@ -1,12 +1,15 @@
 import { createHash } from "node:crypto";
 import type { EnvmanDatabase } from "./database-client.js";
+import { roleHolderIds } from "./organization-approval.js";
 import { loadOrganizationAccess, OrganizationPermissionError, roleState } from "./organization-rbac.js";
 import { presentTargetWindow, serverNow } from "./organization-boundary.js";
 import {
+  PERMISSION_DEFINITIONS,
   RESOURCE_CAPABILITIES,
   RESOURCE_TYPES,
   resourceKey,
   validAt,
+  type ManagementScope,
   type OrganizationRole,
   type ResourceCatalogItem,
   type ResourceRef,
@@ -330,55 +333,130 @@ export async function resourceOverview(db: EnvmanDatabase, org: string, userId: 
   return { entries, projectId: projectId ?? null };
 }
 
+function scopeProjects(scope: ManagementScope, projectName: Map<string, string>) {
+  return {
+    kind: scope.kind,
+    includeChildren: scope.includeChildren,
+    projects: scope.ids.map((id) => ({ id, name: projectName.get(id) ?? "" })),
+  };
+}
+
+/** The caller's own roles, grants, and feature grants. It does not require authorization.view and omits other people's requests. */
 export async function personalAuthorization(db: EnvmanDatabase, org: string, userId: string) {
   const now = serverNow();
   const access = await loadOrganizationAccess(db, org, userId, now);
-  const heldRoleIds = new Set(
-    access.state.assignments.filter((assignment) => access.applies(assignment.subjectType, assignment.subjectId)).map((assignment) => assignment.roleId),
-  );
-  const roles = access.state.assignments
-    .filter((assignment) => access.applies(assignment.subjectType, assignment.subjectId))
-    .map((assignment) => {
-      const role = access.state.roles.find((item) => item.id === assignment.roleId);
+  const [projectRows, organization, selfRow] = await Promise.all([
+    db.prepare("SELECT id, name FROM projects WHERE organization_id = ?").all<{ id: string; name: string }>(org),
+    db.prepare("SELECT name FROM organizations WHERE id = ?").get<{ name: string }>(org),
+    db.prepare("SELECT username FROM admin_users WHERE id = ?").get<{ username: string | null }>(userId),
+  ]);
+  const projectName = new Map(projectRows.map((project) => [project.id, project.name]));
+  const selfName = selfRow?.username?.trim() ?? "";
+  const subjectName = (type: SubjectType, id: string) =>
+    type === "user" ? (id === userId ? selfName : "") : type === "project" ? projectName.get(id) ?? "" : id === org ? organization?.name ?? "" : "";
+  const rolesById = new Map(access.state.roles.map((role) => [role.id, role]));
+  const held = access.state.assignments.filter((assignment) => access.applies(assignment.subjectType, assignment.subjectId));
+  const holderLists = new Map<string, string[]>();
+  for (const roleId of new Set(held.map((assignment) => assignment.roleId)))
+    holderLists.set(roleId, await roleHolderIds(db, org, roleId, now));
+  const holderIds = [...new Set([...holderLists.values()].flat())];
+  const holderRows = holderIds.length
+    ? await db.prepare(`SELECT id, username FROM admin_users WHERE id IN (${holderIds.map(() => "?").join(",")})`).all<{ id: string; username: string | null }>(...holderIds)
+    : [];
+  const holderName = new Map(holderRows.flatMap((row) => (row.username?.trim() ? [[row.id, row.username.trim()] as const] : [])));
+  const holdersOf = (roleId: string) =>
+    (holderLists.get(roleId) ?? []).flatMap((id) => {
+      const name = holderName.get(id);
+      return name ? [{ id, name }] : [];
+    });
+  const assignmentReasons = (role: OrganizationRole | undefined, assignment: { enabled: boolean; startsAt: string | null; expiresAt: string | null }) => {
+    const reasons: string[] = [];
+    if (!role) reasons.push("角色不存在");
+    else if (!role.enabled) reasons.push("角色已停用");
+    if (!assignment.enabled) reasons.push("分配已停用");
+    else if (assignment.startsAt && Date.parse(assignment.startsAt) > now) reasons.push("分配尚未生效");
+    else if (assignment.expiresAt && Date.parse(assignment.expiresAt) <= now) reasons.push("分配已到期");
+    return reasons;
+  };
+  const roles = held.map((assignment) => {
+    const role = rolesById.get(assignment.roleId);
+    const reasons = assignmentReasons(role, assignment);
+    return {
+      id: assignment.id,
+      roleId: assignment.roleId,
+      name: role?.name ?? "",
+      permissionCodes: role?.permissionCodes ?? [],
+      source: assignment.subjectType === "user" ? "direct" as const : "inherited" as const,
+      subjectType: assignment.subjectType,
+      subjectId: assignment.subjectId,
+      subjectName: subjectName(assignment.subjectType, assignment.subjectId),
+      managementScope: scopeProjects(assignment.managementScope, projectName),
+      holders: holdersOf(assignment.roleId),
+      startsAt: assignment.startsAt,
+      expiresAt: assignment.expiresAt,
+      status: statusOf(assignment, now),
+      usable: reasons.length === 0,
+      invalidReason: explainInvalid(reasons),
+      managesResources: false,
+    };
+  });
+  const dataGrants = access.state.dataGrants
+    .filter((grant) => held.some((assignment) => assignment.roleId === grant.roleId))
+    .map((grant) => {
+      const role = rolesById.get(grant.roleId);
+      const paths = roles.filter((assignment) => assignment.roleId === grant.roleId);
+      const reasons: string[] = [];
+      if (!paths.some((path) => path.usable)) {
+        for (const reason of new Set(paths.flatMap((path) => (path.invalidReason ? path.invalidReason.split("；") : [])))) reasons.push(reason);
+      }
+      const window = windowReason(grant, now);
+      if (window) reasons.push(window);
+      const item = access.catalog.find((entry) => resourceKey(entry) === resourceKey(grant.target));
+      const permissionCodes = operationCodes(role, grant.target);
+      reasons.push(...dataTargetReasons(Boolean(item), permissionCodes));
       return {
-        id: assignment.id,
-        roleId: assignment.roleId,
-        name: role?.name ?? "",
-        permissionCodes: role?.permissionCodes ?? [],
-        source: assignment.subjectType === "user" ? "direct" : "inherited",
-        subjectType: assignment.subjectType,
-        subjectId: assignment.subjectId,
-        startsAt: assignment.startsAt,
-        expiresAt: assignment.expiresAt,
-        status: statusOf(assignment, now),
-        managesResources: (role?.permissionCodes ?? []).some((code) => code.includes(".") && !code.startsWith("authorization.") && !code.startsWith("approval.") && !code.startsWith("audit.") && !code.startsWith("organization.") && !code.startsWith("member.") && !code.startsWith("team.")),
+        id: grant.id,
+        roleId: grant.roleId,
+        roleName: role?.name ?? "",
+        target: { type: grant.target.type, id: grant.target.id, name: item?.name ?? "" },
+        name: item?.name ?? "",
+        permissionCodes,
+        sources: paths.map((path) => ({ source: path.source, subjectType: path.subjectType, subjectName: path.subjectName })),
+        startsAt: grant.startsAt,
+        expiresAt: grant.expiresAt,
+        status: statusOf(grant, now),
+        usable: reasons.length === 0,
+        invalidReason: explainInvalid(reasons),
+        source: "role" as const,
       };
     });
-  const dataGrants = access.state.dataGrants
-    .filter((grant) => heldRoleIds.has(grant.roleId))
-    .map((grant) => ({
-      id: grant.id,
-      roleId: grant.roleId,
-      roleName: access.state.roles.find((role) => role.id === grant.roleId)?.name ?? "",
-      target: grant.target,
-      name: access.catalog.find((item) => resourceKey(item) === resourceKey(grant.target))?.name ?? "",
-      startsAt: grant.startsAt,
-      expiresAt: grant.expiresAt,
-      status: statusOf(grant, now),
-      source: "role",
-    }));
   const featureGrants = access.state.featureGrants
     .filter((grant) => access.applies(grant.subjectType, grant.subjectId))
-    .map((grant) => ({
-      id: grant.id,
-      targets: grant.targets,
-      features: grant.features,
-      source: grant.subjectType === "user" ? "direct" : "inherited",
-      subjectType: grant.subjectType,
-      startsAt: grant.startsAt,
-      expiresAt: grant.expiresAt,
-      status: statusOf(grant, now),
-    }));
+    .map((grant) => {
+      const reasons: string[] = [];
+      const window = windowReason(grant, now);
+      if (window) reasons.push(window);
+      const targets = grant.targets.map((target) => {
+        const named = access.catalog.find((entry) => resourceKey(entry) === resourceKey(target));
+        if (!named) reasons.push("目标已删除");
+        return { type: target.type, id: target.id, name: named?.name ?? "" };
+      });
+      const uniqueReasons = [...new Set(reasons)];
+      return {
+        id: grant.id,
+        targets,
+        features: grant.features,
+        source: grant.subjectType === "user" ? "direct" as const : "inherited" as const,
+        subjectType: grant.subjectType,
+        subjectId: grant.subjectId,
+        subjectName: subjectName(grant.subjectType, grant.subjectId),
+        startsAt: grant.startsAt,
+        expiresAt: grant.expiresAt,
+        status: statusOf(grant, now),
+        usable: uniqueReasons.length === 0,
+        invalidReason: explainInvalid(uniqueReasons),
+      };
+    });
   return { roles, dataGrants, featureGrants };
 }
 
@@ -394,13 +472,27 @@ function ancestorProjectIds(directIds: string[], parentOf: Map<string, string | 
   return covered;
 }
 
+/** Resource operations that execution would accept on this target. Catalog and organization scopes are not included. */
 function operationCodes(role: OrganizationRole | undefined, target: ResourceRef) {
   if (!role) return [];
   const capability = RESOURCE_CAPABILITIES[target.type];
-  return role.permissionCodes.filter((code) => {
-    const [head, mid] = code.split(".");
-    return head === capability || (head === "resource" && mid === capability);
-  });
+  return role.permissionCodes.filter((code) => resourceOperationApplies(code, capability));
+}
+
+function resourceOperationApplies(code: string, capability: string) {
+  const definition = PERMISSION_DEFINITIONS.find((item) => item.code === code);
+  if (!definition || definition.scope !== "resource") return false;
+  const [head, mid] = code.split(".");
+  if (head !== capability && !["authorization", "approval", "audit", "resource"].includes(head)) return false;
+  if (head === "resource" && mid !== capability) return false;
+  return true;
+}
+
+function dataTargetReasons(present: boolean, permissionCodes: string[]) {
+  const reasons: string[] = [];
+  if (!present) reasons.push("目标已删除");
+  if (!permissionCodes.length) reasons.push("没有匹配的资源操作码，当前不能操作该资源");
+  return reasons;
 }
 
 function recordStatus(record: { enabled: boolean; startsAt: string | null; expiresAt: string | null }, now: number) {
@@ -499,12 +591,14 @@ export async function memberPermissions(db: EnvmanDatabase, org: string, viewerI
       else if (grant.startsAt && Date.parse(grant.startsAt) > now) grantReasons.push("授权尚未生效");
       else if (grant.expiresAt && Date.parse(grant.expiresAt) <= now) grantReasons.push("授权已过期");
       const item = target.catalog.find((entry) => resourceKey(entry) === resourceKey(grant.target));
+      const permissionCodes = operationCodes(role, grant.target);
+      grantReasons.push(...dataTargetReasons(Boolean(item), permissionCodes));
       return {
         id: grant.id,
         roleId: grant.roleId,
         roleName: role?.name ?? "",
         target: { type: grant.target.type, id: grant.target.id, name: item?.name ?? "" },
-        permissionCodes: operationCodes(role, grant.target),
+        permissionCodes,
         sources: paths.map((path) => ({ source: path.source, subjectType: path.subjectType, subjectName: path.subjectName })),
         enabled: grant.enabled,
         startsAt: grant.startsAt,

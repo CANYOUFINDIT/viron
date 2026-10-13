@@ -1,20 +1,15 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { ArrowRight, Building2, FolderKanban, FolderPlus, Pencil, Plus, Server, ShieldCheck, Trash2, Users } from "@lucide/vue";
-import TipIcon from "../../components/TipIcon.vue";
-import { currentLocale, translate } from "../../i18n";
+import { ArrowRight, Building2, FolderKanban, FolderPlus, Pencil, Plus, Trash2, Users } from "@lucide/vue";
 import { nameInitials } from "../../../shared/name-initials";
 import { useOrganizationContext } from "./context";
-import GrantTimelineView from "./GrantTimelineView.vue";
 import OrganizationInvitationPanel from "./OrganizationInvitationPanel.vue";
 import OrganizationResourceOverview from "./OrganizationResourceOverview.vue";
 import MemberPermissionDialog from "./MemberPermissionDialog.vue";
 import { STRUCTURE_TREE_MAX, STRUCTURE_TREE_MIN, STRUCTURE_TREE_TEXT_MIN, STRUCTURE_TREE_WIDTH_KEY, clampStructureTreeWidth, preferredStructureTreeWidth, settleStructureTreeWidth } from "./structure-tree-width";
 
-const { activateWorkspace, canManageOrganization, changeRole, createOrganizationDialog, currentOrganizationId, deleteProject, detail, openCreateProject, openEditGrant, openEditProject, openGrantDialog, openGrantHistory, openInvitationDialog, openProjectMembersById, organizations, removeMember, resources, revokeGrant, selectStructureNode, selectedGrantRows, selectedGrantTarget, selectedMember, selectedMemberProjects, selectedNode, selectedProject, selectedProjectChildren, selectedProjectPath, structureTree } = useOrganizationContext();
+const { activateWorkspace, canManageOrganization, changeRole, createOrganizationDialog, currentOrganizationId, deleteProject, detail, openCreateProject, openEditProject, openInvitationDialog, openProjectMembersById, organizations, removeMember, selectStructureNode, selectedMember, selectedMemberProjects, selectedNode, selectedProject, selectedProjectChildren, selectedProjectPath, structureTree } = useOrganizationContext();
 const memberPermissionOpen = ref(false);
-
-const grantView = ref<"list" | "timeline">("list");
 function showMember(id: string) {
   selectedNode.value = { type: "member", id };
 }
@@ -115,19 +110,6 @@ onBeforeUnmount(() => {
   stopTreeResize?.();
 });
 
-function grantSource(row: { source: string; inherited: boolean }): string {
-  return row.inherited ? translate("继承自 {0}", [row.source]) : row.source;
-}
-
-function grantExpiry(grant: { expired: boolean; pending?: boolean; startsAt?: string | null; expiresAt?: string | null }): string {
-  if (grant.expired) return translate("已过期");
-  const end = grant.expiresAt ? new Date(grant.expiresAt).toLocaleString(currentLocale()) : translate("永久");
-  if (grant.pending && grant.startsAt) {
-    const start = new Date(grant.startsAt).toLocaleString(currentLocale());
-    return grant.expiresAt ? translate("{{0}} 起，至 {{1}}", [start, end]) : translate("{{0}} 起生效", [start]);
-  }
-  return end;
-}
 </script>
 
 <template>
@@ -215,7 +197,6 @@ function grantExpiry(grant: { expired: boolean; pending?: boolean; startsAt?: st
                     <span><small>{{ $t('根项目组') }}</small><strong>{{ detail.projects.filter((project) => !project.parentId).length }}</strong></span>
                     <span><small>{{ $t('项目组总数') }}</small><strong>{{ detail.projects.length }}</strong></span>
                     <span><small>{{ $t('成员总数') }}</small><strong>{{ detail.members.length }}</strong></span>
-                    <span><small>{{ $t('授权关系') }}</small><strong>{{ detail.grants.length }}</strong></span>
                   </template>
                   <template v-else-if="selectedProject">
                     <span><small>{{ $t('直属成员') }}</small><strong>{{ selectedProject.memberCount }}</strong></span>
@@ -240,40 +221,6 @@ function grantExpiry(grant: { expired: boolean; pending?: boolean; startsAt?: st
                 <OrganizationInvitationPanel v-if="canManageOrganization && selectedNode.type === 'organization'" />
                 <section v-else-if="selectedMember && currentOrganizationId" class="node-grants" aria-label="成员权限">
                   <header><div><strong>成员权限</strong><small>{{ (selectedMember.roleNames || []).join("、") || "暂无有效角色" }}</small></div><el-button type="primary" @click="memberPermissionOpen = true">查看权限</el-button></header>
-                </section>
-                <section v-if="canManageOrganization && selectedNode.type === 'organization'" class="node-grants">
-                  <header>
-                    <div><strong>{{ selectedNode.type === 'organization' ? $t('组织授权总览') : $t('连接与资源授权') }}</strong><small>{{ selectedGrantRows.length }} {{ $t('项有效授权') }}</small></div>
-                    <span class="node-grants__tools">
-                      <div v-if="selectedGrantRows.length" class="grant-view-switch" role="radiogroup" :aria-label="$t('授权视角')">
-                        <button type="button" role="radio" :aria-checked="grantView === 'list'" :class="{ 'is-active': grantView === 'list' }" @click="grantView = 'list'">{{ $t('列表') }}</button>
-                        <button type="button" role="radio" :aria-checked="grantView === 'timeline'" :class="{ 'is-active': grantView === 'timeline' }" @click="grantView = 'timeline'">{{ $t('时间线') }}</button>
-                      </div>
-                      <TipIcon :content="$t('子项目组继承父项目组授权；成员权限是个人直授与所属项目组、祖先项目组授权的并集。')" placement="left" />
-                      <el-button v-if="selectedGrantTarget" type="primary" disabled title="请在角色维护中授权" @click="openGrantDialog"><ShieldCheck :size="15" />{{ $t('授权资源') }}</el-button>
-                    </span>
-                  </header>
-                  <div v-if="selectedGrantRows.length && grantView === 'list'" class="grant-ledger">
-                    <div class="grant-ledger__head"><span>{{ $t('资源') }}</span><span>{{ $t('权限') }}</span><span>{{ $t('到期') }}</span><span>{{ $t('来源') }}</span><span>{{ $t('操作') }}</span></div>
-                    <div v-for="row in selectedGrantRows" :key="row.grant.id" class="grant-ledger__row">
-                      <span><Server :size="15" /><strong :title="row.grant.label">{{ row.grant.label || row.grant.resourceId }}</strong></span>
-                      <span :title="row.grant.permissionText">{{ row.grant.permissionText }}</span>
-                      <span :title="grantExpiry(row.grant)">{{ grantExpiry(row.grant) }}</span>
-                      <span><em :class="{ 'is-inherited': row.inherited }" :title="grantSource(row)">{{ grantSource(row) }}</em></span>
-                      <span class="grant-ledger__actions"><button type="button" class="is-edit" @click="openGrantHistory(row.grant)">{{ $t('记录') }}</button><template v-if="!row.inherited || selectedNode.type === 'organization'"><button type="button" class="is-edit" disabled title="旧授权只读" @click="openEditGrant(row.grant)">{{ $t('修改') }}</button><button type="button" disabled title="旧授权只读" @click="revokeGrant(row.grant)">{{ $t('撤销') }}</button></template><small v-else :title="$t('在来源节点管理')">{{ $t('在来源节点管理') }}</small></span>
-                    </div>
-                  </div>
-                  <GrantTimelineView
-                    v-else-if="selectedGrantRows.length"
-                    :rows="selectedGrantRows"
-                    :selected-node-type="selectedNode.type"
-                    :organization-id="currentOrganizationId"
-                    :resources="resources"
-                    @edit="openEditGrant"
-                    @revoke="revokeGrant"
-                    @history="openGrantHistory"
-                  />
-                  <div v-else class="grant-empty"><ShieldCheck :size="24" /><span>{{ $t('暂无有效授权') }}</span></div>
                 </section>
               </section>
             </article>
