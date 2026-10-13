@@ -7,7 +7,6 @@ import { provideOrganizationContext } from "./organization/context";
 import OrganizationRolesPanel from "./organization/OrganizationRolesPanel.vue";
 import OrganizationAccessPanel from "./organization/OrganizationAccessPanel.vue";
 import OrganizationGrantDialog from "./organization/OrganizationGrantDialog.vue";
-import OrganizationInvitationPanel from "./organization/OrganizationInvitationPanel.vue";
 import OrganizationPlatformPanel from "./organization/OrganizationPlatformPanel.vue";
 import OrganizationStructurePanel from "./organization/OrganizationStructurePanel.vue";
 import OrganizationResourceOverview from "./organization/OrganizationResourceOverview.vue";
@@ -86,10 +85,9 @@ function selectOrganization(organizationId: string) {
             <button type="button" :class="{ 'is-active': activePanel === 'mine' }" @click="activePanel = 'mine'">我的授权</button>
             <button type="button" :class="{ 'is-active': activePanel === 'requests' }" @click="activePanel = 'requests'">我的申请</button>
             <button type="button" :class="{ 'is-active': activePanel === 'todo' }" @click="activePanel = 'todo'">待我审批</button>
-            <button v-if="canManageOrganization" type="button" :class="{ 'is-active': activePanel === 'invitations' }" @click="activePanel = 'invitations'"><Link2 :size="16" />{{ $t('邀请') }}</button>
             <button v-if="session.user?.isPlatformAdmin" type="button" :class="{ 'is-active': activePanel === 'platform' }" @click="activePanel = 'platform'"><KeyRound :size="16" />{{ $t('平台账号') }}</button>
           </nav>
-          <OrganizationStructurePanel v-if="activePanel === 'structure'" />
+          <OrganizationStructurePanel v-if="activePanel === 'structure' || activePanel === 'invitations'" />
           <OrganizationResourceOverview v-else-if="activePanel === 'resources'" />
           <OrganizationRolesPanel v-else-if="activePanel === 'roles'" />
           <OrganizationApprovalPanel v-else-if="activePanel === 'approval'" />
@@ -97,7 +95,6 @@ function selectOrganization(organizationId: string) {
           <OrganizationMinePanel v-else-if="activePanel === 'requests'" view="requests" />
           <OrganizationMinePanel v-else-if="activePanel === 'todo'" view="todo" />
           <OrganizationAccessPanel v-else-if="activePanel === 'access'" />
-          <OrganizationInvitationPanel v-else-if="activePanel === 'invitations' && canManageOrganization" />
           <OrganizationPlatformPanel v-else-if="activePanel === 'platform' && session.user?.isPlatformAdmin" />
         </template>
 

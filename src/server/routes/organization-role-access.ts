@@ -23,6 +23,10 @@ import {
 } from "../../shared/organization-rbac.js";
 import { disconnectGrantees } from "../access-expiry.js";
 import { recordGrantLedger } from "../organization-approval.js";
+import {
+  dataAuthorizationRevision,
+  featureAuthorizationRevision,
+} from "../organization-overview.js";
 import { writeAudit } from "../audit.js";
 import { isUniqueConstraintError } from "../database-errors.js";
 
@@ -97,6 +101,28 @@ const featureSchema = z
   .refine(validRange, "结束时间必须晚于开始时间并且尚未到期");
 const reasonSchema = z
   .object({ reason: z.string().trim().min(1).max(2000) })
+  .strict();
+const revisionField = z.string().regex(/^[a-f0-9]{64}$/);
+const targetWindowSchema = z
+  .object({
+    ...validity,
+    revision: revisionField,
+  })
+  .strict()
+  .refine(validRange, "结束时间必须晚于开始时间并且尚未到期");
+const featureTargetWindowSchema = z
+  .object({
+    ...validity,
+    revision: revisionField,
+    features: z
+      .object({ mcp: z.boolean(), agent: z.boolean(), webPlugins: z.boolean() })
+      .strict()
+      .refine((value) => value.mcp || value.agent || value.webPlugins, "至少选择一项功能"),
+  })
+  .strict()
+  .refine(validRange, "结束时间必须晚于开始时间并且尚未到期");
+const targetRevokeSchema = z
+  .object({ reason: z.string().trim().min(1).max(2000), revision: revisionField })
   .strict();
 
 export async function registerOrganizationRoleAccessRoutes(
@@ -891,4 +917,302 @@ export async function registerOrganizationRoleAccessRoutes(
         });
       },
     );
+
+  const changed = () =>
+    new OrganizationPermissionError(
+      "GRANT_CHANGED",
+      409,
+      "当前授权已变更，请刷新后重试",
+    );
+  const targetGone = () =>
+    new OrganizationPermissionError(
+      "CURRENT_TARGET_CHANGED",
+      409,
+      "当前资源已不在这条授权中，请刷新后重试",
+    );
+  const parseFeatureTargets = (value: unknown) => {
+    const parsed = typeof value === "string" ? JSON.parse(value) : value;
+    return Array.isArray(parsed) ? (parsed as ResourceRef[]) : [];
+  };
+  const parseFeatures = (value: unknown) => {
+    const parsed = typeof value === "string" ? JSON.parse(value) : value;
+    const record = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+    return {
+      mcp: Boolean(record.mcp),
+      agent: Boolean(record.agent),
+      webPlugins: Boolean(record.webPlugins),
+    };
+  };
+  const resourceParams = (
+    request: FastifyRequest<{ Params: { type: string; resourceId: string; grantId: string } }>,
+    reply: { code: (status: number) => { send: (body: unknown) => unknown } },
+  ) => {
+    const parsed = z
+      .object({
+        type: z.enum(RESOURCE_TYPES),
+        resourceId: z.string().uuid(),
+        grantId: z.string().uuid(),
+      })
+      .safeParse(request.params);
+    if (!parsed.success) {
+      void reply.code(400).send({ error: "INVALID_RESOURCE", message: "资源不存在" });
+      return null;
+    }
+    return {
+      grantId: parsed.data.grantId,
+      target: { type: parsed.data.type, id: parsed.data.resourceId } as ResourceRef,
+    };
+  };
+
+  app.put<{ Params: { id: string; type: string; resourceId: string; grantId: string } }>(
+    "/api/v1/organizations/:id/resource-authorizations/:type/:resourceId/data-grants/:grantId",
+    async (request, reply) => {
+      const params = resourceParams(request, reply);
+      const body = params && parseBody(targetWindowSchema, request.body, reply);
+      if (!params || !body) return;
+      const result = await mutate(request, "修改当前资源的数据授权", body.reason, async () => {
+        const row = await app.db
+          .prepare(
+            "SELECT id, role_id, target_type, target_id, enabled, starts_at, expires_at, reason, source, request_id FROM organization_role_data_grants WHERE organization_id = ? AND id = ?",
+          )
+          .get<{
+            id: string;
+            role_id: string;
+            target_type: ResourceRef["type"];
+            target_id: string;
+            enabled: number;
+            starts_at: string | null;
+            expires_at: string | null;
+            reason: string;
+            source: string;
+            request_id: string | null;
+          }>(request.params.id, params.grantId);
+        if (!row) throw new OrganizationPermissionError("NOT_FOUND", 404, "授权记录不存在");
+        const stored = { type: row.target_type, id: row.target_id };
+        if (resourceKey(stored) !== resourceKey(params.target)) throw targetGone();
+        await validateTargets(request.params.id, [params.target]);
+        const requestId = row.request_id ? String(row.request_id) : null;
+        const current = {
+          id: row.id,
+          roleId: row.role_id,
+          target: stored,
+          enabled: Number(row.enabled) === 1,
+          startsAt: row.starts_at ? String(row.starts_at) : null,
+          expiresAt: row.expires_at ? String(row.expires_at) : null,
+          reason: String(row.reason),
+          source: String(row.source),
+          requestId,
+        };
+        if (dataAuthorizationRevision(current) !== body.revision) throw changed();
+        await requirePermission(request, "authorization.update", [params.target]);
+        await app.db
+          .prepare(
+            "UPDATE organization_role_data_grants SET enabled = ?, starts_at = ?, expires_at = ?, reason = ? WHERE organization_id = ? AND id = ?",
+          )
+          .run(body.enabled ? 1 : 0, body.startsAt, body.expiresAt, body.reason, request.params.id, row.id);
+        return {
+          id: row.id,
+          before: current,
+          after: { ...current, enabled: body.enabled, startsAt: body.startsAt, expiresAt: body.expiresAt, reason: body.reason },
+        };
+      });
+      return reply.send(result);
+    },
+  );
+  app.delete<{ Params: { id: string; type: string; resourceId: string; grantId: string } }>(
+    "/api/v1/organizations/:id/resource-authorizations/:type/:resourceId/data-grants/:grantId",
+    async (request, reply) => {
+      const params = resourceParams(request, reply);
+      const body = params && parseBody(targetRevokeSchema, request.body, reply);
+      if (!params || !body) return;
+      return mutate(request, "撤销当前资源的数据授权", body.reason, async () => {
+        const row = await app.db
+          .prepare(
+            "SELECT id, role_id, target_type, target_id, enabled, starts_at, expires_at, reason, source, request_id FROM organization_role_data_grants WHERE organization_id = ? AND id = ?",
+          )
+          .get<{
+            id: string;
+            role_id: string;
+            target_type: ResourceRef["type"];
+            target_id: string;
+            enabled: number;
+            starts_at: string | null;
+            expires_at: string | null;
+            reason: string;
+            source: string;
+            request_id: string | null;
+          }>(request.params.id, params.grantId);
+        if (!row) throw new OrganizationPermissionError("NOT_FOUND", 404, "授权记录不存在");
+        const stored = { type: row.target_type, id: row.target_id };
+        if (resourceKey(stored) !== resourceKey(params.target)) throw targetGone();
+        const requestId = row.request_id ? String(row.request_id) : null;
+        const current = {
+          id: row.id,
+          roleId: row.role_id,
+          target: stored,
+          enabled: Number(row.enabled) === 1,
+          startsAt: row.starts_at ? String(row.starts_at) : null,
+          expiresAt: row.expires_at ? String(row.expires_at) : null,
+          reason: String(row.reason),
+          source: String(row.source),
+          requestId,
+        };
+        if (dataAuthorizationRevision(current) !== body.revision) throw changed();
+        await requirePermission(request, "authorization.revoke", [params.target]);
+        await app.db
+          .prepare("DELETE FROM organization_role_data_grants WHERE organization_id = ? AND id = ?")
+          .run(request.params.id, row.id);
+        return { before: current };
+      });
+    },
+  );
+  app.put<{ Params: { id: string; type: string; resourceId: string; grantId: string } }>(
+    "/api/v1/organizations/:id/resource-authorizations/:type/:resourceId/feature-grants/:grantId",
+    async (request, reply) => {
+      const params = resourceParams(request, reply);
+      const body = params && parseBody(featureTargetWindowSchema, request.body, reply);
+      if (!params || !body) return;
+      const result = await mutate(request, "修改当前资源的功能授权", body.reason, async () => {
+        const row = await app.db
+          .prepare(
+            "SELECT id, subject_type, subject_id, targets_json, features_json, enabled, starts_at, expires_at, reason, request_id FROM organization_feature_grants WHERE organization_id = ? AND id = ?",
+          )
+          .get<Record<string, unknown>>(request.params.id, params.grantId);
+        if (!row) throw new OrganizationPermissionError("NOT_FOUND", 404, "授权记录不存在");
+        const targets = parseFeatureTargets(row.targets_json);
+        if (!targets.some((item) => resourceKey(item) === resourceKey(params.target))) throw targetGone();
+        await validateTargets(request.params.id, [params.target]);
+        const features = parseFeatures(row.features_json);
+        const requestId = row.request_id ? String(row.request_id) : null;
+        const current = {
+          id: String(row.id),
+          subjectType: String(row.subject_type),
+          subjectId: String(row.subject_id),
+          enabled: Number(row.enabled) === 1,
+          startsAt: row.starts_at ? String(row.starts_at) : null,
+          expiresAt: row.expires_at ? String(row.expires_at) : null,
+          reason: String(row.reason),
+          features,
+          requestId,
+          targets,
+        };
+        if (featureAuthorizationRevision(current) !== body.revision) throw changed();
+        await requirePermission(request, "authorization.update", [params.target]);
+        if (body.features.webPlugins && params.target.type !== "environment")
+          throw new OrganizationPermissionError("INVALID_PLUGIN_SCOPE", 400, "Web 插件只能按环境授权");
+        const remaining = targets.filter((item) => resourceKey(item) !== resourceKey(params.target));
+        const next = {
+          subjectType: current.subjectType,
+          subjectId: current.subjectId,
+          targets: [params.target],
+          features: body.features,
+          enabled: body.enabled,
+          startsAt: body.startsAt,
+          expiresAt: body.expiresAt,
+          reason: body.reason,
+          requestId,
+          source: requestId ? "request" : "direct",
+        };
+        if (!remaining.length) {
+          await app.db
+            .prepare(
+              "UPDATE organization_feature_grants SET features_json = ?, enabled = ?, starts_at = ?, expires_at = ?, reason = ? WHERE organization_id = ? AND id = ?",
+            )
+            .run(JSON.stringify(body.features), body.enabled ? 1 : 0, body.startsAt, body.expiresAt, body.reason, request.params.id, current.id);
+          return { id: current.id, before: current, after: { ...next, id: current.id } };
+        }
+        const id = randomUUID();
+        await app.db
+          .prepare("UPDATE organization_feature_grants SET targets_json = ? WHERE organization_id = ? AND id = ?")
+          .run(JSON.stringify(remaining), request.params.id, current.id);
+        await app.db
+          .prepare(
+            `INSERT INTO organization_feature_grants (
+              id, organization_id, subject_type, subject_id, targets_json, features_json,
+              enabled, starts_at, expires_at, reason, request_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            id,
+            request.params.id,
+            current.subjectType,
+            current.subjectId,
+            JSON.stringify([params.target]),
+            JSON.stringify(body.features),
+            body.enabled ? 1 : 0,
+            body.startsAt,
+            body.expiresAt,
+            body.reason,
+            requestId,
+            new Date().toISOString(),
+          );
+        return {
+          id,
+          before: current,
+          after: { ...next, id, retainedGrantId: current.id, retainedTargets: remaining },
+        };
+      });
+      return reply.send(result);
+    },
+  );
+  app.delete<{ Params: { id: string; type: string; resourceId: string; grantId: string } }>(
+    "/api/v1/organizations/:id/resource-authorizations/:type/:resourceId/feature-grants/:grantId",
+    async (request, reply) => {
+      const params = resourceParams(request, reply);
+      const body = params && parseBody(targetRevokeSchema, request.body, reply);
+      if (!params || !body) return;
+      return mutate(request, "撤销当前资源的功能授权", body.reason, async () => {
+        const row = await app.db
+          .prepare(
+            "SELECT id, subject_type, subject_id, targets_json, features_json, enabled, starts_at, expires_at, reason, request_id FROM organization_feature_grants WHERE organization_id = ? AND id = ?",
+          )
+          .get<Record<string, unknown>>(request.params.id, params.grantId);
+        if (!row) throw new OrganizationPermissionError("NOT_FOUND", 404, "授权记录不存在");
+        const targets = parseFeatureTargets(row.targets_json);
+        if (!targets.some((item) => resourceKey(item) === resourceKey(params.target))) throw targetGone();
+        const features = parseFeatures(row.features_json);
+        const requestId = row.request_id ? String(row.request_id) : null;
+        const current = {
+          id: String(row.id),
+          subjectType: String(row.subject_type),
+          subjectId: String(row.subject_id),
+          enabled: Number(row.enabled) === 1,
+          startsAt: row.starts_at ? String(row.starts_at) : null,
+          expiresAt: row.expires_at ? String(row.expires_at) : null,
+          reason: String(row.reason),
+          features,
+          requestId,
+          targets,
+        };
+        if (featureAuthorizationRevision(current) !== body.revision) throw changed();
+        await requirePermission(request, "authorization.revoke", [params.target]);
+        const remaining = targets.filter((item) => resourceKey(item) !== resourceKey(params.target));
+        if (!remaining.length) {
+          await app.db
+            .prepare("DELETE FROM organization_feature_grants WHERE organization_id = ? AND id = ?")
+            .run(request.params.id, current.id);
+          return { before: current };
+        }
+        await app.db
+          .prepare("UPDATE organization_feature_grants SET targets_json = ? WHERE organization_id = ? AND id = ?")
+          .run(JSON.stringify(remaining), request.params.id, current.id);
+        return {
+          before: current,
+          after: {
+            id: current.id,
+            subjectType: current.subjectType,
+            subjectId: current.subjectId,
+            targets: remaining,
+            features,
+            enabled: current.enabled,
+            startsAt: current.startsAt,
+            expiresAt: current.expiresAt,
+            reason: current.reason,
+            requestId,
+            source: requestId ? "request" : "direct",
+          },
+        };
+      });
+    },
+  );
 }

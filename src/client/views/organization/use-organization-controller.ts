@@ -240,7 +240,7 @@ export function useOrganizationController() {
         meta: tr("{0} 人", [directMembers.length]),
         children: [
           ...projectChildren,
-          ...directMembers.map((member) => ({ key: `member:${project.id}:${member.id}`, type: "member" as const, entityId: member.id, label: member.username, meta: member.role === "admin" ? tr("管理员") : tr("成员") })),
+          ...directMembers.map((member) => ({ key: `member:${project.id}:${member.id}`, type: "member" as const, entityId: member.id, label: member.username, meta: (member.roleNames ?? []).join("、") || "暂无角色" })),
         ],
       };
     };
@@ -255,7 +255,7 @@ export function useOrganizationController() {
       meta: tr("{0} 个项目组 · {1} 人", [projects.length, members.length]),
       children: [
         ...rootProjects,
-        ...unassignedMembers.map((member) => ({ key: `member:root:${member.id}`, type: "member" as const, entityId: member.id, label: member.username, meta: tr("未归组") })),
+        ...unassignedMembers.map((member) => ({ key: `member:root:${member.id}`, type: "member" as const, entityId: member.id, label: member.username, meta: (member.roleNames ?? []).join("、") || "暂无角色" })),
       ],
     }];
   });
@@ -300,7 +300,8 @@ export function useOrganizationController() {
     grantDialog.value = true;
   }
 
-  function openInvitationDialog() {
+  function openInvitationDialog(projectId?: string | null) {
+    invitationProjectId.value = typeof projectId === "string" ? projectId : null;
     generatedInvitation.value = null;
     invitationDialog.value = true;
   }

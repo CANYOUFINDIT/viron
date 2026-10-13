@@ -422,4 +422,122 @@ describe("organization phases 2-7", () => {
     const grants = await f.db.prepare("SELECT id FROM organization_role_data_grants WHERE role_id = ? AND request_id = ?").all(held.roleId, pauseRequest.json().id);
     expect(grants).toHaveLength(0);
   });
+
+  it("reads a member's ancestor and direct permissions without using the viewer's role state", async () => {
+    const f = await fixture();
+    const parent = await f.app.inject({ method: "POST", url: f.base + "/projects", cookies: f.cookies, payload: { name: "示例技术部" } });
+    const child = await f.app.inject({ method: "POST", url: f.base + "/projects", cookies: f.cookies, payload: { name: "示例研发组", parentId: parent.json().id } });
+    expect(parent.statusCode, parent.body).toBe(201);
+    expect(child.statusCode, child.body).toBe(201);
+    const guest = await f.app.inject({ method: "POST", url: "/api/v1/auth/register", payload: { username: "review-member", password: "member" } });
+    const guestId = guest.json().user.id as string;
+    const guestCookies = { envman_session: guest.cookies[0].value };
+    const joinedAt = new Date().toISOString();
+    await f.db.prepare("INSERT INTO organization_members (organization_id,user_id,role,created_at,updated_at) VALUES (?,?,'member',?,?)").run(f.org, guestId, joinedAt, joinedAt);
+    expect((await f.app.inject({ method: "POST", url: `${f.base}/projects/${child.json().id}/members`, cookies: f.cookies, payload: { userId: guestId } })).statusCode).toBe(201);
+    expect((await f.app.inject({ method: "PUT", url: "/api/v1/auth/workspace", cookies: guestCookies, payload: { type: "organization", id: f.org } })).statusCode).toBe(200);
+    const inherited = await f.app.inject({ method: "POST", url: f.base + "/roles", cookies: f.cookies, payload: { name: "示例查看角色", permissionCodes: ["ssh.view", "ssh.use"], reason: "祖先角色" } });
+    const direct = await f.app.inject({ method: "POST", url: f.base + "/roles", cookies: f.cookies, payload: { name: "直接查看", permissionCodes: ["ssh.view"], reason: "直接角色" } });
+    const future = await f.app.inject({ method: "POST", url: f.base + "/roles", cookies: f.cookies, payload: { name: "未来角色", permissionCodes: ["ssh.view"], reason: "未来角色" } });
+    const disabledRole = await f.app.inject({ method: "POST", url: f.base + "/roles", cookies: f.cookies, payload: { name: "停用角色", permissionCodes: ["ssh.view"], enabled: false, reason: "停用角色" } });
+    const disabledAssignment = await f.app.inject({ method: "POST", url: f.base + "/roles", cookies: f.cookies, payload: { name: "停用分配", permissionCodes: ["ssh.view"], reason: "停用分配" } });
+    expect(inherited.statusCode, inherited.body).toBe(201);
+    const inheritedId = inherited.json().id as string;
+    const directId = direct.json().id as string;
+    const futureId = future.json().id as string;
+    const disabledRoleId = disabledRole.json().id as string;
+    const disabledAssignmentId = disabledAssignment.json().id as string;
+    expect((await f.app.inject({ method: "POST", url: f.base + "/role-assignments", cookies: f.cookies, payload: { roleId: inheritedId, subjectType: "project", subjectId: parent.json().id, reason: "父组织" } })).statusCode).toBe(201);
+    expect((await f.app.inject({ method: "POST", url: f.base + "/role-assignments", cookies: f.cookies, payload: { roleId: directId, subjectType: "user", subjectId: guestId, reason: "直接分配" } })).statusCode).toBe(201);
+    expect((await f.app.inject({ method: "POST", url: f.base + "/role-assignments", cookies: f.cookies, payload: { roleId: futureId, subjectType: "user", subjectId: guestId, startsAt: new Date(Date.now() + 86_400_000).toISOString(), reason: "尚未生效" } })).statusCode).toBe(201);
+    expect((await f.app.inject({ method: "POST", url: f.base + "/role-assignments", cookies: f.cookies, payload: { roleId: disabledRoleId, subjectType: "user", subjectId: guestId, reason: "角色停用" } })).statusCode).toBe(201);
+    expect((await f.app.inject({ method: "POST", url: f.base + "/role-assignments", cookies: f.cookies, payload: { roleId: disabledAssignmentId, subjectType: "user", subjectId: guestId, enabled: false, reason: "分配停用" } })).statusCode).toBe(201);
+    for (const roleId of [inheritedId, futureId, disabledRoleId, disabledAssignmentId])
+      expect((await f.app.inject({ method: "POST", url: f.base + "/role-data-grants", cookies: f.cookies, payload: { roleId, targets: [{ type: "ssh_connection", id: f.sshId }], reason: "连接A" } })).statusCode).toBe(201);
+    expect((await f.app.inject({ method: "POST", url: f.base + "/role-data-grants", cookies: f.cookies, payload: { roleId: directId, targets: [{ type: "ssh_connection", id: f.otherId }], reason: "连接B" } })).statusCode).toBe(201);
+    expect((await f.app.inject({ method: "POST", url: f.base + "/feature-grants", cookies: f.cookies, payload: { subjectType: "project", subjectId: parent.json().id, targets: [{ type: "ssh_connection", id: f.sshId }, { type: "ssh_connection", id: f.otherId }], features: { mcp: true, agent: false, webPlugins: false }, reason: "祖先功能" } })).statusCode).toBe(201);
+    const metadata = await f.app.inject({ method: "POST", url: f.base + "/roles", cookies: f.cookies, payload: { name: "元信息查看", permissionCodes: ["member.view", "role.view"], reason: "元信息" } });
+    expect(metadata.statusCode, metadata.body).toBe(201);
+    expect((await f.app.inject({ method: "POST", url: f.base + "/role-assignments", cookies: f.cookies, payload: { roleId: metadata.json().id, subjectType: "user", subjectId: f.userId, managementScope: { kind: "organization", ids: [], includeChildren: true }, reason: "元信息" } })).statusCode).toBe(201);
+    await grantRole(f.app, f.cookies, f.base, f.userId, ["authorization.view"], [{ type: "ssh_connection", id: f.sshId }]);
+    const quiet = await f.app.inject({ method: "POST", url: "/api/v1/auth/register", payload: { username: "quiet-member", password: "member" } });
+    const quietId = quiet.json().user.id as string;
+    const quietJoinedAt = new Date().toISOString();
+    await f.db.prepare("INSERT INTO organization_members (organization_id,user_id,role,created_at,updated_at) VALUES (?,?,'member',?,?)").run(f.org, quietId, quietJoinedAt, quietJoinedAt);
+
+    const read = await f.app.inject({ method: "GET", url: `${f.base}/members/${guestId}/permissions`, cookies: f.cookies });
+    expect(read.statusCode, read.body).toBe(200);
+    const body = read.json();
+    expect(body.roles.map((role: { name: string }) => role.name)).not.toContain("组织管理员");
+    expect(body.effectiveRoleNames).toEqual(expect.arrayContaining(["普通成员", "示例查看角色", "直接查看"]));
+    expect(body.effectiveRoleNames).not.toEqual(expect.arrayContaining(["未来角色", "停用角色", "停用分配"]));
+    expect(body.assignments).toEqual(expect.arrayContaining([
+      expect.objectContaining({ roleName: "示例查看角色", source: "ancestor", subjectName: "示例技术部", usable: true, status: "active" }),
+      expect.objectContaining({ roleName: "直接查看", source: "direct", subjectName: "review-member", usable: true }),
+      expect.objectContaining({ roleName: "普通成员", source: "organization", usable: true }),
+      expect.objectContaining({ roleName: "未来角色", status: "pending", usable: false, invalidReason: expect.stringContaining("尚未生效") }),
+      expect.objectContaining({ roleName: "停用角色", usable: false, invalidReason: expect.stringContaining("角色已停用") }),
+      expect.objectContaining({ roleName: "停用分配", status: "disabled", usable: false, invalidReason: expect.stringContaining("分配已停用") }),
+    ]));
+    expect(body.dataGrants).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        roleName: "示例查看角色",
+        usable: true,
+        permissionCodes: expect.arrayContaining(["ssh.view", "ssh.use"]),
+        target: { type: "ssh_connection", id: f.sshId, name: "连接A" },
+        sources: [expect.objectContaining({ source: "ancestor", subjectName: "示例技术部" })],
+      }),
+      expect.objectContaining({ roleName: "未来角色", usable: false, invalidReason: expect.stringContaining("尚未生效") }),
+      expect.objectContaining({ roleName: "停用角色", usable: false }),
+    ]));
+    expect(body.featureGrants).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        source: "ancestor",
+        subjectName: "示例技术部",
+        usable: true,
+        features: { mcp: true, agent: false, webPlugins: false },
+        targets: expect.arrayContaining([
+          expect.objectContaining({ type: "ssh_connection", id: f.sshId, name: "连接A" }),
+          expect.objectContaining({ type: "ssh_connection", id: f.otherId, name: "连接B" }),
+        ]),
+        hiddenTargetCount: 0,
+      }),
+    ]));
+    expect(body.partialReason).toBeNull();
+    expect(read.body).not.toContain("example.invalid");
+    expect(read.body).not.toContain("other.invalid");
+    expect(read.body).not.toContain("fake-password");
+    expect(read.body).not.toContain("secret-body-text");
+
+    const self = await f.app.inject({ method: "GET", url: `${f.base}/members/${guestId}/permissions`, cookies: guestCookies });
+    expect(self.statusCode, self.body).toBe(200);
+    expect(self.json().assignments).toEqual(expect.arrayContaining([
+      expect.objectContaining({ roleName: "示例查看角色", source: "ancestor", subjectName: "示例技术部" }),
+    ]));
+    const mine = await f.app.inject({ method: "GET", url: f.base + "/my-access", cookies: guestCookies });
+    expect(mine.statusCode, mine.body).toBe(200);
+    expect(mine.json().roles).toEqual(expect.arrayContaining([expect.objectContaining({ name: "示例查看角色", source: "inherited" })]));
+
+    const partial = await f.app.inject({ method: "GET", url: `${f.base}/members/${guestId}/permissions`, cookies: f.memberCookies });
+    expect(partial.statusCode, partial.body).toBe(200);
+    const narrowed = partial.json();
+    expect(narrowed.partialReason).toMatch(/不在当前查看范围内/);
+    expect(narrowed.roles.map((role: { name: string }) => role.name)).toEqual(expect.arrayContaining(["示例查看角色", "直接查看"]));
+    expect(narrowed.dataGrants.map((grant: { target: { id: string } }) => grant.target.id)).toContain(f.sshId);
+    expect(narrowed.dataGrants.map((grant: { target: { id: string } }) => grant.target.id)).not.toContain(f.otherId);
+    expect(narrowed.featureGrants.every((grant: { targets: Array<{ id: string }> }) => grant.targets.every((target) => target.id !== f.otherId))).toBe(true);
+    expect(narrowed.featureGrants.some((grant: { targets: Array<{ id: string }> }) => grant.targets.some((target) => target.id === f.sshId))).toBe(true);
+    expect(narrowed.dataGrants.find((grant: { roleName: string }) => grant.roleName === "未来角色").usable).toBe(false);
+    expect(narrowed.dataGrants.find((grant: { roleName: string }) => grant.roleName === "停用角色").usable).toBe(false);
+    expect(partial.body).not.toContain("example.invalid");
+    expect(partial.body).not.toContain("fake-password");
+    expect(partial.body).not.toContain("连接B");
+
+    const quietCookies = { envman_session: quiet.cookies[0].value };
+    expect((await f.app.inject({ method: "PUT", url: "/api/v1/auth/workspace", cookies: quietCookies, payload: { type: "organization", id: f.org } })).statusCode).toBe(200);
+    const denied = await f.app.inject({ method: "GET", url: `${f.base}/members/${guestId}/permissions`, cookies: quietCookies });
+    expect(denied.statusCode, denied.body).toBe(403);
+    const absent = await f.app.inject({ method: "GET", url: `${f.base}/members/${randomUUID()}/permissions`, cookies: f.cookies });
+    expect(absent.statusCode, absent.body).toBe(404);
+  });
 });

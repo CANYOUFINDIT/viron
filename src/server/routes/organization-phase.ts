@@ -5,7 +5,7 @@ import { parseBody } from "../validation.js";
 import { OrganizationPermissionError } from "../organization-rbac.js";
 import { RESOURCE_TYPES, type ResourceRef } from "../../shared/organization-rbac.js";
 import { webPluginInjection } from "../organization-boundary.js";
-import { personalAuthorization, resourceAuthorization, resourceOverview } from "../organization-overview.js";
+import { memberPermissions, personalAuthorization, resourceAuthorization, resourceOverview } from "../organization-overview.js";
 import {
   decideGrantRequest,
   deleteApprovalFlow,
@@ -118,6 +118,13 @@ export async function registerOrganizationPhaseRoutes(app: FastifyInstance): Pro
   app.get<{ Params: { id: string } }>("/api/v1/organizations/:id/my-access", async (request, reply) => {
     if (!workspaceReady(request, reply, request.params.id)) return;
     return personalAuthorization(app.db, request.params.id, request.admin!.id);
+  });
+
+  app.get<{ Params: { id: string; memberId: string } }>("/api/v1/organizations/:id/members/:memberId/permissions", async (request, reply) => {
+    if (!workspaceReady(request, reply, request.params.id)) return;
+    const memberId = z.string().uuid().safeParse(request.params.memberId);
+    if (!memberId.success) return reply.code(400).send({ error: "INVALID_MEMBER", message: "成员不存在" });
+    return memberPermissions(app.db, request.params.id, request.admin!.id, memberId.data);
   });
 
   app.get<{ Params: { id: string } }>("/api/v1/organizations/:id/member-roles", async (request, reply) => {

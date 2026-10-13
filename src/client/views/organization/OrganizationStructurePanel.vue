@@ -6,10 +6,13 @@ import { currentLocale, translate } from "../../i18n";
 import { nameInitials } from "../../../shared/name-initials";
 import { useOrganizationContext } from "./context";
 import GrantTimelineView from "./GrantTimelineView.vue";
+import OrganizationInvitationPanel from "./OrganizationInvitationPanel.vue";
 import OrganizationResourceOverview from "./OrganizationResourceOverview.vue";
+import MemberPermissionDialog from "./MemberPermissionDialog.vue";
 import { STRUCTURE_TREE_MAX, STRUCTURE_TREE_MIN, STRUCTURE_TREE_TEXT_MIN, STRUCTURE_TREE_WIDTH_KEY, clampStructureTreeWidth, preferredStructureTreeWidth, settleStructureTreeWidth } from "./structure-tree-width";
 
-const { activateWorkspace, canManageOrganization, changeRole, createOrganizationDialog, currentOrganizationId, deleteProject, detail, openCreateProject, openEditGrant, openEditProject, openGrantDialog, openGrantHistory, openProjectMembersById, organizations, removeMember, resources, revokeGrant, selectStructureNode, selectedGrantRows, selectedGrantTarget, selectedMember, selectedMemberProjects, selectedNode, selectedProject, selectedProjectChildren, selectedProjectPath, structureTree } = useOrganizationContext();
+const { activateWorkspace, canManageOrganization, changeRole, createOrganizationDialog, currentOrganizationId, deleteProject, detail, openCreateProject, openEditGrant, openEditProject, openGrantDialog, openGrantHistory, openInvitationDialog, openProjectMembersById, organizations, removeMember, resources, revokeGrant, selectStructureNode, selectedGrantRows, selectedGrantTarget, selectedMember, selectedMemberProjects, selectedNode, selectedProject, selectedProjectChildren, selectedProjectPath, structureTree } = useOrganizationContext();
+const memberPermissionOpen = ref(false);
 
 const grantView = ref<"list" | "timeline">("list");
 function showMember(id: string) {
@@ -217,28 +220,28 @@ function grantExpiry(grant: { expired: boolean; pending?: boolean; startsAt?: st
                   <template v-else-if="selectedProject">
                     <span><small>{{ $t('直属成员') }}</small><strong>{{ selectedProject.memberCount }}</strong></span>
                     <span><small>{{ $t('子项目组') }}</small><strong>{{ selectedProjectChildren.length }}</strong></span>
-                    <span><small>{{ $t('有效授权') }}</small><strong>{{ selectedGrantRows.length }}</strong></span>
-                    <span><small>{{ $t('节点类型') }}</small><strong>{{ $t('项目组') }}</strong></span>
                   </template>
                   <template v-else-if="selectedMember">
                     <span><small>{{ $t('账号状态') }}</small><strong>{{ selectedMember.status === 'active' ? $t('使用中') : $t('已停用') }}</strong></span>
-                    <span><small>{{ $t('组织角色') }}</small><strong>{{ selectedMember.role === 'admin' ? $t('管理员') : $t('普通成员') }}</strong></span>
-                    <span><small>计算角色</small><strong>{{ (selectedMember.roleNames || []).join("、") || "—" }}</strong></span>
+                    <span><small>有效角色</small><strong>{{ (selectedMember.roleNames || []).join("、") || "—" }}</strong></span>
                     <span><small>{{ $t('所属项目组') }}</small><strong>{{ selectedMemberProjects.length }}</strong></span>
-                    <span><small>{{ $t('有效授权') }}</small><strong>{{ selectedGrantRows.length }}</strong></span>
                   </template>
                 </div>
 
                 <section v-if="selectedProject" class="node-grants" aria-label="子组织">
-                  <header><div><strong>成员</strong><small>关联资源与资源总览使用同一视图</small></div></header>
+                  <header><div><strong>成员</strong><small>关联资源与资源总览使用同一视图</small></div><el-button v-if="canManageOrganization" @click="openInvitationDialog(selectedProject.id)">邀请成员</el-button></header>
                   <div v-for="member in projectMembers" :key="member.id" class="grant-ledger__row">
                     <span><strong>{{ member.username }}</strong></span>
                     <span>{{ (member.roleNames || []).join("、") || "暂无角色" }}</span>
-                    <button type="button" @click="showMember(member.id)">查看权限</button>
+                    <button type="button" @click="showMember(member.id); memberPermissionOpen = true">查看权限</button>
                   </div>
                   <OrganizationResourceOverview :project-id="selectedProject.id" />
                 </section>
-                <section v-if="canManageOrganization && selectedNode.type !== 'project'" class="node-grants">
+                <OrganizationInvitationPanel v-if="canManageOrganization && selectedNode.type === 'organization'" />
+                <section v-else-if="selectedMember && currentOrganizationId" class="node-grants" aria-label="成员权限">
+                  <header><div><strong>成员权限</strong><small>{{ (selectedMember.roleNames || []).join("、") || "暂无有效角色" }}</small></div><el-button type="primary" @click="memberPermissionOpen = true">查看权限</el-button></header>
+                </section>
+                <section v-if="canManageOrganization && selectedNode.type === 'organization'" class="node-grants">
                   <header>
                     <div><strong>{{ selectedNode.type === 'organization' ? $t('组织授权总览') : $t('连接与资源授权') }}</strong><small>{{ selectedGrantRows.length }} {{ $t('项有效授权') }}</small></div>
                     <span class="node-grants__tools">
@@ -274,6 +277,7 @@ function grantExpiry(grant: { expired: boolean; pending?: boolean; startsAt?: st
                 </section>
               </section>
             </article>
+            <MemberPermissionDialog v-if="selectedMember && currentOrganizationId" v-model="memberPermissionOpen" :organization-id="currentOrganizationId" :member-id="selectedMember.id" :username="selectedMember.username" />
           </section>
 <section v-else class="console-panel organization-overview">
               <div v-if="organizations.length" class="organization-card-grid">

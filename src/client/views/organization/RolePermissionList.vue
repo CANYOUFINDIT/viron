@@ -18,7 +18,7 @@ const groups = computed(() =>
     <div v-for="group in groups" :key="group.module">
       <strong>{{ group.module }}</strong
       ><span v-for="item in group.items" :key="item.code"
-        >✓ {{ item.label }}</span
+        >✓ {{ item.label }} <code>{{ item.code }}</code></span
       >
     </div>
     <p v-if="!groups.length">此角色没有操作权限</p>
@@ -47,6 +47,11 @@ const groups = computed(() =>
 }
 .permission-summary span {
   color: var(--el-text-color-regular);
+}
+.permission-summary code {
+  margin-left: 4px;
+  color: var(--el-text-color-secondary);
+  font-size: 11px;
 }
 .permission-summary p {
   margin: 0;
