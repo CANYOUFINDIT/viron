@@ -34,6 +34,15 @@ export async function environmentsExist(db: EnvmanDatabase, environmentIds: stri
   return Number(row.count) === environmentIds.length;
 }
 
+export async function connectionEnvironmentIds(
+  db: EnvmanDatabase,
+  type: EnvironmentConnectionType,
+  connectionId: string,
+): Promise<string[]> {
+  const rows = await db.prepare(`SELECT environment_id FROM ${tables[type].environments} WHERE connection_id = ?`).all(connectionId) as Array<{ environment_id: string }>;
+  return rows.map((row) => row.environment_id);
+}
+
 export async function replaceConnectionEnvironments(
   db: EnvmanDatabase,
   type: EnvironmentConnectionType,

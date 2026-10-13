@@ -221,6 +221,7 @@ export async function recordGrantLedger(
     channel?: string | null;
   } = {},
 ) {
+  const targets = await stampTargetNames(db, org, details.targets ?? []);
   await db
     .prepare(
       `INSERT INTO organization_grant_ledger (
@@ -237,12 +238,68 @@ export async function recordGrantLedger(
       reason,
       details.before === undefined ? null : JSON.stringify(redactLedger(details.before)),
       details.after === undefined ? null : JSON.stringify(redactLedger(details.after)),
-      JSON.stringify(details.targets ?? []),
+      JSON.stringify(targets),
       details.requestId ?? null,
       details.grantId ?? null,
       details.channel ?? null,
       new Date().toISOString(),
     );
+}
+
+async function stampTargetNames(db: EnvmanDatabase, org: string, targets: ResourceRef[]) {
+  if (!targets.length) return [];
+  const catalog = await organizationResourceCatalog(db, org);
+  return targets.map((target) => {
+    const name = catalog.find((item) => item.type === target.type && item.id === target.id)?.name;
+    return name ? { type: target.type, id: target.id, name } : { type: target.type, id: target.id };
+  });
+}
+
+const connectionResourceType = {
+  ssh: "ssh_connection",
+  database: "database_connection",
+  redis: "redis_connection",
+} as const;
+
+/** Records an organization connection's environment association only when the set actually changes. */
+export async function recordConnectionEnvironmentChange(
+  db: EnvmanDatabase,
+  workspace: { type: string; id: string },
+  actor: LedgerActor,
+  kind: keyof typeof connectionResourceType,
+  connectionId: string,
+  connectionName: string,
+  beforeEnvironmentIds: string[],
+  afterEnvironmentIds: string[],
+) {
+  if (workspace.type !== "organization") return;
+  const beforeIds = [...new Set(beforeEnvironmentIds)].sort();
+  const afterIds = [...new Set(afterEnvironmentIds)].sort();
+  if (beforeIds.join("\0") === afterIds.join("\0")) return;
+  const ids = [...new Set([...beforeIds, ...afterIds])];
+  const rows = ids.length
+    ? await db.prepare(`SELECT id, name FROM environments WHERE id IN (${ids.map(() => "?").join(",")})`).all<{ id: string; name: string }>(...ids)
+    : [];
+  const nameOf = (id: string) => rows.find((row) => row.id === id)?.name || "已删除的环境";
+  const named = (list: string[]) => list.map((id) => ({ type: "environment" as const, id, name: nameOf(id) }));
+  const describe = (list: string[]) => (list.length ? list.map(nameOf).join("、") : "未关联环境");
+  await recordGrantLedger(db, workspace.id, actor, "变更资源关联", `关联环境由「${describe(beforeIds)}」改为「${describe(afterIds)}」`, {
+    before: {
+      target: { type: connectionResourceType[kind], id: connectionId, name: connectionName },
+      environmentIds: beforeIds,
+      environments: named(beforeIds),
+    },
+    after: {
+      target: { type: connectionResourceType[kind], id: connectionId, name: connectionName },
+      environmentIds: afterIds,
+      environments: named(afterIds),
+    },
+    targets: [
+      { type: connectionResourceType[kind], id: connectionId },
+      ...ids.map((id) => ({ type: "environment" as const, id })),
+    ],
+    channel: "association",
+  });
 }
 
 async function activeMembers(db: EnvmanDatabase, org: string) {
@@ -407,13 +464,31 @@ export async function listApprovalFlows(db: EnvmanDatabase, org: string) {
   const catalog = await organizationResourceCatalog(db, org);
   const items = await flows(db, org);
   const owned = new Set(items.flatMap((item) => item.targets.map(resourceKey)));
+  const named = (target: ResourceRef) => ({
+    ...target,
+    name: catalog.find((item) => item.type === target.type && item.id === target.id)?.name ?? "",
+  });
+  const unassigned = catalog
+    .filter((target) => !owned.has(resourceKey(target)))
+    .map((target) => ({ type: target.type, id: target.id, name: target.name, environmentIds: target.environmentIds }));
+  const members = await db
+    .prepare(
+      `SELECT u.id, u.username, u.status FROM organization_members m
+       JOIN admin_users u ON u.id = m.user_id
+       WHERE m.organization_id = ? ORDER BY u.username, u.id`,
+    )
+    .all<{ id: string; username: string; status: string }>(org);
   return {
     items: items.map((item) => ({
       ...item,
-      coverage: item.isDefault
-        ? catalog.filter((target) => !owned.has(resourceKey(target))).length
-        : item.targets.length,
+      nodes: item.nodes.map((node) => (unsupportedNode(node) ? { ...node, unsupported: true } : node)),
+      targets: item.targets.map(named),
+      coverage: item.isDefault ? unassigned.length : item.targets.length,
     })),
+    catalog: catalog.map((target) => ({ type: target.type, id: target.id, name: target.name, environmentIds: target.environmentIds })),
+    unassigned,
+    roles: (await roleState(db, org)).roles.map((role) => ({ id: role.id, name: role.name, enabled: role.enabled })),
+    members: members.map((member) => ({ id: member.id, username: member.username, status: member.status })),
   };
 }
 
@@ -452,12 +527,20 @@ export async function saveApprovalFlow(
       );
       return owner ? [{ target, flowName: owner.name }] : [];
     });
-    if (conflicts.length)
+    if (conflicts.length) {
+      const conflictItems = conflicts.map((item) => ({
+        type: item.target.type,
+        id: item.target.id,
+        name: catalog.find((resource) => sameTarget(resource, item.target))?.name ?? item.target.id,
+        flowName: item.flowName,
+      }));
       throw new OrganizationPermissionError(
         "APPROVAL_SCOPE_CONFLICT",
         409,
-        `这些资源已经属于其他流程：${conflicts.map((item) => catalog.find((resource) => sameTarget(resource, item.target))?.name ?? item.target.id).join("、")}`,
+        `这些资源已经属于其他流程：${conflictItems.map((item) => item.name).join("、")}`,
+        { conflicts: conflictItems },
       );
+    }
     const now = new Date().toISOString();
     const id = flow?.id ?? randomUUID();
     const nodes = input.nodes.map(storedSwitches);
@@ -1339,7 +1422,62 @@ export async function roleNamesByMember(db: EnvmanDatabase, org: string, now = s
   return names;
 }
 
-export async function listGrantLedger(db: EnvmanDatabase, org: string, viewerId: string, exporting = false) {
+export interface GrantLedgerFilter {
+  action?: string;
+  actor?: string;
+  target?: string;
+  type?: ResourceRef["type"];
+  from?: number;
+  to?: number;
+}
+
+function containsResourceType(value: unknown, type: string): boolean {
+  if (!value || typeof value !== "object") return false;
+  if (Array.isArray(value)) return value.some((item) => containsResourceType(item, type));
+  const record = value as Record<string, unknown>;
+  if (record.type === type && typeof record.id === "string") return true;
+  return Object.values(record).some((item) => containsResourceType(item, type));
+}
+
+function snapshotFacts(before: unknown, after: unknown) {
+  const names = new Map<string, string>();
+  const roles: string[] = [];
+  const subjects: string[] = [];
+  const sources: string[] = [];
+  const visit = (value: unknown) => {
+    if (!value || typeof value !== "object") return;
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    const record = value as Record<string, unknown>;
+    if (typeof record.id === "string" && typeof record.name === "string" && record.name.trim()) {
+      const key = typeof record.type === "string" ? `${record.type}:${record.id}` : record.id;
+      if (!names.has(key)) names.set(key, record.name);
+    }
+    if (typeof record.roleName === "string" && record.roleName && !roles.includes(record.roleName)) roles.push(record.roleName);
+    if (typeof record.subjectName === "string" && record.subjectName && !subjects.includes(record.subjectName)) subjects.push(record.subjectName);
+    if (typeof record.source === "string" && record.source && !sources.includes(record.source)) sources.push(record.source);
+    Object.values(record).forEach(visit);
+  };
+  visit(before);
+  visit(after);
+  return { names, role: roles.join("、"), subject: subjects.join("、"), source: sources.join("、") };
+}
+
+function ledgerTime(value: unknown) {
+  if (value instanceof Date) return value.getTime();
+  const time = Date.parse(String(value ?? ""));
+  return Number.isFinite(time) ? time : NaN;
+}
+
+export async function listGrantLedger(
+  db: EnvmanDatabase,
+  org: string,
+  viewerId: string,
+  exporting = false,
+  filter: GrantLedgerFilter = {},
+) {
   const access = await loadOrganizationAccess(db, org, viewerId);
   if (exporting && !access.allows("audit.export"))
     throw new OrganizationPermissionError("ACTION_FORBIDDEN", 403, "没有导出台账的权限");
@@ -1352,23 +1490,53 @@ export async function listGrantLedger(db: EnvmanDatabase, org: string, viewerId:
       "SELECT * FROM organization_grant_ledger WHERE organization_id = ? ORDER BY created_at DESC, id DESC",
     )
     .all<Record<string, unknown>>(org);
+  const needle = filter.target?.trim().toLowerCase() ?? "";
+  const actorQuery = filter.actor?.trim().toLowerCase() ?? "";
+  const actionQuery = filter.action?.trim().toLowerCase() ?? "";
   return {
     items: rows.flatMap((row) => {
-      const targets = parse<ResourceRef[]>(row.target_refs_json, []);
-      if (!orgWide && (targets.length === 0 || !targets.every((target) => targetVisible(target)))) return [];
+      const stored = parse<Array<ResourceRef & { name?: string }>>(row.target_refs_json, []);
+      if (!orgWide && (stored.length === 0 || !stored.every((target) => targetVisible(target)))) return [];
+      const before = redactLedger(parse<unknown>(row.before_json, null));
+      const after = redactLedger(parse<unknown>(row.after_json, null));
+      const facts = snapshotFacts(before, after);
+      const targets = stored.map((target) => ({
+        type: target.type,
+        id: target.id,
+        // Names stay inside the written snapshot. A current catalog name would rewrite history after a rename.
+        name: target.name?.trim() || facts.names.get(resourceKey(target)) || "",
+      }));
+      const createdAt = row.created_at;
+      const time = ledgerTime(createdAt);
+      const actorName = String(row.actor_name ?? "");
+      const action = String(row.action ?? "");
+      const source = [...new Set([row.channel, ...facts.source.split("、")].map((item) => String(item ?? "").trim()).filter(Boolean))].join("、");
+      if (actionQuery && !action.toLowerCase().includes(actionQuery)) return [];
+      if (actorQuery && String(row.actor_id ?? "") !== filter.actor?.trim() && !actorName.toLowerCase().includes(actorQuery)) return [];
+      if (filter.from !== undefined && !(time >= filter.from)) return [];
+      if (filter.to !== undefined && !(time <= filter.to)) return [];
+      if (filter.type && !targets.some((target) => target.type === filter.type) && !containsResourceType(before, filter.type) && !containsResourceType(after, filter.type)) return [];
+      if (needle) {
+        const named = targets.some((target) => target.id === filter.target?.trim() || target.name.toLowerCase().includes(needle));
+        const snapshot = JSON.stringify({ before, after, reason: row.reason, role: facts.role, subject: facts.subject }).toLowerCase();
+        if (!named && !snapshot.includes(needle)) return [];
+      }
       return [{
         id: row.id,
         actorId: row.actor_id,
-        actorName: row.actor_name,
-        action: row.action,
+        actorName,
+        action,
         reason: row.reason,
-        before: parse<unknown>(row.before_json, null),
-        after: parse<unknown>(row.after_json, null),
+        before,
+        after,
         targets,
+        role: facts.role,
+        subject: facts.subject,
+        source,
         requestId: row.request_id,
         grantId: row.grant_id,
         channel: row.channel,
-        createdAt: row.created_at,
+        createdAt,
       }];
     }),
   };

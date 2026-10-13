@@ -4,7 +4,8 @@ import { z } from "zod";
 import { getWorkspaceAccess, requireConnectionConfig, workspaceParams, workspaceWhere } from "../access-control.js";
 import { removeResourceAuthorizations } from "../access-authorizations.js";
 import { writeAudit } from "../audit.js";
-import { connectionEnvironmentMap, environmentsExist, normalizeEnvironmentIds, replaceConnectionEnvironments } from "../connection-environments.js";
+import { connectionEnvironmentIds, connectionEnvironmentMap, environmentsExist, normalizeEnvironmentIds, replaceConnectionEnvironments } from "../connection-environments.js";
+import { recordConnectionEnvironmentChange } from "../organization-approval.js";
 import { connectionGroupExists, resolveConnectionGroupId } from "../connection-groups.js";
 import { revokeWorkspaceRuntime } from "../user-runtime.js";
 import { parseBody } from "../validation.js";
@@ -212,6 +213,7 @@ export async function registerRedisConnectionRoutes(app: FastifyInstance): Promi
     if (invalidTunnel) return reply.code(400).send({ error: "INVALID_SSH_TUNNEL", message: invalidTunnel });
     const connectionGroupId = await resolveConnectionGroupId(app, "redis", environmentIds[0], body.connectionGroupId, workspaceParams(request), existing.connection_group_id);
     await app.db.transaction(async () => {
+      const beforeEnvironments = await connectionEnvironmentIds(app.db, "redis", request.params.id);
       await app.db.prepare(`
         UPDATE redis_connections SET environment_id = ?, connection_group_id = ?, name = ?, host = ?, port = ?, username = ?,
           credential_ciphertext = ?, default_database = ?, connection_mode = ?, options_json = ?, updated_at = ? WHERE id = ?
@@ -221,6 +223,7 @@ export async function registerRedisConnectionRoutes(app: FastifyInstance): Promi
         body.defaultDatabase, body.connectionMode, JSON.stringify(body.options), new Date().toISOString(), request.params.id,
       );
       await replaceConnectionEnvironments(app.db, "redis", request.params.id, environmentIds);
+      await recordConnectionEnvironmentChange(app.db, request.admin!.workspace, { id: request.admin!.id, username: request.admin!.username }, "redis", request.params.id, body.name, beforeEnvironments, environmentIds);
     })();
     await closeRedisConnectionPool(app, request.params.id);
     await revokeWorkspaceRuntime(app, request.admin!.workspace);

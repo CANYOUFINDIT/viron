@@ -12,6 +12,7 @@ import {
   listApprovalFlows,
   listGrantLedger,
   listGrantRequests,
+  type GrantLedgerFilter,
   readGrantRequest,
   reviseGrantRequest,
   roleNamesByMember,
@@ -218,10 +219,42 @@ export async function registerOrganizationPhaseRoutes(app: FastifyInstance): Pro
     return reviseGrantRequest(app.db, request.params.id, request.params.requestId, request.admin!, body);
   });
 
-  app.get<{ Params: { id: string }; Querystring: { export?: string } }>("/api/v1/organizations/:id/grant-ledger", async (request, reply) => {
+  app.get<{ Params: { id: string }; Querystring: Record<string, string | undefined> }>("/api/v1/organizations/:id/grant-ledger", async (request, reply) => {
     if (!workspaceReady(request, reply, request.params.id)) return;
-    const exporting = request.query.export === "1" || request.query.export === "true";
-    return listGrantLedger(app.db, request.params.id, request.admin!.id, exporting);
+    const query = request.query ?? {};
+    const bounded = (value: string | undefined) => {
+      const text = value?.trim() ?? "";
+      return text.length > 200 ? null : text;
+    };
+    const action = bounded(query.action);
+    const actor = bounded(query.actor);
+    const target = bounded(query.target);
+    if (action === null || actor === null || target === null)
+      return reply.code(400).send({ error: "INVALID_LEDGER_QUERY", message: "台账筛选过长" });
+    const parseTime = (value?: string) => {
+      if (!value?.trim()) return undefined;
+      const numeric = Number(value);
+      const time = Number.isFinite(numeric) && Math.abs(numeric) > 10_000_000_000 ? numeric : Date.parse(value);
+      return Number.isFinite(time) ? time : null;
+    };
+    const from = parseTime(query.from);
+    const to = parseTime(query.to);
+    if (from === null || to === null || (from !== undefined && to !== undefined && from > to))
+      return reply.code(400).send({ error: "INVALID_LEDGER_QUERY", message: "台账时间范围无效" });
+    const type = query.type?.trim() ?? "";
+    if (type && !(RESOURCE_TYPES as readonly string[]).includes(type))
+      return reply.code(400).send({ error: "INVALID_LEDGER_QUERY", message: "台账资源类型无效" });
+    const exporting = query.export === "1" || query.export === "true";
+    const filter: GrantLedgerFilter = {
+      action: action || undefined,
+      actor: actor || undefined,
+      target: target || undefined,
+      type: (type || undefined) as GrantLedgerFilter["type"],
+      from,
+      to,
+    };
+    if (exporting) reply.header("content-disposition", "attachment; filename=\"grant-ledger.json\"");
+    return listGrantLedger(app.db, request.params.id, request.admin!.id, exporting, filter);
   });
 
   app.get<{ Querystring: { environmentId?: string } }>("/api/v1/web-plugin-policy", async (request) => {

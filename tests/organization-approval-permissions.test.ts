@@ -647,6 +647,60 @@ describe("approval permission boundaries", () => {
     expect(adminLedger.json().items.some((item: { requestId: string }) => item.requestId === onB.json().id)).toBe(true);
   });
 
+  it("gives workflow editors named flow metadata and keeps ledger names frozen behind export permission", async () => {
+    const f = await fixture();
+    const editor = await f.person("metadata-editor");
+    await f.assign(editor.userId, ["approval.workflow"], "organization");
+    const flows = await f.app.inject({ method: "GET", url: f.base + "/approval-flows", cookies: editor.cookies });
+    expect(flows.statusCode, flows.body).toBe(200);
+    const metadata = flows.json();
+    expect(metadata.catalog).toEqual(expect.arrayContaining([expect.objectContaining({ type: "ssh_connection", id: f.sshA, name: "连接A" })]));
+    expect(metadata.roles.some((role: { name: string }) => role.name === "组织管理员")).toBe(true);
+    expect(metadata.members).toEqual(expect.arrayContaining([expect.objectContaining({ id: f.adminId, username: "admin" })]));
+    expect(metadata.unassigned.some((item: { type: string; id: string }) => item.type === "ssh_connection" && item.id === f.sshA)).toBe(true);
+    expect((await f.app.inject({ method: "GET", url: f.base + "/grant-ledger", cookies: editor.cookies })).statusCode).toBe(403);
+    const adminRole = metadata.roles.find((role: { name: string; id: string }) => role.name === "组织管理员");
+    const maintainer = await f.app.inject({
+      method: "POST",
+      url: f.base + "/role-data-grants",
+      cookies: f.cookies,
+      payload: { roleId: adminRole.id, targets: [{ type: "ssh_connection", id: f.sshA }], reason: "虚构配置维护范围" },
+    });
+    expect(maintainer.statusCode, maintainer.body).toBe(201);
+
+    const next = await f.app.inject({ method: "POST", url: "/api/v1/environments", cookies: f.cookies, payload: { name: "验收后环境" } });
+    expect(next.statusCode, next.body).toBe(201);
+    const moved = await f.app.inject({
+      method: "PUT",
+      url: `/api/v1/ssh-connections/${f.sshA}`,
+      cookies: f.cookies,
+      payload: { name: "连接A", host: "连接A.invalid", port: 22, username: "root", authType: "password", environmentIds: [next.json().id] },
+    });
+    expect(moved.statusCode, moved.body).toBe(200);
+    await f.db.prepare("UPDATE environments SET name = ? WHERE id = ?").run("改名后的原环境", f.env);
+    const ledger = await f.app.inject({
+      method: "GET",
+      url: `${f.base}/grant-ledger?action=${encodeURIComponent("变更资源关联")}&actor=admin&type=ssh_connection&target=${encodeURIComponent("验收后环境")}`,
+      cookies: f.cookies,
+    });
+    expect(ledger.statusCode, ledger.body).toBe(200);
+    const items = ledger.json().items as Array<{ action: string; actorName: string; targets: Array<{ name: string }> }>;
+    expect(items.length).toBeGreaterThan(0);
+    expect(items.every((item) => item.action === "变更资源关联" && item.actorName === "admin")).toBe(true);
+    expect(JSON.stringify(items)).toContain("生产");
+    expect(JSON.stringify(items)).not.toContain("改名后的原环境");
+    expect(items.some((item) => item.targets.some((target) => target.name === "连接A"))).toBe(true);
+    expect((await f.app.inject({ method: "GET", url: f.base + "/grant-ledger?from=not-a-date", cookies: f.cookies })).statusCode).toBe(400);
+    const reader = await f.person("ledger-reader");
+    await f.assign(reader.userId, ["audit.view"], "organization");
+    expect((await f.app.inject({ method: "GET", url: f.base + "/grant-ledger?export=1", cookies: reader.cookies })).statusCode).toBe(403);
+    await f.assign(reader.userId, ["audit.export"], "organization");
+    const exported = await f.app.inject({ method: "GET", url: f.base + "/grant-ledger?export=1&type=ssh_connection", cookies: reader.cookies });
+    expect(exported.statusCode, exported.body).toBe(200);
+    expect(String(exported.headers["content-disposition"] ?? "")).toContain("attachment");
+    expect(exported.json().items.some((item: { action: string }) => item.action === "变更资源关联")).toBe(true);
+  });
+
   it("stores node operation switches, snapshots them, and exposes only eligible revision choices", async () => {
     const f = await fixture();
     const applicant = await f.person("switch-applicant");

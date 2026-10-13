@@ -255,6 +255,8 @@ describe("organization phases 2-7", () => {
     });
     expect(overlap.statusCode).toBe(409);
     expect(overlap.json().error).toBe("APPROVAL_SCOPE_CONFLICT");
+    expect(overlap.json().message).toContain("连接A");
+    expect(overlap.json().conflicts).toEqual([expect.objectContaining({ type: "ssh_connection", id: f.sshId, name: "连接A" })]);
     const ledgerBefore = (await f.app.inject({ method: "GET", url: f.base + "/grant-ledger", cookies: f.cookies })).json().items.length;
     const removed = await f.app.inject({ method: "DELETE", url: `${f.base}/role-data-grants/${approvedGrants[0].id}`, cookies: f.cookies, payload: { reason: "撤销数据授权" } });
     expect(removed.statusCode, removed.body).toBe(200);

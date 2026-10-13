@@ -8,8 +8,10 @@ import {
   connectionEnvironmentMap,
   environmentsExist,
   normalizeEnvironmentIds,
+  connectionEnvironmentIds,
   replaceConnectionEnvironments,
 } from "../connection-environments.js";
+import { recordConnectionEnvironmentChange } from "../organization-approval.js";
 import { inspectConnection, type InspectableConnectionType } from "../connection-inspection.js";
 import { connectionGroupExists, ensureConnectionGroup, resolveConnectionGroupId, type ConnectionType } from "../connection-groups.js";
 import { refreshPendingExistingConnections } from "../connection-existing.js";
@@ -816,6 +818,7 @@ export async function registerConnectionRoutes(app: FastifyInstance): Promise<vo
       ? Number(existing.sort_order)
       : await nextSshConnectionSortOrder(app.db, workspaceParams(request), connectionGroupId, request.params.id);
     await app.db.transaction(async () => {
+      const beforeEnvironments = await connectionEnvironmentIds(app.db, "ssh", request.params.id);
       await app.db.prepare(`
         UPDATE ssh_connections SET environment_id = ?, connection_group_id = ?, name = ?, host = ?, port = ?, username = ?,
           auth_type = ?, ssh_key_id = ?, credential_ciphertext = ?, jump_connection_id = ?, options_json = ?, tags_json = ?, sort_order = ?, updated_at = ?
@@ -826,6 +829,7 @@ export async function registerConnectionRoutes(app: FastifyInstance): Promise<vo
         body.jumpConnectionId ?? null, JSON.stringify(effectiveSshOptions), JSON.stringify(tags), sortOrder, new Date().toISOString(), request.params.id,
       );
       await replaceConnectionEnvironments(app.db, "ssh", request.params.id, environmentIds);
+      await recordConnectionEnvironmentChange(app.db, request.admin!.workspace, { id: request.admin!.id, username: request.admin!.username }, "ssh", request.params.id, body.name, beforeEnvironments, environmentIds);
     })();
     await Promise.all([closeSshConnectionPool(app, request.params.id), closeDatabaseConnectionPool(app), closeRedisConnectionPool(app)]);
     await revokeWorkspaceRuntime(app, request.admin!.workspace);
@@ -1165,6 +1169,7 @@ export async function registerConnectionRoutes(app: FastifyInstance): Promise<vo
     const connectionGroupId = await resolveConnectionGroupId(app, "database", environmentIds[0], body.connectionGroupId, workspaceParams(request), existing.connection_group_id);
     const storage = normalizeDatabaseStorage(body.options, body.credential as StoredCredential | undefined);
     await app.db.transaction(async () => {
+      const beforeEnvironments = await connectionEnvironmentIds(app.db, "database", request.params.id);
       await app.db.prepare(`
         UPDATE database_connections SET environment_id = ?, connection_group_id = ?, name = ?, engine = ?, host = ?, port = ?,
           username = ?, credential_ciphertext = ?, default_database = ?, connection_mode = ?,
@@ -1175,6 +1180,7 @@ export async function registerConnectionRoutes(app: FastifyInstance): Promise<vo
         body.defaultDatabase, body.connectionMode, JSON.stringify(storage.options), new Date().toISOString(), request.params.id,
       );
       await replaceConnectionEnvironments(app.db, "database", request.params.id, environmentIds);
+      await recordConnectionEnvironmentChange(app.db, request.admin!.workspace, { id: request.admin!.id, username: request.admin!.username }, "database", request.params.id, body.name, beforeEnvironments, environmentIds);
     })();
     await closeDatabaseConnectionPool(app, request.params.id);
     await revokeWorkspaceRuntime(app, request.admin!.workspace);
@@ -1246,12 +1252,18 @@ export async function registerConnectionRoutes(app: FastifyInstance): Promise<vo
     let updated = 0;
     const assign = app.db.transaction(async () => {
       for (const item of body.items) {
+        const table = item.type === "ssh" ? "ssh_connections" : item.type === "database" ? "database_connections" : "redis_connections";
         const result = item.type === "ssh"
           ? await updateSsh.run(sshConnectionGroupId, now, item.id, ...workspaceParams(request))
           : item.type === "database"
             ? await updateDatabase.run(databaseConnectionGroupId, now, item.id, ...workspaceParams(request))
             : await updateRedis.run(redisConnectionGroupId, now, item.id, ...workspaceParams(request));
-        if (result.changes && await replaceConnectionEnvironments(app.db, item.type, item.id, environmentIds)) updated += 1;
+        if (!result.changes) continue;
+        const beforeEnvironments = await connectionEnvironmentIds(app.db, item.type, item.id);
+        if (!await replaceConnectionEnvironments(app.db, item.type, item.id, environmentIds)) continue;
+        updated += 1;
+        const named = await app.db.prepare(`SELECT name FROM ${table} WHERE id = ?`).get(item.id) as { name: string } | undefined;
+        await recordConnectionEnvironmentChange(app.db, request.admin!.workspace, { id: request.admin!.id, username: request.admin!.username }, item.type, item.id, named?.name ?? "", beforeEnvironments, environmentIds);
       }
     });
     await assign();

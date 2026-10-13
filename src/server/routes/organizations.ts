@@ -11,7 +11,7 @@ import { authorizationBodySchema } from "./access-governance.js";
 import { writeAudit } from "../audit.js";
 import { isUniqueConstraintError } from "../database-errors.js";
 import { revokeUserRuntime } from "../user-runtime.js";
-import { roleNamesByMember } from "../organization-approval.js";
+import { recordGrantLedger, roleNamesByMember } from "../organization-approval.js";
 import { parseBody } from "../validation.js";
 import { requireAdmin } from "./auth.js";
 
@@ -661,11 +661,28 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
       return reply.code(400).send({ error: "PROJECT_CYCLE", message: "项目组不能移动到自身或子项目组下" });
     }
     const affectedUsers = await projectSubtreeUserIds(app, request.params.id, request.params.projectId);
+    const currentProject = await app.db.prepare("SELECT name, parent_id FROM projects WHERE id = ? AND organization_id = ?").get(request.params.projectId, request.params.id) as { name: string; parent_id: string | null } | undefined;
+    if (!currentProject) return reply.code(404).send({ error: "NOT_FOUND", message: "项目不存在" });
+    const parentMoved = (currentProject.parent_id ?? null) !== (body.parentId ?? null);
     try {
       await app.db.transaction(async () => {
         await app.db.prepare("UPDATE organizations SET updated_at = updated_at WHERE id = ?").run(request.params.id);
         await app.db.prepare("UPDATE projects SET parent_id = ?, name = ?, description = ?, updated_at = ? WHERE id = ?")
           .run(body.parentId, body.name, body.description, new Date().toISOString(), request.params.projectId);
+        if (parentMoved) {
+          const parentName = async (parentId: string | null) => {
+            if (!parentId) return "组织根级";
+            const parent = await app.db.prepare("SELECT name FROM projects WHERE id = ? AND organization_id = ?").get(parentId, request.params.id) as { name: string } | undefined;
+            return parent?.name ?? "已删除的子组织";
+          };
+          const beforeParent = await parentName(currentProject.parent_id);
+          const afterParent = await parentName(body.parentId);
+          await recordGrantLedger(app.db, request.params.id, { id: request.admin!.id, username: request.admin!.username }, "移动子组织", `上级由「${beforeParent}」改为「${afterParent}」`, {
+            before: { projectId: request.params.projectId, name: currentProject.name, parentId: currentProject.parent_id, parentName: beforeParent },
+            after: { projectId: request.params.projectId, name: body.name, parentId: body.parentId, parentName: afterParent },
+            channel: "project-move",
+          });
+        }
         await assertOrganizationMaintainer(app.db, request.params.id);
       })();
     } catch (error) {
