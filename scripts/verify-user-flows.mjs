@@ -627,7 +627,7 @@ async function verifyOrganization(page, baseUrl) {
   await projectDialog.getByRole("button", { name: "创建项目组", exact: true }).click();
   await expectVisible(page.locator(".structure-tree").getByText(projectName, { exact: true }), "新项目组树节点");
 
-  await page.locator(".console-tabs").getByRole("button", { name: "邀请", exact: true }).click();
+  await page.locator(".structure-tree .el-tree-node__content").first().click();
   const invitationPanel = page.locator(".invitation-directory");
   await expectVisible(invitationPanel, "邀请管理面板");
   await invitationPanel.getByRole("button", { name: "生成邀请链接", exact: true }).first().click();
@@ -639,7 +639,11 @@ async function verifyOrganization(page, baseUrl) {
   assert.match(await invitationLink.inputValue(), /\/join\//, "邀请链接格式错误");
   await invitationDialog.getByRole("button", { name: "关闭", exact: true }).click();
 
-  await page.locator(".console-tabs").getByRole("button", { name: "平台账号", exact: true }).click();
+  await page.locator(".workspace-switcher__trigger").click();
+  await page.locator(".workspace-switcher-popper").getByRole("menuitem", { name: `${adminUsername} 的个人空间` }).click();
+  await expectVisible(page.locator(".workspace-switcher__trigger").getByText(`${adminUsername} 的个人空间`), "个人工作空间");
+  await page.locator("#envman-primary-menu").getByRole("button", { name: "组织与用户", exact: true }).click();
+  await page.locator(".organization-view .console-tabs").getByRole("button", { name: "平台账号", exact: true }).click();
   const platformPanel = page.locator(".platform-workspace");
   await expectVisible(platformPanel, "平台账号面板");
   await expectVisible(platformPanel.getByText(adminUsername, { exact: true }), "平台管理员账号");
