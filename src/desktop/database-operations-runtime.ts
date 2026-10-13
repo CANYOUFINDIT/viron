@@ -50,12 +50,13 @@ interface DatabaseTask {
   createdAt: string;
   startedAt?: string;
   completedAt?: string;
+  cancelRequested?: boolean;
   active: Set<ConnectedDesktopDatabase>;
 }
 
 interface StoredDatabaseTask extends Omit<DatabaseTask, "active"> {}
 
-interface PublicDatabaseTask extends Omit<DatabaseTask, "active" | "outputPath" | "context"> {
+interface PublicDatabaseTask extends Omit<DatabaseTask, "active" | "outputPath" | "context" | "cancelRequested"> {
   downloadable: boolean;
   outputFilename: string | null;
 }
@@ -262,7 +263,7 @@ function splitSql(sql: string): string[] {
 }
 
 function isTaskCancelled(task: DatabaseTask): boolean {
-  return task.status === "cancelled";
+  return task.status === "cancelled" || task.cancelRequested === true;
 }
 
 export function isDesktopDatabaseOperationPath(path: string): boolean {
@@ -281,6 +282,7 @@ export function isDesktopDatabaseDownloadPath(path: string): boolean {
 export class DesktopDatabaseOperationRuntime {
   private readonly tasks = new Map<string, DatabaseTask>();
   private readonly runningTasks = new Map<string, Promise<void>>();
+  private readonly taskFinished = new Map<string, (status: DatabaseTaskStatus) => void>();
   private readonly taskDirectory: string;
   private readonly backupDirectory: string;
   private readonly uploadDirectory: string;
@@ -628,13 +630,17 @@ export class DesktopDatabaseOperationRuntime {
     this.saveTasks();
     try {
       await action();
-      if (!isTaskCancelled(task)) {
+      if (isTaskCancelled(task)) {
+        task.status = "cancelled";
+      } else {
         task.status = "success";
         task.progress = 100;
         this.log(task, tr("任务完成"));
       }
     } catch (error) {
-      if (!isTaskCancelled(task)) {
+      if (isTaskCancelled(task)) {
+        task.status = "cancelled";
+      } else {
         task.status = "error";
         task.error = errorMessage(error);
         this.log(task, tr("任务失败：{{0}}", [task.error]));
@@ -643,17 +649,23 @@ export class DesktopDatabaseOperationRuntime {
       task.completedAt = new Date().toISOString();
       task.active.clear();
       this.saveTasks();
-      if (task.connectionId) {
-        const finalTaskStatus = task.status as DatabaseTaskStatus;
-        const status = finalTaskStatus === "success" ? "success" : finalTaskStatus === "cancelled" ? "cancelled" : "error";
-        await this.report({
-          kind: "operation",
-          operationId: task.id,
-          connectionId: task.connectionId,
-          action: `${task.type}_${status}` as DesktopDatabaseOperationReport["action"],
-          summary: tr("本机{{0}} · {{1}}", [task.title, task.status]),
-          details: { taskId: task.id, status: task.status, ...task.details },
-        }, task.context).catch(() => undefined);
+      try {
+        if (task.connectionId) {
+          const finalTaskStatus = task.status as DatabaseTaskStatus;
+          const status = finalTaskStatus === "success" ? "success" : finalTaskStatus === "cancelled" ? "cancelled" : "error";
+          await this.report({
+            kind: "operation",
+            operationId: task.id,
+            connectionId: task.connectionId,
+            action: `${task.type}_${status}` as DesktopDatabaseOperationReport["action"],
+            summary: tr("本机{{0}} · {{1}}", [task.title, task.status]),
+            details: { taskId: task.id, status: task.status, ...task.details },
+          }, task.context).catch(() => undefined);
+        }
+      } finally {
+        const listener = this.taskFinished.get(task.id);
+        this.taskFinished.delete(task.id);
+        listener?.(task.status);
       }
     }
   }
@@ -683,7 +695,7 @@ export class DesktopDatabaseOperationRuntime {
       const views = objects.filter((item) => item.type === "VIEW");
       let processed = 0;
       for (const table of tables) {
-        if (task.status === "cancelled") return;
+        if (isTaskCancelled(task)) return;
         const [createRows] = await connected.connection.query<RowDataPacket[]>(`SHOW CREATE TABLE ${identifier(database)}.${identifier(table.name)}`);
         await file.write(`DROP TABLE IF EXISTS ${identifier(table.name)};${BACKUP_BOUNDARY}${extractCreate(createRows[0])};${BACKUP_BOUNDARY}`);
         let rowCount = 0;
@@ -703,14 +715,14 @@ export class DesktopDatabaseOperationRuntime {
         this.progress(task, Math.round((processed / Math.max(1, totalObjects)) * 90));
       }
       for (const view of views) {
-        if (task.status === "cancelled") return;
+        if (isTaskCancelled(task)) return;
         const [createRows] = await connected.connection.query<RowDataPacket[]>(`SHOW CREATE VIEW ${identifier(database)}.${identifier(view.name)}`);
         await file.write(`DROP VIEW IF EXISTS ${identifier(view.name)};${BACKUP_BOUNDARY}${extractCreate(createRows[0])};${BACKUP_BOUNDARY}`);
         processed += 1;
         this.progress(task, Math.round((processed / Math.max(1, totalObjects)) * 90));
       }
       for (const row of routineRows) {
-        if (task.status === "cancelled") return;
+        if (isTaskCancelled(task)) return;
         const name = String(row.name);
         const type = String(row.type).toUpperCase() === "FUNCTION" ? "FUNCTION" : "PROCEDURE";
         const [createRows] = await connected.connection.query<RowDataPacket[]>(`SHOW CREATE ${type} ${identifier(database)}.${identifier(name)}`);
@@ -719,7 +731,7 @@ export class DesktopDatabaseOperationRuntime {
         this.progress(task, Math.round((processed / Math.max(1, totalObjects)) * 90));
       }
       for (const row of triggerRows) {
-        if (task.status === "cancelled") return;
+        if (isTaskCancelled(task)) return;
         const name = String(row.name);
         const [createRows] = await connected.connection.query<RowDataPacket[]>(`SHOW CREATE TRIGGER ${identifier(database)}.${identifier(name)}`);
         await file.write(`DROP TRIGGER IF EXISTS ${identifier(name)};${BACKUP_BOUNDARY}${extractCreate(createRows[0])};${BACKUP_BOUNDARY}`);
@@ -727,7 +739,7 @@ export class DesktopDatabaseOperationRuntime {
         this.progress(task, Math.round((processed / Math.max(1, totalObjects)) * 90));
       }
       for (const row of eventRows) {
-        if (task.status === "cancelled") return;
+        if (isTaskCancelled(task)) return;
         const name = String(row.name);
         const [createRows] = await connected.connection.query<RowDataPacket[]>(`SHOW CREATE EVENT ${identifier(database)}.${identifier(name)}`);
         await file.write(`DROP EVENT IF EXISTS ${identifier(name)};${BACKUP_BOUNDARY}${extractCreate(createRows[0])};${BACKUP_BOUNDARY}`);
@@ -751,7 +763,7 @@ export class DesktopDatabaseOperationRuntime {
       const statements = splitSql(await readFile(inputPath, "utf8"));
       this.log(task, tr("读取 {{0}} 条 SQL 语句", [statements.length]));
       for (let index = 0; index < statements.length; index += 1) {
-        if (task.status === "cancelled") return;
+        if (isTaskCancelled(task)) return;
         const statement = statements[index].trim();
         if (!statement || statement.startsWith("--") && !statement.includes("\n")) continue;
         await connected.connection.query(statement);
@@ -794,7 +806,7 @@ export class DesktopDatabaseOperationRuntime {
       let processed = 0;
       this.log(task, tr("准备迁移 {{0}} 个表{{1}}", [tables.length, includeObjects ? `及 ${totalObjects - tables.length} 个视图/例程/触发器/事件` : ""]));
       for (const table of tables) {
-        if (task.status === "cancelled") return;
+        if (isTaskCancelled(task)) return;
         if (options.includeStructure) {
           const [createRows] = await source.connection.query<RowDataPacket[]>(`SHOW CREATE TABLE ${identifier(options.sourceDatabase)}.${identifier(table)}`);
           if (options.dropExisting) await target.connection.query(`DROP TABLE IF EXISTS ${identifier(options.targetDatabase)}.${identifier(table)}`);
@@ -817,7 +829,7 @@ export class DesktopDatabaseOperationRuntime {
       }
       if (includeObjects) {
         for (const row of routineRows) {
-          if (task.status === "cancelled") return;
+          if (isTaskCancelled(task)) return;
           const name = String(row.name);
           const type = String(row.type).toUpperCase() === "FUNCTION" ? "FUNCTION" : "PROCEDURE";
           const [createRows] = await source.connection.query<RowDataPacket[]>(`SHOW CREATE ${type} ${identifier(options.sourceDatabase)}.${identifier(name)}`);
@@ -827,7 +839,7 @@ export class DesktopDatabaseOperationRuntime {
           this.progress(task, Math.round((processed / Math.max(1, totalObjects)) * 95));
         }
         for (const row of viewRows) {
-          if (task.status === "cancelled") return;
+          if (isTaskCancelled(task)) return;
           const name = String(row.name);
           const [createRows] = await source.connection.query<RowDataPacket[]>(`SHOW CREATE VIEW ${identifier(options.sourceDatabase)}.${identifier(name)}`);
           if (options.dropExisting) await target.connection.query(`DROP VIEW IF EXISTS ${identifier(options.targetDatabase)}.${identifier(name)}`);
@@ -836,7 +848,7 @@ export class DesktopDatabaseOperationRuntime {
           this.progress(task, Math.round((processed / Math.max(1, totalObjects)) * 95));
         }
         for (const row of triggerRows) {
-          if (task.status === "cancelled") return;
+          if (isTaskCancelled(task)) return;
           const name = String(row.name);
           const [createRows] = await source.connection.query<RowDataPacket[]>(`SHOW CREATE TRIGGER ${identifier(options.sourceDatabase)}.${identifier(name)}`);
           if (options.dropExisting) await target.connection.query(`DROP TRIGGER IF EXISTS ${identifier(options.targetDatabase)}.${identifier(name)}`);
@@ -845,7 +857,7 @@ export class DesktopDatabaseOperationRuntime {
           this.progress(task, Math.round((processed / Math.max(1, totalObjects)) * 95));
         }
         for (const row of eventRows) {
-          if (task.status === "cancelled") return;
+          if (isTaskCancelled(task)) return;
           const name = String(row.name);
           const [createRows] = await source.connection.query<RowDataPacket[]>(`SHOW CREATE EVENT ${identifier(options.sourceDatabase)}.${identifier(name)}`);
           if (options.dropExisting) await target.connection.query(`DROP EVENT IF EXISTS ${identifier(options.targetDatabase)}.${identifier(name)}`);
@@ -871,7 +883,7 @@ export class DesktopDatabaseOperationRuntime {
         await executeDatabaseSync(source.connection, target.connection, options, options.selectedItems, {
           log: (message) => this.log(task, message),
           progress: (value) => this.progress(task, value),
-          cancelled: () => task.status === "cancelled",
+          cancelled: () => isTaskCancelled(task),
         });
       } finally {
         await target.close();
@@ -888,6 +900,25 @@ export class DesktopDatabaseOperationRuntime {
     const task = this.tasks.get(id);
     if (!task || contextKey(task.context) !== contextKey(context)) return null;
     return { type: task.type, connectionId: task.connectionId, details: task.details };
+  }
+
+  /** Stops one owned background task and destroys its active clients. A finished task stays finished. */
+  cancelOwnedTask(id: string, context: DesktopSshContext, reason: string): void {
+    const task = this.tasks.get(id);
+    if (!task || contextKey(task.context) !== contextKey(context)) return;
+    if (!["pending", "running"].includes(task.status)) return;
+    this.cancelTask(task, reason);
+  }
+
+  /** Runs after this task leaves pending or running. The listener sees the stored status. */
+  bindTaskFinished(id: string, context: DesktopSshContext, listener: (status: DatabaseTaskStatus) => void): void {
+    const task = this.tasks.get(id);
+    if (!task || contextKey(task.context) !== contextKey(context)) return;
+    if (!["pending", "running"].includes(task.status)) {
+      listener(task.status);
+      return;
+    }
+    this.taskFinished.set(id, listener);
   }
 
   private list(context: DesktopSshContext): PublicDatabaseTask[] {
@@ -915,9 +946,9 @@ export class DesktopDatabaseOperationRuntime {
   }
 
   private cancelTask(task: DatabaseTask, reason: string): void {
-    task.status = "cancelled";
+    if (!["pending", "running"].includes(task.status)) return;
+    task.cancelRequested = true;
     task.error = reason;
-    task.completedAt = new Date().toISOString();
     for (const connected of task.active) connected.connection.destroy();
     this.log(task, reason);
     this.saveTasks();

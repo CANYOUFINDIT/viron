@@ -228,4 +228,59 @@ describe("desktop database operations runtime", () => {
     expect(reports.some((report) => report.kind === "operation" && report.action === "restore_success")).toBe(true);
     expect(reports.some((report) => report.kind === "operation" && report.action === "transfer_success")).toBe(true);
   });
+
+  it("stops an owned running backup, destroys the client, and reports cancelled after the task actually ends", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "viron-desktop-database-task-stop-"));
+    directories.push(directory);
+    const reports: DesktopDatabaseExecutionReport[] = [];
+    let pending: { reject: (error: Error) => void } | null = null;
+    let destroyed = 0;
+    const other: DesktopSshContext = { ...context, userId: "44444444-4444-4444-8444-444444444444" };
+    const runtime = new DesktopDatabaseOperationRuntime(
+      directory,
+      async (connectionId) => ({ context, credential: credential(connectionId) }),
+      async (report) => { reports.push(report); },
+      async (databaseCredential): Promise<ConnectedDesktopDatabase> => ({
+        connection: {
+          ...fakeConnection(databaseCredential.connection.connectionId, []),
+          query: async (sql: string) => {
+            if (sql.startsWith("SHOW FULL TABLES")) {
+              return await new Promise((_resolve, reject) => { pending = { reject }; });
+            }
+            return [[], []];
+          },
+          destroy() {
+            destroyed += 1;
+            pending?.reject(new Error("fictional database task transport stopped"));
+            pending = null;
+          },
+        },
+        credential: databaseCredential,
+        async close() {},
+      }),
+    );
+    const sourceId = "22222222-2222-4222-8222-222222222222";
+    const started = await runtime.handle(textRequest(`/api/v1/database-connections/${sourceId}/backup`, "POST", { database: "ops", includeData: false }), context);
+    expect(started.status).toBe(202);
+    const taskId = JSON.parse(started.body).task.id as string;
+    const deadline = Date.now() + 3_000;
+    while (!pending && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(pending).toBeTruthy();
+    expect(runtime.ownedAccess(taskId, context)?.type).toBe("backup");
+    expect(runtime.ownedAccess(taskId, other)).toBeNull();
+    let finished: string | null = null;
+    runtime.bindTaskFinished(taskId, context, (status) => { finished = status; });
+    runtime.cancelOwnedTask(taskId, other, "wrong owner");
+    expect(destroyed).toBe(0);
+    runtime.cancelOwnedTask(taskId, context, "组织执行授权已失效，进行中的操作已停止");
+    const task = await waitForTask(runtime, taskId);
+    expect(task.status).toBe("cancelled");
+    expect(destroyed).toBeGreaterThan(0);
+    const finishDeadline = Date.now() + 3_000;
+    while (finished !== "cancelled" && Date.now() < finishDeadline) await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(finished).toBe("cancelled");
+    expect(reports.some((report) => report.kind === "operation" && report.action === "backup_cancelled")).toBe(true);
+    runtime.cancelOwnedTask(taskId, context, "already finished");
+    expect(task.status).toBe("cancelled");
+  });
 });

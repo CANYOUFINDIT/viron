@@ -322,6 +322,37 @@ function retainDesktopQueryWatch(
   });
 }
 
+function retainDesktopDatabaseTaskWatch(
+  input: McpApiRequest,
+  path: string,
+  context: Awaited<ReturnType<typeof currentDesktopSshContext>>,
+  gate: { checks: Parameters<typeof watchOrganizationExecution>[0]["checks"]; decisions: Parameters<typeof watchOrganizationExecution>[0]["decisions"] },
+  response: { status: number; body: string },
+): void {
+  if (response.status !== 202 || !gate.decisions.length) return;
+  const pathname = new URL(path, "http://desktop.local").pathname;
+  if (!/\/(?:backup|restore|transfer|sync)$/i.test(pathname) && !/^\/api\/v1\/database-tasks\/[^/]+\/retry$/i.test(pathname)) return;
+  let taskId = "";
+  try {
+    taskId = String((JSON.parse(response.body) as { task?: { id?: string } }).task?.id ?? "");
+  } catch {
+    return;
+  }
+  if (!taskId) return;
+  const watch = watchOrganizationExecution({
+    context,
+    channel: organizationExecutionChannel.getStore() ?? "mcp",
+    checks: gate.checks,
+    decisions: gate.decisions,
+    requestIdentity: desktopMcpRequestIdentity(input),
+    cancel: (reason) => desktopDatabaseOperationRuntime.cancelOwnedTask(taskId, context, reason),
+  });
+  desktopDatabaseOperationRuntime.bindTaskFinished(taskId, context, (status) => {
+    const outcome = status === "success" ? "success" as const : status === "cancelled" ? "cancelled" as const : "failed" as const;
+    void watch.finish(outcome);
+  });
+}
+
 function retainDesktopTransferWatch(
   input: McpApiRequest,
   context: Awaited<ReturnType<typeof currentDesktopSshContext>>,
@@ -399,7 +430,10 @@ export async function executeDesktopMcpApprovedRequest(input: McpApiRequest): Pr
       }
       if (isDesktopDatabaseOperationPath(path)) {
         if (!activeEndpoint?.capabilities.desktopLocal?.database) throw new Error(tr("当前 Endpoint 未开放桌面 App 本机数据库能力，MCP 不会回退到服务端执行"));
-        return desktopResponseToMcp(await desktopDatabaseOperationRuntime.handle(request, await currentDesktopSshContext()));
+        const context = await currentDesktopSshContext();
+        const response = await desktopDatabaseOperationRuntime.handle(request, context);
+        retainDesktopDatabaseTaskWatch(input, path, context, gate, response);
+        return desktopResponseToMcp(response);
       }
       if (isDesktopRedisExecutionPath(path)) {
         if (!activeEndpoint?.capabilities.desktopLocal?.redis) throw new Error(tr("当前 Endpoint 未开放桌面 App 本机 Redis 能力，MCP 不会回退到服务端执行"));
@@ -642,7 +676,10 @@ export async function invokeDesktopMcpTool(toolName: string, arguments_: Record<
     }
     if (isDesktopDatabaseOperationPath(path)) {
       if (!activeEndpoint.capabilities.desktopLocal?.database) throw new Error(tr("当前 Endpoint 未开放桌面 App 本机数据库能力，MCP 不会回退到服务端执行"));
-      return desktopResponseToMcp(await desktopDatabaseOperationRuntime.handle(desktopRequest, await currentDesktopSshContext()));
+      const context = await currentDesktopSshContext();
+      const response = await desktopDatabaseOperationRuntime.handle(desktopRequest, context);
+      retainDesktopDatabaseTaskWatch(request, path, context, gate, response);
+      return desktopResponseToMcp(response);
     }
     if (isDesktopDatabaseDownloadPath(path)) {
       if (!activeEndpoint.capabilities.desktopLocal?.database) throw new Error(tr("当前 Endpoint 未开放桌面 App 本机数据库能力，MCP 不会回退到服务端执行"));
