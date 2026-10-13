@@ -47,6 +47,8 @@ import {
   type DesktopAuthContext,
   type DesktopRuntimeRegistration,
 } from "./desktop-runtime-context.js";
+import { organizationExecutionChannel } from "./organization-execution.js";
+import { sshCredentialPurpose } from "./organization-mcp-purpose.js";
 import { DesktopApiError, endpointJson } from "./http-proxy.js";
 import { translate as tr } from "./i18n.js";
 import { mainWindow } from "./window-host.js";
@@ -313,9 +315,27 @@ export async function localSshCredential(connectionId: string): Promise<{ contex
   const requestId = randomUUID();
   pendingCredentialRequests.add(requestId);
   try {
+    const auditSource = desktopAuditSourceContext.getStore() ?? "manual";
+    const purpose = auditSource === "mcp" ? sshCredentialPurpose(connectionId) : undefined;
+    const signedPurpose = purpose
+      ? await signedDesktopOperation({
+        operationId: randomUUID(),
+        connectionId,
+        channel: organizationExecutionChannel.getStore() ?? "mcp",
+        code: purpose.code,
+        targetType: purpose.targetType,
+        targetId: purpose.targetId,
+      })
+      : undefined;
     const envelope = await endpointJson<CredentialEnvelope>(`/api/v1/desktop/ssh-connections/${connectionId}/envelope`, {
       method: "POST",
-      body: { deviceId: identity.deviceId, requestId, endpoint, auditSource: desktopAuditSourceContext.getStore() ?? "manual" },
+      body: {
+        deviceId: identity.deviceId,
+        requestId,
+        endpoint,
+        auditSource,
+        ...(signedPurpose ? { purpose: signedPurpose } : {}),
+      },
     });
     if (!pendingCredentialRequests.has(requestId)) throw new Error(tr("SSH 凭据请求已经结束"));
     const opened = openSshCredentialEnvelope(identity, envelope, {

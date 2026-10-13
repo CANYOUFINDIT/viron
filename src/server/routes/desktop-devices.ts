@@ -17,6 +17,7 @@ import { writeAudit } from "../audit.js";
 import { decryptDatabaseCredential, hydrateDatabaseOptions } from "../database-credentials.js";
 import { isUniqueConstraintError } from "../database-errors.js";
 import { acceptDesktopReport, DesktopReportError } from "../desktop-report.js";
+import { authorizeSignedSshCredentialPurpose } from "../ssh-credential-purpose.js";
 import { resolveSshCredential } from "../ssh/key-store.js";
 import { parseBody } from "../validation.js";
 import { requireAdmin } from "./auth.js";
@@ -37,6 +38,10 @@ const envelopeRequestSchema = z.object({
   deviceId: deviceIdSchema,
   requestId: z.string().uuid(),
   auditSource: z.enum(["manual", "mcp"]).default("manual"),
+  purpose: z.object({
+    protected: z.string().min(1).max(20000),
+    signature: z.string().min(1).max(20000),
+  }).optional(),
   endpoint: z.string().url().max(2048).transform((value, context) => {
     const url = new URL(value);
     if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
@@ -595,10 +600,14 @@ export async function registerDesktopDeviceRoutes(app: FastifyInstance): Promise
       `).get(body.deviceId, request.admin!.id) as StoredDevice | undefined;
       if (!device) return reply.code(404).send({ error: "DEVICE_NOT_FOUND", message: "当前设备尚未注册" });
       if (device.status !== "active") return reply.code(403).send({ error: "DEVICE_REVOKED", message: "当前设备已被撤销" });
-      if (!await canAccessConnection(app.db, request.admin!, "ssh", connectionId.data, "view")) {
+      const organizationPurpose = body.auditSource === "mcp" && Boolean(request.admin?.organizationAccess);
+      if (!organizationPurpose && !await canAccessConnection(app.db, request.admin!, "ssh", connectionId.data, "view")) {
         return reply.code(404).send({ error: "NOT_FOUND", message: "SSH 连接不存在" });
       }
-      if (!await canAccessConnection(app.db, request.admin!, "ssh", connectionId.data, "use")) {
+      if (organizationPurpose) {
+        const purpose = await authorizeSignedSshCredentialPurpose(request, connectionId.data);
+        if (!purpose.allowed) return reply.code(purpose.status).send({ error: purpose.error, message: purpose.message });
+      } else if (!await canAccessConnection(app.db, request.admin!, "ssh", connectionId.data, "use")) {
         return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有这项操作权限" });
       }
       const connection = await app.db.prepare(`
@@ -606,7 +615,9 @@ export async function registerDesktopDeviceRoutes(app: FastifyInstance): Promise
           jump_connection_id, options_json, source_deleted, updated_at
         FROM ssh_connections WHERE id = ?
       `).get(connectionId.data) as SshEnvelopeRow | undefined;
-      if (!connection || connection.source_deleted) return reply.code(404).send({ error: "NOT_FOUND", message: "SSH 连接不存在" });
+      if (!connection || connection.source_deleted || connection.workspace_type !== request.admin!.workspace.type || connection.workspace_id !== request.admin!.workspace.id) {
+        return reply.code(404).send({ error: "NOT_FOUND", message: "SSH 连接不存在" });
+      }
       let jumpConnections: SshEnvelopeRow[];
       try {
         jumpConnections = await sshJumpChain(app, connection);

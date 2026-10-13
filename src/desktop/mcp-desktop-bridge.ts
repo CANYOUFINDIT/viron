@@ -51,6 +51,7 @@ import {
   touchDesktopDatabaseRequest,
 } from "./execution-router.js";
 import { guardDesktopOrganizationMcpRequest } from "./organization-mcp-request.js";
+import { organizationMcpPurpose } from "./organization-mcp-purpose.js";
 import { endpointFetch, endpointJson, type DesktopRequest } from "./http-proxy.js";
 import {
   actOnDesktopWebCredential,
@@ -295,8 +296,9 @@ export async function executeDesktopMcpApprovedRequest(input: McpApiRequest): Pr
     return desktopDeviceAuthorizationContext.run(authorization, () => executeDesktopMcpApprovedRequest(input));
   }
   return desktopAuditSourceContext.run("mcp", async () => {
-    const denied = await guardDesktopOrganizationMcpRequest(input);
-    if (denied) return denied;
+    const gate = await guardDesktopOrganizationMcpRequest(input);
+    if (gate.denied) return gate.denied;
+    return organizationMcpPurpose.run(gate.checks, async () => {
     const request = mcpDesktopRequest(input);
     const path = request.path;
     try {
@@ -384,6 +386,7 @@ export async function executeDesktopMcpApprovedRequest(input: McpApiRequest): Pr
     } catch (error) {
       return mcpJsonResponse(502, { error: "DESKTOP_MCP_OPERATION_FAILED", message: error instanceof Error ? error.message : tr("本机 MCP Operation 执行失败") });
     }
+    });
   });
 }
 
@@ -449,8 +452,10 @@ export async function invokeDesktopMcpTool(toolName: string, arguments_: Record<
     const source = desktopAuditSourceContext.getStore() ?? "mcp";
     return desktopDeviceAuthorizationContext.run(authorization, () => desktopAuditSourceContext.run(source, () => invokeDesktopMcpTool(toolName, arguments_)));
   }
-  const denied = await guardDesktopOrganizationMcpRequest(request);
-  if (denied) return denied;
+  const gate = await guardDesktopOrganizationMcpRequest(request);
+  if (gate.denied) return gate.denied;
+  return organizationMcpPurpose.run(gate.checks, async () => {
+  if (!activeEndpoint) throw new Error(tr("请先在 Viron App 中验证 Endpoint"));
   if (currentExecutionMode() === "local") {
     const sshBatch = new URL(path, "http://desktop.local").pathname.match(/^\/api\/v1\/mcp\/ssh-connections\/([0-9a-f-]+)\/commands$/i);
     if (sshBatch && request.method === "POST") {
@@ -639,6 +644,7 @@ export async function invokeDesktopMcpTool(toolName: string, arguments_: Record<
     };
   }
   return handleDesktopMcpOperationResponse(toolName, arguments_, { status: response.status, headers, data });
+  });
 }
 
 export function mcpJsonResponse(status: number, data: unknown): McpApiResponse {

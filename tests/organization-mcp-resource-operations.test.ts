@@ -193,6 +193,8 @@ describe("organization MCP resource operations", () => {
       databaseTask: async () => ({ type: "backup", connectionId: source, details: { database: "app" } }),
       databaseQuery: async () => null,
       sftpTransfer: async () => null,
+      recording: async () => null,
+      recordingConnectionIds: async () => [],
     });
     expect(checks).toEqual([
       { target: { type: "database_connection", id: source }, code: "database.read" },

@@ -358,6 +358,11 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
         WHERE c.id = ? AND e.workspace_type = ? AND e.workspace_id = ?
       `).get(request.params.id, request.admin!.workspace.type, request.admin!.workspace.id) as { entry_id: string } | undefined;
       if (!row) return reply.code(404).send({ error: "NOT_FOUND", message: "登录账号不存在" });
+      const access = request.admin?.organizationAccess;
+      const target = { type: "web_entry" as const, id: row.entry_id };
+      if (access && !access.allows("web.use", target) && !access.allows("web.view", target)) {
+        return reply.code(404).send({ error: "NOT_FOUND", message: "登录账号不存在" });
+      }
       return { entryId: row.entry_id };
     },
   );

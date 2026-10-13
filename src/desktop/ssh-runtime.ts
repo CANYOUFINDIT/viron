@@ -575,6 +575,17 @@ export class DesktopSshRuntime {
     await this.closeAllSessions(reason);
   }
 
+  ownedRecording(id: string, context: DesktopSshContext): { connectionId: string } | null {
+    const recording = this.recordings.get(id);
+    if (!recording || contextKey(recording) !== contextKey(context)) return null;
+    return { connectionId: recording.connectionId };
+  }
+
+  ownedRecordingConnectionIds(context: DesktopSshContext): string[] {
+    const key = contextKey(context);
+    return [...new Set([...this.recordings.values()].filter((recording) => contextKey(recording) === key).map((recording) => recording.connectionId))];
+  }
+
   listRecordings(context: DesktopSshContext): DesktopSshRecording[] {
     const key = contextKey(context);
     return [...this.recordings.values()]

@@ -122,8 +122,10 @@ async function mappedOperation(request: FastifyRequest, channel: ExecutionChanne
     return operation(code, "ssh_connection", id);
   }
   if (/\/mcp\/ssh-connections\/[^/]+/.test(path) && id) return operation("ssh.use", "ssh_connection", id);
-  if (/\/desktop\/ssh-connections\/[^/]+\/envelope$/.test(path) && desktopConnectionId)
+  if (/\/desktop\/ssh-connections\/[^/]+\/envelope$/.test(path) && desktopConnectionId) {
+    if (bodyRecord(request.body).auditSource === "mcp") return null;
     return operation("ssh.use", "ssh_connection", desktopConnectionId);
+  }
   if (/\/desktop\/database-connections\/[^/]+\/envelope$/.test(path) && desktopConnectionId)
     return {
       codes: ["database.read", "database.write", "database.ddl"],
@@ -252,6 +254,10 @@ export async function organizationExecutionFence(request: FastifyRequest, reply:
   const access = request.admin?.organizationAccess;
   if (!access || reply.sent) return;
   const path = request.url.split("?", 1)[0] ?? "";
+  if (
+    /^\/api\/v1\/desktop\/ssh-connections\/[^/]+\/envelope$/i.test(path)
+    && bodyRecord(request.body).auditSource === "mcp"
+  ) return;
   if (path.startsWith("/api/v1/mcp/") && path.endsWith("/status")) return;
   if (
     request.method !== "GET" &&

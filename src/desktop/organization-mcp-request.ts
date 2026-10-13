@@ -9,6 +9,7 @@ import {
   desktopDatabaseOperationRuntime,
   desktopDatabaseRuntime,
   desktopSftpRuntime,
+  desktopSshRuntime,
 } from "./desktop-runtime-context.js";
 import { currentDesktopSshContext } from "./execution-router.js";
 import { DesktopApiError, endpointJson } from "./http-proxy.js";
@@ -48,6 +49,8 @@ export interface OrganizationMcpSources {
   databaseTask(id: string): Promise<{ type: DatabaseTaskKind; connectionId: string | null; details: Record<string, unknown> } | null>;
   databaseQuery(id: string): Promise<{ connectionId: string; sql: string } | null>;
   sftpTransfer(id: string): Promise<{ sourceConnectionId: string; targetConnectionId: string } | null>;
+  recording(id: string): Promise<{ connectionId: string } | null>;
+  recordingConnectionIds(): Promise<string[]>;
 }
 
 function requestMethod(request: McpApiRequest): string {
@@ -154,23 +157,54 @@ async function defaultSources(): Promise<OrganizationMcpSources> {
     async sftpTransfer(id) {
       return desktopSftpRuntime?.ownedTransfer(id, context) ?? null;
     },
+    async recording(id) {
+      return desktopSshRuntime?.ownedRecording(id, context) ?? null;
+    },
+    async recordingConnectionIds() {
+      return desktopSshRuntime?.ownedRecordingConnectionIds(context) ?? [];
+    },
   };
 }
 
-/** Supported organization MCP paths. Null means the call is metadata or not an execution this batch can authorize. */
-export async function organizationMcpChecks(request: McpApiRequest, sources?: OrganizationMcpSources): Promise<DesktopExecutionCheck[] | null> {
+/** Passthrough is an owned status or metadata read. Closed is an operation this batch does not run. */
+export type OrganizationMcpDecision = DesktopExecutionCheck[] | "passthrough" | "closed";
+
+function isOwnedCancel(method: string, path: string): boolean {
+  return method === "DELETE" && (/^\/api\/v1\/database-tasks\/[^/]+$/i.test(path) || /^\/api\/v1\/database-queries\/[^/]+$/i.test(path) || /^\/api\/v1\/sftp-transfers\/[^/]+$/i.test(path));
+}
+
+/** Supported organization MCP paths. Passthrough does not start a new external operation. */
+export async function organizationMcpChecks(request: McpApiRequest, sources?: OrganizationMcpSources): Promise<OrganizationMcpDecision> {
   const method = requestMethod(request);
   const url = requestUrl(request);
   const path = url.pathname;
-  if (isMetadataRead(method, path)) return null;
+  if (isMetadataRead(method, path) && path !== "/api/v1/ssh-recordings") return "passthrough";
   const resolved = sources ?? await defaultSources();
+  if (isOwnedCancel(method, path)) {
+    const id = path.split("/").at(-1) ?? "";
+    if (path.includes("/database-tasks/")) return await resolved.databaseTask(id) ? "passthrough" : [];
+    if (path.includes("/database-queries/")) return await resolved.databaseQuery(id) ? "passthrough" : [];
+    return await resolved.sftpTransfer(id) ? "passthrough" : [];
+  }
+  const recordings = path.match(/^\/api\/v1\/ssh-recordings(?:\/([^/]+)(?:\/download)?)?$/i);
+  if (recordings && !recordings[1] && (method === "GET" || method === "HEAD")) {
+    const connectionIds = await resolved.recordingConnectionIds();
+    if (!connectionIds.length) return "passthrough";
+    return connectionIds.flatMap((id) => sshChecks(id, "ssh.view"));
+  }
+  if (recordings?.[1] && UUID.test(recordings[1])) {
+    const recording = await resolved.recording(recordings[1]);
+    if (!recording) return [];
+    const code = method === "DELETE" ? "resource.ssh.configure" : "ssh.view";
+    return sshChecks(recording.connectionId, code);
+  }
   const knowledge = path.match(/^\/api\/v1\/knowledge-documents\/([^/]+)(?:\/content)?$/i);
   if (knowledge && UUID.test(knowledge[1])) {
     return [check("knowledge_node", knowledge[1], method === "GET" || method === "HEAD" ? "knowledge.view" : "knowledge.edit")].filter((item): item is DesktopExecutionCheck => item !== null);
   }
   const ssh = path.match(/^\/api\/v1\/mcp\/ssh-connections\/([^/]+)\/commands?$/i);
   if (ssh && method === "POST" && UUID.test(ssh[1])) return [check("ssh_connection", ssh[1], "ssh.use")].filter((item): item is DesktopExecutionCheck => item !== null);
-  const web = path.match(/^\/api\/v1\/(?:mcp\/)?web-credentials\/([^/]+)\/(?:snapshot|action|control|view\/upload)$/i);
+  const web = path.match(/^\/api\/v1\/(?:mcp\/)?web-credentials\/([^/]+)\/(?:snapshot|action|control|view\/upload|view\/reset)$/i);
   if (web && method === "POST" && UUID.test(web[1])) {
     const entryId = await resolved.webEntryId(web[1]);
     return entryId ? [check("web_entry", entryId, "web.use")].filter((item): item is DesktopExecutionCheck => item !== null) : [];
@@ -273,7 +307,7 @@ export async function organizationMcpChecks(request: McpApiRequest, sources?: Or
     if (!codes) return [];
     return codes.map((code) => check("redis_connection", redisCommand[1], code)).filter((item): item is DesktopExecutionCheck => item !== null);
   }
-  return null;
+  return "closed";
 }
 
 function denied(error: string, message: string): McpApiResponse {
@@ -281,23 +315,21 @@ function denied(error: string, message: string): McpApiResponse {
 }
 
 /** Organization calls authorize before execution. Personal workspaces stay on the existing path. */
-export async function guardDesktopOrganizationMcpRequest(request: McpApiRequest): Promise<McpApiResponse | null> {
-  if ((await currentDesktopSshContext()).workspaceType !== "organization") return null;
-  const checks = await organizationMcpChecks(request);
-  if (checks === null) {
-    if (isMetadataRead(requestMethod(request), requestUrl(request).pathname)) return null;
-    return denied("FEATURE_FORBIDDEN", "组织 MCP 尚未接入这项操作");
-  }
-  if (!checks.length) return denied("ACTION_FORBIDDEN", "组织 MCP 不能执行未受控的操作");
+export async function guardDesktopOrganizationMcpRequest(request: McpApiRequest): Promise<{ denied: McpApiResponse | null; checks: DesktopExecutionCheck[] }> {
+  if ((await currentDesktopSshContext()).workspaceType !== "organization") return { denied: null, checks: [] };
+  const decision = await organizationMcpChecks(request);
+  if (decision === "passthrough") return { denied: null, checks: [] };
+  if (decision === "closed") return { denied: denied("FEATURE_FORBIDDEN", "组织 MCP 尚未接入这项操作"), checks: [] };
+  if (!decision.length) return { denied: denied("ACTION_FORBIDDEN", "组织 MCP 不能执行未受控的操作"), checks: [] };
   const identity = desktopMcpRequestIdentity(request);
   try {
-    for (let index = 0; index < checks.length; index += CHECK_BATCH) {
-      const result = await authorizeOrganizationExecution(identity, checks.slice(index, index + CHECK_BATCH));
-      if (!result.allowed) return denied(result.error ?? "FEATURE_FORBIDDEN", result.message || "组织执行授权未通过");
+    for (let index = 0; index < decision.length; index += CHECK_BATCH) {
+      const result = await authorizeOrganizationExecution(identity, decision.slice(index, index + CHECK_BATCH));
+      if (!result.allowed) return { denied: denied(result.error ?? "FEATURE_FORBIDDEN", result.message || "组织执行授权未通过"), checks: [] };
     }
-    return null;
+    return { denied: null, checks: decision };
   } catch (error) {
-    if (error instanceof DesktopApiError && error.status === 403) return denied(error.code, error.message);
+    if (error instanceof DesktopApiError && error.status === 403) return { denied: denied(error.code, error.message), checks: [] };
     throw error;
   }
 }
