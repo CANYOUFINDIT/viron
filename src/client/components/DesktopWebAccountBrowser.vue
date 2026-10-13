@@ -778,6 +778,7 @@ onBeforeUnmount(() => {
               <button v-if="extensionPanel === 'chrome'" type="button" :aria-label="$t('刷新')" :disabled="chromeScanning" @click="refreshChromeExtensions"><RefreshCw :size="14" :class="{ 'is-spinning': chromeScanning }" /></button>
             </div>
             <div v-if="extensionPanel === 'installed'" class="desktop-web-extensions__section">
+              <span v-if="state?.extensionPolicyLabel" class="desktop-web-extensions__empty">{{ state.extensionPolicyLabel }}</span>
               <span v-if="extensionsLoading" class="desktop-web-extensions__empty">{{ $t('正在加载…') }}</span>
               <span v-else-if="!extensions.length" class="desktop-web-extensions__empty">{{ $t('尚未添加拓展') }}</span>
               <div v-for="extension in extensions" :key="extension.installId" class="desktop-web-extensions__item">

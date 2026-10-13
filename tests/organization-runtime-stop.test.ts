@@ -360,14 +360,16 @@ describe("runtime authorization stop", () => {
     const revokedFeature = await feature(f.env);
     await feature(otherEnv);
     const page = await watchConnection(f, { type: "web", resourceId: credentialId });
-    const policy = async (environmentId: string) => {
+    const policy = async (environmentId: string, entry = "") => {
+      const params = new URLSearchParams({ environmentId });
+      if (entry) params.set("entryId", entry);
       const response = await f.app.inject({
-        method: "GET", url: `/api/v1/web-plugin-policy?environmentId=${encodeURIComponent(environmentId)}`, cookies: f.memberCookies,
+        method: "GET", url: `/api/v1/web-plugin-policy?${params.toString()}`, cookies: f.memberCookies,
       });
       expect(response.statusCode, response.body).toBe(200);
       return response.json() as { inject: boolean };
     };
-    expect((await policy(f.env)).inject).toBe(true);
+    expect((await policy(f.env, entryId)).inject).toBe(true);
     await disconnectGrantees(f.app, f.org, [f.userId]);
     expect(page.reasons).toEqual([]);
     expect(live(f, page.id)).toBe(true);
@@ -376,16 +378,16 @@ describe("runtime authorization stop", () => {
       method: "DELETE", url: `${f.base}/feature-grants/${revokedFeature}`, cookies: f.cookies, payload: { reason: "停用插件" },
     });
     expect(removed.statusCode, removed.body).toBe(200);
-    expect((await policy(f.env)).inject).toBe(false);
-    expect((await policy(otherEnv)).inject).toBe(true);
+    expect((await policy(f.env, entryId)).inject).toBe(false);
+    expect((await policy(otherEnv, otherEntryId)).inject).toBe(true);
     await disconnectGrantees(f.app, f.org, [f.userId]);
     expect(page.reasons).toEqual([]);
     expect(live(f, page.id)).toBe(true);
 
-    const lost = pluginView(f.env, true);
-    const kept = pluginView(otherEnv, true);
-    const personal = pluginView("", true);
-    await refreshOrganizationWebPlugins([lost, kept, personal], policy);
+    const lost = pluginView(f.env, entryId, true);
+    const kept = pluginView(otherEnv, otherEntryId, true);
+    const personal = pluginView("", "", true);
+    await refreshOrganizationWebPlugins([lost, kept, personal], (target) => policy(target.environmentId, target.entryId));
     expect(lost.allowExtensions).toBe(false);
     expect(lost.suspended).toBe(true);
     expect(lost.popupClosed).toBe(1);
@@ -404,13 +406,15 @@ describe("runtime authorization stop", () => {
     await disconnectGrantees(f.app, f.org, [f.userId]);
     expect(page.reasons).toEqual(["授权已到期"]);
     expect(live(f, page.id)).toBe(false);
-    expect((await policy(otherEnv)).inject).toBe(true);
+    expect((await policy(otherEnv, otherEntryId)).inject).toBe(true);
   });
 });
 
-function pluginView(environmentId: string, allowExtensions: boolean): WebPluginView & { suspended: boolean; popupClosed: number } {
+function pluginView(environmentId: string, entryId: string, allowExtensions: boolean): WebPluginView & { suspended: boolean; popupClosed: number } {
   const state = {
     environmentId,
+    entryId,
+    currentUrl: entryId ? `https://console.example/${entryId}` : "",
     allowExtensions,
     locked: false,
     suspended: false,

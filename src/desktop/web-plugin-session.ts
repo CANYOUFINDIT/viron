@@ -1,10 +1,22 @@
+export interface WebPluginPolicy {
+  inject: boolean;
+  label?: string | null;
+  reason?: string;
+  entryId?: string;
+  environmentId?: string;
+  entryUrl?: string;
+}
+
 export interface WebPluginView {
   environmentId: string;
+  entryId: string;
+  currentUrl: string;
   allowExtensions: boolean;
   locked: boolean;
   suspend(): Promise<void>;
   resume(): Promise<void>;
   closePopup(): void;
+  note?(policy: WebPluginPolicy): void;
 }
 
 export function webExtensionShortcutEnabled(allowExtensions: boolean, locked: boolean): boolean {
@@ -13,9 +25,10 @@ export function webExtensionShortcutEnabled(allowExtensions: boolean, locked: bo
 
 export async function applyDesktopWebPluginPolicy(
   view: WebPluginView,
-  policy: { inject: boolean },
+  policy: WebPluginPolicy,
 ): Promise<"suspended" | "resumed" | "unchanged"> {
   const next = policy.inject === true && !view.locked;
+  view.note?.(policy);
   if (view.allowExtensions === next) return "unchanged";
   view.allowExtensions = next;
   view.closePopup();
@@ -29,19 +42,20 @@ export async function applyDesktopWebPluginPolicy(
 
 export async function refreshOrganizationWebPlugins(
   views: WebPluginView[],
-  readPolicy: (environmentId: string) => Promise<{ inject: boolean }>,
+  readPolicy: (target: { environmentId: string; entryId: string; currentUrl: string }) => Promise<WebPluginPolicy>,
 ): Promise<void> {
-  const seen = new Map<string, { inject: boolean }>();
+  const seen = new Map<string, WebPluginPolicy>();
   for (const view of views) {
     if (!view.environmentId) continue;
-    let policy = seen.get(view.environmentId);
+    const key = `${view.environmentId}\0${view.entryId}\0${view.currentUrl}`;
+    let policy = seen.get(key);
     if (!policy) {
       try {
-        policy = await readPolicy(view.environmentId);
+        policy = await readPolicy({ environmentId: view.environmentId, entryId: view.entryId, currentUrl: view.currentUrl });
       } catch {
-        policy = { inject: false };
+        policy = { inject: false, label: "环境未授权 · 已禁用", reason: "策略不可用" };
       }
-      seen.set(view.environmentId, policy);
+      seen.set(key, policy);
     }
     await applyDesktopWebPluginPolicy(view, policy);
   }

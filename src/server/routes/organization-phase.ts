@@ -5,6 +5,7 @@ import { parseBody } from "../validation.js";
 import { OrganizationPermissionError } from "../organization-rbac.js";
 import { RESOURCE_TYPES, type ResourceRef } from "../../shared/organization-rbac.js";
 import { webPluginInjection } from "../organization-boundary.js";
+import { selectWebPluginEntry, type WebPluginEntryRecord } from "../../shared/web-plugin-target.js";
 import { memberPermissions, personalAuthorization, resourceAuthorization, resourceOverview } from "../organization-overview.js";
 import {
   decideGrantRequest,
@@ -257,12 +258,35 @@ export async function registerOrganizationPhaseRoutes(app: FastifyInstance): Pro
     return listGrantLedger(app.db, request.params.id, request.admin!.id, exporting, filter);
   });
 
-  app.get<{ Querystring: { environmentId?: string } }>("/api/v1/web-plugin-policy", async (request) => {
+  app.get<{ Querystring: { environmentId?: string; entryId?: string; url?: string } }>("/api/v1/web-plugin-policy", async (request) => {
     const user = request.admin!;
-    if (user.workspace.type === "personal") return { inject: true, label: null, reason: "" };
+    const denied = (reason: string) => ({ inject: false, label: "环境未授权 · 已禁用", reason, entryId: "", environmentId: "", entryUrl: "" });
+    if (user.workspace.type === "personal") return { inject: true, label: null, reason: "", entryId: "", environmentId: "", entryUrl: "" };
     const access = user.organizationAccess;
-    if (!access || !request.query.environmentId)
-      return { inject: false, label: "环境未授权 · 已禁用", reason: "无法确定真实环境" };
-    return webPluginInjection(access, request.query.environmentId);
+    if (!access) return denied("无法确定真实环境");
+    const requestedEntry = request.query.entryId?.trim() ?? "";
+    const requestedEnvironment = request.query.environmentId?.trim() ?? "";
+    const currentUrl = request.query.url?.trim() ?? "";
+    if (requestedEntry.length > 80 || requestedEnvironment.length > 80 || currentUrl.length > 2000)
+      return denied("无法确定真实环境");
+    const rows = await app.db.prepare(`
+      SELECT w.id, w.environment_id, w.url
+      FROM web_entries w
+      JOIN environments e ON e.id = w.environment_id
+      WHERE e.workspace_type = 'organization' AND e.workspace_id = ?
+    `).all<{ id: string; environment_id: string; url: string }>(user.workspace.id);
+    const entries: WebPluginEntryRecord[] = rows.map((row) => ({ id: row.id, environmentId: row.environment_id, url: row.url }));
+    const selected = currentUrl
+      ? selectWebPluginEntry(entries, currentUrl, requestedEntry)
+      : entries.find((entry) => entry.id === requestedEntry) ?? null;
+    if (!selected) return denied(currentUrl ? "未知目标" : "无法确定真实环境");
+    if (!currentUrl && requestedEnvironment && requestedEnvironment !== selected.environmentId)
+      return denied("入口不属于该环境");
+    return {
+      ...webPluginInjection(access, selected.environmentId, selected.id),
+      entryId: selected.id,
+      environmentId: selected.environmentId,
+      entryUrl: selected.url,
+    };
   });
 }

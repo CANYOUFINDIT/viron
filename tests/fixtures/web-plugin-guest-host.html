@@ -1,0 +1,29 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Viron guest host fixture</title>
+<body></body>
+<script>
+const guests = new Map();
+function create(request) {
+  if (guests.has(request.token)) return;
+  const element = document.createElement("webview");
+  element.setAttribute("partition", request.partition);
+  element.setAttribute("useragent", `VironBrowserGuest/${request.token}`);
+  element.setAttribute("allowpopups", "");
+  element.style.cssText = "position:fixed;left:0;top:0;width:900px;height:640px;visibility:hidden";
+  guests.set(request.token, element);
+  element.addEventListener("did-stop-loading", () => {
+    window.vironDesktop.attachBrowserGuest(request.token, element.getWebContentsId()).catch((error) => console.error(error));
+  }, { once: true });
+  element.setAttribute("src", "about:blank");
+  document.body.appendChild(element);
+}
+window.vironDesktop.onBrowserHostMessage((message) => {
+  if (message.type === "create") create(message.request);
+  if (message.type === "destroy") {
+    const element = guests.get(message.token);
+    guests.delete(message.token);
+    element?.remove();
+  }
+});
+</script>

@@ -191,9 +191,17 @@ export function releaseDesktopWebSessionExtensions(partition: Session): Promise<
   });
 }
 
+/** Stop content scripts, background workers and popups in this session before the next document loads. */
+export function quarantineDesktopWebSessionExtensions(partition: Session): void {
+  suspendedSessions.add(partition);
+  for (const extension of partition.extensions.getAllExtensions()) {
+    partition.extensions.removeExtension(extension.id);
+  }
+}
+
 /** Keep the account profile, but remove every extension execution path before filling a secret. */
 export function suspendDesktopWebSessionExtensions(partition: Session): Promise<void> {
-  suspendedSessions.add(partition);
+  quarantineDesktopWebSessionExtensions(partition);
   return extensionOperation(async () => {
     extensionSessions.delete(partition);
     storeViews.delete(partition);

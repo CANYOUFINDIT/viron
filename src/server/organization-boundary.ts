@@ -249,30 +249,24 @@ export function presentTargetWindow(
 export function webPluginInjection(
   access: OrganizationAccess,
   environmentId: string,
+  entryId: string,
 ): { inject: boolean; label: string | null; reason: string } {
+  const denied = (reason: string) => ({
+    inject: false,
+    label: "环境未授权 · 已禁用",
+    reason,
+  });
   const environment = access.catalog.find(
     (item) => item.type === "environment" && item.id === environmentId,
   );
-  if (!environment)
-    return {
-      inject: false,
-      label: "环境未授权 · 已禁用",
-      reason: "无法确定真实环境",
-    };
+  const entry = access.catalog.find((item) => item.type === "web_entry" && item.id === entryId);
+  if (!environment || !entry || !entry.environmentIds.includes(environmentId))
+    return denied("无法确定真实环境");
   const feature = unionWindow(
     access.featurePaths("webPlugins", { type: "environment", id: environmentId }),
   );
-  const entries = access.catalog.filter(
-    (item) => item.type === "web_entry" && item.environmentIds.includes(environmentId),
-  );
-  const canOpen = entries.some(
-    (entry) => access.allows("web.view", entry) || access.allows("web.use", entry),
-  );
+  const canOpen = access.allows("web.view", entry) || access.allows("web.use", entry);
   if (!feature.allowed || !canOpen)
-    return {
-      inject: false,
-      label: "环境未授权 · 已禁用",
-      reason: feature.allowed ? "没有该环境的 Web 入口访问权限" : "环境未授权",
-    };
+    return denied(feature.allowed ? "没有该入口的数据权限" : "环境未授权");
   return { inject: true, label: null, reason: "" };
 }

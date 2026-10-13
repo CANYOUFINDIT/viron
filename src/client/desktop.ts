@@ -140,6 +140,7 @@ export interface DesktopWebViewState {
   zoomFactor: number;
   protectedLogin: ProtectedLoginState | null;
   loginNotice: string;
+  extensionPolicyLabel?: string;
 }
 
 export interface DesktopWebViewAction {

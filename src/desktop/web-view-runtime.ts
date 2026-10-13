@@ -69,8 +69,9 @@ import {
   handleDesktopHistoryNavigationMouse,
 } from "./history-navigation-runtime.js";
 import { mainWindow } from "./window-host.js";
-import { closeDesktopWebExtensionPopup, forgetDesktopWebExtensions, loadDesktopWebExtensions, releaseDesktopWebSessionExtensions, resumeDesktopWebSessionExtensions, suspendDesktopWebSessionExtensions } from "./web-extensions.js";
-import { refreshOrganizationWebPlugins, webExtensionShortcutEnabled } from "./web-plugin-session.js";
+import { closeDesktopWebExtensionPopup, forgetDesktopWebExtensions, loadDesktopWebExtensions, quarantineDesktopWebSessionExtensions, releaseDesktopWebSessionExtensions, resumeDesktopWebSessionExtensions, suspendDesktopWebSessionExtensions } from "./web-extensions.js";
+import { applyDesktopWebPluginPolicy, refreshOrganizationWebPlugins, webExtensionShortcutEnabled, type WebPluginPolicy, type WebPluginView } from "./web-plugin-session.js";
+import { webEntryUrlScore } from "../shared/web-plugin-target.js";
 import { closeExtensionBrowser, handleExtensionShortcut, registerExtensionBrowser, registerExtensionTab, selectExtensionTab } from "./web-extension-browser.js";
 import { desktopWebExtensionContextMenuItems } from "./web-extension-context-menus.js";
 import {
@@ -178,6 +179,7 @@ export interface DesktopWebViewState {
   zoomFactor: number;
   protectedLogin: ProtectedLoginState | null;
   loginNotice: string;
+  extensionPolicyLabel: string;
 }
 
 export interface ManagedDesktopWebPage {
@@ -204,8 +206,27 @@ export interface ManagedDesktopWebPage {
   zoomWheelAt: number;
 }
 
+export interface IsolatedWebPluginPopup {
+  window: BrowserWindow;
+  partition: Session;
+  environmentId: string;
+  entryId: string;
+  entryUrl: string;
+  currentUrl: string;
+  allowExtensions: boolean;
+  scopeKey: string;
+  closing: boolean;
+}
+
 export interface ManagedDesktopWebView {
   allowExtensions: boolean;
+  organizationWeb: boolean;
+  pluginEntryId: string;
+  pluginEntryUrl: string;
+  pluginEnvironmentId: string;
+  extensionPolicyLabel: string;
+  ownerUserId: string;
+  isolatedPopups: IsolatedWebPluginPopup[];
   id: string;
   registrationId: string;
   credentialId: string;
@@ -326,6 +347,7 @@ export function activateDesktopWebPage(view: ManagedDesktopWebView, pageId: stri
     page.pendingUrl = "";
     page.loadingUrl = pendingUrl;
     void page.view.webContents.loadURL(pendingUrl).catch((error) => {
+      if (error instanceof Error && error.message.includes("ERR_ABORTED")) return;
       if (page.loadingUrl === pendingUrl) page.loadingUrl = "";
       page.error = error instanceof Error ? error.message : tr("本机页面加载失败");
       sendWebViewState(view);
@@ -351,6 +373,7 @@ export async function removeDesktopWebPage(view: ManagedDesktopWebView, pageId: 
     activateDesktopWebPage(view, replacement.id);
     return replacement.view.webContents.loadURL(view.entryUrl);
   }).catch((error) => {
+    if (error instanceof Error && error.message.includes("ERR_ABORTED")) return;
     if (!view.closing) notifyWebView(view, "error", error instanceof Error ? error.message : tr("本机页面加载失败"));
   });
 }
@@ -666,6 +689,10 @@ function configureDesktopWebPage(
       sendWebViewState(view);
       return { action: "deny" };
     }
+    if (view.organizationWeb && supportedDesktopWebUrl(url) && webEntryUrlScore(view.pluginEntryUrl, url) < 0) {
+      void openCrossEnvironmentWebPopup(view, url);
+      return { action: "deny" };
+    }
     return {
       action: "allow",
       outlivesOpener: true,
@@ -691,6 +718,21 @@ function configureDesktopWebPage(
       return;
     }
     restoreDesktopWebPageZoom(view, page, url);
+    if (!view.organizationWeb || !supportedDesktopWebUrl(url) || consumeApprovedOrganizationWebLoad(nativeView.webContents, url)) return;
+    event.preventDefault();
+    if (!(view.allowExtensions && webEntryUrlScore(view.pluginEntryUrl, url) > 0)) {
+      quarantineDesktopWebSessionExtensions(view.partition);
+      view.allowExtensions = false;
+      view.extensionPolicyLabel = "环境未授权 · 已禁用";
+    }
+    void (async () => {
+      await applyCurrentWebPluginPolicy(view, url);
+      if (view.closing || page.closing || nativeView.webContents.isDestroyed()) return;
+      approveOrganizationWebLoad(nativeView.webContents, url);
+      page.loadingUrl = url;
+      await nativeView.webContents.loadURL(url).catch(() => undefined);
+      sendWebViewState(view);
+    })();
   });
   nativeView.webContents.on("certificate-error", (event, url, error, _certificate, callback, isMainFrame) => {
     if (!isMainFrame || !supportedDesktopWebUrl(url)) return;
@@ -721,6 +763,15 @@ function configureDesktopWebPage(
   });
   nativeView.webContents.on("did-navigate-in-page", (_event, url) => {
     if (view.activePageId === page.id) rememberDesktopWebLastUrl(view, url);
+    if (view.organizationWeb && supportedDesktopWebUrl(url) && webEntryUrlScore(view.pluginEntryUrl, url) < 0) {
+      quarantineDesktopWebSessionExtensions(view.partition);
+      view.allowExtensions = false;
+      view.extensionPolicyLabel = "环境未授权 · 已禁用";
+      void applyCurrentWebPluginPolicy(view, url).then(() => {
+        if (!view.closing && !page.closing && view.allowExtensions && !nativeView.webContents.isDestroyed()) nativeView.webContents.reload();
+        sendWebViewState(view);
+      });
+    }
     sendWebViewState(view);
   });
   nativeView.webContents.on("render-process-gone", (_event, details) => {
@@ -739,10 +790,37 @@ function cacheableLoginResumeUrl(entryUrl: string, key: string): string {
   return restored === entryUrl || /\/(login|signin)(?:[/?#]|$)/i.test(restored) ? "" : restored;
 }
 
-export async function syncOpenWebPluginPolicies(): Promise<void> {
-  const open = [...desktopWebViews.values()].filter((view) => !view.closing);
-  await refreshOrganizationWebPlugins(open.map((view) => ({
-    environmentId: view.environmentId,
+const approvedOrganizationLoads = new WeakMap<Electron.WebContents, string>();
+
+function approveOrganizationWebLoad(contents: Electron.WebContents, url: string): void {
+  approvedOrganizationLoads.set(contents, url);
+}
+
+function consumeApprovedOrganizationWebLoad(contents: Electron.WebContents, url: string): boolean {
+  if (approvedOrganizationLoads.get(contents) !== url) return false;
+  approvedOrganizationLoads.delete(contents);
+  return true;
+}
+
+function currentPluginUrl(view: ManagedDesktopWebView): string {
+  const active = view.pages.get(view.activePageId);
+  const live = active && !active.view.webContents.isDestroyed() ? active.view.webContents.getURL() : "";
+  return supportedDesktopWebUrl(live) ? live : view.pluginEntryUrl;
+}
+
+async function readWebPluginPolicy(environmentId: string, entryId: string, url: string): Promise<WebPluginPolicy> {
+  const params = new URLSearchParams();
+  if (environmentId) params.set("environmentId", environmentId);
+  if (entryId) params.set("entryId", entryId);
+  if (url) params.set("url", url);
+  return endpointJson<WebPluginPolicy>(`/api/v1/web-plugin-policy?${params.toString()}`);
+}
+
+function pluginBinding(view: ManagedDesktopWebView, currentUrl = currentPluginUrl(view)): WebPluginView {
+  return {
+    environmentId: view.pluginEnvironmentId,
+    entryId: view.pluginEntryId,
+    currentUrl,
     get allowExtensions() { return view.allowExtensions; },
     set allowExtensions(value: boolean) { view.allowExtensions = value; },
     locked: view.loginConfig.mode === "locked",
@@ -756,7 +834,131 @@ export async function syncOpenWebPluginPolicies(): Promise<void> {
       closeDesktopWebExtensionPopup(view.lastUrlKey);
       closeExtensionBrowser(view.partition);
     },
-  })), async (environmentId) => endpointJson<{ inject: boolean }>(`/api/v1/web-plugin-policy?environmentId=${encodeURIComponent(environmentId)}`));
+    note: (policy) => {
+      if (policy.entryId) view.pluginEntryId = policy.entryId;
+      if (policy.environmentId) view.pluginEnvironmentId = policy.environmentId;
+      if (policy.entryUrl) view.pluginEntryUrl = policy.entryUrl;
+      view.extensionPolicyLabel = policy.inject ? "" : policy.label || "环境未授权 · 已禁用";
+    },
+  };
+}
+
+function popupBinding(view: ManagedDesktopWebView, popup: IsolatedWebPluginPopup): WebPluginView {
+  return {
+    environmentId: popup.environmentId,
+    entryId: popup.entryId,
+    currentUrl: popup.currentUrl,
+    get allowExtensions() { return popup.allowExtensions; },
+    set allowExtensions(value: boolean) { popup.allowExtensions = value; },
+    locked: view.loginConfig.mode === "locked",
+    suspend: () => suspendDesktopWebSessionExtensions(popup.partition),
+    resume: async () => {
+      await resumeDesktopWebSessionExtensions(popup.partition);
+      enableDesktopWebSessionExtensions(popup.partition, popup.scopeKey);
+      await loadDesktopWebExtensions(popup.partition, popup.scopeKey);
+    },
+    closePopup: () => closeExtensionBrowser(popup.partition),
+    note: (policy) => {
+      if (policy.entryId) popup.entryId = policy.entryId;
+      if (policy.environmentId) popup.environmentId = policy.environmentId;
+      if (policy.entryUrl) popup.entryUrl = policy.entryUrl;
+    },
+  };
+}
+
+async function applyPopupWebPluginPolicy(view: ManagedDesktopWebView, popup: IsolatedWebPluginPopup, url: string): Promise<void> {
+  popup.currentUrl = url;
+  let policy: WebPluginPolicy = { inject: false, label: "环境未授权 · 已禁用", reason: "策略不可用" };
+  try { policy = await readWebPluginPolicy(popup.environmentId === "unknown" ? "" : popup.environmentId, popup.entryId, url); }
+  catch { policy = { inject: false, label: "环境未授权 · 已禁用", reason: "策略不可用" }; }
+  if (!policy.environmentId) policy = { ...policy, environmentId: "unknown" };
+  await applyDesktopWebPluginPolicy(popupBinding(view, popup), policy);
+}
+
+function bindIsolatedPopupNavigation(view: ManagedDesktopWebView, popup: IsolatedWebPluginPopup): void {
+  const contents = popup.window.webContents;
+  contents.on("will-navigate", (event, url) => {
+    if (!supportedDesktopWebUrl(url) || consumeApprovedOrganizationWebLoad(contents, url) || popup.closing || view.closing) return;
+    event.preventDefault();
+    void (async () => {
+      await applyPopupWebPluginPolicy(view, popup, url);
+      if (popup.closing || view.closing || contents.isDestroyed()) return;
+      approveOrganizationWebLoad(contents, url);
+      await contents.loadURL(url).catch(() => undefined);
+    })();
+  });
+  contents.on("did-navigate-in-page", (_event, url) => {
+    if (!supportedDesktopWebUrl(url) || popup.closing || webEntryUrlScore(popup.entryUrl, url) > 0) return;
+    void applyPopupWebPluginPolicy(view, popup, url);
+  });
+}
+
+async function openCrossEnvironmentWebPopup(view: ManagedDesktopWebView, url: string): Promise<void> {
+  const endpoint = activeEndpoint?.endpoint;
+  if (!endpoint || !view.ownerUserId || view.closing) return;
+  let policy: WebPluginPolicy = { inject: false, label: "环境未授权 · 已禁用", reason: "策略不可用", environmentId: "unknown", entryId: "", entryUrl: "" };
+  try { policy = await readWebPluginPolicy(view.pluginEnvironmentId, view.pluginEntryId, url); }
+  catch { policy = { inject: false, label: "环境未授权 · 已禁用", reason: "策略不可用", environmentId: "unknown", entryId: "", entryUrl: "" }; }
+  if (view.closing) return;
+  const environmentKey = policy.environmentId || "unknown";
+  const popup: IsolatedWebPluginPopup = {
+    window: null as unknown as BrowserWindow,
+    partition: environmentKey === view.pluginEnvironmentId
+      ? view.partition
+      : session.fromPartition(desktopWebPartitionName(endpoint, view.ownerUserId, view.credentialId, environmentKey)),
+    environmentId: environmentKey,
+    entryId: policy.entryId || "",
+    entryUrl: policy.entryUrl || "",
+    currentUrl: url,
+    allowExtensions: false,
+    scopeKey: desktopWebLastUrlKey(endpoint, view.ownerUserId, view.credentialId, environmentKey === "unknown" ? undefined : environmentKey),
+    closing: false,
+  };
+  const allowed = policy.inject === true && view.loginConfig.mode !== "locked";
+  if (popup.partition !== view.partition) {
+    if (allowed) {
+      popup.allowExtensions = true;
+      await popupBinding(view, popup).resume();
+    } else await suspendDesktopWebSessionExtensions(popup.partition);
+  } else popup.allowExtensions = allowed && view.allowExtensions;
+  if (view.closing) return;
+  popup.window = new BrowserWindow({
+    show: !process.argv.includes("--smoke-test"),
+    width: 1000,
+    height: 720,
+    webPreferences: { ...desktopWebPreferences(popup.partition), devTools: view.loginConfig.mode !== "locked" },
+  });
+  view.isolatedPopups.push(popup);
+  popup.window.on("closed", () => {
+    popup.closing = true;
+    view.isolatedPopups = view.isolatedPopups.filter((item) => item !== popup);
+    if (popup.partition !== view.partition) void suspendDesktopWebSessionExtensions(popup.partition);
+  });
+  bindIsolatedPopupNavigation(view, popup);
+  approveOrganizationWebLoad(popup.window.webContents, url);
+  await popup.window.loadURL(url).catch(() => undefined);
+}
+
+async function applyCurrentWebPluginPolicy(view: ManagedDesktopWebView, url: string): Promise<void> {
+  let policy: WebPluginPolicy = { inject: false, label: "环境未授权 · 已禁用", reason: "策略不可用" };
+  try { policy = await readWebPluginPolicy(view.pluginEnvironmentId, view.pluginEntryId, url); }
+  catch { policy = { inject: false, label: "环境未授权 · 已禁用", reason: "策略不可用" }; }
+  await applyDesktopWebPluginPolicy(pluginBinding(view, url), policy);
+}
+
+export async function syncOpenWebPluginPolicies(): Promise<void> {
+  const open = [...desktopWebViews.values()].filter((view) => !view.closing);
+  const targets: WebPluginView[] = [];
+  for (const view of open) {
+    targets.push(pluginBinding(view));
+    for (const popup of view.isolatedPopups) {
+      if (popup.closing || popup.window.isDestroyed()) continue;
+      const live = popup.window.webContents.getURL();
+      if (supportedDesktopWebUrl(live)) popup.currentUrl = live;
+      targets.push(popupBinding(view, popup));
+    }
+  }
+  await refreshOrganizationWebPlugins(targets, (target) => readWebPluginPolicy(target.environmentId === "unknown" ? "" : target.environmentId, target.entryId, target.currentUrl));
 }
 
 function registerBusinessExtensions(view: ManagedDesktopWebView): void {
@@ -807,6 +1009,7 @@ async function startConfiguredDesktopLogin(view: ManagedDesktopWebView): Promise
   if (view.allowExtensions && view.loginConfig.mode !== "locked") registerBusinessExtensions(view);
   page.loadingUrl = view.entryUrl;
   activateDesktopWebPage(view, page.id);
+  approveOrganizationWebLoad(page.view.webContents, view.entryUrl);
   const navigation = page.view.webContents.loadURL(view.entryUrl);
   fillDirectDesktopPage(view, page);
   void navigation.catch(() => {
@@ -878,6 +1081,7 @@ function startProtectedDesktopLogin(view: ManagedDesktopWebView): void {
         }
         if (!current()) return;
         const target = view.lastUrl && !/\/(?:log-?in|sign-?in|auth)(?:[/?#]|$)/i.test(new URL(view.lastUrl).pathname + new URL(view.lastUrl).hash) ? view.lastUrl : url;
+        approveOrganizationWebLoad(contents, target);
         await loadWebDocument(contents, target);
         if (!current()) return;
         if (view.login) Object.assign(view.login.state, { pageLoading: false, message: "业务网页已加载，正在确认登录状态" });
@@ -946,6 +1150,7 @@ export function browseDesktopWebWithoutAutofill(view: ManagedDesktopWebView): Pr
       view.loginNotice = "";
       page.loadingUrl = view.entryUrl;
       activateDesktopWebPage(view, page.id);
+      approveOrganizationWebLoad(page.view.webContents, view.entryUrl);
       void page.view.webContents.loadURL(view.entryUrl).catch(() => {
         if (current()) { page.loadingUrl = ""; page.error = tr("网页加载失败，请检查地址或网络后刷新"); sendWebViewState(view); }
       });
@@ -1027,13 +1232,23 @@ export async function openDesktopWebView(
   if (!supportedDesktopWebUrl(credential.entryUrl)) throw new Error(tr("Web 入口地址只支持 HTTP 或 HTTPS"));
   const endpoint = activeEndpoint?.endpoint;
   if (!endpoint) throw new Error(tr("请先验证 Viron Endpoint"));
-  let allowExtensions = auth.workspace.type === "personal";
-  if (auth.workspace.type === "organization") {
+  const organizationWeb = auth.workspace.type === "organization";
+  let allowExtensions = !organizationWeb;
+  let extensionPolicyLabel = "";
+  let pluginEntryId = credential.entryId;
+  let pluginEntryUrl = credential.entryUrl;
+  let pluginEnvironmentId = environmentId;
+  if (organizationWeb) {
     allowExtensions = false;
-    if (environmentId) {
+    extensionPolicyLabel = "环境未授权 · 已禁用";
+    if (environmentId && credential.entryId) {
       try {
-        const policy = await endpointJson<{ inject: boolean }>(`/api/v1/web-plugin-policy?environmentId=${encodeURIComponent(environmentId)}`);
+        const policy = await readWebPluginPolicy(environmentId, credential.entryId, credential.entryUrl);
         allowExtensions = policy.inject === true;
+        extensionPolicyLabel = policy.inject ? "" : policy.label || "环境未授权 · 已禁用";
+        if (policy.entryId) pluginEntryId = policy.entryId;
+        if (policy.entryUrl) pluginEntryUrl = policy.entryUrl;
+        if (policy.environmentId) pluginEnvironmentId = policy.environmentId;
       } catch {
         allowExtensions = false;
       }
@@ -1078,6 +1293,13 @@ export async function openDesktopWebView(
     lastActivityAt: Date.now(),
     closedReason: "",
     allowExtensions,
+    organizationWeb,
+    pluginEntryId,
+    pluginEntryUrl,
+    pluginEnvironmentId,
+    extensionPolicyLabel,
+    ownerUserId: auth.user.id,
+    isolatedPopups: [],
     partition: webPartition,
     partitionName,
     lastUrlKey,
@@ -1225,7 +1447,10 @@ export async function controlDesktopWebCredential(credentialId: string, input: D
     if (!input.url || !supportedDesktopWebUrl(input.url)) throw new Error(tr("页面地址只支持 HTTP 或 HTTPS URL"));
     page.pendingUrl = "";
     page.error = "";
-    await webContents.loadURL(input.url);
+    try { await webContents.loadURL(input.url); }
+    catch (error) {
+      if (!(error instanceof Error && error.message.includes("ERR_ABORTED"))) throw error;
+    }
   } else if (input.action === "back") {
     if (navigation.canGoBack()) navigation.goBack();
   } else if (input.action === "forward") {
@@ -1284,6 +1509,8 @@ export async function closeDesktopWebView(id: string, reason = tr("用户主动�
   if (!managed) return;
   if (managed.closing) { await closingProfiles.get(managed.partition); return; }
   closeDesktopWebExtensionPopup(managed.lastUrlKey);
+  for (const popup of managed.isolatedPopups) if (!popup.window.isDestroyed()) popup.window.destroy();
+  managed.isolatedPopups = [];
   managed.closedReason = reason;
   sendWebViewState(managed);
   managed.closing = true;
@@ -1407,6 +1634,7 @@ export async function handleDesktopWebViewAction(id: string, action: { type: str
     page.error = "";
     page.loadingUrl = url;
     void page.view.webContents.loadURL(url).catch((error) => {
+      if (error instanceof Error && error.message.includes("ERR_ABORTED")) return;
       if (page.loadingUrl === url) page.loadingUrl = "";
       page.error = error instanceof Error ? error.message : tr("页面导航失败");
       sendWebViewState(managed);

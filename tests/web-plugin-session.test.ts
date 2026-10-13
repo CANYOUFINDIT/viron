@@ -13,6 +13,8 @@ function view(environmentId: string, allowExtensions: boolean, locked = false): 
 } {
   const state = {
     environmentId,
+    entryId: environmentId ? `entry-${environmentId}` : "",
+    currentUrl: environmentId ? `https://console.example/${environmentId}` : "",
     allowExtensions,
     locked,
     suspended: false,
@@ -55,9 +57,11 @@ describe("open web plugin sessions", () => {
     const kept = view("env-b", true);
     const personal = view("", true);
     const reads: string[] = [];
-    await refreshOrganizationWebPlugins([lost, kept, personal], async (environmentId) => {
-      reads.push(environmentId);
-      return { inject: environmentId === "env-b" };
+    await refreshOrganizationWebPlugins([lost, kept, personal], async (target) => {
+      reads.push(target.environmentId);
+      expect(target.entryId).toBe(`entry-${target.environmentId}`);
+      expect(target.currentUrl).toContain(target.environmentId);
+      return { inject: target.environmentId === "env-b" };
     });
     expect(reads).toEqual(["env-a", "env-b"]);
     expect(lost.suspended).toBe(true);
