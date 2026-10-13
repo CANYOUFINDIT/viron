@@ -6,6 +6,7 @@ export const DESKTOP_EXECUTION_CHANNELS = ["mcp", "agent"] as const;
 export type DesktopExecutionChannel = (typeof DESKTOP_EXECUTION_CHANNELS)[number];
 
 export const DESKTOP_EXECUTION_AUTHORIZATION_KIND = "organization_execution_authorization" as const;
+export const DESKTOP_EXECUTION_RESULT_KIND = "organization_execution_result" as const;
 
 export const desktopExecutionRequestIdentitySchema = z.object({
   method: z.string().regex(/^[A-Z]{1,16}$/),
@@ -32,6 +33,38 @@ export const desktopExecutionAuthorizationPayloadSchema = z.object({
 export type DesktopExecutionRequestIdentity = z.infer<typeof desktopExecutionRequestIdentitySchema>;
 export type DesktopExecutionCheck = z.infer<typeof desktopExecutionCheckSchema>;
 export type DesktopExecutionAuthorizationPayload = z.infer<typeof desktopExecutionAuthorizationPayloadSchema>;
+
+const desktopExecutionWindowSchema = z.object({
+  allowed: z.boolean(),
+  permanent: z.boolean(),
+  expiresAt: z.number().nullable(),
+}).strict();
+
+/** Separate from the authorization check. status is the tool execution outcome. */
+export const desktopExecutionResultPayloadSchema = z.object({
+  operationId: z.string().uuid(),
+  kind: z.literal(DESKTOP_EXECUTION_RESULT_KIND),
+  channel: z.enum(DESKTOP_EXECUTION_CHANNELS),
+  target: z.object({
+    type: z.enum(RESOURCE_TYPES),
+    id: z.string().uuid(),
+  }).strict(),
+  code: z.string().min(1).max(80),
+  status: z.enum(["success", "failed"]),
+  basis: z.object({
+    roles: z.array(z.object({
+      roleId: z.string().min(1).max(80),
+      roleName: z.string().min(1).max(200),
+      assignmentId: z.string().min(1).max(80),
+      dataGrantId: z.string().min(1).max(80),
+    }).strict()).max(32),
+    featureGrantIds: z.array(z.string().min(1).max(80)).max(32),
+    operation: desktopExecutionWindowSchema,
+    feature: desktopExecutionWindowSchema,
+  }).strict(),
+}).strict();
+
+export type DesktopExecutionResultPayload = z.infer<typeof desktopExecutionResultPayloadSchema>;
 
 export interface DesktopExecutionWindow {
   allowed: boolean;

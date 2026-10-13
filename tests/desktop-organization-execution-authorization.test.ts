@@ -246,6 +246,55 @@ describe("desktop organization execution authorization", () => {
   });
 });
 
+describe("organization execution result", () => {
+  it("records one execution result and ignores a retransmission", async () => {
+    const f = await fixture();
+    const role = await f.grant("结果执行", ["ssh.use"], true);
+    const featureId = await f.feature("agent");
+    const operationId = randomUUID();
+    const payload = {
+      operationId,
+      kind: "organization_execution_result" as const,
+      channel: "agent" as const,
+      target: f.target,
+      code: "ssh.use",
+      status: "success" as const,
+      basis: {
+        roles: [{ roleId: role.roleId, roleName: "结果执行", assignmentId: randomUUID(), dataGrantId: role.grantIds[0] }],
+        featureGrantIds: [featureId],
+        operation: { allowed: true, permanent: true, expiresAt: null },
+        feature: { allowed: true, permanent: true, expiresAt: null },
+      },
+    };
+    const registered = createDeviceIdentity();
+    const challenge = await f.app.inject({
+      method: "POST",
+      url: "/api/v1/desktop/devices/registration-challenges",
+      cookies: f.memberCookies,
+      payload: { deviceId: registered.deviceId, publicKey: registered.publicKey },
+    });
+    expect(challenge.statusCode, challenge.body).toBe(201);
+    const proof = solveDeviceChallenge(registered, challenge.json().encryptedChallenge);
+    expect((await f.app.inject({
+      method: "POST",
+      url: `/api/v1/desktop/devices/registration-challenges/${challenge.json().challengeId}/complete`,
+      cookies: f.memberCookies,
+      payload: { proof },
+    })).statusCode).toBe(200);
+    const signed = signedReport(registered, f.userId, { type: "organization", id: f.org }, payload);
+    const first = await f.app.inject({ method: "POST", url: "/api/v1/desktop/organization-execution/result", cookies: f.memberCookies, payload: signed });
+    expect(first.statusCode, first.body).toBe(200);
+    expect(first.json()).toMatchObject({ accepted: true, duplicate: false });
+    const replay = await f.app.inject({ method: "POST", url: "/api/v1/desktop/organization-execution/result", cookies: f.memberCookies, payload: signed });
+    expect(replay.statusCode, replay.body).toBe(200);
+    expect(replay.json()).toMatchObject({ accepted: true, duplicate: true });
+    const rows = await f.db.prepare("SELECT after_json FROM organization_grant_ledger WHERE organization_id = ? AND action = '执行结果'").all<{ after_json: string }>(f.org);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].after_json).toContain(operationId);
+    expect(rows[0].after_json).toContain("\"status\":\"success\"");
+  });
+});
+
 describe("organization execution helper", () => {
   it("signs the trusted channel and a new operation each call", async () => {
     signedDesktopOperation.mockImplementation(async (payload: { operationId: string; channel: string }) => ({ protected: payload.operationId, signature: payload.channel }));

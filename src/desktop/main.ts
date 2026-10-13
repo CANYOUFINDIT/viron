@@ -40,6 +40,7 @@ import { sanitizeAgentDatabaseInput } from "./agent-database-context.js";
 import { DesktopMcpBroker } from "./mcp-broker.js";
 import { createVironMcpCompactGateway } from "../shared/mcp-tools.js";
 import { runWithOrganizationExecutionChannel } from "./organization-execution.js";
+import { authorizeDesktopAgentDatabase, reportDesktopAgentExecution } from "./agent-organization-authorization.js";
 import {
   currentAgentEntryMode,
   readState,
@@ -697,6 +698,7 @@ app.whenReady().then(async () => {
             intent: input.intent ?? "read",
           };
           if (!agentRuntimeScopeMatches(execution.scope, agentRuntimeScope(desktopContext))) throw new Error(tr("Viron Agent 诊断现场已经失效"));
+          const databaseGrant = await authorizeDesktopAgentDatabase(desktopContext, input.connectionId, input.sql);
           desktopAgentAuditStore.append(execution.scope, write ? "database_workbench_write_started" : "database_workbench_execution_started", `${input.connectionId}:${input.database}`, tr("在当前数据库工作台执行{{0}}（第 {{1}}/{{2}} 步）", [write ? tr("写 SQL") : tr("只读查询"), execution.step, execution.maxSteps]));
           try {
             const workbenchResult = await requestAgentWorkbenchExecution(request, execution.abortSignal);
@@ -715,9 +717,11 @@ app.whenReady().then(async () => {
               truncated: workbenchResult.result.truncated || sanitized.truncated,
               presentation: "workbench" as const,
             };
+            await reportDesktopAgentExecution(desktopContext, databaseGrant, "success");
             desktopAgentAuditStore.append(execution.scope, write ? "database_workbench_write_completed" : "database_workbench_execution_completed", `${input.connectionId}:${input.database}`, write ? tr("数据库工作台写 SQL 完成，影响 {{0}} 行", [result.affectedRows ?? result.rowCount]) : tr("数据库工作台只读查询完成，返回 {{0}} 行", [result.rowCount]));
             return result;
           } catch (error) {
+            if (!execution.abortSignal.aborted) await reportDesktopAgentExecution(desktopContext, databaseGrant, "failed");
             desktopAgentAuditStore.append(execution.scope, execution.abortSignal.aborted ? (write ? "database_workbench_write_cancelled" : "database_workbench_execution_cancelled") : (write ? "database_workbench_write_failed" : "database_workbench_execution_failed"), `${input.connectionId}:${input.database}`, error instanceof Error ? error.message : tr("数据库工作台执行失败"));
             throw error;
           }

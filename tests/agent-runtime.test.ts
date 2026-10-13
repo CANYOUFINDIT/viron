@@ -526,6 +526,7 @@ describe("Desktop Agent Pi runtime", () => {
     let secondTurnContext: import("@earendil-works/pi-ai").Context | undefined;
     const { runtime, events } = createRuntime([
       fauxAssistantMessage("第一轮回答"),
+      fauxAssistantMessage("组织回合"),
       (context) => {
         secondTurnContext = context;
         return fauxAssistantMessage("第二轮回答");
@@ -533,16 +534,20 @@ describe("Desktop Agent Pi runtime", () => {
     ]);
     const first = runtime.chat(testScope(), { message: "第一轮问题" });
     await waitForRunEvent(events, "run-finish", first.runId);
-    expect(() => runtime.chat(testScope("o2"), { message: "组织执行" })).toThrow("阶段 6");
+    const organization = runtime.chat(testScope("o2"), { message: "组织执行" });
+    await waitForRunEvent(events, "run-finish", organization.runId);
+    expect(organization.sessionId).toBe(first.sessionId);
     const second = runtime.chat(testScope(), { sessionId: first.sessionId, message: "继续刚才的问题" });
     await waitForRunEvent(events, "run-finish", second.runId);
 
     expect(second.sessionId).toBe(first.sessionId);
-    expect(secondTurnContext?.messages.map((message) => message.role)).toEqual(["user", "assistant", "user"]);
+    expect(secondTurnContext?.messages.map((message) => message.role)).toEqual(["user", "assistant", "user", "assistant", "user"]);
     const stored = runtime.currentConversation(testScope());
     expect(stored.messages.map((message) => message.content)).toEqual([
       "第一轮问题",
       "第一轮回答",
+      "组织执行",
+      "组织回合",
       "继续刚才的问题",
       "第二轮回答",
     ]);

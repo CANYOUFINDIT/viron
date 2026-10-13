@@ -448,7 +448,6 @@ export class DesktopAgentRuntime {
   }
 
   chat(scope: AgentRuntimeScope, request: AgentChatRequest): { runId: string; messageId: string; sessionId: string } {
-    if (scope.workspaceType === "organization") throw new Error(tr("组织 Agent 执行将在阶段 6 开放"));
     const content = inputMessage(request);
     const requestedSessionId = request.sessionId?.trim();
     const conversation = requestedSessionId ? this.sessionStore.select(scope, requestedSessionId) : this.sessionStore.current(scope);

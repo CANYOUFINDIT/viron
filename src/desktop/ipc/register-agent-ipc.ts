@@ -41,6 +41,8 @@ import {
   signedDesktopOperation,
 } from "../execution-router.js";
 import { endpointJson } from "../http-proxy.js";
+import { authorizeDesktopAgentDatabase, authorizeDesktopAgentDatabaseRead, authorizeDesktopAgentSsh, reportDesktopAgentExecution, type DesktopAgentGrant } from "../agent-organization-authorization.js";
+import { organizationMcpPurpose } from "../organization-mcp-purpose.js";
 import { requireDesktopString } from "./desktop-ipc-parse.js";
 
 export let desktopAgentSettingsStore: DesktopAgentSettingsStore;
@@ -124,6 +126,39 @@ function agentDatabaseContextInput(value: unknown): AgentDatabaseContextInput {
   };
 }
 
+function withAgentPurpose<T>(grant: DesktopAgentGrant | null, run: () => Promise<T>): Promise<T> {
+  return grant?.checks.length ? organizationMcpPurpose.run(grant.checks, run) : run();
+}
+
+async function agentSshConnectionId(
+  sessionId: string,
+  executionTarget: "desktop-local" | "server-forwarded",
+  desktopContext: DesktopSshContext,
+): Promise<string> {
+  if (executionTarget === "server-forwarded") {
+    const executionScope = executionScopeForEndpoint(desktopContext.endpoint);
+    const snapshot = await endpointJson<import("../../shared/agent.js").AgentSshContextSnapshot>(
+      `/api/v1/ssh-sessions/${encodeURIComponent(sessionId)}/agent-context`,
+      {
+        method: "POST",
+        body: await signedDesktopOperation({
+          operationId: randomUUID(),
+          action: "context" as const,
+          sessionId,
+          executionScope,
+        }, desktopContext),
+      },
+    );
+    return snapshot.connectionId;
+  }
+  return desktopSshRuntime.agentContext(sessionId, desktopContext).connectionId;
+}
+
+async function reportAgentOutcome(context: DesktopSshContext, grant: DesktopAgentGrant | null, status: "success" | "failed"): Promise<void> {
+  if (!grant) return;
+  await reportDesktopAgentExecution(context, grant, status);
+}
+
 export async function executeAgentSshRead(input: {
   executionId: string;
   sessionId: string;
@@ -139,6 +174,9 @@ export async function executeAgentSshRead(input: {
   if (!agentRuntimeScopeMatches(input.scope, agentRuntimeScope(input.desktopContext))) throw new Error(tr("Viron Agent 诊断现场已经失效"));
   const currentTarget = currentExecutionMode() === "server" ? "server-forwarded" : "desktop-local";
   if (input.executionTarget !== currentTarget) throw new Error(tr("Viron Agent 诊断现场已经失效"));
+  const sshGrant = input.desktopContext.workspaceType === "organization"
+    ? await authorizeDesktopAgentSsh(input.desktopContext, await agentSshConnectionId(input.sessionId, input.executionTarget, input.desktopContext), input.command)
+    : null;
   const stepSummary = input.step && input.maxSteps ? tr("（第 {{0}}/{{1}} 步）", [input.step, input.maxSteps]) : "";
   const targetSummary = input.executionTarget === "server-forwarded" ? tr("服务端转发") : tr("本机直连");
   const write = input.intent === "write";
@@ -162,7 +200,7 @@ export async function executeAgentSshRead(input: {
     input.abortSignal?.addEventListener("abort", cancel, { once: true });
     if (input.abortSignal?.aborted) cancel();
     try {
-      const result = await endpointJson<import("../../shared/agent.js").AgentSshDiagnosticResult>(
+      const result = await withAgentPurpose(sshGrant, async () => endpointJson<import("../../shared/agent.js").AgentSshDiagnosticResult>(
         `/api/v1/ssh-sessions/${encodeURIComponent(input.sessionId)}/agent-diagnostics`,
         {
           method: "POST",
@@ -175,7 +213,8 @@ export async function executeAgentSshRead(input: {
             intent: write ? "write" as const : "read" as const,
           }, input.desktopContext),
         },
-      );
+      ));
+      await reportDesktopAgentExecution(input.desktopContext, sshGrant ?? { checks: [], decisions: [] }, "success");
       desktopAgentAuditStore.append(
         input.scope,
         write ? "ssh_write_executed" : "ssh_diagnostic_executed",
@@ -195,6 +234,7 @@ export async function executeAgentSshRead(input: {
         desktopAgentAuditStore.append(input.scope, write ? "ssh_write_cancelled" : "ssh_diagnostic_cancelled", input.sessionId, tr("服务端转发 SSH {{0}}已取消{{1}}", [write ? tr("写命令") : tr("只读诊断"), stepSummary]));
       } else {
         desktopAgentAuditStore.append(input.scope, write ? "ssh_write_rejected" : "ssh_diagnostic_rejected", input.sessionId, error instanceof Error ? error.message : tr("服务端转发 SSH 诊断执行失败"));
+        await reportAgentOutcome(input.desktopContext, sshGrant, "failed");
       }
       throw error;
     } finally {
@@ -209,7 +249,8 @@ export async function executeAgentSshRead(input: {
   input.abortSignal?.addEventListener("abort", cancel, { once: true });
   if (input.abortSignal?.aborted) cancel();
   try {
-    const result = await desktopSshRuntime.agentDiagnostic(input.executionId, input.sessionId, input.command, input.desktopContext, { allowWrite: write });
+    const result = await withAgentPurpose(sshGrant, () => desktopSshRuntime.agentDiagnostic(input.executionId, input.sessionId, input.command, input.desktopContext, { allowWrite: write }));
+    await reportAgentOutcome(input.desktopContext, sshGrant, "success");
     desktopAgentAuditStore.append(
       input.scope,
       write ? "ssh_write_executed" : "ssh_diagnostic_executed",
@@ -229,6 +270,7 @@ export async function executeAgentSshRead(input: {
       desktopAgentAuditStore.append(input.scope, write ? "ssh_write_cancelled" : "ssh_diagnostic_cancelled", input.sessionId, tr("SSH {{0}}已取消{{1}}", [write ? tr("写命令") : tr("只读诊断"), stepSummary]));
     } else {
       desktopAgentAuditStore.append(input.scope, write ? "ssh_write_rejected" : "ssh_diagnostic_rejected", input.sessionId, error instanceof Error ? error.message : tr("SSH 诊断执行失败"));
+      await reportAgentOutcome(input.desktopContext, sshGrant, "failed");
     }
     throw error;
   } finally {
@@ -339,6 +381,7 @@ export async function executeAgentSshWorkbenchRead(input: {
   if (input.request.executionTarget !== currentTarget) throw new Error(tr("Viron Agent 诊断现场已经失效"));
   const write = input.request.intent === "write";
   desktopAgentAuditStore.append(input.scope, write ? "ssh_workbench_write_started" : "ssh_workbench_execution_started", input.request.sessionId, tr("在当前 SSH 终端执行{{0}}（第 {{1}}/{{2}} 步）", [write ? tr("写命令") : tr("只读诊断命令"), input.request.step, input.request.maxSteps]));
+  let sshGrant: DesktopAgentGrant | null = null;
   try {
     const snapshot = input.request.executionTarget === "server-forwarded"
       ? await endpointJson<import("../../shared/agent.js").AgentSshContextSnapshot>(
@@ -354,7 +397,8 @@ export async function executeAgentSshWorkbenchRead(input: {
         },
       )
       : await desktopSshRuntime.agentContext(input.request.sessionId, input.desktopContext);
-    const result = await requestAgentWorkbenchExecution(input.request, input.abortSignal);
+    sshGrant = await authorizeDesktopAgentSsh(input.desktopContext, snapshot.connectionId, input.request.command);
+    const result = await withAgentPurpose(sshGrant, () => requestAgentWorkbenchExecution(input.request, input.abortSignal));
     if (result.domain !== "ssh") throw new Error(tr("Viron Agent SSH 工作台执行结果无效"));
     if (
       result.connectionId !== snapshot.connectionId
@@ -364,6 +408,7 @@ export async function executeAgentSshWorkbenchRead(input: {
     ) throw new Error(tr("Viron Agent SSH 工作台执行现场已经失效"));
     if (!agentRuntimeScopeMatches(input.scope, agentRuntimeScope(await currentDesktopSshContext()))) throw new Error(tr("Viron Agent 诊断现场已经失效"));
     const output = summarizeAgentSshOutput(result.rawOutput, { maxBytes: 64 * 1024, maxLines: 500 });
+    await reportAgentOutcome(input.desktopContext, sshGrant, "success");
     desktopAgentAuditStore.append(input.scope, write ? "ssh_workbench_write_completed" : "ssh_workbench_execution_completed", result.connectionId, tr("SSH 终端{{0}}完成，耗时 {{1}} ms，输出脱敏 {{2}} 处{{3}}", [write ? tr("写命令") : tr("只读诊断"), result.durationMs, output.redactionCount, output.truncated || result.truncated ? tr("，结果已截断") : ""]));
     return {
       executionId: input.request.requestId,
@@ -383,6 +428,7 @@ export async function executeAgentSshWorkbenchRead(input: {
       presentation: "workbench",
     };
   } catch (error) {
+    if (!input.abortSignal.aborted) await reportAgentOutcome(input.desktopContext, sshGrant, "failed");
     desktopAgentAuditStore.append(input.scope, input.abortSignal.aborted ? "ssh_workbench_execution_cancelled" : "ssh_workbench_execution_failed", input.request.sessionId, error instanceof Error ? error.message : tr("SSH 工作台执行失败"));
     throw error;
   }
@@ -400,6 +446,7 @@ export async function executeAgentDatabaseRead(input: {
   intent?: "read" | "write";
 }): Promise<import("../../shared/agent.js").AgentDatabaseReadResult> {
   if (!agentRuntimeScopeMatches(input.scope, agentRuntimeScope(input.desktopContext))) throw new Error(tr("Viron Agent 诊断现场已经失效"));
+  const databaseGrant = await authorizeDesktopAgentDatabase(input.desktopContext, input.connectionId, input.sql);
   const target = `${input.connectionId}:${input.database}`;
   const stepSummary = input.step && input.maxSteps ? tr("（第 {{0}}/{{1}} 步）", [input.step, input.maxSteps]) : "";
   const write = input.intent === "write";
@@ -408,12 +455,14 @@ export async function executeAgentDatabaseRead(input: {
     const result = write
       ? await desktopDatabaseRuntime.agentWriteQuery(input.connectionId, input.database, input.sql, input.desktopContext, input.abortSignal)
       : await desktopDatabaseRuntime.agentReadQuery(input.connectionId, input.database, input.sql, input.desktopContext, input.abortSignal);
+    await reportAgentOutcome(input.desktopContext, databaseGrant, "success");
     desktopAgentAuditStore.append(input.scope, write ? "database_write_executed" : "database_read_executed", target, write ? tr("执行写 SQL{{0}}，影响 {{1}} 行", [stepSummary, result.affectedRows ?? result.rowCount]) : tr("执行只读 SQL{{0}}，返回 {{1}} 行", [stepSummary, result.rowCount]));
     return result;
   } catch (error) {
     if (input.abortSignal?.aborted) {
       desktopAgentAuditStore.append(input.scope, write ? "database_write_cancelled" : "database_read_cancelled", target, tr("数据库{{0}}已取消{{1}}", [write ? tr("写 SQL") : tr("只读查询"), stepSummary]));
     } else {
+      await reportAgentOutcome(input.desktopContext, databaseGrant, "failed");
       desktopAgentAuditStore.append(input.scope, write ? "database_write_rejected" : "database_read_rejected", target, error instanceof Error ? error.message : write ? tr("写 SQL 执行失败") : tr("只读 SQL 执行失败"));
     }
     throw error;
@@ -454,7 +503,7 @@ export function registerDesktopAgentIpc(): void {
       if (!activeEndpoint?.capabilities.serverForwarding.ssh) throw new Error(tr("当前 Endpoint 未开放 SSH 服务端转发能力"));
       const desktopContext = await currentDesktopSshContext();
       const executionScope = executionScopeForEndpoint(desktopContext.endpoint);
-      return endpointJson<import("../../shared/agent.js").AgentSshContextSnapshot>(
+      const snapshot = await endpointJson<import("../../shared/agent.js").AgentSshContextSnapshot>(
         `/api/v1/ssh-sessions/${encodeURIComponent(id)}/agent-context`,
         {
           method: "POST",
@@ -466,14 +515,24 @@ export function registerDesktopAgentIpc(): void {
           }, desktopContext),
         },
       );
+      const grant = await authorizeDesktopAgentSsh(desktopContext, snapshot.connectionId, "");
+      await reportAgentOutcome(desktopContext, grant, "success");
+      return snapshot;
     }
-    return desktopSshRuntime.agentContext(id, await currentDesktopSshContext());
+    const desktopContext = await currentDesktopSshContext();
+    const snapshot = desktopSshRuntime.agentContext(id, desktopContext);
+    const grant = await authorizeDesktopAgentSsh(desktopContext, snapshot.connectionId, "");
+    await reportAgentOutcome(desktopContext, grant, "success");
+    return snapshot;
   });
   ipcMain.handle("viron:agent:database-context", async (event, value: unknown) => {
     trustedSender(event);
     const input = agentDatabaseContextInput(value);
     const scope = await currentAgentSettingsScope();
-    const snapshot = await desktopDatabaseRuntime.agentContext(input, await currentDesktopSshContext());
+    const desktopContext = await currentDesktopSshContext();
+    const grant = await authorizeDesktopAgentDatabaseRead(desktopContext, input.connectionId);
+    const snapshot = await desktopDatabaseRuntime.agentContext(input, desktopContext);
+    await reportAgentOutcome(desktopContext, grant, "success");
     desktopAgentAuditStore.append(scope, "database_context_read", `${snapshot.connectionId}:${snapshot.database}`, tr("读取数据库现场 {{0}} / {{1}}", [snapshot.connectionName, snapshot.database]));
     return snapshot;
   });

@@ -7,7 +7,9 @@ import { requireAdmin } from "./auth.js";
 import { resourceKey, validAt, type ResourceRef } from "../../shared/organization-rbac.js";
 import {
   DESKTOP_EXECUTION_AUTHORIZATION_KIND,
+  DESKTOP_EXECUTION_RESULT_KIND,
   desktopExecutionAuthorizationPayloadSchema,
+  desktopExecutionResultPayloadSchema,
   type DesktopExecutionAuthorizationBasis,
   type DesktopExecutionAuthorizationPayload,
   type DesktopExecutionAuthorizationResult,
@@ -177,6 +179,50 @@ export async function registerDesktopExecutionAuthorizationRoutes(app: FastifyIn
         );
         if (!result.allowed) return reply.code(403).send(result);
         return result;
+      } catch (error) {
+        if (error instanceof DesktopReportError) return reply.code(error.status).send({ error: error.code, message: error.message });
+        throw error;
+      }
+    },
+  );
+
+  app.post(
+    "/api/v1/desktop/organization-execution/result",
+    { preHandler: requireAdmin, config: { rateLimit: { max: 300, timeWindow: "1 minute" } } },
+    async (request, reply) => {
+      if (!request.admin) return;
+      const admin = request.admin;
+      try {
+        const accepted = await acceptDesktopReport(
+          app,
+          admin,
+          request.body,
+          desktopExecutionResultPayloadSchema,
+          async ({ payload }) => {
+            if (admin.workspace.type !== "organization") return;
+            await recordGrantLedger(
+              app.db,
+              admin.workspace.id,
+              { id: admin.id, username: admin.username },
+              "执行结果",
+              `${payload.code} ${payload.target.type}:${payload.target.id}`,
+              {
+                targets: [payload.target],
+                channel: payload.channel,
+                after: {
+                  kind: DESKTOP_EXECUTION_RESULT_KIND,
+                  status: payload.status,
+                  code: payload.code,
+                  channel: payload.channel,
+                  operationId: payload.operationId,
+                  target: payload.target,
+                  basis: payload.basis,
+                },
+              },
+            );
+          },
+        );
+        return { accepted: true, duplicate: accepted.duplicate };
       } catch (error) {
         if (error instanceof DesktopReportError) return reply.code(error.status).send({ error: error.code, message: error.message });
         throw error;
