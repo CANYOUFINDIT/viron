@@ -3,6 +3,7 @@ import type { FastifyRequest } from "fastify";
 import { internalRequestAuditSource } from "./audit.js";
 import type { OrganizationAccess } from "./organization-rbac.js";
 import {
+  PERMISSION_DEFINITIONS,
   resourceKey,
   type FeatureGrant,
   type ResourceRef,
@@ -64,7 +65,12 @@ export function trustedExecutionChannel(request: FastifyRequest): ExecutionChann
 }
 
 export interface OperationPath {
+  /** Null means the path is already open at asOf. */
+  startsAt?: number | null;
+  /** Null means the path does not expire. */
   expiresAt: number | null;
+  /** Clock used when the path was read. Matches loadOrganizationAccess. */
+  asOf?: number;
 }
 
 export interface OperationWindow {
@@ -73,15 +79,45 @@ export interface OperationWindow {
   expiresAt: number | null;
 }
 
-export function unionWindow(paths: OperationPath[]): OperationWindow {
-  if (!paths.length) return { allowed: false, permanent: false, expiresAt: null };
-  if (paths.some((path) => path.expiresAt === null))
+function pathAsOf(paths: OperationPath[], now?: number): number {
+  if (typeof now === "number") return now;
+  const stamped = paths.find((path) => typeof path.asOf === "number")?.asOf;
+  return typeof stamped === "number" ? stamped : Date.now();
+}
+
+/**
+ * Merges complete-path intervals that cover `now` without crossing a gap.
+ * A later path extends the window only when it starts at or before the current end.
+ * A permanent path that is not covering `now` does not make the window permanent.
+ */
+export function unionWindow(paths: OperationPath[], now?: number): OperationWindow {
+  const at = pathAsOf(paths, now);
+  const intervals = paths
+    .map((path) => ({
+      start: path.startsAt ?? Number.NEGATIVE_INFINITY,
+      end: path.expiresAt,
+    }))
+    .filter((interval) => interval.end === null || interval.end > at);
+  const active = intervals.filter(
+    (interval) => interval.start <= at && (interval.end === null || interval.end > at),
+  );
+  if (!active.length) return { allowed: false, permanent: false, expiresAt: null };
+  if (active.some((interval) => interval.end === null))
     return { allowed: true, permanent: true, expiresAt: null };
-  return {
-    allowed: true,
-    permanent: false,
-    expiresAt: Math.max(...paths.map((path) => path.expiresAt ?? 0)),
-  };
+  let cursor = Math.max(...active.map((interval) => interval.end ?? at));
+  const later = intervals.filter((interval) => interval.start > at);
+  let progressed = true;
+  while (progressed) {
+    progressed = false;
+    for (const interval of later) {
+      if (interval.start <= cursor && (interval.end === null || interval.end > cursor)) {
+        if (interval.end === null) return { allowed: true, permanent: true, expiresAt: null };
+        cursor = interval.end;
+        progressed = true;
+      }
+    }
+  }
+  return { allowed: true, permanent: false, expiresAt: cursor };
 }
 
 export function intersectWindows(left: OperationWindow, right: OperationWindow): OperationWindow {
@@ -196,28 +232,56 @@ export function formatOperableRemaining(expiresAt: number, now = serverNow()): s
   return `${rest} 分`;
 }
 
+export interface WindowDetail {
+  code: string;
+  name: string;
+  channel: "operation" | "mcp" | "agent" | "webPlugins";
+  resourceType: string;
+  resourceId: string;
+  resourceName: string;
+  permanent: boolean;
+  expiresAt: string | null;
+}
+
 export interface PresentedWindow {
   permanent: boolean;
   partial: boolean;
   expiresAt: string | null;
   label: string | null;
+  serverNow: string;
+  details: WindowDetail[];
+}
+
+function permissionName(code: string): string {
+  return PERMISSION_DEFINITIONS.find((item) => item.code === code)?.label ?? code;
+}
+
+function emptyPresented(now: number): PresentedWindow {
+  return {
+    permanent: false,
+    partial: false,
+    expiresAt: null,
+    label: null,
+    serverNow: new Date(now).toISOString(),
+    details: [],
+  };
 }
 
 export function presentWindows(
-  paths: Array<OperationPath & { code: string }>,
-  now = serverNow(),
+  paths: Array<OperationPath & { code: string; resourceType?: string; resourceId?: string; resourceName?: string }>,
+  now = pathAsOf(paths),
 ): PresentedWindow {
   const byCode = new Map<string, OperationPath[]>();
   for (const path of paths) {
-    const list = byCode.get(path.code) ?? [];
+    const key = `${path.resourceType ?? ""}:${path.resourceId ?? ""}:${path.code}`;
+    const list = byCode.get(key) ?? [];
     list.push(path);
-    byCode.set(path.code, list);
+    byCode.set(key, list);
   }
-  const windows = [...byCode.values()].map(unionWindow).filter((item) => item.allowed);
-  if (!windows.length)
-    return { permanent: false, partial: false, expiresAt: null, label: null };
+  const windows = [...byCode.values()].map((group) => unionWindow(group, now)).filter((item) => item.allowed);
+  if (!windows.length) return emptyPresented(now);
   if (windows.every((item) => item.permanent))
-    return { permanent: true, partial: false, expiresAt: null, label: null };
+    return { permanent: true, partial: false, expiresAt: null, label: null, serverNow: new Date(now).toISOString(), details: [] };
   const limited = windows.filter((item) => !item.permanent && item.expiresAt !== null);
   const expiresAt = Math.min(...limited.map((item) => item.expiresAt ?? now));
   const partial =
@@ -229,21 +293,111 @@ export function presentWindows(
     partial,
     expiresAt: new Date(expiresAt).toISOString(),
     label: `${partial ? "部分操作剩余" : "可操作剩余"} ${amount}`,
+    serverNow: new Date(now).toISOString(),
+    details: [],
   };
 }
 
+const CHANNELS = ["mcp", "agent", "webPlugins"] as const;
+const CHANNEL_NAMES = { mcp: "MCP", agent: "Agent", webPlugins: "插件" } as const;
+
+function catalogItem(access: OrganizationAccess, target: ResourceRef) {
+  return access.catalog.find((item) => resourceKey(item) === resourceKey(target));
+}
+
+function operationDetail(
+  access: OrganizationAccess,
+  target: ResourceRef,
+  code: string,
+  window: OperationWindow,
+  channel: WindowDetail["channel"],
+): WindowDetail {
+  const item = catalogItem(access, target);
+  const name = permissionName(code);
+  return {
+    code,
+    name: channel === "operation" ? name : `${CHANNEL_NAMES[channel]} · ${name}（功能与数据交集）`,
+    channel,
+    resourceType: target.type,
+    resourceId: target.id,
+    resourceName: item?.name ?? target.id,
+    permanent: window.permanent,
+    expiresAt: window.expiresAt === null ? null : new Date(window.expiresAt).toISOString(),
+  };
+}
+
+/** One resource, or an environment card plus the resources linked to it. */
 export function presentTargetWindow(
   access: OrganizationAccess,
   target: ResourceRef,
-  codes = useCodesFor(
-    access.catalog.find((item) => resourceKey(item) === resourceKey(target))?.capability ?? "",
-  ),
-  now = serverNow(),
+  codes?: string[],
+  now = access.now,
 ): PresentedWindow {
-  const paths = codes.flatMap((code) =>
-    access.operationPaths(code, target).map((path) => ({ code, ...path })),
+  return presentResourceWindows(access, [target], now, codes ? new Map([[resourceKey(target), codes]]) : undefined);
+}
+
+export function presentEnvironmentWindow(
+  access: OrganizationAccess,
+  environmentId: string,
+  now = access.now,
+): PresentedWindow {
+  const targets = access.catalog.filter(
+    (item) => item.id === environmentId || item.environmentIds.includes(environmentId),
   );
-  return presentWindows(paths, now);
+  if (!targets.some((item) => item.type === "environment" && item.id === environmentId)) {
+    targets.unshift({
+      type: "environment",
+      id: environmentId,
+      name: access.catalog.find((item) => item.id === environmentId)?.name ?? "",
+      capability: "environment",
+      environmentIds: [],
+      groupIds: [],
+    });
+  }
+  return presentResourceWindows(access, targets, now);
+}
+
+function presentResourceWindows(
+  access: OrganizationAccess,
+  targets: ResourceRef[],
+  now: number,
+  codesByTarget?: Map<string, string[]>,
+): PresentedWindow {
+  const paths: Array<OperationPath & { code: string; resourceType: string; resourceId: string; resourceName: string }> = [];
+  const details: WindowDetail[] = [];
+  for (const target of targets) {
+    const codes = codesByTarget?.get(resourceKey(target)) ?? useCodesFor(catalogItem(access, target)?.capability ?? (target.type === "environment" ? "environment" : ""));
+    for (const code of codes) {
+      const operationPaths = access.operationPaths(code, target).map((path) => ({ ...path, asOf: path.asOf ?? now }));
+      const operation = unionWindow(operationPaths, now);
+      if (!operation.allowed) continue;
+      const item = catalogItem(access, target);
+      paths.push({
+        code,
+        startsAt: null,
+        expiresAt: operation.expiresAt,
+        asOf: now,
+        resourceType: target.type,
+        resourceId: target.id,
+        resourceName: item?.name ?? target.id,
+      });
+      details.push(operationDetail(access, target, code, operation, "operation"));
+      for (const channel of CHANNELS) {
+        const featureName = channel;
+        const featureTarget = featureName === "webPlugins" && target.type !== "environment" ? null : target;
+        if (!featureTarget) continue;
+        const feature = unionWindow(
+          access.featurePaths(featureName, featureTarget).map((path) => ({ ...path, asOf: path.asOf ?? now })),
+          now,
+        );
+        const intersected = intersectWindows(operation, feature);
+        if (!intersected.allowed) continue;
+        details.push(operationDetail(access, target, code, intersected, channel));
+      }
+    }
+  }
+  const presented = presentWindows(paths, now);
+  return { ...presented, details };
 }
 
 export function webPluginInjection(

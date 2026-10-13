@@ -1,4 +1,5 @@
 <script setup lang="ts">import { translate as tr } from "../i18n";
+import OperationWindow from "./OperationWindow.vue";
 
 import {
   AlertTriangle,
@@ -797,7 +798,7 @@ onBeforeUnmount(() => {
             <span class="redis-connection-icon"><Server :size="14" /></span>
             <div>
               <strong>{{ connection.name }}</strong>
-              <small v-if="connection.operationWindow?.label">{{ connection.operationWindow.label }}</small>
+              <OperationWindow :window="connection.operationWindow" @expired="loadConnections" />
               <small>{{ connection.host }}:{{ connection.port }} · DB {{ connection.defaultDatabase }}</small>
             </div>
             <em v-if="connection.options.readOnly">{{ $t('只读') }}</em><ChevronRight v-else :size="14" />

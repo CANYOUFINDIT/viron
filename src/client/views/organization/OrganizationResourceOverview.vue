@@ -7,6 +7,7 @@ import { ApiError, api } from "../../api";
 import { loadSession } from "../../session";
 import { RESOURCE_TYPE_LABELS, RESOURCE_TYPES, type ResourceType } from "../../../shared/organization-rbac";
 import { useOrganizationContext } from "./context";
+import OperationWindow from "../../components/OperationWindow.vue";
 import OrganizationResourceAuthorizationDialog from "./OrganizationResourceAuthorizationDialog.vue";
 import RolePermissionList from "./RolePermissionList.vue";
 import { pendingResourceGrant } from "./grant-selection";
@@ -372,7 +373,7 @@ function environmentNames(item: Item) {
                       <span class="environment-avatar">{{ String(item.name || '环').slice(0, 2) }}</span>
                       <p class="environment-card__description">{{ item.description || "暂无环境说明" }}</p>
                     </div>
-                    <small v-if="item.operationWindow?.label" class="environment-card__remaining">{{ item.operationWindow.label }}</small>
+                    <OperationWindow :window="item.operationWindow" @expired="load" />
                     <small v-if="item.partial" class="environment-card__remaining">仅部分连接已授权</small>
                     <div class="resource-counts" aria-label="环境资源数量">
                       <span><Globe2 :size="14" /><strong>{{ item.counts?.web ?? 0 }}</strong><small>Web</small></span>
@@ -406,6 +407,7 @@ function environmentNames(item: Item) {
             <article v-for="item in (group[1] as Item[])" :key="item.id" class="located-row">
               <div>
                 <strong>{{ item.name }}</strong>
+                <OperationWindow :window="item.operationWindow" @expired="load" />
                 <small>{{ RESOURCE_TYPE_LABELS[item.type as ResourceType] || item.type }}</small>
                 <small v-if="item.url">{{ item.url }}</small>
                 <p v-if="item.content" class="knowledge-preview">{{ item.content }}</p>
@@ -423,7 +425,7 @@ function environmentNames(item: Item) {
           <header><h3>未关联环境的资源</h3></header>
           <p v-if="!unlinked.length" class="browser-empty">没有未关联环境的 Web、日志或服务</p>
           <article v-for="item in unlinked" :key="item.id" class="located-row">
-            <div><strong>{{ item.name }}</strong><small>{{ RESOURCE_TYPE_LABELS[item.type as ResourceType] || item.type }}</small><small v-if="item.url">{{ item.url }}</small></div>
+            <div><strong>{{ item.name }}</strong><OperationWindow :window="item.operationWindow" @expired="load" /><small>{{ RESOURCE_TYPE_LABELS[item.type as ResourceType] || item.type }}</small><small v-if="item.url">{{ item.url }}</small></div>
             <div class="resource-auth-actions">
               <el-button v-if="item.authorization?.maintain" link type="primary" @click="openMaintain(item)">数据授权</el-button>
               <el-button v-else-if="item.authorization?.request" link @click="openRequest(item)">申请授权</el-button>
@@ -460,6 +462,7 @@ function environmentNames(item: Item) {
                 {{ reference.name || reference.environmentName || "引用" }}
                 <template v-if="reference.host"> · {{ reference.host }}<template v-if="reference.port">:{{ reference.port }}</template></template>
                 <template v-else-if="reference.username"> · {{ reference.username }}</template>
+                <OperationWindow :window="reference.operationWindow" @expired="load" />
               </li>
             </ul>
             <p v-if="!(item.references ?? []).length">尚未引用</p>
@@ -476,7 +479,7 @@ function environmentNames(item: Item) {
           <div v-for="item in section.items" :key="item.id" class="ssh-host-card">
             <div class="connection-card-main">
               <span class="ssh-host-card__icon"><Server :size="16" /></span>
-              <span class="ssh-host-card__details"><strong>{{ item.name }}</strong><small v-if="endpoint(item)" class="ssh-host-card__endpoint"><span>{{ endpoint(item) }}</span></small></span>
+              <span class="ssh-host-card__details"><strong>{{ item.name }}</strong><OperationWindow :window="item.operationWindow" @expired="load" /><small v-if="endpoint(item)" class="ssh-host-card__endpoint"><span>{{ endpoint(item) }}</span></small></span>
             </div>
             <small class="connection-environments">{{ environmentNames(item) }}</small>
             <div class="resource-auth-actions">
@@ -497,7 +500,7 @@ function environmentNames(item: Item) {
           <span class="database-navigation-placeholder"></span>
           <div class="database-navigation-connection">
             <Database :size="14" />
-            <span class="database-navigation-connection-label">{{ item.name }}<template v-if="item.engine"> · {{ item.engine }}</template><template v-if="item.databaseName"> / {{ item.databaseName }}</template></span>
+            <span class="database-navigation-connection-label">{{ item.name }}<template v-if="item.engine"> · {{ item.engine }}</template><template v-if="item.databaseName"> / {{ item.databaseName }}</template><OperationWindow :window="item.operationWindow" @expired="load" /></span>
           </div>
           <small class="connection-environments">{{ environmentNames(item) }}</small>
           <div class="resource-auth-actions">
@@ -517,6 +520,7 @@ function environmentNames(item: Item) {
           <span class="redis-connection-icon"><MemoryStick :size="14" /></span>
           <div>
             <strong>{{ item.name }}</strong>
+            <OperationWindow :window="item.operationWindow" @expired="load" />
             <small v-if="endpoint(item)">{{ endpoint(item) }}</small>
             <small v-if="item.databaseIndex !== undefined">DB {{ item.databaseIndex }}</small>
             <small>{{ environmentNames(item) }}</small>

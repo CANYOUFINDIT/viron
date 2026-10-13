@@ -740,14 +740,15 @@ export interface OrganizationAccess {
   permissionCodes: string[];
   applies(subjectType: SubjectType, subjectId: string): boolean;
   allows(code: string, target?: ResourceRef | string): boolean;
+  now: number;
   operationPaths(
     code: string,
     target: ResourceRef,
-  ): Array<{ expiresAt: number | null }>;
+  ): Array<{ startsAt: number | null; expiresAt: number | null; asOf: number }>;
   featurePaths(
     feature: keyof FeatureGrant["features"],
     target: ResourceRef,
-  ): Array<{ expiresAt: number | null }>;
+  ): Array<{ startsAt: number | null; expiresAt: number | null; asOf: number }>;
   featureAllowed(
     feature: keyof FeatureGrant["features"],
     target: ResourceRef,
@@ -878,12 +879,30 @@ export async function loadOrganizationAccess(
       catalog.some((t) => allows(code, t)) ||
       projects.some((p) => allows(code, p.id)),
   );
-  const cutoff = (left: string | null, right: string | null) => {
-    const values = [left, right].flatMap((value) =>
-      value ? [Date.parse(value)] : [],
-    );
-    return values.length ? Math.min(...values) : null;
+  const parsed = (value: string | null) => (value ? Date.parse(value) : null);
+  const openInterval = (start: number | null, end: number | null) => {
+    if (end !== null && end <= now) return null;
+    if (start !== null && end !== null && start >= end) return null;
+    return { startsAt: start, expiresAt: end, asOf: now };
   };
+  const intersectRecord = (
+    left: { startsAt: string | null; expiresAt: string | null },
+    right: { startsAt: string | null; expiresAt: string | null },
+  ) => {
+    const leftStart = parsed(left.startsAt);
+    const rightStart = parsed(right.startsAt);
+    const leftEnd = parsed(left.expiresAt);
+    const rightEnd = parsed(right.expiresAt);
+    const start = leftStart === null ? rightStart : rightStart === null ? leftStart : Math.max(leftStart, rightStart);
+    const end = leftEnd === null ? rightEnd : rightEnd === null ? leftEnd : Math.min(leftEnd, rightEnd);
+    return openInterval(start, end);
+  };
+  const windowAssignments = state.assignments.filter(
+    (assignment) =>
+      assignment.enabled &&
+      applies(assignment.subjectType, assignment.subjectId) &&
+      (!assignment.expiresAt || Date.parse(assignment.expiresAt) > now),
+  );
   const operationPaths = (code: string, target: ResourceRef) => {
     if (!member || !targets.has(resourceKey(target))) return [];
     const definition = PERMISSION_DEFINITIONS.find((item) => item.code === code);
@@ -897,8 +916,8 @@ export async function loadOrganizationAccess(
     )
       return [];
     if (code.startsWith("resource.") && code.split(".")[1] !== cap) return [];
-    const paths: Array<{ expiresAt: number | null }> = [];
-    for (const assignment of assignments) {
+    const paths: Array<{ startsAt: number | null; expiresAt: number | null; asOf: number }> = [];
+    for (const assignment of windowAssignments) {
       const role = activeRoles.get(assignment.roleId);
       if (!role?.permissionCodes.includes(code)) continue;
       if (
@@ -914,37 +933,36 @@ export async function loadOrganizationAccess(
         ].includes(code) &&
         assignment.managementScope.kind === "organization"
       ) {
-        paths.push({ expiresAt: cutoff(assignment.expiresAt, null) });
+        const interval = openInterval(parsed(assignment.startsAt), parsed(assignment.expiresAt));
+        if (interval) paths.push(interval);
         continue;
       }
-      for (const grant of state.dataGrants)
-        if (
-          grant.roleId === assignment.roleId &&
-          validAt(grant, now) &&
-          resourceKey(grant.target) === resourceKey(target)
-        )
-          paths.push({
-            expiresAt: cutoff(assignment.expiresAt, grant.expiresAt),
-          });
+      for (const grant of state.dataGrants) {
+        if (grant.roleId !== assignment.roleId || !grant.enabled) continue;
+        if (resourceKey(grant.target) !== resourceKey(target)) continue;
+        const interval = intersectRecord(assignment, grant);
+        if (interval) paths.push(interval);
+      }
     }
     return paths;
   };
+  const coversNow = (paths: Array<{ startsAt: number | null; expiresAt: number | null }>) =>
+    paths.some(
+      (path) =>
+        (path.startsAt === null || path.startsAt <= now) &&
+        (path.expiresAt === null || path.expiresAt > now),
+    );
   const featurePaths = (
     feature: keyof FeatureGrant["features"],
     target: ResourceRef,
   ) =>
     targets.has(resourceKey(target))
-      ? state.featureGrants
-          .filter(
-            (grant) =>
-              validAt(grant, now) &&
-              applies(grant.subjectType, grant.subjectId) &&
-              grant.features[feature] &&
-              grant.targets.some((item) => resourceKey(item) === resourceKey(target)),
-          )
-          .map((grant) => ({
-            expiresAt: grant.expiresAt ? Date.parse(grant.expiresAt) : null,
-          }))
+      ? state.featureGrants.flatMap((grant) => {
+          if (!grant.enabled || !applies(grant.subjectType, grant.subjectId) || !grant.features[feature]) return [];
+          if (!grant.targets.some((item) => resourceKey(item) === resourceKey(target))) return [];
+          const interval = openInterval(parsed(grant.startsAt), parsed(grant.expiresAt));
+          return interval ? [interval] : [];
+        })
       : [];
   const maintenanceRoleIds = (capability: string, environmentId: string) => {
     const code = `resource.${capability}.configure`;
@@ -974,12 +992,13 @@ export async function loadOrganizationAccess(
     state,
     catalog,
     userId,
+    now,
     permissionCodes,
     applies,
     allows,
     operationPaths,
     featurePaths,
-    featureAllowed: (feature, target) => featurePaths(feature, target).length > 0,
+    featureAllowed: (feature, target) => coversNow(featurePaths(feature, target)),
     maintenanceRoleIds,
   };
 }

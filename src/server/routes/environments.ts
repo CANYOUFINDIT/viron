@@ -9,7 +9,7 @@ import type { PermissionMap } from "../../shared/access-permissions.js";
 import { parseBody } from "../validation.js";
 import { requireAdmin } from "./auth.js";
 import { revokeWorkspaceRuntime } from "../user-runtime.js";
-import { presentTargetWindow } from "../organization-boundary.js";
+import { presentEnvironmentWindow } from "../organization-boundary.js";
 
 const groupSchema = z.object({
   name: z.string().trim().min(1).max(80),
@@ -73,7 +73,7 @@ function mapEnvironment(row: Record<string, unknown>, permissions?: PermissionMa
 }
 
 function environmentWindow(access: Awaited<ReturnType<typeof getWorkspaceAccess>>, id: string) {
-  return access.organizationAccess ? presentTargetWindow(access.organizationAccess, { type: "environment", id }) : null;
+  return access.organizationAccess ? presentEnvironmentWindow(access.organizationAccess, id) : null;
 }
 
 function requireWorkspaceManager(request: Parameters<typeof canManageWorkspace>[0], reply: { code: (status: number) => { send: (body: unknown) => unknown } }): boolean {

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { EnvmanDatabase } from "./database-client.js";
 import { roleHolderIds } from "./organization-approval.js";
 import { loadOrganizationAccess, OrganizationPermissionError, roleState } from "./organization-rbac.js";
-import { presentTargetWindow, serverNow } from "./organization-boundary.js";
+import { presentEnvironmentWindow, presentTargetWindow, serverNow } from "./organization-boundary.js";
 import {
   PERMISSION_DEFINITIONS,
   RESOURCE_CAPABILITIES,
@@ -161,9 +161,7 @@ export async function resourceOverview(db: EnvmanDatabase, org: string, userId: 
     publicItem(item, { ...extra, authorization: authorizationFor(item) });
   const environmentItems = environments.map((item) => {
     const meta = environmentMeta.get(item.id);
-    const authorized =
-      access.operationPaths("environment.view", item).length > 0 ||
-      access.operationPaths("environment.update", item).length > 0;
+    const authorized = access.allows("environment.view", item) || access.allows("environment.update", item);
     const child = access.catalog.filter((other) => other.environmentIds.includes(item.id) && other.id !== item.id && visible(other));
     const partial = !authorized && child.some((other) => access.allows("ssh.view", other) || access.allows("database.read", other) || access.allows("redis.view", other) || access.allows("web.view", other));
     return present(item, {
@@ -175,7 +173,7 @@ export async function resourceOverview(db: EnvmanDatabase, org: string, userId: 
       ownerNote: meta?.owner ?? "",
       environmentAuthorized: authorized,
       partial,
-      operationWindow: windowFor(item),
+      operationWindow: presentEnvironmentWindow(access, item.id, now),
       counts: {
         web: child.filter((other) => other.type === "web_entry").length,
         ssh: child.filter((other) => other.type === "ssh_connection").length,
@@ -183,10 +181,10 @@ export async function resourceOverview(db: EnvmanDatabase, org: string, userId: 
         redis: child.filter((other) => other.type === "redis_connection").length,
       },
       located: {
-        web: child.filter((other) => other.type === "web_entry").map((other) => present(other)),
-        logs: child.filter((other) => other.type === "environment_log").map((other) => present(other)),
-        services: child.filter((other) => ["service", "service_deployment", "service_script", "monitor_host"].includes(other.type)).map((other) => present(other)),
-        knowledge: child.filter((other) => other.type === "knowledge_node").map((other) => present(other)),
+        web: child.filter((other) => other.type === "web_entry").map((other) => present(other, { operationWindow: windowFor(other) })),
+        logs: child.filter((other) => other.type === "environment_log").map((other) => present(other, { operationWindow: windowFor(other) })),
+        services: child.filter((other) => ["service", "service_deployment", "service_script", "monitor_host"].includes(other.type)).map((other) => present(other, { operationWindow: windowFor(other) })),
+        knowledge: child.filter((other) => other.type === "knowledge_node").map((other) => present(other, { operationWindow: windowFor(other) })),
       },
     });
   });
@@ -235,7 +233,7 @@ export async function resourceOverview(db: EnvmanDatabase, org: string, userId: 
   const keyReferences = (keyId: string) => sshRows.filter((row) => row.ssh_key_id === keyId && (!projectId || visibleSsh.has(row.id))).map((row) => {
     const target = { type: "ssh_connection" as const, id: row.id };
     const config = access.allows("ssh.view", target) ? safeConfig.get(resourceKey(target)) : undefined;
-    return { type: target.type, id: row.id, name: sshName.get(row.id) ?? "", ...(config ?? {}) };
+    return { type: target.type, id: row.id, name: sshName.get(row.id) ?? "", operationWindow: windowFor(target), ...(config ?? {}) };
   });
   const keys = await db
     .prepare(
@@ -323,7 +321,7 @@ export async function resourceOverview(db: EnvmanDatabase, org: string, userId: 
     for (const group of Object.values(environment.located ?? {})) group.forEach(decorateLocated);
   }
   const entries = [
-    { ...RESOURCE_ENTRIES[0], count: environmentItems.length, items: environmentItems, unlinked: unlinked.map((item) => decorateLocated(present(item) as Record<string, unknown>)) },
+    { ...RESOURCE_ENTRIES[0], count: environmentItems.length, items: environmentItems, unlinked: unlinked.map((item) => decorateLocated(present(item, { operationWindow: windowFor(item) }) as Record<string, unknown>)) },
     { ...RESOURCE_ENTRIES[1], count: credentialItems.length, items: credentialItems },
     { ...RESOURCE_ENTRIES[2], count: connections("ssh_connection").length, items: connections("ssh_connection") },
     { ...RESOURCE_ENTRIES[3], count: connections("database_connection").length, items: connections("database_connection") },
