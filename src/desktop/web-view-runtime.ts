@@ -700,7 +700,7 @@ function configureDesktopWebPage(
       createWindow: (options) => {
         // Preserve window.opener and script-created about:blank documents in a
         // real page popup. App chrome is never moved into this document.
-        const popup = new BrowserWindow({ ...options, show: true, width: 1000, height: 720 });
+        const popup = new BrowserWindow({ ...options, show: !process.argv.includes("--smoke-test"), width: 1000, height: 720 });
         const popupHost: BrowserPageHost = {
           kind: "window", webContents: popup.webContents,
           setBounds() {}, getBounds: () => popup.getContentBounds(), setVisible() {},
@@ -718,6 +718,17 @@ function configureDesktopWebPage(
       return;
     }
     restoreDesktopWebPageZoom(view, page, url);
+    if (page.view.kind === "window" && view.organizationWeb && supportedDesktopWebUrl(url)) {
+      if (consumeApprovedOrganizationWebLoad(nativeView.webContents, url) || page.closing) return;
+      event.preventDefault();
+      void (async () => {
+        const moved = await migratePopupToPolicyEnvironment(view, url, view.pluginEnvironmentId, () => page.view.dispose());
+        if (moved || page.closing || nativeView.webContents.isDestroyed()) return;
+        approveOrganizationWebLoad(nativeView.webContents, url);
+        await nativeView.webContents.loadURL(url).catch(() => undefined);
+      })();
+      return;
+    }
     if (!view.organizationWeb || !supportedDesktopWebUrl(url) || consumeApprovedOrganizationWebLoad(nativeView.webContents, url)) return;
     event.preventDefault();
     if (!(view.allowExtensions && webEntryUrlScore(view.pluginEntryUrl, url) > 0)) {
@@ -763,6 +774,10 @@ function configureDesktopWebPage(
   });
   nativeView.webContents.on("did-navigate-in-page", (_event, url) => {
     if (view.activePageId === page.id) rememberDesktopWebLastUrl(view, url);
+    if (page.view.kind === "window" && view.organizationWeb && supportedDesktopWebUrl(url) && webEntryUrlScore(view.pluginEntryUrl, url) < 0) {
+      void migratePopupToPolicyEnvironment(view, url, view.pluginEnvironmentId, () => page.view.dispose());
+      return;
+    }
     if (view.organizationWeb && supportedDesktopWebUrl(url) && webEntryUrlScore(view.pluginEntryUrl, url) < 0) {
       quarantineDesktopWebSessionExtensions(view.partition);
       view.allowExtensions = false;
@@ -875,12 +890,40 @@ async function applyPopupWebPluginPolicy(view: ManagedDesktopWebView, popup: Iso
   await applyDesktopWebPluginPolicy(popupBinding(view, popup), policy);
 }
 
+function popupPartitionStillUsed(view: ManagedDesktopWebView, partition: Session, except?: IsolatedWebPluginPopup): boolean {
+  if (!view.closing && view.partition === partition) return true;
+  return view.isolatedPopups.some((item) => item !== except && !item.closing && item.partition === partition);
+}
+
+function releasePopupPartition(view: ManagedDesktopWebView, popup: IsolatedWebPluginPopup): void {
+  if (popupPartitionStillUsed(view, popup.partition, popup)) return;
+  void suspendDesktopWebSessionExtensions(popup.partition);
+}
+
+async function migratePopupToPolicyEnvironment(
+  view: ManagedDesktopWebView,
+  url: string,
+  currentEnvironmentId: string,
+  closeCurrent: () => void,
+): Promise<boolean> {
+  let policy: WebPluginPolicy = { inject: false, environmentId: "unknown" };
+  try { policy = await readWebPluginPolicy(currentEnvironmentId === "unknown" ? "" : currentEnvironmentId, view.pluginEntryId, url); }
+  catch { policy = { inject: false, environmentId: "unknown" }; }
+  const next = policy.environmentId || "unknown";
+  if (next === currentEnvironmentId) return false;
+  await openCrossEnvironmentWebPopup(view, url);
+  closeCurrent();
+  return true;
+}
+
 function bindIsolatedPopupNavigation(view: ManagedDesktopWebView, popup: IsolatedWebPluginPopup): void {
   const contents = popup.window.webContents;
   contents.on("will-navigate", (event, url) => {
     if (!supportedDesktopWebUrl(url) || consumeApprovedOrganizationWebLoad(contents, url) || popup.closing || view.closing) return;
     event.preventDefault();
     void (async () => {
+      const moved = await migratePopupToPolicyEnvironment(view, url, popup.environmentId, () => { if (!popup.window.isDestroyed()) popup.window.destroy(); });
+      if (moved || popup.closing || view.closing || contents.isDestroyed()) return;
       await applyPopupWebPluginPolicy(view, popup, url);
       if (popup.closing || view.closing || contents.isDestroyed()) return;
       approveOrganizationWebLoad(contents, url);
@@ -889,7 +932,7 @@ function bindIsolatedPopupNavigation(view: ManagedDesktopWebView, popup: Isolate
   });
   contents.on("did-navigate-in-page", (_event, url) => {
     if (!supportedDesktopWebUrl(url) || popup.closing || webEntryUrlScore(popup.entryUrl, url) > 0) return;
-    void applyPopupWebPluginPolicy(view, popup, url);
+    void migratePopupToPolicyEnvironment(view, url, popup.environmentId, () => { if (!popup.window.isDestroyed()) popup.window.destroy(); });
   });
 }
 
@@ -932,7 +975,7 @@ async function openCrossEnvironmentWebPopup(view: ManagedDesktopWebView, url: st
   popup.window.on("closed", () => {
     popup.closing = true;
     view.isolatedPopups = view.isolatedPopups.filter((item) => item !== popup);
-    if (popup.partition !== view.partition) void suspendDesktopWebSessionExtensions(popup.partition);
+    releasePopupPartition(view, popup);
   });
   bindIsolatedPopupNavigation(view, popup);
   approveOrganizationWebLoad(popup.window.webContents, url);

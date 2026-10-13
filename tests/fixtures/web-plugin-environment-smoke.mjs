@@ -116,6 +116,15 @@ async function run() {
   await until(async () => pageOf(devState.id).contents.getURL().includes("/dev/next") && (await marker(devState.id)) === "on");
   assert.equal(pageOf(devState.id).view.pluginEnvironmentId, dev.environmentId);
   const beforePopup = devView.partition.extensions.getAllExtensions().length;
+  await pageOf(devState.id).contents.executeJavaScript(`window.open(${JSON.stringify(`${origin}/dev/inside`)}); undefined`);
+  await until(() => BrowserWindow.getAllWindows().some((window) => window.webContents.getURL().includes("/dev/inside") && window.webContents.session === devView.partition));
+  const devPopup = BrowserWindow.getAllWindows().find((window) => window.webContents.getURL().includes("/dev/inside") && window.webContents.session === devView.partition);
+  const devPopupId = devPopup.id;
+  await devPopup.webContents.executeJavaScript(`location.assign(${JSON.stringify(prod.url)}); undefined`);
+  await until(() => BrowserWindow.getAllWindows().some((window) => window.id !== devPopupId && window.webContents.getURL() === prod.url && window.webContents.session !== devView.partition && window.webContents.session.extensions.getAllExtensions().length === 0));
+  assert.equal(devView.partition.extensions.getAllExtensions().length, beforePopup);
+  assert.equal(await marker(devState.id), "on");
+  assert.equal(pageOf(devState.id).view.pluginEnvironmentId, dev.environmentId);
   await pageOf(devState.id).contents.executeJavaScript(`window.open(${JSON.stringify(prod.url)})`);
   await until(() => BrowserWindow.getAllWindows().some((window) => window.webContents.session !== devView.partition && window.webContents.getURL() === prod.url));
   const prodPopup = BrowserWindow.getAllWindows().find((window) => window.webContents.getURL() === prod.url);
