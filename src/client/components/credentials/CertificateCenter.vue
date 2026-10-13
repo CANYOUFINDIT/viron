@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ApiError, api } from "../../api";
+import OperationWindow from "../OperationWindow.vue";
 import { translate as tr } from "../../i18n";
 import {
   formatFingerprint,
@@ -381,13 +382,13 @@ defineExpose({ openCreate, probeAll, retryFailed, batchBusy, certificateCount })
         <p v-if="asset.leafSans.length">{{ $t('备用域名') }}：{{ asset.leafSans.join(", ") }}</p>
         <p>{{ $t('有效期') }}：{{ asset.notBefore.slice(0, 10) }} {{ $t('至') }} {{ asset.notAfter.slice(0, 10) }}</p>
         <ul v-if="asset.webEntries.length">
-          <li v-for="entry in asset.webEntries" :key="entry.id">{{ entry.environmentName }} · {{ entry.name }} ({{ entry.url }})</li>
+          <li v-for="entry in asset.webEntries" :key="entry.id">{{ entry.environmentName }} · {{ entry.name }} ({{ entry.url }}) <OperationWindow :window="entry.operationWindow" @expired="load" /></li>
         </ul>
         <p v-else>{{ $t('待关联 Web 入口') }}</p>
         <section class="cert-bindings">
           <header><span><Server :size="14" />{{ $t('探测端点与 SSH 主机') }}</span><small>{{ asset.endpoints.length }}</small></header>
           <button v-for="endpoint in asset.endpoints" :key="endpoint.id" type="button" @click="openEndpointEdit(asset, endpoint.id)">
-            <span><strong>{{ endpoint.host }}:{{ endpoint.port }}</strong><small>{{ environmentName(endpoint.environmentId) }}<template v-if="endpoint.sni"> · SNI {{ endpoint.sni }}</template></small></span>
+            <span><strong>{{ endpoint.host }}:{{ endpoint.port }}</strong><OperationWindow :window="endpoint.operationWindow" @expired="load" /><small>{{ environmentName(endpoint.environmentId) }}<template v-if="endpoint.sni"> · SNI {{ endpoint.sni }}</template></small></span>
             <em :class="{ 'is-unbound': !endpoint.sshConnectionId }">{{ endpoint.sshConnectionName || $t('未绑定 SSH 主机') }}</em>
             <Pencil :size="13" />
           </button>

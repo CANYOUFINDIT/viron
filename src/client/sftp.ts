@@ -7,6 +7,7 @@ export interface SftpConnection {
   username: string;
   environmentIds: string[];
   connectionGroupPath: string | null;
+  operationWindow?: import("../shared/operation-window").OperationWindowData | null;
 }
 
 export const LOCAL_SFTP_CONNECTION_ID = "desktop-local";

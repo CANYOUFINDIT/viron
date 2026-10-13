@@ -9,6 +9,8 @@ import { readGrantSnapshot, recordAccessEvent } from "../access-governance-event
 import { writeAudit } from "../audit.js";
 import { isUniqueConstraintError } from "../database-errors.js";
 import { parseBody } from "../validation.js";
+import { presentTargetWindow } from "../organization-boundary.js";
+import type { OrganizationAccess } from "../organization-rbac.js";
 import { requireAdmin } from "./auth.js";
 
 const MAX_IMAGE_BYTES = 30 * 1024 * 1024;
@@ -697,9 +699,12 @@ async function requireKnowledgeManager(request: FastifyRequest, reply: FastifyRe
   return { workspace_id: node.workspace_id };
 }
 
-function knowledgeResponse(context: KnowledgeContext) {
+function knowledgeResponse(context: KnowledgeContext, access?: OrganizationAccess) {
   return {
-    items: context.rows.filter((node) => node.id !== context.environmentRootId).map((node) => mapNode(node, context)),
+    items: context.rows.filter((node) => node.id !== context.environmentRootId).map((node) => ({
+      ...mapNode(node, context),
+      operationWindow: access ? presentTargetWindow(access, { type: "knowledge_node", id: node.id }) : null,
+    })),
     environments: context.environments,
     canManage: context.permissions.canManage,
     canCreateDocument: context.environmentRootId
@@ -753,7 +758,7 @@ export async function registerKnowledgeBaseRoutes(app: FastifyInstance): Promise
     if (request.admin!.workspace.type === "organization" && request.method !== "GET" && request.url.includes("/grants")) return reply.code(410).send({error:"LEGACY_ACCESS_READ_ONLY",message:"请通过角色的数据授权维护知识库权限"});
   });
 
-  app.get("/api/v1/knowledge", async (request) => knowledgeResponse(await knowledgeContext(app, request.admin!)));
+  app.get("/api/v1/knowledge", async (request) => knowledgeResponse(await knowledgeContext(app, request.admin!), request.admin?.organizationAccess));
 
   app.get<{ Params: { environmentId: string } }>("/api/v1/environments/:environmentId/knowledge", async (request, reply) => {
     let result = await accessibleKnowledge(app, request, reply, request.params.environmentId);
@@ -762,7 +767,7 @@ export async function registerKnowledgeBaseRoutes(app: FastifyInstance): Promise
       await ensureEnvironmentRoot(app, request.admin!, request.params.environmentId);
       result = await knowledgeContext(app, request.admin!, request.params.environmentId);
     }
-    return knowledgeResponse(result);
+    return knowledgeResponse(result, request.admin?.organizationAccess);
   });
 
   app.get<{ Params: { id: string }; Querystring: { includeAssetData?: string } }>("/api/v1/knowledge-documents/:id", async (request, reply) => {

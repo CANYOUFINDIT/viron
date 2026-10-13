@@ -21,7 +21,9 @@ import {
 } from "@lucide/vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
+import type { OperationWindowData } from "../../shared/operation-window";
 import { api } from "../api";
+import OperationWindow from "./OperationWindow.vue";
 import { rememberActiveConnectionOrigin } from "../active-connection-origin";
 import {
   closeDesktopLogStream,
@@ -63,6 +65,7 @@ interface EnvironmentLog {
   connectionAvailable: boolean;
   createdAt: string;
   updatedAt: string;
+  operationWindow?: OperationWindowData | null;
 }
 
 interface SshConnection {
@@ -812,6 +815,7 @@ onBeforeUnmount(() => {
               <span class="log-config-item__icon" :title="logStreamActive(log.id) ? $t('正在后台跟踪') : undefined"><FileText :size="17" /><i v-if="logStreamActive(log.id)"></i></span>
               <span class="log-config-item__copy">
                 <strong>{{ log.name }}</strong>
+                <OperationWindow :window="log.operationWindow" @expired="loadData" />
                 <span>{{ log.connectionName }}</span>
                 <code :title="log.filePaths.join('\n')">{{ log.filePaths[0] }}<em v-if="log.filePaths.length > 1">+{{ log.filePaths.length - 1 }}</em></code>
               </span>

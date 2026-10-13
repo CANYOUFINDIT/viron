@@ -7,6 +7,7 @@ import { writeAudit } from "../audit.js";
 import { addConnectionEnvironment } from "../connection-environments.js";
 import { ensureConnectionGroup } from "../connection-groups.js";
 import { parseStoredLogFilePaths } from "../environment-log-files.js";
+import { presentEnvironmentWindow, presentTargetWindow } from "../organization-boundary.js";
 import { parseBody } from "../validation.js";
 import { requireAdmin } from "./auth.js";
 
@@ -490,12 +491,12 @@ export async function registerConnectionCopyRoutes(app: FastifyInstance): Promis
     ]);
     return {
       environmentGroups: [...source.groups.values()].map((row) => ({ id: row.id, name: row.name, description: row.description, color: row.color })),
-      environments: [...source.environments.values()].map((row) => ({ id: row.id, groupId: row.group_id, name: row.name, description: row.description, status: row.status })),
-      webEntries: [...source.webEntries.values()].map((row) => ({ id: row.id, environmentId: row.environment_id, name: row.name, url: row.url })),
+      environments: [...source.environments.values()].map((row) => ({ id: row.id, groupId: row.group_id, name: row.name, description: row.description, status: row.status, operationWindow: request.admin?.organizationAccess ? presentEnvironmentWindow(request.admin.organizationAccess, row.id) : null })),
+      webEntries: [...source.webEntries.values()].map((row) => ({ id: row.id, environmentId: row.environment_id, name: row.name, url: row.url, operationWindow: request.admin?.organizationAccess ? presentTargetWindow(request.admin.organizationAccess, { type: "web_entry", id: row.id }) : null })),
       webCredentials: [...source.webCredentials.values()].map((row) => ({ id: row.id, webEntryId: row.web_entry_id, username: row.username, note: row.note })),
-      sshConnections: [...source.sshConnections.values()].map((row) => ({ id: row.id, name: row.name, host: row.host, port: Number(row.port), username: row.username, environmentIds: source.sshEnvironmentIds.get(row.id) ?? [], jumpConnectionId: row.jump_connection_id, connectionGroupPath: row.connection_group_id ? source.connectionGroups.get(row.connection_group_id)?.path ?? "" : "" })),
-      databaseConnections: [...source.databaseConnections.values()].map((row) => ({ id: row.id, name: row.name, engine: row.engine, host: row.host, port: Number(row.port), username: row.username, environmentIds: source.databaseEnvironmentIds.get(row.id) ?? [], sshConnectionId: String(parseJsonObject(row.options_json).sshConnectionId ?? ""), connectionGroupPath: row.connection_group_id ? source.connectionGroups.get(row.connection_group_id)?.path ?? "" : "" })),
-      logs: [...source.logs.values()].map((row) => ({ id: row.id, environmentId: row.environment_id, sshConnectionId: row.ssh_connection_id, name: row.name, filePaths: parseStoredLogFilePaths(row.file_paths_json, row.file_path) })),
+      sshConnections: [...source.sshConnections.values()].map((row) => ({ id: row.id, name: row.name, host: row.host, port: Number(row.port), username: row.username, environmentIds: source.sshEnvironmentIds.get(row.id) ?? [], jumpConnectionId: row.jump_connection_id, connectionGroupPath: row.connection_group_id ? source.connectionGroups.get(row.connection_group_id)?.path ?? "" : "", operationWindow: request.admin?.organizationAccess ? presentTargetWindow(request.admin.organizationAccess, { type: "ssh_connection", id: row.id }) : null })),
+      databaseConnections: [...source.databaseConnections.values()].map((row) => ({ id: row.id, name: row.name, engine: row.engine, host: row.host, port: Number(row.port), username: row.username, environmentIds: source.databaseEnvironmentIds.get(row.id) ?? [], sshConnectionId: String(parseJsonObject(row.options_json).sshConnectionId ?? ""), connectionGroupPath: row.connection_group_id ? source.connectionGroups.get(row.connection_group_id)?.path ?? "" : "", operationWindow: request.admin?.organizationAccess ? presentTargetWindow(request.admin.organizationAccess, { type: "database_connection", id: row.id }) : null })),
+      logs: [...source.logs.values()].map((row) => ({ id: row.id, environmentId: row.environment_id, sshConnectionId: row.ssh_connection_id, name: row.name, filePaths: parseStoredLogFilePaths(row.file_paths_json, row.file_path), operationWindow: request.admin?.organizationAccess ? presentTargetWindow(request.admin.organizationAccess, { type: "environment_log", id: row.id }) : null })),
       grantees: [...members.map((item) => ({ ...item, type: "user" as const })), ...projects.map((item) => ({ ...item, type: "project" as const }))],
     };
   });

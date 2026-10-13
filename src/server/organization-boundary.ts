@@ -241,6 +241,13 @@ export interface WindowDetail {
   resourceName: string;
   permanent: boolean;
   expiresAt: string | null;
+  /** Operation boundary. Present on channel rows. */
+  operationPermanent?: boolean;
+  operationExpiresAt?: string | null;
+  /** Feature boundary. Present on channel rows. */
+  featurePermanent?: boolean;
+  featureExpiresAt?: string | null;
+  featureAllowed?: boolean;
 }
 
 export interface PresentedWindow {
@@ -305,25 +312,47 @@ function catalogItem(access: OrganizationAccess, target: ResourceRef) {
   return access.catalog.find((item) => resourceKey(item) === resourceKey(target));
 }
 
+function isoTime(value: number | null): string | null {
+  return value === null ? null : new Date(value).toISOString();
+}
+
 function operationDetail(
   access: OrganizationAccess,
   target: ResourceRef,
   code: string,
   window: OperationWindow,
   channel: WindowDetail["channel"],
+  bounds?: { operation: OperationWindow; feature: OperationWindow },
 ): WindowDetail {
   const item = catalogItem(access, target);
   const name = permissionName(code);
   return {
     code,
-    name: channel === "operation" ? name : `${CHANNEL_NAMES[channel]} · ${name}（功能与数据交集）`,
+    name: channel === "operation" ? name : `${CHANNEL_NAMES[channel]} · ${name}`,
     channel,
     resourceType: target.type,
     resourceId: target.id,
     resourceName: item?.name ?? target.id,
     permanent: window.permanent,
-    expiresAt: window.expiresAt === null ? null : new Date(window.expiresAt).toISOString(),
+    expiresAt: isoTime(window.expiresAt),
+    ...(bounds
+      ? {
+          operationPermanent: bounds.operation.permanent,
+          operationExpiresAt: isoTime(bounds.operation.expiresAt),
+          featurePermanent: bounds.feature.allowed && bounds.feature.permanent,
+          featureExpiresAt: bounds.feature.allowed ? isoTime(bounds.feature.expiresAt) : null,
+          featureAllowed: bounds.feature.allowed,
+        }
+      : {}),
   };
+}
+
+/** Web plugins are granted on the real environment and apply to that environment's web entry. */
+function pluginEnvironment(access: OrganizationAccess, target: ResourceRef): ResourceRef | null {
+  if (target.type === "environment") return target;
+  if (target.type !== "web_entry") return null;
+  const environmentId = catalogItem(access, target)?.environmentIds[0];
+  return environmentId ? { type: "environment", id: environmentId } : null;
 }
 
 /** One resource, or an environment card plus the resources linked to it. */
@@ -383,16 +412,15 @@ function presentResourceWindows(
       });
       details.push(operationDetail(access, target, code, operation, "operation"));
       for (const channel of CHANNELS) {
-        const featureName = channel;
-        const featureTarget = featureName === "webPlugins" && target.type !== "environment" ? null : target;
+        if (channel === "webPlugins" && !(code === "web.view" || code === "web.use")) continue;
+        const featureTarget = channel === "webPlugins" ? pluginEnvironment(access, target) : target;
         if (!featureTarget) continue;
         const feature = unionWindow(
-          access.featurePaths(featureName, featureTarget).map((path) => ({ ...path, asOf: path.asOf ?? now })),
+          access.featurePaths(channel, featureTarget).map((path) => ({ ...path, asOf: path.asOf ?? now })),
           now,
         );
         const intersected = intersectWindows(operation, feature);
-        if (!intersected.allowed) continue;
-        details.push(operationDetail(access, target, code, intersected, channel));
+        details.push(operationDetail(access, target, code, intersected.allowed ? intersected : { allowed: false, permanent: false, expiresAt: null }, channel, { operation, feature }));
       }
     }
   }

@@ -3,7 +3,9 @@
 import { Activity, CircleCheck, CircleX, Database, MemoryStick, RefreshCw, Search, TerminalSquare } from "@lucide/vue";
 import { ElMessage } from "element-plus";
 import { computed, onMounted, ref } from "vue";
+import type { OperationWindowData } from "../../shared/operation-window";
 import { api } from "../api";
+import OperationWindow from "./OperationWindow.vue";
 import TipIcon from "./TipIcon.vue";
 
 interface ConnectionItem {
@@ -19,6 +21,7 @@ interface ConnectionItem {
   lastInspectionLatencyMs: number | null;
   lastInspectionMessage: string | null;
   lastInspectedAt: string | null;
+  operationWindow?: OperationWindowData | null;
 }
 
 interface InspectionReport {
@@ -129,7 +132,7 @@ onMounted(load);
       <label v-for="item in candidates" :key="key(item)" class="inspection-candidate">
         <el-checkbox :model-value="selected.has(key(item))" @change="setItem(item, Boolean($event))" />
         <span :class="['connection-type-icon', `is-${item.type}`]"><TerminalSquare v-if="item.type === 'ssh'" :size="15" /><MemoryStick v-else-if="item.type === 'redis'" :size="15" /><Database v-else :size="15" /></span>
-        <span><strong>{{ item.name }}</strong><small>{{ item.username }}@{{ item.host }}:{{ item.port }}</small></span>
+        <span><strong>{{ item.name }}</strong><OperationWindow :window="item.operationWindow" @expired="load" /><small>{{ item.username }}@{{ item.host }}:{{ item.port }}</small></span>
         <em>{{ item.connectionGroupPath || $t('未分组') }}</em>
       </label>
       <div v-if="!candidates.length" class="inspection-empty">{{ $t('当前筛选下没有连接') }}</div>

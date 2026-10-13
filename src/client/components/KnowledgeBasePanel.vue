@@ -26,7 +26,9 @@ import {
 } from "@lucide/vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from "vue";
+import type { OperationWindowData } from "../../shared/operation-window";
 import { api, ApiError } from "../api";
+import OperationWindow from "./OperationWindow.vue";
 import { copyTextToClipboard } from "../clipboard";
 import { downloadApiFile } from "../desktop";
 import { renderKnowledgeMarkdown } from "../knowledge-markdown";
@@ -56,6 +58,7 @@ interface KnowledgeNode {
   directEnvironmentIds: string[];
   effectiveEnvironmentIds: string[];
   isContextOnly: boolean;
+  operationWindow?: OperationWindowData | null;
 }
 
 interface KnowledgeEnvironment { id: string; name: string }
@@ -898,6 +901,7 @@ onBeforeUnmount(() => {
           <Folder v-if="item.node.type === 'folder'" class="is-folder" :size="16" />
           <FileText v-else :size="16" />
           <span class="knowledge-tree-row__name" :title="item.node.name">{{ item.node.name }}</span>
+          <OperationWindow :window="item.node.operationWindow" @expired="loadKnowledge()" />
           <span v-if="item.node.type === 'document' && item.node.createdBy?.id === session.user?.id" class="knowledge-owner-dot" :title="$t('我创建的文档')"></span>
           <div v-if="selectedNodeId === item.node.id" class="knowledge-tree-row__actions">
             <button v-if="item.node.canManagePermissions" type="button" :title="$t('编辑权限')" :aria-label="$t('编辑权限')" @click.stop="openGrantDialog(item.node)"><ShieldCheck :size="13" /></button>

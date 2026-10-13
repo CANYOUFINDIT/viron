@@ -37,6 +37,8 @@ import {
   type EnvironmentPreloadTab,
 } from "../environment-preload";
 import { immersiveModeKey } from "../immersive-mode";
+import type { OperationWindowData } from "../../shared/operation-window";
+import OperationWindow from "../components/OperationWindow.vue";
 import OrganizationResourceAuthorizationDialog from "./organization/OrganizationResourceAuthorizationDialog.vue";
 import { session, workspaceCan } from "../session";
 import type { Capability, PermissionMap } from "../../shared/access-permissions";
@@ -86,6 +88,7 @@ interface WebEntry {
   credentialCount: number;
   loginConfig?: WebLoginConfig;
   tls?: import("../../shared/tls-certificates").TlsWebEntryBadge | null;
+  operationWindow?: OperationWindowData | null;
 }
 
 interface WebCredential {
@@ -1082,6 +1085,7 @@ onBeforeUnmount(() => {
           >
             <span class="resource-list__icon"><img v-if="displayEntryFavicons[entry.id]" :src="displayEntryFavicons[entry.id]" alt="" @error="discardEntryFavicon(entry.id)" /><Globe2 v-else :size="17" /></span>
             <strong>{{ entry.name }}</strong>
+            <OperationWindow :window="entry.operationWindow" @expired="loadEnvironment" />
             <em>{{ entry.credentialCount }}</em>
           </button>
           <div v-if="!webEntries.length" class="list-empty"><Globe2 :size="20" /><span>{{ $t('还没有页面入口') }}</span></div>
@@ -1128,6 +1132,7 @@ onBeforeUnmount(() => {
                     <span class="admin-avatar">{{ credential.username.slice(0, 1).toUpperCase() }}</span>
                     <span class="web-account-row__identity">
                       <strong>{{ credential.username }}</strong>
+                      <OperationWindow v-if="selectedEntry" :window="selectedEntry.operationWindow" @expired="loadEnvironment" />
                       <code v-if="credentialSelected(credential.id) && revealed[credential.id]">{{ revealed[credential.id] }}</code>
                     </span>
                   </button>

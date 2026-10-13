@@ -19,6 +19,7 @@ import {
 import { ElMessage } from "element-plus";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { api } from "../api";
+import OperationWindow from "./OperationWindow.vue";
 import { rememberActiveConnectionOrigin } from "../active-connection-origin";
 import {
   cancelDesktopSftpTransfer,
@@ -664,11 +665,11 @@ onBeforeUnmount(() => {
       <div class="sftp-host-picker__list">
         <section v-if="groupedConnections.recommended.length">
           <header><span>{{ $t('当前环境') }}</span></header>
-          <button v-for="connection in groupedConnections.recommended" :key="connection.id" type="button" @click="chooseConnection(connection)"><span><Server :size="16" /></span><div><strong>{{ connection.name }}</strong><small>{{ connectionMeta(connection) }}</small></div><em v-if="isCurrentSession(connection.id)">{{ $t('会话活动') }}</em></button>
+          <button v-for="connection in groupedConnections.recommended" :key="connection.id" type="button" @click="chooseConnection(connection)"><span><Server :size="16" /></span><div><strong>{{ connection.name }}</strong><OperationWindow :window="connection.operationWindow" @expired="loadWorkspace" /><small>{{ connectionMeta(connection) }}</small></div><em v-if="isCurrentSession(connection.id)">{{ $t('会话活动') }}</em></button>
         </section>
         <section>
           <header><span>{{ props.environmentId ? $t('其他位置') : $t('可用位置') }}</span></header>
-          <button v-for="connection in groupedConnections.others" :key="connection.id" type="button" @click="chooseConnection(connection)"><span><Server :size="16" /></span><div><strong>{{ connection.name }}</strong><small>{{ connectionMeta(connection) }}</small></div><em v-if="isCurrentSession(connection.id)">{{ $t('会话活动') }}</em></button>
+          <button v-for="connection in groupedConnections.others" :key="connection.id" type="button" @click="chooseConnection(connection)"><span><Server :size="16" /></span><div><strong>{{ connection.name }}</strong><OperationWindow :window="connection.operationWindow" @expired="loadWorkspace" /><small>{{ connectionMeta(connection) }}</small></div><em v-if="isCurrentSession(connection.id)">{{ $t('会话活动') }}</em></button>
         </section>
         <div v-if="!filteredConnections.length" class="sftp-host-picker__empty"><CircleAlert :size="20" />{{ $t('没有匹配的位置') }}</div>
       </div>

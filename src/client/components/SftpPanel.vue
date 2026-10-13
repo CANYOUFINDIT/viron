@@ -23,6 +23,7 @@ import {
 import { ElMessage, ElMessageBox } from "element-plus";
 import { computed, nextTick, ref, watch } from "vue";
 import { api } from "../api";
+import OperationWindow from "./OperationWindow.vue";
 import { updateSftpSelection } from "../sftp-selection";
 import {
   cancelDesktopSftpUpload,
@@ -483,7 +484,7 @@ defineExpose({ reload: () => load() });
     <header class="sftp-pane__toolbar">
       <button type="button" class="sftp-host-select" :title="connection ? localConnection ? $t('当前电脑文件系统') : `${connection.username}@${connection.host}:${connection.port}` : $t('选择位置')" @click="emit('chooseConnection')">
         <span class="sftp-pane__host-icon" :class="{ 'is-empty': !connection }"><Server :size="16" /></span>
-        <span><strong>{{ connection?.name || $t('选择主机') }}</strong><small v-if="currentSession">{{ $t('活动') }}</small></span>
+        <span><strong>{{ connection?.name || $t('选择主机') }}</strong><OperationWindow v-if="connection" :window="connection.operationWindow" /><small v-if="currentSession">{{ $t('活动') }}</small></span>
         <ChevronDown :size="14" />
       </button>
       <div v-if="connection" class="sftp-pane__toolbar-actions">

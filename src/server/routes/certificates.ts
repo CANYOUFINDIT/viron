@@ -10,6 +10,7 @@ import {
   listWorkspaceCertificates,
   probeTlsEndpoint,
 } from "../tls-certificates.js";
+import { presentEnvironmentWindow, presentTargetWindow } from "../organization-boundary.js";
 import { requireAdmin } from "./auth.js";
 
 function requireManager(request: Parameters<typeof canManageWorkspace>[0], reply: { code: (status: number) => { send: (body: unknown) => unknown } }): boolean {
@@ -36,7 +37,23 @@ export async function registerCertificateRoutes(app: FastifyInstance): Promise<v
     if (parsed.data.environmentId && !await canAccessEnvironment(app.db, request.admin!, parsed.data.environmentId)) {
       return reply.code(404).send({ error: "ENVIRONMENT_NOT_FOUND", message: "环境不存在" });
     }
-    return await listWorkspaceCertificates(app, { type: workspaceType, id: workspaceId }, parsed.data);
+    const listed = await listWorkspaceCertificates(app, { type: workspaceType, id: workspaceId }, parsed.data);
+    const access = request.admin?.organizationAccess;
+    if (!access) return listed;
+    return {
+      ...listed,
+      items: listed.items.map((item) => ({
+        ...item,
+        endpoints: item.endpoints.map((endpoint) => ({
+          ...endpoint,
+          operationWindow: presentEnvironmentWindow(access, endpoint.environmentId),
+        })),
+        webEntries: item.webEntries.map((entry) => ({
+          ...entry,
+          operationWindow: presentTargetWindow(access, { type: "web_entry", id: entry.id }),
+        })),
+      })),
+    };
   });
 
   app.get<{ Params: { id: string } }>("/api/v1/certificates/:id", { preHandler: requireAdmin }, async (request, reply) => {

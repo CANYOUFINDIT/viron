@@ -10,6 +10,7 @@ import { loadWebFavicon } from "../../shared/web-favicon.js";
 import { tlsWebEntryBadge } from "../../shared/tls-certificates.js";
 import { monitorAlertSettingsForEnvironment } from "../monitor-alerts.js";
 import { hasExactIds } from "../../shared/tab-order.js";
+import { presentTargetWindow } from "../organization-boundary.js";
 import { requireAdmin } from "./auth.js";
 import { bindWebEntryTlsEndpoint, getTlsEndpoint, listTlsEndpoints, removeWebEntryTlsEndpoint, syncWebEntryTlsEndpoint, TlsCertificateError } from "../tls-certificates.js";
 
@@ -78,6 +79,7 @@ export async function registerWebEntryRoutes(app: FastifyInstance): Promise<void
             tls: tlsWebEntryBadge(linked, alertSettings.tlsWarnDays),
             createdAt: row.created_at,
             updatedAt: row.updated_at,
+            operationWindow: request.admin?.organizationAccess ? presentTargetWindow(request.admin.organizationAccess, { type: "web_entry", id: String(row.id) }) : null,
           };
         }),
       };

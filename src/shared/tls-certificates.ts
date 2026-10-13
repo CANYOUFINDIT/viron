@@ -69,6 +69,7 @@ export interface TlsWebEntryLink {
   id: string;
   name: string;
   url: string;
+  operationWindow?: import("./operation-window.js").OperationWindowData | null;
 }
 
 export interface TlsEndpoint {
@@ -103,6 +104,7 @@ export interface TlsEndpoint {
   daysRemaining: number | null;
   stale: boolean;
   webEntries: TlsWebEntryLink[];
+  operationWindow?: import("./operation-window.js").OperationWindowData | null;
   createdAt: string;
   updatedAt: string;
 }

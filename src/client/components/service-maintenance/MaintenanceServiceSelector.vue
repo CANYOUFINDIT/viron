@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ArrowDown, ArrowUp, Box, EllipsisVertical, GripVertical, RefreshCw, Server } from "@lucide/vue";
+import OperationWindow from "../OperationWindow.vue";
 
 const { m } = defineProps<{ m: Record<string, any> }>();
 const {
@@ -52,7 +53,7 @@ const {
           <span v-else class="directory-row__spacer"></span>
           <button class="directory-row__main" type="button" :aria-pressed="activeWorkspace === 'service' && selectedService?.id === service.id" @click="selectService(service.id)">
             <span class="service-mark" :class="`is-${summarizeService(service).status}`"><Box :size="16" /></span>
-            <span><strong>{{ service.name }}</strong><small>{{ summarizeService(service).label }}<template v-if="service.deployments.length"> · {{ service.deployments.length }} {{ $t('节点') }}</template></small></span>
+            <span><strong>{{ service.name }}</strong><OperationWindow :window="service.operationWindow" @expired="m.fetchMaintenance()" /><small>{{ summarizeService(service).label }}<template v-if="service.deployments.length"> · {{ service.deployments.length }} {{ $t('节点') }}</template></small></span>
           </button>
           <el-dropdown v-if="payload.canConfigure" class="directory-row__menu-target" trigger="click" placement="bottom-end" @command="handleDirectoryMove('service', service.id, $event)">
             <button class="directory-row__menu" type="button" :disabled="!canSortDirectory" :aria-label="$t('调整服务顺序')" :title="$t('调整服务顺序')"><EllipsisVertical :size="14" /></button>
@@ -83,7 +84,7 @@ const {
         >
           <span v-if="payload.canConfigure" class="directory-row__grip" :class="{ 'is-disabled': !canSortDirectory }" :draggable="canSortDirectory" :title="$t('拖动宿主机排序')" aria-hidden="true" @dragstart="startDirectoryDrag('host', host.sshConnectionId, $event)" @dragend="endDirectoryDrag"><GripVertical :size="14" /></span>
           <span v-else class="directory-row__spacer"></span>
-          <button class="directory-row__main" type="button" :aria-pressed="activeWorkspace === 'host' && selectedHost?.sshConnectionId === host.sshConnectionId" @click="selectHost(host.sshConnectionId)"><Server :size="15" /><span><strong>{{ host.connectionName }}</strong><small>{{ hostPresence(host).label }}<template v-if="hostLiveCpu(host)"> · CPU {{ hostLiveCpu(host) }}</template></small></span><i :class="`is-${hostPresence(host).key}`"></i></button>
+          <button class="directory-row__main" type="button" :aria-pressed="activeWorkspace === 'host' && selectedHost?.sshConnectionId === host.sshConnectionId" @click="selectHost(host.sshConnectionId)"><Server :size="15" /><span><strong>{{ host.connectionName }}</strong><OperationWindow :window="host.operationWindow" @expired="m.fetchMaintenance()" /><small>{{ hostPresence(host).label }}<template v-if="hostLiveCpu(host)"> · CPU {{ hostLiveCpu(host) }}</template></small></span><i :class="`is-${hostPresence(host).key}`"></i></button>
           <el-dropdown v-if="payload.canConfigure" class="directory-row__menu-target" trigger="click" placement="bottom-end" @command="handleDirectoryMove('host', host.sshConnectionId, $event)">
             <button class="directory-row__menu" type="button" :disabled="!canSortDirectory" :aria-label="$t('调整宿主机顺序')" :title="$t('调整宿主机顺序')"><EllipsisVertical :size="14" /></button>
             <template #dropdown><el-dropdown-menu><el-dropdown-item command="up" :disabled="!canMoveDirectoryItem('host', host.sshConnectionId, 'up')"><ArrowUp :size="14" />{{ $t('上移') }}</el-dropdown-item><el-dropdown-item command="down" :disabled="!canMoveDirectoryItem('host', host.sshConnectionId, 'down')"><ArrowDown :size="14" />{{ $t('下移') }}</el-dropdown-item></el-dropdown-menu></template>

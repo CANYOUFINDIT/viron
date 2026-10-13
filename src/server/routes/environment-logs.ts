@@ -16,6 +16,7 @@ import { nextEnvironmentLogSortOrder } from "../list-order.js";
 import { hasExactIds, sameOrder } from "../../shared/tab-order.js";
 import { parseBody } from "../validation.js";
 import { executionScope } from "../execution-scope.js";
+import { presentTargetWindow } from "../organization-boundary.js";
 import { requireAdmin } from "./auth.js";
 import { ConnectionLimitError } from "../active-connections.js";
 
@@ -86,6 +87,14 @@ function mapLog(row: Record<string, unknown>) {
   };
 }
 
+function withLogWindow(row: Record<string, unknown>, access: Parameters<typeof presentTargetWindow>[0] | undefined) {
+  const item = mapLog(row);
+  return {
+    ...item,
+    operationWindow: access ? presentTargetWindow(access, { type: "environment_log", id: String(row.id) }) : null,
+  };
+}
+
 export async function registerEnvironmentLogRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Params: { environmentId: string } }>(
     "/api/v1/environments/:environmentId/logs",
@@ -104,7 +113,7 @@ export async function registerEnvironmentLogRoutes(app: FastifyInstance): Promis
         WHERE l.environment_id = ?
         ORDER BY l.sort_order ASC, l.updated_at DESC, l.name ASC, l.id ASC
       `).all(request.params.environmentId) as Record<string, unknown>[];
-      return { items: rows.filter((row) => access.allowsEnvironment(request.params.environmentId, "logs", "view", String(row.id))).map(mapLog) };
+      return { items: rows.filter((row) => access.allowsEnvironment(request.params.environmentId, "logs", "view", String(row.id))).map((row) => withLogWindow(row, request.admin?.organizationAccess)) };
     },
   );
 

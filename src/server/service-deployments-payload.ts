@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { monitoringProbeState } from "../shared/monitoring.js";
 import { getWorkspaceAccess } from "./access-control.js";
+import { presentTargetWindow } from "./organization-boundary.js";
 import {
   SERVICE_DEPLOYMENTS_MAX_BYTES,
   SERVICE_DEPLOYMENTS_MAX_DEPLOYMENTS,
@@ -180,7 +181,11 @@ export async function loadServiceDeploymentsPayload(
     status: row.status,
     sortOrder: row.sort_order,
     scriptActions: scriptActionsByService.get(String(row.id)) ?? [],
-    deployments: deploymentsByService.get(String(row.id)) ?? [],
+    deployments: (deploymentsByService.get(String(row.id)) ?? []).map((deployment) => ({
+      ...deployment,
+      operationWindow: request.admin?.organizationAccess ? presentTargetWindow(request.admin.organizationAccess, { type: "service_deployment", id: String(deployment.id) }) : null,
+    })),
+    operationWindow: request.admin?.organizationAccess ? presentTargetWindow(request.admin.organizationAccess, { type: "service", id: String(row.id) }) : null,
     logIds: logIdsByService.get(String(row.id)) ?? [],
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -206,6 +211,7 @@ export async function loadServiceDeploymentsPayload(
         sshConnectionId: row.ssh_connection_id,
         connectionName: row.connection_name,
         filePaths: paths.length ? paths : (row.file_path ? [String(row.file_path)] : []),
+        operationWindow: request.admin?.organizationAccess ? presentTargetWindow(request.admin.organizationAccess, { type: "environment_log", id: String(row.id) }) : null,
       };
     }),
     discovery: {
@@ -226,6 +232,7 @@ export async function loadServiceDeploymentsPayload(
           sampleResolutionSeconds: parseJson<{ resolutionSeconds?: number } | null>(row.latest_host_json, null)?.resolutionSeconds,
         }),
         candidateCount: parseJson<unknown[]>(row.latest_candidates_json, []).length,
+        operationWindow: request.admin?.organizationAccess ? presentTargetWindow(request.admin.organizationAccess, { type: "monitor_host", id: String(row.id) }) : null,
       })),
     },
   };

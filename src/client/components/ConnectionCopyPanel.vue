@@ -4,17 +4,19 @@ import { workspaceCan } from "../session";import { translate as tr } from "../i1
 import { AlertTriangle, ArrowLeft, CheckCircle2, Copy, Database, FileText, FolderTree, Globe2, KeyRound, RotateCcw, ShieldCheck, TerminalSquare, Users } from "@lucide/vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { computed, onMounted, ref, type Ref } from "vue";
+import type { OperationWindowData } from "../../shared/operation-window";
 import { api } from "../api";
+import OperationWindow from "./OperationWindow.vue";
 import { session } from "../session";
 import TipIcon from "./TipIcon.vue";
 
 interface EnvironmentGroupItem { id: string; name: string; description: string; color: string }
-interface EnvironmentItem { id: string; groupId: string | null; name: string; description: string; status: string }
-interface WebEntryItem { id: string; environmentId: string; name: string; url: string }
+interface EnvironmentItem { id: string; groupId: string | null; name: string; description: string; status: string; operationWindow?: OperationWindowData | null }
+interface WebEntryItem { id: string; environmentId: string; name: string; url: string; operationWindow?: OperationWindowData | null }
 interface WebCredentialItem { id: string; webEntryId: string; username: string; note: string }
-interface SshItem { id: string; name: string; host: string; port: number; username: string; environmentIds: string[]; jumpConnectionId: string | null; connectionGroupPath: string }
-interface DatabaseItem { id: string; name: string; engine: string; host: string; port: number; username: string; environmentIds: string[]; sshConnectionId: string; connectionGroupPath: string }
-interface LogItem { id: string; environmentId: string; sshConnectionId: string; name: string; filePaths: string[] }
+interface SshItem { id: string; name: string; host: string; port: number; username: string; environmentIds: string[]; jumpConnectionId: string | null; connectionGroupPath: string; operationWindow?: OperationWindowData | null }
+interface DatabaseItem { id: string; name: string; engine: string; host: string; port: number; username: string; environmentIds: string[]; sshConnectionId: string; connectionGroupPath: string; operationWindow?: OperationWindowData | null }
+interface LogItem { id: string; environmentId: string; sshConnectionId: string; name: string; filePaths: string[]; operationWindow?: OperationWindowData | null }
 interface GranteeItem { id: string; name: string; type: "user" | "project" }
 interface Catalog {
   environmentGroups: EnvironmentGroupItem[];
@@ -278,25 +280,25 @@ onMounted(loadCatalog);
           <div class="copy-environment-grid">
             <article v-for="group in catalog.environmentGroups" :key="group.id" class="copy-environment-group">
               <label><el-checkbox :model-value="selectedGroups.has(group.id)" @change="toggleGroup(group.id, Boolean($event))" /><i :style="{ background: group.color }"></i><span><strong>{{ group.name }}</strong><small v-if="group.description">{{ group.description }}</small></span></label>
-              <div><label v-for="environment in catalog.environments.filter((item) => item.groupId === group.id)" :key="environment.id"><el-checkbox :model-value="selectedEnvironments.has(environment.id)" @change="toggleEnvironment(environment.id, Boolean($event))" /><span>{{ environment.name }}</span><small>{{ entriesForEnvironment(environment.id).length }} Web · {{ logsForEnvironment(environment.id).length }} {{ $t('日志') }}</small></label></div>
+              <div><label v-for="environment in catalog.environments.filter((item) => item.groupId === group.id)" :key="environment.id"><el-checkbox :model-value="selectedEnvironments.has(environment.id)" @change="toggleEnvironment(environment.id, Boolean($event))" /><span>{{ environment.name }}<OperationWindow :window="environment.operationWindow" @expired="loadCatalog" /></span><small>{{ entriesForEnvironment(environment.id).length }} Web · {{ logsForEnvironment(environment.id).length }} {{ $t('日志') }}</small></label></div>
             </article>
-            <article v-if="ungroupedEnvironments.length" class="copy-environment-group"><label><FolderTree :size="16" /><span><strong>{{ $t('未分组环境') }}</strong><small>{{ $t('直接位于个人空间') }}</small></span></label><div><label v-for="environment in ungroupedEnvironments" :key="environment.id"><el-checkbox :model-value="selectedEnvironments.has(environment.id)" @change="toggleEnvironment(environment.id, Boolean($event))" /><span>{{ environment.name }}</span><small>{{ entriesForEnvironment(environment.id).length }} Web · {{ logsForEnvironment(environment.id).length }} {{ $t('日志') }}</small></label></div></article>
+            <article v-if="ungroupedEnvironments.length" class="copy-environment-group"><label><FolderTree :size="16" /><span><strong>{{ $t('未分组环境') }}</strong><small>{{ $t('直接位于个人空间') }}</small></span></label><div><label v-for="environment in ungroupedEnvironments" :key="environment.id"><el-checkbox :model-value="selectedEnvironments.has(environment.id)" @change="toggleEnvironment(environment.id, Boolean($event))" /><span>{{ environment.name }}<OperationWindow :window="environment.operationWindow" @expired="loadCatalog" /></span><small>{{ entriesForEnvironment(environment.id).length }} Web · {{ logsForEnvironment(environment.id).length }} {{ $t('日志') }}</small></label></div></article>
           </div>
         </section>
 
         <section class="copy-resource-section">
           <header><span><TerminalSquare :size="16" />{{ $t('连接') }}<TipIcon :content="$t('同一连接关联多个环境时只复制一次。')" placement="right" /></span></header>
           <div class="copy-connection-grid">
-            <label v-for="item in catalog.sshConnections" :key="item.id"><el-checkbox :model-value="selectedSsh.has(item.id)" @change="toggleSsh(item.id, Boolean($event))" /><TerminalSquare :size="16" /><span><strong>{{ item.name }}</strong><small>{{ item.username }}@{{ item.host }}:{{ item.port }}</small></span><em>{{ item.connectionGroupPath || $t('未分组') }}</em></label>
-            <label v-for="item in catalog.databaseConnections" :key="item.id"><el-checkbox :model-value="selectedDatabases.has(item.id)" @change="toggleDatabase(item.id, Boolean($event))" /><Database :size="16" /><span><strong>{{ item.name }}</strong><small>{{ item.username }}@{{ item.host }}:{{ item.port }}</small></span><em>{{ item.connectionGroupPath || $t('未分组') }}</em></label>
+            <label v-for="item in catalog.sshConnections" :key="item.id"><el-checkbox :model-value="selectedSsh.has(item.id)" @change="toggleSsh(item.id, Boolean($event))" /><TerminalSquare :size="16" /><span><strong>{{ item.name }}</strong><OperationWindow :window="item.operationWindow" @expired="loadCatalog" /><small>{{ item.username }}@{{ item.host }}:{{ item.port }}</small></span><em>{{ item.connectionGroupPath || $t('未分组') }}</em></label>
+            <label v-for="item in catalog.databaseConnections" :key="item.id"><el-checkbox :model-value="selectedDatabases.has(item.id)" @change="toggleDatabase(item.id, Boolean($event))" /><Database :size="16" /><span><strong>{{ item.name }}</strong><OperationWindow :window="item.operationWindow" @expired="loadCatalog" /><small>{{ item.username }}@{{ item.host }}:{{ item.port }}</small></span><em>{{ item.connectionGroupPath || $t('未分组') }}</em></label>
           </div>
         </section>
 
         <section v-if="catalog.webEntries.length || catalog.logs.length" class="copy-resource-section">
           <header><span><Globe2 :size="16" />{{ $t('Web 账号与日志') }}<TipIcon :content="$t('可取消选择不应进入组织的账号或日志配置。')" placement="right" /></span></header>
           <div class="copy-detail-grid">
-            <article v-for="entry in catalog.webEntries" :key="entry.id"><label><el-checkbox :model-value="selectedWebEntries.has(entry.id)" @change="toggleEntry(entry, Boolean($event))" /><Globe2 :size="15" /><span><strong>{{ entry.name }}</strong><small>{{ entry.url }}</small></span></label><div><label v-for="credential in credentialsForEntry(entry.id)" :key="credential.id"><el-checkbox :model-value="selectedWebCredentials.has(credential.id)" @change="toggleCredential(credential, Boolean($event))" /><KeyRound :size="13" />{{ credential.username }}</label></div></article>
-            <article v-for="log in catalog.logs" :key="log.id"><label><el-checkbox :model-value="selectedLogs.has(log.id)" @change="toggleLog(log, Boolean($event))" /><FileText :size="15" /><span><strong>{{ log.name }}</strong><small>{{ log.filePaths.join(' · ') }}</small></span></label></article>
+            <article v-for="entry in catalog.webEntries" :key="entry.id"><label><el-checkbox :model-value="selectedWebEntries.has(entry.id)" @change="toggleEntry(entry, Boolean($event))" /><Globe2 :size="15" /><span><strong>{{ entry.name }}</strong><OperationWindow :window="entry.operationWindow" @expired="loadCatalog" /><small>{{ entry.url }}</small></span></label><div><label v-for="credential in credentialsForEntry(entry.id)" :key="credential.id"><el-checkbox :model-value="selectedWebCredentials.has(credential.id)" @change="toggleCredential(credential, Boolean($event))" /><KeyRound :size="13" />{{ credential.username }}</label></div></article>
+            <article v-for="log in catalog.logs" :key="log.id"><label><el-checkbox :model-value="selectedLogs.has(log.id)" @change="toggleLog(log, Boolean($event))" /><FileText :size="15" /><span><strong>{{ log.name }}</strong><OperationWindow :window="log.operationWindow" @expired="loadCatalog" /><small>{{ log.filePaths.join(' · ') }}</small></span></label></article>
           </div>
         </section>
         <footer class="tool-panel__actions"><el-button type="primary" :disabled="!selectionCount" :loading="saving" @click="createPreview">{{ $t('生成复制预览') }}</el-button></footer>
