@@ -26,10 +26,13 @@ function requestSql(body: { sql?: string; statements?: Array<string | { sql: str
 
 function mappedOperation(request: FastifyRequest, channel: ExecutionChannel): MappedOperation | null {
   const path = request.url.split("?", 1)[0] ?? "";
-  const id = (request.params as { id?: string }).id;
+  const params = request.params as { id?: string; connectionId?: string };
+  const id = params.id;
   const connectionId =
     (request.body as { connectionId?: string } | undefined)?.connectionId ??
     (request.query as { connectionId?: string } | undefined)?.connectionId;
+  // These three desktop routes name the resource :connectionId. Body and query ids belong to other chains.
+  const desktopConnectionId = params.connectionId || id;
   if (/\/ssh-connections\/[^/]+\/sftp/.test(path) && id) {
     const code = path.endsWith("/download")
       ? "ssh.download"
@@ -41,12 +44,12 @@ function mappedOperation(request: FastifyRequest, channel: ExecutionChannel): Ma
     return operation(code, "ssh_connection", id);
   }
   if (/\/mcp\/ssh-connections\/[^/]+/.test(path) && id) return operation("ssh.use", "ssh_connection", id);
-  if (/\/desktop\/ssh-connections\/[^/]+\/envelope$/.test(path) && id)
-    return operation("ssh.use", "ssh_connection", id);
-  if (/\/desktop\/database-connections\/[^/]+\/envelope$/.test(path) && id)
-    return operation("database.read", "database_connection", id);
-  if (/\/desktop\/redis-connections\/[^/]+\/envelope$/.test(path) && id)
-    return operation("redis.view", "redis_connection", id);
+  if (/\/desktop\/ssh-connections\/[^/]+\/envelope$/.test(path) && desktopConnectionId)
+    return operation("ssh.use", "ssh_connection", desktopConnectionId);
+  if (/\/desktop\/database-connections\/[^/]+\/envelope$/.test(path) && desktopConnectionId)
+    return operation("database.read", "database_connection", desktopConnectionId);
+  if (/\/desktop\/redis-connections\/[^/]+\/envelope$/.test(path) && desktopConnectionId)
+    return operation("redis.view", "redis_connection", desktopConnectionId);
   if (/\/database-connections\//.test(path) && id) {
     if (/\/(table-export|backup)$/.test(path)) return { codes: ["database.read", "database.export"], type: "database_connection", id };
     if (/\/restore$/.test(path)) return { codes: [], type: "database_connection", id };

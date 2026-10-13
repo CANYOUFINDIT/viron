@@ -3,6 +3,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import {
+  createDeviceIdentity,
+  openDatabaseCredentialEnvelope,
+  openRedisCredentialEnvelope,
+  openSshCredentialEnvelope,
+  solveDeviceChallenge,
+} from "../src/desktop/device-identity.js";
 import { buildApp } from "../src/server/app.js";
 import { openDatabase, ensureAdmin } from "../src/server/database.js";
 import type { AppConfig } from "../src/server/config.js";
@@ -534,5 +541,193 @@ describe("organization role permissions", () => {
         id: resource.json().id,
       }),
     ).toBe(false);
+  });
+
+  it("authorizes desktop SSH, database, and Redis envelopes from the connectionId route param", async () => {
+    const f = await fixture();
+    const endpoint = "http://127.0.0.1:18453";
+    const database = await f.app.inject({
+      method: "POST",
+      url: "/api/v1/database-connections",
+      cookies: f.cookies,
+      payload: {
+        name: "虚构桌面数据库",
+        engine: "mysql",
+        host: "database.example.invalid",
+        port: 3306,
+        username: "fake",
+        credential: { password: "fake-db" },
+      },
+    });
+    expect(database.statusCode, database.body).toBe(201);
+    const redis = await f.app.inject({
+      method: "POST",
+      url: "/api/v1/redis-connections",
+      cookies: f.cookies,
+      payload: {
+        name: "虚构桌面缓存",
+        host: "redis.example.invalid",
+        port: 6379,
+        username: "fake",
+        credential: { password: "fake-redis" },
+      },
+    });
+    expect(redis.statusCode, redis.body).toBe(201);
+    const otherSsh = await f.app.inject({
+      method: "POST",
+      url: "/api/v1/ssh-connections",
+      cookies: f.cookies,
+      payload: {
+        name: "未授权SSH",
+        host: "other.example.invalid",
+        port: 22,
+        username: "fake",
+        authType: "password",
+        password: "not-granted",
+      },
+    });
+    expect(otherSsh.statusCode, otherSsh.body).toBe(201);
+    const granted = [
+      {
+        type: "ssh_connection" as const,
+        id: f.sshId,
+        code: "ssh.use",
+        path: `/api/v1/desktop/ssh-connections/${f.sshId}/envelope`,
+      },
+      {
+        type: "database_connection" as const,
+        id: database.json().id as string,
+        code: "database.read",
+        path: `/api/v1/desktop/database-connections/${database.json().id}/envelope`,
+      },
+      {
+        type: "redis_connection" as const,
+        id: redis.json().id as string,
+        code: "redis.view",
+        path: `/api/v1/desktop/redis-connections/${redis.json().id}/envelope`,
+      },
+    ];
+    const role = await insertRole(f.db, f.org, "桌面凭据", [
+      "ssh.view",
+      ...granted.map((item) => item.code),
+    ]);
+    await insertAssignment(f.db, f.org, role, "user", f.userId, {
+      kind: "resources",
+      ids: [],
+      includeChildren: false,
+    });
+    for (const target of granted) {
+      await insertDataGrant(f.db, f.org, role, target, role, null, null, "测试");
+    }
+
+    const spoofed = await f.app.inject({
+      method: "POST",
+      url: `/api/v1/desktop/ssh-connections/${otherSsh.json().id}/envelope`,
+      cookies: f.memberCookies,
+      payload: {
+        deviceId: randomUUID(),
+        requestId: randomUUID(),
+        endpoint,
+        connectionId: f.sshId,
+      },
+    });
+    expect(spoofed.statusCode, spoofed.body).toBe(403);
+    expect(spoofed.json().error).toBe("ACTION_FORBIDDEN");
+
+    for (const target of granted) {
+      const blocked = await f.app.inject({
+        method: "POST",
+        url: target.path,
+        cookies: f.memberCookies,
+        payload: {
+          deviceId: randomUUID(),
+          requestId: randomUUID(),
+          endpoint,
+        },
+      });
+      expect(blocked.statusCode, blocked.body).toBe(404);
+      expect(blocked.json().error).toBe("DEVICE_NOT_FOUND");
+    }
+
+    const identity = createDeviceIdentity();
+    const challenge = await f.app.inject({
+      method: "POST",
+      url: "/api/v1/desktop/devices/registration-challenges",
+      cookies: f.memberCookies,
+      payload: { deviceId: identity.deviceId, publicKey: identity.publicKey },
+    });
+    expect(challenge.statusCode, challenge.body).toBe(201);
+    const proof = solveDeviceChallenge(identity, challenge.json().encryptedChallenge);
+    const registered = await f.app.inject({
+      method: "POST",
+      url: `/api/v1/desktop/devices/registration-challenges/${challenge.json().challengeId}/complete`,
+      cookies: f.memberCookies,
+      payload: { proof },
+    });
+    expect(registered.statusCode, registered.body).toBe(200);
+
+    const expected = {
+      userId: f.userId,
+      workspaceType: "organization" as const,
+      workspaceId: f.org,
+      endpoint,
+    };
+    const sshRequestId = randomUUID();
+    const sshIssued = await f.app.inject({
+      method: "POST",
+      url: granted[0].path,
+      cookies: f.memberCookies,
+      payload: { deviceId: identity.deviceId, requestId: sshRequestId, endpoint },
+    });
+    expect(sshIssued.statusCode, sshIssued.body).toBe(200);
+    const sshOpened = openSshCredentialEnvelope(identity, sshIssued.json(), {
+      ...expected,
+      requestId: sshRequestId,
+      connectionId: f.sshId,
+    });
+    expect(sshOpened.credential.connection).toMatchObject({
+      connectionId: f.sshId,
+      host: "example.invalid",
+      port: 22,
+      username: "test",
+    });
+
+    const databaseRequestId = randomUUID();
+    const databaseIssued = await f.app.inject({
+      method: "POST",
+      url: granted[1].path,
+      cookies: f.memberCookies,
+      payload: { deviceId: identity.deviceId, requestId: databaseRequestId, endpoint },
+    });
+    expect(databaseIssued.statusCode, databaseIssued.body).toBe(200);
+    const databaseOpened = openDatabaseCredentialEnvelope(identity, databaseIssued.json(), {
+      ...expected,
+      requestId: databaseRequestId,
+      connectionId: database.json().id,
+    });
+    expect(databaseOpened.credential.connection).toMatchObject({
+      connectionId: database.json().id,
+      host: "database.example.invalid",
+      password: "fake-db",
+    });
+
+    const redisRequestId = randomUUID();
+    const redisIssued = await f.app.inject({
+      method: "POST",
+      url: granted[2].path,
+      cookies: f.memberCookies,
+      payload: { deviceId: identity.deviceId, requestId: redisRequestId, endpoint },
+    });
+    expect(redisIssued.statusCode, redisIssued.body).toBe(200);
+    const redisOpened = openRedisCredentialEnvelope(identity, redisIssued.json(), {
+      ...expected,
+      requestId: redisRequestId,
+      connectionId: redis.json().id,
+    });
+    expect(redisOpened.credential.connection).toMatchObject({
+      connectionId: redis.json().id,
+      host: "redis.example.invalid",
+      password: "fake-redis",
+    });
   });
 });
