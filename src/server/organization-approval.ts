@@ -38,6 +38,8 @@ export interface FlowSnapshotNode extends FlowNode {
   resolution: string;
   /** Usernames frozen when these members entered the request snapshot. */
   approverNames?: Record<string, string>;
+  /** Role name frozen at submit. Absent on older snapshots and never filled in later. */
+  approverRoleName?: string | null;
 }
 interface RequestRow {
   id: string;
@@ -719,10 +721,14 @@ async function resolveNode(
 ): Promise<FlowSnapshotNode> {
   let ids = [...node.approverUserIds];
   let resolution = ids.length ? "指定成员" : "";
+  let approverRoleName: string | null = null;
   if (node.approverRoleId) {
     const holders = await roleHolderIds(db, org, node.approverRoleId);
     ids = [...new Set([...ids, ...holders])];
-    resolution = resolution ? `${resolution}；角色成员` : "角色成员";
+    const role = await db.prepare("SELECT name FROM organization_roles WHERE organization_id = ? AND id = ?").get<{ name: string | null }>(org, node.approverRoleId);
+    approverRoleName = role?.name?.trim() || null;
+    const basis = approverRoleName ? `角色 ${approverRoleName}` : "角色成员";
+    resolution = resolution ? `${resolution}；${basis}` : basis;
   }
   if (!node.allowSelf) ids = ids.filter((id) => id !== requesterId);
   const capabilities = human.has(node.mode) ? await approverCapabilities(db, org, ids, targets) : null;
@@ -736,6 +742,7 @@ async function resolveNode(
     passApproverIds,
     resolution: resolution || node.mode,
     approverNames: await accountNames(db, resolved),
+    approverRoleName,
   };
 }
 
@@ -1326,6 +1333,8 @@ async function presentRequest(
       allowTransfer: node.allowTransfer !== false,
       allowAddSign: node.allowAddSign !== false,
       allowRollback: node.allowRollback !== false,
+      approverRoleId: node.approverRoleId,
+      approverRoleName: typeof node.approverRoleName === "string" && node.approverRoleName.trim() ? node.approverRoleName : null,
       approverIds: node.resolvedApproverIds,
       approvers: node.resolvedApproverIds.map((id) => {
         const capability = capabilities.get(id);

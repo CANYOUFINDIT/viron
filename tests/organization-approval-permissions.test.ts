@@ -1143,4 +1143,59 @@ describe("approval permission boundaries", () => {
     expect(roleRow.targets).toEqual([]);
     expect(roleRow.role).toBe("台账可见角色");
   });
+
+  it("freezes the selected role name on a request node and leaves an older snapshot unnamed", async () => {
+    const f = await fixture();
+    const applicant = await f.person("role-snapshot-applicant");
+    const holder = await f.person("role-snapshot-holder");
+    const held = await f.assign(applicant.userId, ["ssh.view"], "resources", [{ type: "ssh_connection", id: f.sshA }]);
+    const role = await f.app.inject({
+      method: "POST",
+      url: f.base + "/roles",
+      cookies: f.cookies,
+      payload: { name: "示例查看", permissionCodes: ["approval.approve"], reason: "节点角色" },
+    });
+    expect(role.statusCode, role.body).toBe(201);
+    const roleId = role.json().id as string;
+    expect((await f.app.inject({
+      method: "POST",
+      url: f.base + "/role-assignments",
+      cookies: f.cookies,
+      payload: { roleId, subjectType: "user", subjectId: holder.userId, managementScope: { kind: "organization", ids: [], includeChildren: true }, reason: "持有审批角色" },
+    })).statusCode).toBe(201);
+    const created = await f.app.inject({
+      method: "POST",
+      url: f.base + "/approval-flows",
+      cookies: f.cookies,
+      payload: {
+        name: "角色名快照流程",
+        nodes: [{ id: randomUUID(), name: "第二节点", mode: "any", approverUserIds: [], approverRoleId: roleId, allowSelf: false, requireComment: true }],
+        targets: [{ type: "ssh_connection", id: f.sshA }],
+      },
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const submitted = await f.app.inject({
+      method: "POST",
+      url: f.base + "/grant-requests",
+      cookies: applicant.cookies,
+      payload: { kind: "data", roleId: held.roleId, targets: [{ type: "ssh_connection", id: f.sshA }], durationMs: 3_600_000, reason: "冻结角色名" },
+    });
+    expect(submitted.statusCode, submitted.body).toBe(201);
+    const requestId = submitted.json().id as string;
+    const read = () => f.app.inject({ method: "GET", url: `${f.base}/grant-requests/${requestId}`, cookies: applicant.cookies });
+    const current = await read();
+    expect(current.json().nodes[0]).toMatchObject({ approverRoleId: roleId, approverRoleName: "示例查看" });
+    expect(current.json().nodes[0].resolution).toContain("示例查看");
+    await f.db.prepare("UPDATE organization_roles SET name = ? WHERE id = ?").run("改名后的示例查看", roleId);
+    const frozen = await read();
+    expect(frozen.json().nodes[0].approverRoleName).toBe("示例查看");
+    expect(frozen.body).not.toContain("改名后的示例查看");
+    const raw = await f.db.prepare("SELECT workflow_snapshot_json FROM organization_grant_requests WHERE id = ?").get<{ workflow_snapshot_json: string }>(requestId);
+    const snapshot = JSON.parse(raw!.workflow_snapshot_json) as { nodes: Array<Record<string, unknown>> };
+    delete snapshot.nodes[0].approverRoleName;
+    await f.db.prepare("UPDATE organization_grant_requests SET workflow_snapshot_json = ? WHERE id = ?").run(JSON.stringify(snapshot), requestId);
+    const legacy = await read();
+    expect(legacy.json().nodes[0]).toMatchObject({ approverRoleId: roleId, approverRoleName: null });
+    expect(legacy.body).not.toContain("改名后的示例查看");
+  });
 });

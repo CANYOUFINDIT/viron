@@ -25,6 +25,13 @@ export interface ApprovalFlowGroup {
 }
 
 const UNIT_MS = { minute: 60_000, hour: 3_600_000, day: 86_400_000 } as const;
+export const grantRequestStatusLabel: Record<string, string> = {
+  pending: "待审批",
+  approved: "已通过",
+  rejected: "已拒绝",
+  withdrawn: "已撤回",
+};
+
 export const DURATION_PRESETS = [
   { id: "30m", label: "30 分钟", ms: 30 * UNIT_MS.minute },
   { id: "1h", label: "1 小时", ms: UNIT_MS.hour },

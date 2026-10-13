@@ -5,7 +5,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { api } from "../../api";
 import { workspaceCan } from "../../session";
 import { RESOURCE_TYPE_LABELS, resourceKey, type ResourceRef, type ResourceType } from "../../../shared/organization-rbac";
-import { linkedEnvironmentState, linkedResources as catalogLinkedResources, toggleLinkedEnvironment, toggleResource } from "./grant-selection";
+import { grantRequestStatusLabel, linkedEnvironmentState, linkedResources as catalogLinkedResources, toggleLinkedEnvironment, toggleResource } from "./grant-selection";
 import GrantRequestDetail from "./GrantRequestDetail.vue";
 import { useOrganizationContext } from "./context";
 
@@ -88,7 +88,7 @@ const modes = [
   ["auto_reject", "自动拒绝"],
 ] as const;
 const knownModes = new Set<string>(modes.map((item) => item[0]));
-const requestStatus: Record<string, string> = { pending: "待审批", approved: "已通过", rejected: "已拒绝", withdrawn: "已撤回" };
+
 
 const { currentOrganizationId } = useOrganizationContext();
 const tab = ref<"flows" | "requests" | "ledger">("flows");
@@ -442,7 +442,7 @@ function when(value: string) {
         <button v-for="item in requests" :key="item.id" type="button" class="access-ledger__row approval-request-grid" @click="requestDetailId = item.id; requestDetailOpen = true">
           <span class="access-identity"><strong>{{ item.requesterName || "申请人" }}</strong><small>{{ item.reason }}</small></span>
           <span>{{ item.kind === "data" ? "数据授权" : "功能授权" }}</span>
-          <span>{{ requestStatus[item.status] ?? item.status }}</span>
+          <span>{{ grantRequestStatusLabel[item.status] ?? item.status }}</span>
           <span>{{ item.targets.map(targetText).join("、") || "未记录目标" }}</span>
         </button>
       </div>

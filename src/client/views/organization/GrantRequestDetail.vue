@@ -3,13 +3,14 @@ import { computed, ref, watch } from "vue";
 import { api } from "../../api";
 import { RESOURCE_TYPE_LABELS, type ResourceType } from "../../../shared/organization-rbac";
 import RolePermissionList from "./RolePermissionList.vue";
-import { formatDuration } from "./grant-selection";
+import { formatDuration, grantRequestStatusLabel } from "./grant-selection";
 
 const props = defineProps<{ modelValue: boolean; organizationId: string; requestId: string }>();
 const emit = defineEmits<{ "update:modelValue": [boolean]; changed: [] }>();
 const open = computed({ get: () => props.modelValue, set: (value) => emit("update:modelValue", value) });
 
 interface Person { id: string; name: string; nameSource?: string; canApprove?: boolean; canReject?: boolean }
+interface RevisionCandidate { userId: string; name: string; canApprove: boolean; canReject: boolean }
 interface TargetView { type: ResourceType; id: string; name: string; typeName?: string; environmentName?: string }
 interface RequestNode {
   id: string;
@@ -21,6 +22,8 @@ interface RequestNode {
   allowTransfer: boolean;
   allowAddSign: boolean;
   allowRollback: boolean;
+  approverRoleId: string | null;
+  approverRoleName: string | null;
   approvers: Person[];
 }
 interface DecisionView {
@@ -63,7 +66,7 @@ interface GrantRequestDetail {
   canRollback: boolean;
   canWithdraw: boolean;
   rollbackTargets: RollbackTarget[];
-  revisionCandidates: Person[];
+  revisionCandidates: RevisionCandidate[];
 }
 const detail = ref<GrantRequestDetail | null>(null);
 const loading = ref(false);
@@ -83,7 +86,7 @@ const modeLabel: Record<string, string> = {
 const decisionLabel: Record<string, string> = {
   approve: "通过", reject: "拒绝", withdraw: "撤回", cc: "抄送", transfer: "转交", add_sign: "加签", rollback: "回退",
 };
-const statusLabel: Record<string, string> = { pending: "待审批", approved: "已通过", rejected: "已拒绝", withdrawn: "已撤回" };
+const statusLabel = grantRequestStatusLabel;
 
 const holders = computed(() => Object.values(detail.value?.holderNames ?? {}).filter(Boolean));
 const currentNode = computed(() => {
@@ -245,6 +248,7 @@ function revise(type: "transfer" | "add_sign" | "rollback") {
             <strong>{{ index + 1 }}. {{ node.name }} · {{ modeLabel[node.mode] ?? node.mode }}</strong>
             <p v-if="index < detail.stageIndex || detail.status !== 'pending'">{{ index < detail.stageIndex ? "已经过" : "" }}</p>
             <p>选择依据：{{ node.resolution || "未记录" }}</p>
+            <p v-if="node.approverRoleId">所选角色：{{ node.approverRoleName || "名称未记入当时快照" }} · {{ node.approverRoleId }}</p>
             <p>{{ node.mode === "cc" ? "抄送接收" : "快照人员" }}：{{ people(node.approvers) }}</p>
             <p>{{ node.allowSelf ? "允许申请人本人审批并记录" : "不包含申请人本人" }} · {{ node.requireComment ? "必须填写意见" : "意见可选" }}</p>
             <p v-if="node.mode !== 'cc'">转交 {{ node.allowTransfer ? "开启" : "关闭" }} · 加签 {{ node.allowAddSign ? "开启" : "关闭" }} · 回退 {{ node.allowRollback ? "开启" : "关闭" }}</p>
@@ -278,12 +282,12 @@ function revise(type: "transfer" | "add_sign" | "rollback") {
           <el-input v-model="reviseComment" type="textarea" :rows="2" maxlength="2000" placeholder="填写调整意见" />
           <label v-if="detail.canTransfer">转交给
             <el-select v-model="transferUserId" placeholder="选择合格成员" style="width: 100%">
-              <el-option v-for="person in detail.revisionCandidates" :key="person.id" :label="person.name" :value="person.id" />
+              <el-option v-for="person in detail.revisionCandidates" :key="person.userId" :label="person.name" :value="person.userId" />
             </el-select>
           </label>
           <label v-if="detail.canAddSign">加签
             <el-select v-model="addSignUserId" placeholder="选择合格成员" style="width: 100%">
-              <el-option v-for="person in detail.revisionCandidates" :key="person.id" :label="person.name" :value="person.id" />
+              <el-option v-for="person in detail.revisionCandidates" :key="person.userId" :label="person.name" :value="person.userId" />
             </el-select>
           </label>
           <label v-if="detail.canRollback">回退到

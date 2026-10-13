@@ -13,6 +13,7 @@ import {
   DURATION_PRESETS,
   featuresForTargets,
   featuresSubmittable,
+  grantRequestStatusLabel,
   hasEnvironmentTarget,
   pendingResourceGrant,
   toggleResource,
@@ -401,7 +402,7 @@ function groupFlagText(group: ApprovalFlowGroup) {
         <h4>{{ tab === "todo" ? "待我审批" : "我的申请" }}</h4>
         <p v-if="!visibleRequests.length">暂无记录</p>
         <article v-for="item in visibleRequests" :key="item.id">
-          <strong>{{ item.kind === "data" ? "数据申请" : "功能申请" }} · {{ item.status }}</strong>
+          <strong>{{ item.kind === "data" ? "数据申请" : "功能申请" }} · {{ grantRequestStatusLabel[item.status] ?? item.status }}</strong>
           <small>{{ item.flowName || "流程见详情" }} · {{ item.reason }}</small>
           <small v-if="item.pauseReason || item.blockReason">{{ item.pauseReason || item.blockReason }}</small>
           <button type="button" @click="openDetail(item.id)">查看详情</button>
