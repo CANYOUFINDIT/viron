@@ -308,6 +308,9 @@ function revise(type: "transfer" | "add_sign" | "rollback") {
         </section>
       </template>
     </div>
+    <template #footer>
+      <el-button @click="open = false">关闭</el-button>
+    </template>
   </el-dialog>
 </template>
 

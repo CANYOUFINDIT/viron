@@ -1198,4 +1198,139 @@ describe("approval permission boundaries", () => {
     expect(legacy.json().nodes[0]).toMatchObject({ approverRoleId: roleId, approverRoleName: null });
     expect(legacy.body).not.toContain("改名后的示例查看");
   });
+
+  it("uses one pending rule for countersign votes, sequence order, and rollback", async () => {
+    const f = await fixture();
+    const applicant = await f.person("queue-applicant");
+    const first = await f.person("queue-first");
+    const second = await f.person("queue-second");
+    const extra = await f.app.inject({
+      method: "POST",
+      url: "/api/v1/ssh-connections",
+      cookies: f.cookies,
+      payload: { name: "连接C", host: "queue-c.invalid", port: 22, username: "root", authType: "password", password: "fake-password", environmentIds: [f.env] },
+    });
+    expect(extra.statusCode, extra.body).toBe(201);
+    const sshC = extra.json().id as string;
+    const held = await f.assign(applicant.userId, ["ssh.view"], "resources", [
+      { type: "ssh_connection", id: f.sshA },
+      { type: "ssh_connection", id: f.sshB },
+      { type: "ssh_connection", id: sshC },
+    ]);
+    await f.assign(first.userId, ["approval.approve", "approval.reject"], "organization");
+    await f.assign(second.userId, ["approval.approve", "approval.reject"], "organization");
+    const saved = async (name: string, nodes: ReturnType<typeof node>[], target: string) => {
+      const flow = await f.app.inject({
+        method: "POST",
+        url: f.base + "/approval-flows",
+        cookies: f.cookies,
+        payload: { name, nodes, targets: [{ type: "ssh_connection", id: target }] },
+      });
+      expect(flow.statusCode, flow.body).toBe(201);
+    };
+    await saved("会签待办", [node("会签", "all", [first.userId, second.userId])], f.sshA);
+    await saved("依次待办", [node("依次", "sequence", [first.userId, second.userId])], f.sshB);
+    await saved("回退待办", [node("第一人或签", "any", [first.userId]), node("第二人或签", "any", [second.userId])], sshC);
+    const submit = (target: string, reason: string) => f.app.inject({
+      method: "POST",
+      url: f.base + "/grant-requests",
+      cookies: applicant.cookies,
+      payload: { kind: "data", roleId: held.roleId, targets: [{ type: "ssh_connection", id: target }], durationMs: 3_600_000, reason },
+    });
+    const countersign = await submit(f.sshA, "会签一人已通过");
+    const ordered = await submit(f.sshB, "依次尚未轮到");
+    const rollback = await submit(sshC, "回退后重新通过");
+    expect(countersign.statusCode, countersign.body).toBe(201);
+    expect(ordered.statusCode, ordered.body).toBe(201);
+    expect(rollback.statusCode, rollback.body).toBe(201);
+    const countersignId = countersign.json().id as string;
+    const orderedId = ordered.json().id as string;
+    const rollbackId = rollback.json().id as string;
+
+    async function shown(requestId: string, cookies: { envman_session: string }) {
+      const detail = await f.app.inject({ method: "GET", url: `${f.base}/grant-requests/${requestId}`, cookies });
+      const todos = await f.app.inject({ method: "GET", url: f.base + "/grant-requests?view=todo", cookies });
+      expect(detail.statusCode, detail.body).toBe(200);
+      expect(todos.statusCode, todos.body).toBe(200);
+      const item = todos.json().items.find((entry: { id: string }) => entry.id === requestId);
+      return { detail: detail.json(), item };
+    }
+    const decide = (requestId: string, cookies: { envman_session: string }, comment: string) => f.app.inject({
+      method: "POST",
+      url: `${f.base}/grant-requests/${requestId}/decision`,
+      cookies,
+      payload: { decision: "approve", comment },
+    });
+    const ledgerCount = async (requestId: string) =>
+      (await f.db.prepare("SELECT id FROM organization_grant_ledger WHERE organization_id = ? AND request_id = ?").all(f.org, requestId)).length;
+    const decisionRows = async (requestId: string) => {
+      const raw = await f.db.prepare("SELECT decisions_json FROM organization_grant_requests WHERE id = ?").get<{ decisions_json: string }>(requestId);
+      return JSON.parse(raw!.decisions_json) as Array<{ decision: string; userId?: string; superseded?: boolean; stageIndex?: number }>;
+    };
+
+    const waitingSecond = await shown(orderedId, second.cookies);
+    expect(waitingSecond.detail).toMatchObject({ status: "pending", canDecide: false, canApprove: false, canReject: false });
+    expect(waitingSecond.item).toBeUndefined();
+    const waitingFirst = await shown(orderedId, first.cookies);
+    expect(waitingFirst.detail).toMatchObject({ canDecide: true, canApprove: true, canReject: true });
+    expect(waitingFirst.item).toMatchObject({ canDecide: true, canApprove: true, canReject: true });
+
+    const firstCountersign = await decide(countersignId, first.cookies, "会签第一人");
+    expect(firstCountersign.statusCode, firstCountersign.body).toBe(200);
+    expect(firstCountersign.json()).toMatchObject({ status: "pending", already: false });
+    const actedDetail = await shown(countersignId, first.cookies);
+    expect(actedDetail.detail).toMatchObject({
+      status: "pending",
+      canDecide: false,
+      canApprove: false,
+      canReject: false,
+      canTransfer: true,
+      canAddSign: true,
+      canRollback: false,
+    });
+    expect(actedDetail.item).toBeUndefined();
+    const otherDetail = await shown(countersignId, second.cookies);
+    expect(otherDetail.detail).toMatchObject({ canDecide: true, canApprove: true, canReject: true });
+    expect(otherDetail.item).toMatchObject({ canDecide: true, canApprove: true, canReject: true });
+    const decisionsBeforeRepeat = await decisionRows(countersignId);
+    const ledgerBeforeRepeat = await ledgerCount(countersignId);
+    const repeatedVote = await decide(countersignId, first.cookies, "会签第一人重复通过");
+    expect(repeatedVote.statusCode, repeatedVote.body).toBe(200);
+    expect(repeatedVote.json()).toMatchObject({ already: true, status: "pending" });
+    expect(await decisionRows(countersignId)).toEqual(decisionsBeforeRepeat);
+    expect(await ledgerCount(countersignId)).toBe(ledgerBeforeRepeat);
+
+    const finished = await decide(countersignId, second.cookies, "会签第二人");
+    expect(finished.statusCode, finished.body).toBe(200);
+    expect(finished.json().status).toBe("approved");
+    expect(finished.json().grantIds).toHaveLength(1);
+    const repeatedFinish = await decide(countersignId, second.cookies, "完成后再次通过");
+    expect(repeatedFinish.statusCode, repeatedFinish.body).toBe(200);
+    expect(repeatedFinish.json()).toMatchObject({ already: true, status: "approved" });
+    expect(await f.db.prepare("SELECT id FROM organization_role_data_grants WHERE request_id = ?").all(countersignId)).toHaveLength(1);
+    expect((await decisionRows(countersignId)).filter((item) => item.decision === "approve" && !item.superseded)).toHaveLength(2);
+
+    const moved = await decide(rollbackId, first.cookies, "进入下一节点");
+    expect(moved.statusCode, moved.body).toBe(200);
+    expect(moved.json()).toMatchObject({ status: "pending", already: false });
+    const rolled = await f.app.inject({
+      method: "POST",
+      url: `${f.base}/grant-requests/${rollbackId}/revise`,
+      cookies: second.cookies,
+      payload: { type: "rollback", stageIndex: 0, comment: "退回后允许原审批人再投" },
+    });
+    expect(rolled.statusCode, rolled.body).toBe(200);
+    const afterRollback = await shown(rollbackId, first.cookies);
+    expect(afterRollback.detail).toMatchObject({ status: "pending", stageIndex: 0, canDecide: true, canApprove: true });
+    expect(afterRollback.detail.decisions.some((item: { decision: string; superseded?: boolean }) => item.decision === "approve" && item.superseded)).toBe(true);
+    expect(afterRollback.item).toMatchObject({ canDecide: true, canApprove: true });
+    const revote = await decide(rollbackId, first.cookies, "回退后再次通过");
+    expect(revote.statusCode, revote.body).toBe(200);
+    expect(revote.json()).toMatchObject({ status: "pending", already: false });
+    const revoted = await shown(rollbackId, second.cookies);
+    expect(revoted.detail).toMatchObject({ status: "pending", stageIndex: 1, canDecide: true, canApprove: true });
+    const stored = await decisionRows(rollbackId);
+    expect(stored.filter((item) => item.decision === "approve" && item.superseded)).toHaveLength(1);
+    expect(stored.filter((item) => item.decision === "approve" && !item.superseded && item.userId === first.userId)).toHaveLength(1);
+  });
 });

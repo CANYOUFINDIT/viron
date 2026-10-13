@@ -1108,6 +1108,33 @@ async function stageState(db: EnvmanDatabase, org: string, row: RequestRow) {
   };
 }
 
+/** A live human decision on this stage. Superseded history does not count, so a rollback can be voted again. */
+function actedOnStage(decisions: DecisionEvent[], stage: number, userId: string) {
+  return decisions.some(
+    (item) => item.automatic !== true && item.superseded !== true && item.stageIndex === stage && item.userId === userId,
+  );
+}
+
+function nextSequenceApprover(node: FlowSnapshotNode, qualified: string[], decisions: DecisionEvent[], stage: number) {
+  return node.resolvedApproverIds.find((id) => qualified.includes(id) && !actedOnStage(decisions, stage, id));
+}
+
+/** Same rule for list and detail: pending, currently qualified, no live human decision, and sequence only for the next person. */
+function currentNodePending(
+  status: string,
+  stage: number,
+  paused: boolean,
+  node: FlowSnapshotNode | undefined,
+  qualified: string[],
+  decisions: DecisionEvent[],
+  viewerId: string,
+) {
+  if (!viewerId || status !== "pending" || paused || !node || !human.has(node.mode)) return false;
+  if (!qualified.includes(viewerId) || actedOnStage(decisions, stage, viewerId)) return false;
+  if (node.mode === "sequence" && nextSequenceApprover(node, qualified, decisions, stage) !== viewerId) return false;
+  return true;
+}
+
 export async function listGrantRequests(
   db: EnvmanDatabase,
   org: string,
@@ -1128,9 +1155,8 @@ export async function listGrantRequests(
   for (const row of rows) {
     const state = await stageState(db, org, row);
     const mine = row.requester_id === viewerId;
-    const todo = row.status === "pending" && !state.paused && state.qualified.includes(viewerId) && state.node?.mode !== "sequence"
-      ? true
-      : row.status === "pending" && !state.paused && state.node?.mode === "sequence" && state.qualified.find((id) => !state.decisions.some((item) => item.stageIndex === Number(row.stage_index) && item.userId === id)) === viewerId;
+    const stage = Number(row.stage_index);
+    const todo = currentNodePending(row.status, stage, state.paused, state.node, state.qualified, state.decisions, viewerId);
     if (view === "mine" && !mine) continue;
     if (view === "todo" && !todo) continue;
     if (view === "all" && !orgWideView) {
@@ -1398,13 +1424,13 @@ export async function readGrantRequest(db: EnvmanDatabase, org: string, requestI
     .get<RequestRow>(org, requestId);
   if (!row) throw new OrganizationPermissionError("NOT_FOUND", 404, "申请不存在");
   const state = await stageState(db, org, row);
-  const todo = row.status === "pending" && state.qualified.includes(viewerId);
+  const todo = currentNodePending(row.status, Number(row.stage_index), state.paused, state.node, state.qualified, state.decisions, viewerId);
   const access = await loadOrganizationAccess(db, org, viewerId);
   const targets = snapshotOf(row).targets;
   const covered = access.allows("approval.view") || (targets.length > 0 && targets.every((target) => access.allows("approval.view", target)));
   if (row.requester_id !== viewerId && !todo && !covered && !(await requestParticipant(db, org, row, viewerId)))
     throw new OrganizationPermissionError("NOT_FOUND", 404, "申请不存在或无权查看");
-  return presentRequest(db, org, row, viewerId, state, todo && !state.paused, new Map());
+  return presentRequest(db, org, row, viewerId, state, todo, new Map());
 }
 
 async function activeMember(db: EnvmanDatabase, org: string, userId: string) {
@@ -1501,6 +1527,8 @@ export async function decideGrantRequest(
     if (blocked)
       throw new OrganizationPermissionError("UNSUPPORTED_APPROVAL_NODE", 409, unsupportedNodeMessage(blocked, "审批"));
     const state = await stageState(db, org, row);
+    const currentStage = Number(row.stage_index);
+    if (state.node && actedOnStage(state.decisions, currentStage, actorId)) return { done: true };
     if (state.paused)
       throw new OrganizationPermissionError("APPROVAL_PAUSED", 409, state.reason);
     const node = state.node;
@@ -1512,13 +1540,8 @@ export async function decideGrantRequest(
       throw new OrganizationPermissionError("APPROVAL_DECISION_FORBIDDEN", 403, "没有当前范围的审批拒绝权限");
     if (decision === "approve" && state.approvePaused)
       throw new OrganizationPermissionError("APPROVAL_PAUSED", 409, state.reason);
-    if (node.mode === "sequence") {
-      const pending = node.resolvedApproverIds.find(
-        (id) => state.qualified.includes(id) && !state.decisions.some((item) => item.stageIndex === Number(row.stage_index) && item.userId === id),
-      );
-      if (pending !== actorId)
-        throw new OrganizationPermissionError("APPROVER_REQUIRED", 403, "还没轮到你审批");
-    }
+    if (node.mode === "sequence" && nextSequenceApprover(node, state.qualified, state.decisions, currentStage) !== actorId)
+      throw new OrganizationPermissionError("APPROVER_REQUIRED", 403, "还没轮到你审批");
     if (node.requireComment && !comment.trim())
       throw new OrganizationPermissionError("COMMENT_REQUIRED", 400, "这个节点要求填写意见");
     const namedActor = await resolveLedgerActor(db, actor);
