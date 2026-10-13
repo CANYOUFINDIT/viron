@@ -48,6 +48,7 @@ import {
   type DesktopRuntimeRegistration,
 } from "./desktop-runtime-context.js";
 import { organizationExecutionChannel } from "./organization-execution.js";
+import { syncOrganizationExecutionWatches } from "./organization-execution-watch.js";
 import { sshCredentialPurpose } from "./organization-mcp-purpose.js";
 import { DesktopApiError, endpointJson } from "./http-proxy.js";
 import { translate as tr } from "./i18n.js";
@@ -133,6 +134,7 @@ export async function syncDesktopRuntimeConnections(): Promise<void> {
       desktopRuntimeRegistrations.delete(id);
     }
   }
+  await syncOrganizationExecutionWatches();
 }
 
 export function sendServiceSocketEvent(payload: Record<string, unknown>): void {

@@ -50,7 +50,9 @@ import {
   reportDesktopSshExecution,
   touchDesktopDatabaseRequest,
 } from "./execution-router.js";
-import { guardDesktopOrganizationMcpRequest } from "./organization-mcp-request.js";
+import { desktopMcpRequestIdentity, guardDesktopOrganizationMcpRequest } from "./organization-mcp-request.js";
+import { watchOrganizationExecution } from "./organization-execution-watch.js";
+import { organizationExecutionChannel } from "./organization-execution.js";
 import { organizationMcpPurpose } from "./organization-mcp-purpose.js";
 import { endpointFetch, endpointJson, type DesktopRequest } from "./http-proxy.js";
 import {
@@ -290,6 +292,36 @@ export function boundedDesktopSshBatchResult(result: DesktopSshCommandResult, ma
   };
 }
 
+function retainDesktopQueryWatch(
+  input: McpApiRequest,
+  path: string,
+  context: Awaited<ReturnType<typeof currentDesktopSshContext>>,
+  gate: { checks: Parameters<typeof watchOrganizationExecution>[0]["checks"]; decisions: Parameters<typeof watchOrganizationExecution>[0]["decisions"] },
+  response: { status: number; body: string },
+): void {
+  if (response.status !== 202 || !gate.decisions.length) return;
+  if (!/\/queries$/i.test(new URL(path, "http://desktop.local").pathname)) return;
+  let jobId = "";
+  try {
+    jobId = String((JSON.parse(response.body) as { job?: { id?: string } }).job?.id ?? "");
+  } catch {
+    return;
+  }
+  if (!jobId) return;
+  const watch = watchOrganizationExecution({
+    context,
+    channel: organizationExecutionChannel.getStore() ?? "mcp",
+    checks: gate.checks,
+    decisions: gate.decisions,
+    requestIdentity: desktopMcpRequestIdentity(input),
+    cancel: (reason) => desktopDatabaseRuntime.cancelOwnedQuery(jobId, context, reason),
+  });
+  desktopDatabaseRuntime.bindQueryFinished(jobId, context, (status) => {
+    const outcome = status === "success" ? "success" as const : status === "cancelled" ? "cancelled" as const : "failed" as const;
+    void watch.finish(outcome);
+  });
+}
+
 export async function executeDesktopMcpApprovedRequest(input: McpApiRequest): Promise<McpApiResponse> {
   if (!desktopDeviceAuthorizationContext.getStore()) {
     const authorization = await currentDeviceAuthorization();
@@ -317,7 +349,9 @@ export async function executeDesktopMcpApprovedRequest(input: McpApiRequest): Pr
         if (!activeEndpoint?.capabilities.desktopLocal?.database) throw new Error(tr("当前 Endpoint 未开放桌面 App 本机数据库能力，MCP 不会回退到服务端执行"));
         const context = await currentDesktopSshContext();
         await touchDesktopDatabaseRequest(path, context);
-        return desktopResponseToMcp(await desktopDatabaseRuntime.handle(request, context));
+        const response = await desktopDatabaseRuntime.handle(request, context);
+        retainDesktopQueryWatch(input, path, context, gate, response);
+        return desktopResponseToMcp(response);
       }
       if (isDesktopDatabaseOperationPath(path)) {
         if (!activeEndpoint?.capabilities.desktopLocal?.database) throw new Error(tr("当前 Endpoint 未开放桌面 App 本机数据库能力，MCP 不会回退到服务端执行"));
@@ -524,7 +558,9 @@ export async function invokeDesktopMcpTool(toolName: string, arguments_: Record<
       if (!activeEndpoint.capabilities.desktopLocal?.database) throw new Error(tr("当前 Endpoint 未开放桌面 App 本机数据库能力，MCP 不会回退到服务端执行"));
       const context = await currentDesktopSshContext();
       await touchDesktopDatabaseRequest(path, context);
-      return desktopResponseToMcp(await desktopDatabaseRuntime.handle(desktopRequest, context));
+      const response = await desktopDatabaseRuntime.handle(desktopRequest, context);
+      retainDesktopQueryWatch(request, path, context, gate, response);
+      return desktopResponseToMcp(response);
     }
     if (isDesktopDatabaseOperationPath(path)) {
       if (!activeEndpoint.capabilities.desktopLocal?.database) throw new Error(tr("当前 Endpoint 未开放桌面 App 本机数据库能力，MCP 不会回退到服务端执行"));

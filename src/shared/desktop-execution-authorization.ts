@@ -50,7 +50,7 @@ export const desktopExecutionResultPayloadSchema = z.object({
     id: z.string().uuid(),
   }).strict(),
   code: z.string().min(1).max(80),
-  status: z.enum(["success", "failed"]),
+  status: z.enum(["success", "failed", "cancelled"]),
   basis: z.object({
     roles: z.array(z.object({
       roleId: z.string().min(1).max(80),

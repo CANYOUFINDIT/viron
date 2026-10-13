@@ -56,7 +56,7 @@ export async function authorizeDesktopAgentChecks(
 export async function reportDesktopAgentExecution(
   context: DesktopSshContext,
   grant: DesktopAgentGrant,
-  status: "success" | "failed",
+  status: "success" | "failed" | "cancelled",
 ): Promise<void> {
   if (context.workspaceType !== "organization" || !grant.decisions.length) return;
   for (const decision of grant.decisions) {

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { databaseSqlPermissions } from "../shared/access-permissions.js";
 import { databaseTaskAccessPlan, type DatabaseTaskKind } from "../shared/database-task-access.js";
-import type { DesktopExecutionCheck } from "../shared/desktop-execution-authorization.js";
+import type { DesktopExecutionCheck, DesktopExecutionCheckResult } from "../shared/desktop-execution-authorization.js";
 import type { McpApiRequest, McpApiResponse } from "../shared/mcp-protocol.js";
 import type { ResourceRef } from "../shared/organization-rbac.js";
 import { redisCommandAccess } from "../shared/redis.js";
@@ -315,21 +315,23 @@ function denied(error: string, message: string): McpApiResponse {
 }
 
 /** Organization calls authorize before execution. Personal workspaces stay on the existing path. */
-export async function guardDesktopOrganizationMcpRequest(request: McpApiRequest): Promise<{ denied: McpApiResponse | null; checks: DesktopExecutionCheck[] }> {
-  if ((await currentDesktopSshContext()).workspaceType !== "organization") return { denied: null, checks: [] };
+export async function guardDesktopOrganizationMcpRequest(request: McpApiRequest): Promise<{ denied: McpApiResponse | null; checks: DesktopExecutionCheck[]; decisions: DesktopExecutionCheckResult[] }> {
+  if ((await currentDesktopSshContext()).workspaceType !== "organization") return { denied: null, checks: [], decisions: [] };
   const decision = await organizationMcpChecks(request);
-  if (decision === "passthrough") return { denied: null, checks: [] };
-  if (decision === "closed") return { denied: denied("FEATURE_FORBIDDEN", "组织 MCP 尚未接入这项操作"), checks: [] };
-  if (!decision.length) return { denied: denied("ACTION_FORBIDDEN", "组织 MCP 不能执行未受控的操作"), checks: [] };
+  if (decision === "passthrough") return { denied: null, checks: [], decisions: [] };
+  if (decision === "closed") return { denied: denied("FEATURE_FORBIDDEN", "组织 MCP 尚未接入这项操作"), checks: [], decisions: [] };
+  if (!decision.length) return { denied: denied("ACTION_FORBIDDEN", "组织 MCP 不能执行未受控的操作"), checks: [], decisions: [] };
   const identity = desktopMcpRequestIdentity(request);
+  const decisions: DesktopExecutionCheckResult[] = [];
   try {
     for (let index = 0; index < decision.length; index += CHECK_BATCH) {
       const result = await authorizeOrganizationExecution(identity, decision.slice(index, index + CHECK_BATCH));
-      if (!result.allowed) return { denied: denied(result.error ?? "FEATURE_FORBIDDEN", result.message || "组织执行授权未通过"), checks: [] };
+      if (!result.allowed) return { denied: denied(result.error ?? "FEATURE_FORBIDDEN", result.message || "组织执行授权未通过"), checks: [], decisions: [] };
+      decisions.push(...result.checks);
     }
-    return { denied: null, checks: decision };
+    return { denied: null, checks: decision, decisions };
   } catch (error) {
-    if (error instanceof DesktopApiError && error.status === 403) return { denied: denied(error.code, error.message), checks: [] };
+    if (error instanceof DesktopApiError && error.status === 403) return { denied: denied(error.code, error.message), checks: [], decisions: [] };
     throw error;
   }
 }

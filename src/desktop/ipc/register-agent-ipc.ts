@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { ipcMain } from "electron";
 import { translate as tr } from "../i18n.js";
 import {
@@ -42,6 +42,7 @@ import {
 } from "../execution-router.js";
 import { endpointJson } from "../http-proxy.js";
 import { authorizeDesktopAgentDatabase, authorizeDesktopAgentDatabaseRead, authorizeDesktopAgentSsh, reportDesktopAgentExecution, type DesktopAgentGrant } from "../agent-organization-authorization.js";
+import { linkAbortSignal, watchOrganizationExecution } from "../organization-execution-watch.js";
 import { organizationMcpPurpose } from "../organization-mcp-purpose.js";
 import { requireDesktopString } from "./desktop-ipc-parse.js";
 
@@ -154,7 +155,7 @@ async function agentSshConnectionId(
   return desktopSshRuntime.agentContext(sessionId, desktopContext).connectionId;
 }
 
-async function reportAgentOutcome(context: DesktopSshContext, grant: DesktopAgentGrant | null, status: "success" | "failed"): Promise<void> {
+async function reportAgentOutcome(context: DesktopSshContext, grant: DesktopAgentGrant | null, status: "success" | "failed" | "cancelled"): Promise<void> {
   if (!grant) return;
   await reportDesktopAgentExecution(context, grant, status);
 }
@@ -451,18 +452,32 @@ export async function executeAgentDatabaseRead(input: {
   const stepSummary = input.step && input.maxSteps ? tr("（第 {{0}}/{{1}} 步）", [input.step, input.maxSteps]) : "";
   const write = input.intent === "write";
   desktopAgentAuditStore.append(input.scope, write ? "database_write_approved" : "database_read_approved", target, tr("按当前 Viron Agent 审批策略执行数据库{{0}}{{1}}", [write ? tr("写 SQL") : tr("只读查询"), stepSummary]));
+  const linked = linkAbortSignal(input.abortSignal);
+  const watch = watchOrganizationExecution({
+    context: input.desktopContext,
+    channel: "agent",
+    checks: databaseGrant.checks,
+    decisions: databaseGrant.decisions,
+    requestIdentity: {
+      method: "POST",
+      path: `/api/v1/database-connections/${input.connectionId}/queries`,
+      bodyDigest: createHash("sha256").update(JSON.stringify({ sql: input.sql })).digest("hex"),
+    },
+    cancel: (reason) => linked.cancel(reason),
+  });
   try {
     const result = write
-      ? await desktopDatabaseRuntime.agentWriteQuery(input.connectionId, input.database, input.sql, input.desktopContext, input.abortSignal)
-      : await desktopDatabaseRuntime.agentReadQuery(input.connectionId, input.database, input.sql, input.desktopContext, input.abortSignal);
-    await reportAgentOutcome(input.desktopContext, databaseGrant, "success");
+      ? await desktopDatabaseRuntime.agentWriteQuery(input.connectionId, input.database, input.sql, input.desktopContext, linked.signal)
+      : await desktopDatabaseRuntime.agentReadQuery(input.connectionId, input.database, input.sql, input.desktopContext, linked.signal);
+    await watch.finish("success");
     desktopAgentAuditStore.append(input.scope, write ? "database_write_executed" : "database_read_executed", target, write ? tr("执行写 SQL{{0}}，影响 {{1}} 行", [stepSummary, result.affectedRows ?? result.rowCount]) : tr("执行只读 SQL{{0}}，返回 {{1}} 行", [stepSummary, result.rowCount]));
     return result;
   } catch (error) {
-    if (input.abortSignal?.aborted) {
+    const cancelled = linked.signal.aborted || input.abortSignal?.aborted;
+    await watch.finish(cancelled ? "cancelled" : "failed");
+    if (cancelled) {
       desktopAgentAuditStore.append(input.scope, write ? "database_write_cancelled" : "database_read_cancelled", target, tr("数据库{{0}}已取消{{1}}", [write ? tr("写 SQL") : tr("只读查询"), stepSummary]));
     } else {
-      await reportAgentOutcome(input.desktopContext, databaseGrant, "failed");
       desktopAgentAuditStore.append(input.scope, write ? "database_write_rejected" : "database_read_rejected", target, error instanceof Error ? error.message : write ? tr("写 SQL 执行失败") : tr("只读 SQL 执行失败"));
     }
     throw error;

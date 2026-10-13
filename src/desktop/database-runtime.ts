@@ -426,6 +426,7 @@ export function isDesktopDatabaseExecutionPath(path: string): boolean {
 
 export class DesktopDatabaseRuntime {
   private readonly jobs = new Map<string, ManagedQueryJob>();
+  private readonly queryFinished = new Map<string, (status: QueryStatus) => void>();
   private readonly cleanupTimer: NodeJS.Timeout;
   private readonly connectionPool: IdleResourcePool<{ context: DesktopSshContext; connected: ConnectedDesktopDatabase; usable: boolean }>;
 
@@ -1246,6 +1247,25 @@ export class DesktopDatabaseRuntime {
     return publicJob(job);
   }
 
+  /** Stops one owned query and destroys its external client. A finished job stays finished. */
+  cancelOwnedQuery(id: string, context: DesktopSshContext, reason: string): void {
+    const job = this.jobs.get(id);
+    if (!job || contextKey(job.context) !== contextKey(context)) return;
+    if (!["pending", "running"].includes(job.status) || job.reporting) return;
+    this.cancelManagedJob(job, reason);
+  }
+
+  /** Runs after this query leaves pending or running. The listener sees the stored status. */
+  bindQueryFinished(id: string, context: DesktopSshContext, listener: (status: QueryStatus) => void): void {
+    const job = this.jobs.get(id);
+    if (!job || contextKey(job.context) !== contextKey(context)) return;
+    if (!["pending", "running"].includes(job.status)) {
+      listener(job.status);
+      return;
+    }
+    this.queryFinished.set(id, listener);
+  }
+
   /** Query identity stored for this user and workspace. It does not read result rows. */
   ownedQuery(id: string, context: DesktopSshContext): { connectionId: string; sql: string } | null {
     const job = this.jobs.get(id);
@@ -1357,6 +1377,9 @@ export class DesktopDatabaseRuntime {
       }, job.context).catch(() => undefined);
       job.reporting = false;
       job.status = finalStatus;
+      const listener = this.queryFinished.get(job.id);
+      this.queryFinished.delete(job.id);
+      listener?.(job.status);
     }
   }
 
