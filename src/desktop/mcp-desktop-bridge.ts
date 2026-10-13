@@ -50,6 +50,7 @@ import {
   reportDesktopSshExecution,
   touchDesktopDatabaseRequest,
 } from "./execution-router.js";
+import { guardDesktopOrganizationMcpRequest } from "./organization-mcp-request.js";
 import { endpointFetch, endpointJson, type DesktopRequest } from "./http-proxy.js";
 import {
   actOnDesktopWebCredential,
@@ -289,12 +290,13 @@ export function boundedDesktopSshBatchResult(result: DesktopSshCommandResult, ma
 }
 
 export async function executeDesktopMcpApprovedRequest(input: McpApiRequest): Promise<McpApiResponse> {
-  if ((await currentDesktopSshContext()).workspaceType === "organization") throw new Error(tr("组织 MCP 与 Agent 执行尚未开放"));
   if (!desktopDeviceAuthorizationContext.getStore()) {
     const authorization = await currentDeviceAuthorization();
     return desktopDeviceAuthorizationContext.run(authorization, () => executeDesktopMcpApprovedRequest(input));
   }
   return desktopAuditSourceContext.run("mcp", async () => {
+    const denied = await guardDesktopOrganizationMcpRequest(input);
+    if (denied) return denied;
     const request = mcpDesktopRequest(input);
     const path = request.path;
     try {
@@ -432,7 +434,6 @@ export async function handleDesktopMcpOperationResponse(toolName: string, argume
 
 export async function invokeDesktopMcpTool(toolName: string, arguments_: Record<string, unknown>): Promise<McpApiResponse> {
   if (!activeEndpoint) throw new Error(tr("请先在 Viron App 中验证 Endpoint"));
-  if ((await currentDesktopSshContext()).workspaceType === "organization") throw new Error(tr("组织 MCP 与 Agent 执行尚未开放"));
   const request = resolveVironMcpApiRequest(toolName, arguments_);
   if (request.workspace) {
     const context = await currentDesktopSshContext();
@@ -448,6 +449,8 @@ export async function invokeDesktopMcpTool(toolName: string, arguments_: Record<
     const source = desktopAuditSourceContext.getStore() ?? "mcp";
     return desktopDeviceAuthorizationContext.run(authorization, () => desktopAuditSourceContext.run(source, () => invokeDesktopMcpTool(toolName, arguments_)));
   }
+  const denied = await guardDesktopOrganizationMcpRequest(request);
+  if (denied) return denied;
   if (currentExecutionMode() === "local") {
     const sshBatch = new URL(path, "http://desktop.local").pathname.match(/^\/api\/v1\/mcp\/ssh-connections\/([0-9a-f-]+)\/commands$/i);
     if (sshBatch && request.method === "POST") {

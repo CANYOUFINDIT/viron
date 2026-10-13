@@ -39,6 +39,7 @@ import { agentRuntimeScopeMatches } from "./agent-diagnostic-session.js";
 import { sanitizeAgentDatabaseInput } from "./agent-database-context.js";
 import { DesktopMcpBroker } from "./mcp-broker.js";
 import { createVironMcpCompactGateway } from "../shared/mcp-tools.js";
+import { runWithOrganizationExecutionChannel } from "./organization-execution.js";
 import {
   currentAgentEntryMode,
   readState,
@@ -627,10 +628,10 @@ app.whenReady().then(async () => {
   });
   initializeDesktopAgentIpcStores(app.getPath("userData"));
   const desktopAgentGateway = createVironMcpCompactGateway({
-    invoke: (toolName, arguments_) => desktopMcpApprovalModeContext.run(
+    invoke: (toolName, arguments_) => runWithOrganizationExecutionChannel("agent", () => desktopMcpApprovalModeContext.run(
       "never",
       () => desktopAuditSourceContext.run("mcp", () => invokeDesktopMcpTool(toolName, arguments_)),
-    ),
+    )),
   });
   const agentRuntime = new DesktopAgentRuntime(
     desktopAgentSettingsStore,
@@ -747,7 +748,11 @@ app.whenReady().then(async () => {
     desktopAgentGateway.tools,
   );
   setDesktopAgentRuntime(agentRuntime);
-  initializeDesktopMcpBridge(new DesktopMcpBroker(app.getPath("userData"), app.getVersion(), invokeDesktopMcpTool));
+  initializeDesktopMcpBridge(new DesktopMcpBroker(
+    app.getPath("userData"),
+    app.getVersion(),
+    (toolName, arguments_) => runWithOrganizationExecutionChannel("mcp", () => invokeDesktopMcpTool(toolName, arguments_)),
+  ));
   if (readState().localMcpEnabled === true) {
     try {
       await desktopMcpBroker.start();
