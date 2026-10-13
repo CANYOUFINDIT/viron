@@ -323,7 +323,10 @@ async function save() {
             :codes="selectedRole.permissionCodes"
           />
           <p class="grant-note">
-            数据授权只维护角色的资源范围；成员分配在“已授权对象”中维护。
+            此数据授权及其修改会影响该角色所有有效成员在所选资源上的权限；角色成员分配在‘已授权对象’中维护。
+          </p>
+          <p v-if="singleTarget" class="grant-note">
+            会影响该角色所有有效成员在当前资源上的权限；其他资源不变。
           </p>
         </template>
         <template v-else>

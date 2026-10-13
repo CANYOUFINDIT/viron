@@ -598,6 +598,7 @@ function environmentNames(item: Item) {
     <el-dialog v-model="quickOpen" :title="quickMode === 'revoke' ? '撤销当前资源授权' : (quickRow?.enabled ? '停用当前资源授权' : '启用当前资源授权')" width="420px" append-to-body align-center>
       <el-alert v-if="quickError" :title="quickError" type="error" :closable="false" />
       <p class="grant-note">只处理当前查看的资源，原因必填。</p>
+      <p v-if="quickRow?.kind !== 'feature'" class="grant-note">会影响该角色所有有效成员在当前资源上的权限；其他资源不变。</p>
       <el-input v-model="quickReason" type="textarea" :rows="3" maxlength="2000" placeholder="填写原因" :disabled="quickStale" />
       <template #footer>
         <el-button @click="quickOpen = false">取消</el-button>
