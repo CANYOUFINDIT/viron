@@ -398,17 +398,6 @@ onBeforeUnmount(() => {
               </el-dropdown-menu>
             </template>
           </el-dropdown>
-          <button
-            v-if="session.workspace?.type === 'organization'"
-            class="primary-menu__item mine-entry"
-            :class="{ 'is-active': route.name === 'organization' && ['mine', 'requests', 'todo'].includes(String(route.query.section || '')) }"
-            type="button"
-            aria-label="打开我的授权、申请和待办"
-            @click="router.push({ name: 'organization', query: { section: 'mine' } })"
-          >
-            <span class="sidebar-menu-icon"><UserRound :size="16" /></span>
-            <span class="sidebar-label-wrap"><span class="sidebar-label">我的</span></span>
-          </button>
         </div>
 
         <nav id="envman-primary-menu" class="primary-menu" :aria-label="$t('主导航')">
@@ -488,7 +477,7 @@ onBeforeUnmount(() => {
 
     <section class="app-surface">
       <header v-if="desktop" class="desktop-window-header" :aria-label="$t('窗口标题栏')"></header>
-      <main class="app-content" :class="{ 'is-workbench-page': isWorkbenchPage }">
+      <main class="app-content" :class="{ 'is-workbench-page': isWorkbenchPage, 'is-organization-page': route.name === 'organization' }">
         <slot />
       </main>
     </section>

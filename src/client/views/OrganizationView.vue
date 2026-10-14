@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ArrowRight, Ban, Building2, Check, Clock3, Copy, KeyRound, Link2, Network, Plus, RefreshCw, ShieldCheck, UserPlus } from "@lucide/vue";
-import PageHeader from "../components/PageHeader.vue";
+import { ArrowRight, Ban, Building2, Check, Clock3, Copy, Link2, Plus, RefreshCw, UserPlus } from "@lucide/vue";
+import OrganizationNavigation from "./organization/OrganizationNavigation.vue";
 import TipIcon from "../components/TipIcon.vue";
 import { nameInitials } from "../../shared/name-initials";
 import { provideOrganizationContext } from "./organization/context";
@@ -14,7 +14,7 @@ import OrganizationMinePanel from "./organization/OrganizationMinePanel.vue";
 import OrganizationApprovalPanel from "./organization/OrganizationApprovalPanel.vue";
 import { useOrganizationController } from "./organization/use-organization-controller";
 import { useRoute, useRouter } from "vue-router";
-import { watch } from "vue";
+import { computed, watch } from "vue";
 
 const context = useOrganizationController();
 provideOrganizationContext(context);
@@ -30,20 +30,21 @@ const {
   invitationDialog, invitationDuration, invitationDurations,
   invitationJoinResult, invitationLimitDescription, invitationLimitPreset, invitationLimits,
   invitationLinkInput, invitationProjectId, invitationUsersDialog, joinOrganizationDialog, load,
-  loadError, loading, openInvitationFromLink, organizationForm, organizations, projectDialog,
+  loadError, loading, synchronize, openInvitationFromLink, organizationForm, organizations, projectDialog,
   projectDialogMode, projectForm, projectMemberDialog, saveProject,
   saveProjectMembers, selectInvitationLimit, selectedInvitation,
   selectedProjectMembers, session, unattributedInvitationUses,
 } = context;
 
+const panelLabel = computed(() => ({ structure: '组织架构', resources: '资源总览', roles: '角色', approval: '审批与台账', mine: '我的授权', requests: '我的申请', todo: '待我审批', access: '授权记录', invitations: '邀请管理', platform: '平台账号' })[activePanel.value]);
 watch(() => route.query.section, (section) => {
-  if (typeof section === "string" && (panels as readonly string[]).includes(section)) context.activePanel.value = section as typeof context.activePanel.value;
+  context.activePanel.value = typeof section === "string" && (panels as readonly string[]).includes(section) ? section as typeof context.activePanel.value : "structure";
 }, { immediate: true });
+watch(activePanel, (panel) => {
+  if (route.query.section !== panel) void router.replace({ query: { ...route.query, section: panel } });
+});
 function openPanel(panel: "structure" | "resources" | "roles" | "approval" | "mine" | "requests" | "todo" | "platform") {
   context.activePanel.value = panel;
-  const section = route.query.section;
-  if (section === panel) return;
-  void router.replace({ query: { ...route.query, section: panel } });
 }
 function selectOrganization(organizationId: string) {
   const organization = organizations.value.find((item) => item.id === organizationId);
@@ -53,9 +54,13 @@ function selectOrganization(organizationId: string) {
 </script>
 
 <template>
-  <div class="organization-view" v-loading="loading">
-    <PageHeader :title="$t('组织与用户')">
-      <template #actions>
+  <div class="organization-view">
+    <div class="organization-workspace">
+      <OrganizationNavigation v-if="currentOrganizationId || session.user?.isPlatformAdmin" @open-panel="openPanel" />
+      <div class="organization-main-shell">
+        <header class="organization-topbar">
+          <div class="organization-breadcrumb"><span>{{ detail?.organization.name || session.workspace?.name || '组织与用户' }}</span><ArrowRight :size="14" /><strong>{{ panelLabel }}</strong></div>
+          <div class="organization-topbar__actions">
         <el-select
           class="organization-switcher"
           :model-value="currentOrganizationId || undefined"
@@ -73,46 +78,25 @@ function selectOrganization(organizationId: string) {
         </el-select>
         <el-button :aria-label="$t('通过邀请链接加入组织')" @click="joinOrganizationDialog = true"><Link2 :size="16" />{{ $t('加入组织') }}</el-button>
         <el-button :aria-label="$t('创建组织')" @click="createOrganizationDialog = true"><Plus :size="16" />{{ $t('创建组织') }}</el-button>
-        <el-button type="primary" :aria-label="$t('同步组织数据')" :loading="loading" @click="load"><RefreshCw v-if="!loading" :size="16" />{{ $t('同步数据') }}</el-button>
-      </template>
-    </PageHeader>
-
-    <div class="identity-layout">
-      <main class="workspace-console">
-        <template v-if="detail">
-          <header class="workspace-console__heading">
-            <div class="organization-symbol">{{ detail.organization.name.slice(0, 1).toUpperCase() }}</div>
-            <div><span>{{ detail.organization.role === 'admin' ? 'MANAGED WORKSPACE' : 'ORGANIZATION WORKSPACE' }}</span><h2>{{ detail.organization.name }}</h2><p v-if="detail.organization.description">{{ detail.organization.description }}</p></div>
-            <em>{{ detail.organization.role === 'admin' ? $t('管理员') : $t('成员') }}</em>
-          </header>
-          <OrganizationMinePanel v-if="(personalPanels as readonly string[]).includes(activePanel)" @open-organization="openPanel" />
-          <template v-else>
-          <nav class="console-tabs" :aria-label="$t('组织管理模块')">
-            <button type="button" :class="{ 'is-active': activePanel === 'structure' }" @click="openPanel('structure')"><Network :size="16" />{{ $t('组织架构') }}</button>
-            <button type="button" :class="{ 'is-active': activePanel === 'resources' }" @click="openPanel('resources')"><Network :size="16" />资源总览</button>
-            <button type="button" :class="{ 'is-active': activePanel === 'roles' }" @click="openPanel('roles')"><ShieldCheck :size="16" />角色</button>
-            <button type="button" :class="{ 'is-active': activePanel === 'approval' }" @click="openPanel('approval')"><ShieldCheck :size="16" />审批与台账</button>
-            <button v-if="session.user?.isPlatformAdmin" type="button" :class="{ 'is-active': activePanel === 'platform' }" @click="openPanel('platform')"><KeyRound :size="16" />{{ $t('平台账号') }}</button>
-          </nav>
-          <OrganizationStructurePanel v-if="activePanel === 'structure' || activePanel === 'invitations'" />
-          <OrganizationResourceOverview v-else-if="activePanel === 'resources'" />
-          <OrganizationRolesPanel v-else-if="activePanel === 'roles'" />
-          <OrganizationApprovalPanel v-else-if="activePanel === 'approval'" />
-          <OrganizationAccessPanel v-else-if="activePanel === 'access'" />
+        <el-button type="primary" :aria-label="$t('同步组织数据')" :loading="loading" @click="synchronize"><RefreshCw v-if="!loading" :size="16" />{{ $t('同步数据') }}</el-button>
+          </div>
+        </header>
+        <main class="workspace-console">
+          <div v-if="loadError" class="organization-load-error" role="alert"><Ban :size="18" /><span>{{ loadError }}</span><el-button :loading="loading" @click="load">重试</el-button></div>
+          <section v-if="loading && !detail && activePanel !== 'platform'" class="organization-loading" role="status" aria-label="正在加载组织信息"><el-skeleton :rows="6" animated /><p>正在加载组织信息…</p></section>
+          <template v-else-if="detail">
+            <OrganizationMinePanel v-if="(personalPanels as readonly string[]).includes(activePanel)" />
+            <OrganizationStructurePanel v-else-if="activePanel === 'structure' || activePanel === 'invitations'" />
+            <template v-else-if="activePanel === 'resources'"><header class="organization-page-heading"><h1>资源总览</h1><p>查看组织的环境、连接、密钥与知识库。</p></header><OrganizationResourceOverview /></template>
+            <OrganizationRolesPanel v-else-if="activePanel === 'roles'" />
+            <OrganizationApprovalPanel v-else-if="activePanel === 'approval'" />
+            <OrganizationAccessPanel v-else-if="activePanel === 'access'" />
+            <OrganizationPlatformPanel v-else-if="activePanel === 'platform' && session.user?.isPlatformAdmin" />
+          </template>
           <OrganizationPlatformPanel v-else-if="activePanel === 'platform' && session.user?.isPlatformAdmin" />
-          </template>
-        </template>
-
-        <template v-else>
-          <header class="workspace-console__heading"><div class="organization-symbol"><Building2 :size="24" /></div><div><h2>{{ $t('组织') }}</h2></div><em>{{ organizations.length }} {{ $t('个') }}</em></header>
-          <section v-if="loadError" class="console-panel organization-overview"><div class="panel-empty organization-empty organization-load-error"><Ban :size="30" /><strong>{{ $t('组织信息加载失败') }}</strong><span>{{ loadError }}</span><el-button type="primary" :loading="loading" @click="load"><RefreshCw v-if="!loading" :size="15" />{{ $t('重试') }}</el-button></div></section>
-          <template v-else>
-            <nav v-if="session.user?.isPlatformAdmin" class="console-tabs"><button type="button" :class="{ 'is-active': activePanel !== 'platform' }" @click="activePanel = 'structure'"><Building2 :size="16" />{{ $t('组织') }}</button><button type="button" :class="{ 'is-active': activePanel === 'platform' }" @click="activePanel = 'platform'"><KeyRound :size="16" />{{ $t('平台账号') }}</button></nav>
-            <OrganizationStructurePanel v-if="activePanel !== 'platform'" />
-            <OrganizationPlatformPanel v-else-if="session.user?.isPlatformAdmin" />
-          </template>
-        </template>
-      </main>
+          <template v-else-if="!loadError"><header class="organization-page-heading"><h1>组织与用户</h1><p>选择已加入的组织，或创建、加入一个组织。</p></header><OrganizationStructurePanel /></template>
+        </main>
+      </div>
     </div>
 
     <el-dialog append-to-body v-model="createOrganizationDialog" align-center class="envman-dialog compact-dialog" :title="$t('创建新组织')" width="500px">

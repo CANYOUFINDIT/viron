@@ -1,13 +1,17 @@
 <script setup lang="ts">
+import { watch } from "vue";
 import { nameInitials } from "../../../shared/name-initials";
 import { useOrganizationContext } from "./context";
 import { Ban, Check, Copy, Link2, RefreshCw, Trash2, UserPlus } from "@lucide/vue";
 
 const { copiedInvitationKey, copyInvitationLink, deleteInvitationRecord, deletingInvitationId, invitationLink, invitationStatusLabel, invitationTimeRemaining, invitations, openInvitationDialog, openInvitationUsers, revokeInvitation, revokingInvitationId, unattributedInvitationUses } = useOrganizationContext();
+const { currentOrganizationId, loadInvitations, invitationsLoading, invitationsError, dataRevision } = useOrganizationContext();
+watch(() => [currentOrganizationId.value, dataRevision?.value], () => void loadInvitations(), { immediate: true });
 </script>
 
 <template>
-<section class="console-panel panel-stack">
+<section v-loading="invitationsLoading" class="console-panel panel-stack">
+<p v-if="invitationsError" role="alert">{{ invitationsError, dataRevision }} <el-button @click="loadInvitations">重试</el-button></p>
             <article class="directory-panel invitation-directory">
               <header class="panel-heading invitation-heading">
                 <div class="panel-heading__title"><div><h3>{{ $t('邀请链接') }}</h3><p>{{ $t('查看链接状态、加入用户与使用名额') }}</p></div></div>

@@ -5224,3 +5224,5 @@ button { color: inherit; }
   background: var(--viron-menu-hover);
   color: var(--viron-menu-danger);
 }
+
+.app-content.is-organization-page { padding: 0; background: var(--color-paper-muted); }

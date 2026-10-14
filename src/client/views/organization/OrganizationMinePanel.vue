@@ -22,8 +22,8 @@ import {
   type NamedCatalogItem,
 } from "./grant-selection";
 
-const emit = defineEmits<{ openOrganization: [panel: "structure" | "resources" | "roles" | "approval"] }>();
-const { activePanel, currentOrganizationId } = useOrganizationContext();
+const { activePanel, currentOrganizationId, session } = useOrganizationContext();
+const { dataRevision } = useOrganizationContext();
 
 interface ScopeProject { id: string; name: string }
 interface ManagementScopeView { kind: "organization" | "project" | "resources"; includeChildren: boolean; projects: ScopeProject[] }
@@ -169,7 +169,7 @@ async function load() {
     loading.value = false;
   }
 }
-watch(() => [currentOrganizationId.value, tab.value] as const, load, { immediate: true });
+watch(() => [currentOrganizationId.value, tab.value, dataRevision?.value] as const, load, { immediate: true });
 watch(pendingResourceGrant, (target) => {
   if (!target) return;
   dataTargets.value = toggleResource(dataTargets.value, target, true);
@@ -259,15 +259,9 @@ function groupFlagText(group: ApprovalFlowGroup) {
   <section class="console-panel mine-panel" aria-label="我的">
     <header class="mine-panel__heading">
       <div>
-        <h3>我的</h3>
+        <h1>{{ session.user?.username }}</h1>
         <p>查看自己的授权，提交数据或功能申请，并处理当前轮到自己的审批。</p>
       </div>
-      <nav aria-label="返回组织页面">
-        <button type="button" @click="emit('openOrganization', 'structure')">组织架构</button>
-        <button type="button" @click="emit('openOrganization', 'resources')">资源总览</button>
-        <button type="button" @click="emit('openOrganization', 'roles')">角色</button>
-        <button type="button" @click="emit('openOrganization', 'approval')">审批与台账</button>
-      </nav>
     </header>
     <nav class="console-tabs mine-tabs" aria-label="我的授权、我的申请、待我审批">
       <button type="button" :class="{ 'is-active': tab === 'mine' }" @click="openTab('mine')">我的授权</button>
@@ -425,4 +419,15 @@ function groupFlagText(group: ApprovalFlowGroup) {
 .mine-groups, article { padding: 8px 0; border-top: 1px solid var(--el-border-color-lighter); }
 h3, h4, h5 { margin: 0; }
 article strong, article small, article p { display: block; }
+
+.mine-panel { gap: 22px; }
+.mine-panel__heading h1 { margin: 0; font-size: 28px; color: var(--color-ink); font-weight: 600; }
+.mine-panel__heading p { margin: 12px 0 0; font-size: 13px; line-height: 1.6; }
+.mine-panel > div > section { margin-bottom: 28px; }
+.mine-panel h4 { margin-bottom: 12px; color: var(--color-ink); font-size: 14px; font-weight: 600; }
+.mine-panel article { padding: 16px 18px; margin: 10px 0; border: 1px solid var(--color-rule); border-radius: 6px; background: var(--color-paper-raised); font-size: 13px; }
+.mine-panel article strong { margin-bottom: 8px; }
+.mine-panel article small { margin-top: 5px; line-height: 1.6; }
+.mine-form { padding: 18px; border: 1px solid var(--color-rule); border-radius: 6px; background: var(--color-paper-raised); }
+.mine-duration { flex-wrap: wrap; }
 </style>

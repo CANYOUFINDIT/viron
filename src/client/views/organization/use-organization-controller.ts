@@ -1,7 +1,7 @@
 import { translate as tr } from "../../i18n";
 
 import { ElMessage, ElMessageBox } from "element-plus";
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { api } from "../../api";
 import { copyTextToClipboard } from "../../clipboard";
@@ -94,9 +94,16 @@ export function useOrganizationController() {
   const router = useRouter();
   const desktop = isDesktopApp();
   const loading = ref(false);
+  const dataRevision = ref(0);
   const loadError = ref("");
   const serviceOrigin = ref(window.location.origin);
-  const organizations = ref<Organization[]>([]);
+  const organizations = ref<Organization[]>(session.workspaces.filter(workspace => workspace.type === "organization").map(workspace => ({ id: workspace.id, name: workspace.name, description: "", role: workspace.role === "admin" ? "admin" : "member" })));
+  const invitationsLoading = ref(false);
+  const invitationsError = ref("");
+  const usersLoading = ref(false);
+  const usersError = ref("");
+  let loadSequence = 0;
+  let loadController: AbortController | undefined;
   const detail = ref<OrganizationDetail | null>(null);
   const users = ref<PlatformUser[]>([]);
   const resources = ref<ResourceOption[]>([]);
@@ -281,12 +288,14 @@ export function useOrganizationController() {
     grantRequestMode.value = false;
     editingGrant.value = null;
     grantDialog.value = true;
+    void loadResources().catch(error => ElMessage.error(error instanceof Error ? error.message : tr("读取组织信息失败")));
   }
 
   function openEditGrant(grant: Grant) {
     grantRequestMode.value = false;
     editingGrant.value = grant;
     grantDialog.value = true;
+    void loadResources().catch(error => ElMessage.error(error instanceof Error ? error.message : tr("读取组织信息失败")));
   }
 
   function openGrantHistory(grant: Grant) {
@@ -298,6 +307,7 @@ export function useOrganizationController() {
     grantRequestMode.value = true;
     editingGrant.value = null;
     grantDialog.value = true;
+    void loadResources().catch(error => ElMessage.error(error instanceof Error ? error.message : tr("读取组织信息失败")));
   }
 
   function openInvitationDialog(projectId?: string | null) {
@@ -348,35 +358,57 @@ export function useOrganizationController() {
   }
 
   async function loadInvitations() {
-    if (!canManageOrganization.value || !currentOrganizationId.value) { invitations.value = []; return; }
-    invitations.value = (await api<{ items: ManagedInvitation[] }>(`/api/v1/organizations/${currentOrganizationId.value}/invitations`)).items;
+    const organizationId = currentOrganizationId.value;
+    if (!canManageOrganization.value || !organizationId) { invitations.value = []; return; }
+    invitationsLoading.value = true;
+    invitationsError.value = "";
+    try {
+      const result = await api<{ items: ManagedInvitation[] }>(`/api/v1/organizations/${organizationId}/invitations`);
+      if (currentOrganizationId.value === organizationId) invitations.value = result.items;
+    } catch (error) {
+      if (currentOrganizationId.value === organizationId) invitationsError.value = error instanceof Error ? error.message : tr("读取组织信息失败");
+    } finally {
+      if (currentOrganizationId.value === organizationId) invitationsLoading.value = false;
+    }
+  }
+
+  async function loadUsers() {
+    if (!session.user?.isPlatformAdmin) return;
+    usersLoading.value = true;
+    usersError.value = "";
+    try { users.value = (await api<{ items: PlatformUser[] }>("/api/v1/users")).items; }
+    catch (error) { usersError.value = error instanceof Error ? error.message : tr("读取组织信息失败"); }
+    finally { usersLoading.value = false; }
   }
 
   async function load() {
+    const sequence = ++loadSequence;
+    loadController?.abort();
+    const controller = new AbortController();
+    loadController = controller;
+    const timeout = setTimeout(() => controller.abort(new Error("读取组织信息超时，请重试")), 15_000);
+    controller.signal.addEventListener("abort", () => clearTimeout(timeout), { once: true });
     loading.value = true;
     loadError.value = "";
     const organizationId = currentOrganizationId.value;
-    try {
-      const tasks: Promise<unknown>[] = [api<{ items: Organization[] }>("/api/v1/organizations").then((response) => { organizations.value = response.items; })];
-      if (organizationId) {
-        tasks.push(api<OrganizationDetail>(`/api/v1/organizations/${organizationId}`).then((response) => {
-          if (currentOrganizationId.value === organizationId) detail.value = response;
-        }));
-        tasks.push(loadResources(), loadInvitations());
-      } else {
-        resetOrganizationWorkspaceState();
-      }
-      if (session.user?.isPlatformAdmin) tasks.push(api<{ items: PlatformUser[] }>("/api/v1/users").then((response) => { users.value = response.items; }));
-      await Promise.all(tasks);
-      ensureSelectedNode();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : tr("读取组织信息失败");
-      loadError.value = message;
-      if (organizationId) resetOrganizationWorkspaceState(organizationId);
-      ElMessage.error(message);
-    } finally {
-      loading.value = false;
-    }
+    const current = () => sequence === loadSequence && currentOrganizationId.value === organizationId;
+    if (!organizationId) resetOrganizationWorkspaceState();
+    const read = async <T>(path: string, apply: (response: T) => void) => {
+      try { const response = await api<T>(path, { signal: controller.signal }); if (current()) apply(response); }
+      catch (error) { if (current()) loadError.value = error instanceof Error ? error.message : tr("读取组织信息失败"); }
+    };
+    const list = read<{ items: Organization[] }>("/api/v1/organizations", response => { organizations.value = response.items; });
+    // The organization detail can render as soon as it arrives, independently of the list.
+    const primary = organizationId ? read<OrganizationDetail>(`/api/v1/organizations/${organizationId}`, response => { detail.value = response; ensureSelectedNode(); }) : list;
+    void primary.finally(() => { if (current()) loading.value = false; });
+    await Promise.all([list, primary]);
+    clearTimeout(timeout);
+    if (current()) { loading.value = false; loadController = undefined; }
+  }
+
+  async function synchronize() {
+    await load();
+    dataRevision.value++;
   }
 
   async function createOrganization() {
@@ -404,7 +436,6 @@ export function useOrganizationController() {
     activePanel.value = "structure";
     if (desktop) {
       await router.replace({ name: "organization" });
-      await load();
     } else window.location.assign("/organization");
   }
 
@@ -624,14 +655,14 @@ export function useOrganizationController() {
     try {
       await api("/api/v1/users", { method: "POST", body: JSON.stringify(userForm) });
       Object.assign(userForm, { username: "", password: "", isPlatformAdmin: false });
-      await load();
+      await loadUsers();
     } catch (error) { ElMessage.error(error instanceof Error ? error.message : tr("创建用户失败")); }
   }
   async function toggleUser(user: PlatformUser) {
     const status = user.status === "active" ? "disabled" : "active";
     try {
       await api(`/api/v1/users/${user.id}/status`, { method: "PUT", body: JSON.stringify({ status }) });
-      await load();
+      await loadUsers();
     } catch (error) { ElMessage.error(error instanceof Error ? error.message : tr("更新用户状态失败")); }
   }
   async function resetPassword(user: PlatformUser) {
@@ -645,11 +676,18 @@ export function useOrganizationController() {
     }
   }
 
-  onMounted(async () => {
-    if (desktop) serviceOrigin.value = (await desktopState())?.endpoint ?? serviceOrigin.value;
-    await load();
+  watch(currentOrganizationId, (id, previous) => {
+    if (id === previous) return;
+    resetOrganizationWorkspaceState(id);
+    void load();
+  });
+  onMounted(() => {
+    if (desktop) void desktopState().then(state => { serviceOrigin.value = state?.endpoint ?? serviceOrigin.value; });
+    void load();
   });
   onBeforeUnmount(() => {
+    loadSequence++;
+    loadController?.abort();
     if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer);
   });
 
@@ -661,7 +699,7 @@ export function useOrganizationController() {
     grantRequestMode, historyGrantId, openGrantHistory, openAccessRequest, grantingResource, invitationDialog, invitationDuration, invitationDurations, invitationJoinResult,
     invitationLimitDescription, invitationLimitPreset, invitationLimits, invitationLink, invitationLinkInput, invitationProjectId,
     invitationStatusLabel, invitationTimeRemaining, invitationUsersDialog, invitations, joinOrganizationDialog, load,
-    loadError, loading, openCreateProject, openEditGrant, openEditProject, openGrantDialog, openInvitationDialog,
+    loadError, loading, dataRevision, synchronize, loadInvitations, invitationsLoading, invitationsError, loadUsers, usersLoading, usersError, openCreateProject, openEditGrant, openEditProject, openGrantDialog, openInvitationDialog,
     openInvitationFromLink, openInvitationUsers, openProjectMembersById, organizationForm, organizations, projectDialog,
     projectDialogMode, projectForm, projectMemberDialog, removeMember, resetPassword, resourceNames,
     resourceTypeLabels, resources, revokeGrant, revokeInvitation, revokingInvitationId, saveGrant, saveProject, saveProjectMembers,

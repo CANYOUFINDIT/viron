@@ -3,7 +3,7 @@ import { defineComponent, ref } from "vue";
 import { flushPromises, mount } from "@vue/test-utils";
 import ElementPlus from "element-plus";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import OrganizationStructurePanel from "../src/client/views/organization/OrganizationStructurePanel.vue";
+import OrganizationNavigation from "../src/client/views/organization/OrganizationNavigation.vue";
 import { provideOrganizationContext } from "../src/client/views/organization/context";
 import { STRUCTURE_TREE_WIDTH_KEY, clampStructureTreeWidth, preferredStructureTreeWidth } from "../src/client/views/organization/structure-tree-width";
 import { i18nPlugin } from "../src/client/i18n";
@@ -51,39 +51,39 @@ describe("organization structure tree resizer", () => {
     const wrapper = mount(Host, { attachTo: document.body, global: { plugins: [ElementPlus, i18nPlugin] } });
     await flushPromises();
     const separator = wrapper.get("button[role='separator']");
-    expect(separator.attributes("aria-valuenow")).toBe("330");
+    expect(separator.attributes("aria-valuenow")).toBe("260");
 
     separator.element.dispatchEvent(pointer("pointerdown", 80));
     document.dispatchEvent(pointer("pointermove", 500));
     document.dispatchEvent(pointer("pointerup", 500));
     await flushPromises();
 
-    expect(wrapper.get(".structure-workbench").attributes("style")).toContain("--structure-tree-width: 420px");
+    expect(wrapper.get(".organization-navigation").attributes("style")).toContain("--structure-tree-width: 420px");
     expect(separator.attributes("aria-valuenow")).toBe("420");
     expect(storage.get(STRUCTURE_TREE_WIDTH_KEY)).toBe("420");
     expect(document.body.style.cursor).toBe("");
     expect(wrapper.get(".structure-tree").classes()).not.toContain("is-avatar-rail");
-    expect(wrapper.findAll(".structure-node__initials").map((node) => node.text())).toEqual(["付", "MB"]);
+    expect(wrapper.findAll(".structure-node__initials")).toHaveLength(0);
 
     separator.element.dispatchEvent(pointer("pointerdown", 80));
     document.dispatchEvent(pointer("pointermove", 160));
     document.dispatchEvent(pointer("pointerup", 160));
     await flushPromises();
 
-    expect(wrapper.get(".structure-workbench").attributes("style")).toContain("--structure-tree-width: 72px");
+    expect(wrapper.get(".organization-navigation").attributes("style")).toContain("--structure-tree-width: 72px");
     expect(separator.attributes("aria-valuenow")).toBe("72");
     expect(storage.get(STRUCTURE_TREE_WIDTH_KEY)).toBe("72");
     expect(wrapper.get(".structure-tree").classes()).toContain("is-avatar-rail");
-    expect(wrapper.get(".structure-node[title='付同永']").attributes("title")).toBe("付同永");
+    expect(wrapper.find(".structure-node[title='付同永']").exists()).toBe(false);
     const carets = wrapper.findAll(".el-tree-node__expand-icon");
     expect(carets.some((icon) => !icon.classes().includes("is-leaf"))).toBe(true);
     expect(carets.some((icon) => icon.classes().includes("is-leaf"))).toBe(true);
-    const orgRow = wrapper.get(".structure-node[title='onepro']");
+    const orgRow = wrapper.get(".structure-node[title='整个组织']");
     const orgNode = orgRow.element.closest(".el-tree-node")!;
     expect(orgNode.getAttribute("aria-expanded")).toBe("true");
     await orgRow.trigger("click");
-    expect(orgNode.getAttribute("aria-expanded")).toBe("false");
-    expect(selectStructureNode).toHaveBeenCalledWith(expect.objectContaining({ type: "organization", entityId: "org-1" }), expect.anything(), expect.anything(), expect.anything());
+    expect(orgNode.getAttribute("aria-expanded")).toBe("true");
+    expect(wrapper.findComponent(OrganizationNavigation).emitted("openPanel")?.[0]).toEqual(["structure"]);
     await orgRow.trigger("click");
     expect(orgNode.getAttribute("aria-expanded")).toBe("true");
     wrapper.unmount();
@@ -95,6 +95,8 @@ const selectStructureNode = vi.fn();
 const Host = defineComponent({
   setup() {
     provideOrganizationContext({
+      activePanel: ref("structure"),
+      session: { user: { username: "测试成员", isPlatformAdmin: false }, workspace: { name: "示例组织" } },
       activateWorkspace: vi.fn(),
       canManageOrganization: ref(false),
       changeRole: vi.fn(),
@@ -131,14 +133,15 @@ const Host = defineComponent({
         label: "onepro",
         meta: "1 人",
         children: [
+          { key: "project:project-1", type: "project", entityId: "project-1", label: "研发", meta: "2 人" },
           { key: "member:root:u1", type: "member", entityId: "u1", label: "付同永", meta: "成员" },
           { key: "member:root:u2", type: "member", entityId: "u2", label: "Michelle Bill", meta: "成员" },
         ],
       }]),
     } as never);
   },
-  components: { OrganizationStructurePanel },
-  template: "<OrganizationStructurePanel />",
+  components: { OrganizationNavigation },
+  template: "<OrganizationNavigation />",
 });
 
 function pointer(type: string, clientX: number): PointerEvent {

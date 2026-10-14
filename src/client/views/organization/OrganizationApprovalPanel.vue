@@ -91,6 +91,7 @@ const knownModes = new Set<string>(modes.map((item) => item[0]));
 
 
 const { currentOrganizationId } = useOrganizationContext();
+const { dataRevision } = useOrganizationContext();
 const tab = ref<"flows" | "requests" | "ledger">("flows");
 const flows = ref<FlowItem[]>([]);
 const catalog = ref<CatalogItem[]>([]);
@@ -394,6 +395,7 @@ function when(value: string) {
   const time = new Date(value);
   return Number.isFinite(time.getTime()) ? time.toLocaleString() : value;
 }
+watch(() => dataRevision?.value, () => void load());
 </script>
 
 <template>

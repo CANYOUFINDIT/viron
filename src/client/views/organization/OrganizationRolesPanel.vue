@@ -21,6 +21,7 @@ import RolePermissionList from "./RolePermissionList.vue";
 import OrganizationResourceAuthorizationDialog from "./OrganizationResourceAuthorizationDialog.vue";
 import { pendingResourceGrant } from "./grant-selection";
 const { currentOrganizationId, detail } = useOrganizationContext();
+const { dataRevision } = useOrganizationContext();
 const state = ref<RoleAccessState | null>(null),
   catalog = ref<ResourceCatalogItem[]>([]),
   selected = ref(""),
@@ -292,6 +293,7 @@ watch(currentOrganizationId, () => {
   void load();
 });
 onMounted(load);
+watch(() => dataRevision?.value, () => void load());
 </script>
 <template>
   <section class="console-panel roles-panel" v-loading="loading">

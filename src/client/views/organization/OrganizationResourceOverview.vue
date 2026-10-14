@@ -20,6 +20,7 @@ import {
 
 const props = defineProps<{ projectId?: string }>();
 const { activePanel, currentOrganizationId } = useOrganizationContext();
+const { dataRevision } = useOrganizationContext();
 const route = useRoute();
 const router = useRouter();
 const labels = [
@@ -39,6 +40,8 @@ const selected = ref<EntryId>("environments");
 const keyword = ref("");
 const credentialKind = ref<"ssh_key" | "ssl_certificate">("ssh_key");
 const error = ref("");
+const loading = ref(false);
+let loadSequence = 0;
 const collapsed = ref(new Set<string>());
 const openedEnvironmentId = ref<string | null>(null);
 const previewId = ref<string | null>(null);
@@ -131,18 +134,24 @@ function toggleGroup(id: string) {
   collapsed.value = next;
 }
 async function load() {
+  const sequence = ++loadSequence;
   const organizationId = currentOrganizationId.value;
   if (!organizationId) return;
   error.value = "";
+  loading.value = true;
+  entries.value = labels.map(entry => ({ ...entry, count: 0, items: [] }));
   try {
     const query = props.projectId ? `?projectId=${encodeURIComponent(props.projectId)}` : "";
     const result = await api<{ entries: typeof entries.value }>(`/api/v1/organizations/${organizationId}/resource-overview${query}`);
-    entries.value = labels.map((entry) => result.entries.find((item) => item.id === entry.id) ?? { ...entry, count: 0, items: [] });
+    if (sequence === loadSequence) entries.value = labels.map(entry => result.entries.find(item => item.id === entry.id) ?? { ...entry, count: 0, items: [] });
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : "资源总览加载失败";
+    if (sequence === loadSequence) error.value = cause instanceof Error ? cause.message : "资源总览加载失败";
+  } finally {
+    if (sequence === loadSequence) loading.value = false;
   }
 }
-watch(() => [currentOrganizationId.value, props.projectId], load, { immediate: true });
+
+watch(() => [currentOrganizationId.value, props.projectId, dataRevision?.value], load, { immediate: true });
 watch(selected, () => {
   keyword.value = "";
   openedEnvironmentId.value = null;
@@ -318,7 +327,7 @@ function environmentNames(item: Item) {
 </script>
 
 <template>
-  <section class="console-panel organization-resource-browser" aria-label="资源总览">
+  <section v-loading="loading" class="console-panel organization-resource-browser" aria-label="资源总览">
     <nav class="console-tabs" aria-label="资源入口">
       <button v-for="entry in entries" :key="entry.id" type="button" :class="{ 'is-active': selected === entry.id }" @click="selected = entry.id">
         {{ entry.label }} <small>{{ entry.count }}</small>

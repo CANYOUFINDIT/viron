@@ -339,28 +339,32 @@ async function projectTree(db: EnvmanDatabase, org: string) {
   return { projects, membership, descendants };
 }
 
-export async function roleHolderIds(db: EnvmanDatabase, org: string, roleId: string, now = serverNow()) {
-  const [state, members, tree] = await Promise.all([
-    roleState(db, org),
-    activeMembers(db, org),
-    projectTree(db, org),
-  ]);
-  const memberIds = new Set(members.map((member) => member.user_id));
-  const role = state.roles.find((item) => item.id === roleId);
+function holdersForRole(
+  state: Awaited<ReturnType<typeof roleState>>,
+  memberIds: Set<string>,
+  tree: Awaited<ReturnType<typeof projectTree>>,
+  org: string,
+  roleId: string,
+  now: number,
+) {
+  const role = state.roles.find(item => item.id === roleId);
   if (!role?.enabled) return [];
   const holders = new Set<string>();
   for (const assignment of state.assignments) {
     if (assignment.roleId !== roleId || !validAt(assignment, now)) continue;
-    if (assignment.subjectType === "user" && memberIds.has(assignment.subjectId))
-      holders.add(assignment.subjectId);
-    if (assignment.subjectType === "organization" && assignment.subjectId === org)
-      memberIds.forEach((id) => holders.add(id));
-    if (assignment.subjectType === "project")
-      for (const row of tree.membership)
-        if (tree.descendants(assignment.subjectId).has(row.project_id) && memberIds.has(row.user_id))
-          holders.add(row.user_id);
+    if (assignment.subjectType === "user" && memberIds.has(assignment.subjectId)) holders.add(assignment.subjectId);
+    if (assignment.subjectType === "organization" && assignment.subjectId === org) memberIds.forEach(id => holders.add(id));
+    if (assignment.subjectType === "project") {
+      const descendants = tree.descendants(assignment.subjectId);
+      for (const row of tree.membership) if (descendants.has(row.project_id) && memberIds.has(row.user_id)) holders.add(row.user_id);
+    }
   }
   return [...holders].sort();
+}
+
+export async function roleHolderIds(db: EnvmanDatabase, org: string, roleId: string, now = serverNow()) {
+  const [state, members, tree] = await Promise.all([roleState(db, org), activeMembers(db, org), projectTree(db, org)]);
+  return holdersForRole(state, new Set(members.map(member => member.user_id)), tree, org, roleId, now);
 }
 
 async function defaultFlowId(db: EnvmanDatabase, org: string) {
@@ -1737,11 +1741,11 @@ export async function reviseGrantRequest(
 }
 
 export async function roleNamesByMember(db: EnvmanDatabase, org: string, now = serverNow()) {
-  const state = await roleState(db, org);
+  const [state, members, tree] = await Promise.all([roleState(db, org), activeMembers(db, org), projectTree(db, org)]);
+  const memberIds = new Set(members.map(member => member.user_id));
   const names = new Map<string, string[]>();
   for (const role of state.roles) {
-    if (!role.enabled) continue;
-    for (const userId of await roleHolderIds(db, org, role.id, now)) {
+    for (const userId of holdersForRole(state, memberIds, tree, org, role.id, now)) {
       const list = names.get(userId) ?? [];
       list.push(role.name);
       names.set(userId, list);
