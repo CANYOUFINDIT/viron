@@ -325,19 +325,14 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
     }
     const organization = await membership(app, request.params.id, request.admin!.id);
     if (!organization) return reply.code(404).send({ error: "NOT_FOUND", message: "组织不存在或你不是组织成员" });
-    const memberProjectRows = await app.db.prepare(`
+    const [memberProjectRows, memberRows, projectRows, grants] = await Promise.all([
+      app.db.prepare(`
       SELECT pm.user_id, pm.project_id
       FROM project_members pm
       JOIN projects p ON p.id = pm.project_id
       WHERE p.organization_id = ?
-    `).all(request.params.id) as Array<{ user_id: string; project_id: string }>;
-    const projectIdsByMember = new Map<string, string[]>();
-    for (const row of memberProjectRows) {
-      const projectIds = projectIdsByMember.get(row.user_id) ?? [];
-      projectIds.push(row.project_id);
-      projectIdsByMember.set(row.user_id, projectIds);
-    }
-    const members = (await app.db.prepare(`
+    `).all(request.params.id) as Promise<Array<{ user_id: string; project_id: string }>>,
+      app.db.prepare(`
       SELECT u.id, u.username, u.status, m.role, m.created_at,
         mi.invited_by_user_id, inviter.username AS invited_by_username
       FROM organization_members m
@@ -346,7 +341,21 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
         ON mi.organization_id = m.organization_id AND mi.user_id = m.user_id
       LEFT JOIN admin_users inviter ON inviter.id = mi.invited_by_user_id
       WHERE m.organization_id = ? ORDER BY m.role, u.username COLLATE NOCASE
-    `).all(request.params.id) as Record<string, unknown>[]).map((row) => ({
+    `).all(request.params.id) as Promise<Record<string, unknown>[]>,
+      app.db.prepare(`
+      SELECT p.*, COUNT(pm.user_id) AS member_count
+      FROM projects p LEFT JOIN project_members pm ON pm.project_id = p.id
+      WHERE p.organization_id = ? GROUP BY p.id ORDER BY p.name COLLATE NOCASE
+    `).all(request.params.id) as Promise<Record<string, unknown>[]>,
+      hasWorkspacePermission(request, "authorization.view") ? listOrganizationGrants(app.db, request.params.id) : Promise.resolve([]),
+    ]);
+    const projectIdsByMember = new Map<string, string[]>();
+    for (const row of memberProjectRows) {
+      const projectIds = projectIdsByMember.get(row.user_id) ?? [];
+      projectIds.push(row.project_id);
+      projectIdsByMember.set(row.user_id, projectIds);
+    }
+    const members = memberRows.map((row) => ({
       id: row.id,
       username: row.username,
       status: row.status,
@@ -355,11 +364,7 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
       projectIds: projectIdsByMember.get(String(row.id)) ?? [],
       invitedBy: row.invited_by_user_id ? { id: row.invited_by_user_id, username: row.invited_by_username } : null,
     }));
-    const projects = (await app.db.prepare(`
-      SELECT p.*, COUNT(pm.user_id) AS member_count
-      FROM projects p LEFT JOIN project_members pm ON pm.project_id = p.id
-      WHERE p.organization_id = ? GROUP BY p.id ORDER BY p.name COLLATE NOCASE
-    `).all(request.params.id) as Record<string, unknown>[]).map((row) => ({
+    const projects = projectRows.map((row) => ({
       id: row.id,
       parentId: row.parent_id,
       name: row.name,
@@ -368,8 +373,12 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
-    const grants = hasWorkspacePermission(request,"authorization.view") ? await listOrganizationGrants(app.db, request.params.id) : [];
-    const roleNames = await roleNamesByMember(app.db, request.params.id);
+    const roleNames = await roleNamesByMember(app.db, request.params.id, Date.now(), {
+      state: request.admin!.organizationAccess!.state,
+      memberIds: new Set(members.filter(member => member.status === "active").map(member => String(member.id))),
+      projects: projects.map(project => ({ id: String(project.id), parentId: project.parentId ? String(project.parentId) : null })),
+      membership: memberProjectRows,
+    });
     for (const member of members) Object.assign(member, { roleNames: roleNames.get(String(member.id)) ?? [] });
     return { organization, members, projects, grants };
   });

@@ -24,7 +24,7 @@ describe("member role summary query cost", () => {
     const small = database(1), large = database(40);
     await roleNamesByMember(small.db, "org", Date.UTC(2026, 9, 14));
     const names = await roleNamesByMember(large.db, "org", Date.UTC(2026, 9, 14));
-    expect(large.prepare).toHaveBeenCalledTimes(7);
+    expect(large.prepare).toHaveBeenCalledTimes(5);
     expect(large.prepare.mock.calls.length).toBe(small.prepare.mock.calls.length);
     expect(names.get("active-child")).toHaveLength(40);
     expect(names.get("active-child")).not.toContain("停用角色");

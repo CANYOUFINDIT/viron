@@ -363,7 +363,7 @@ function holdersForRole(
 }
 
 export async function roleHolderIds(db: EnvmanDatabase, org: string, roleId: string, now = serverNow()) {
-  const [state, members, tree] = await Promise.all([roleState(db, org), activeMembers(db, org), projectTree(db, org)]);
+  const [state, members, tree] = await Promise.all([roleState(db, org, false), activeMembers(db, org), projectTree(db, org)]);
   return holdersForRole(state, new Set(members.map(member => member.user_id)), tree, org, roleId, now);
 }
 
@@ -1740,9 +1740,27 @@ export async function reviseGrantRequest(
   })();
 }
 
-export async function roleNamesByMember(db: EnvmanDatabase, org: string, now = serverNow()) {
-  const [state, members, tree] = await Promise.all([roleState(db, org), activeMembers(db, org), projectTree(db, org)]);
-  const memberIds = new Set(members.map(member => member.user_id));
+export async function roleNamesByMember(db: EnvmanDatabase, org: string, now = serverNow(), snapshot?: {
+  state: Awaited<ReturnType<typeof roleState>>;
+  memberIds: Set<string>;
+  projects: Array<{ id: string; parentId: string | null }>;
+  membership: Array<{ project_id: string; user_id: string }>;
+}) {
+  const [state, members, loadedTree] = snapshot ? [snapshot.state, [], null] as const : await Promise.all([roleState(db, org, false), activeMembers(db, org), projectTree(db, org)]);
+  const memberIds = snapshot?.memberIds ?? new Set(members.map(member => member.user_id));
+  const tree = loadedTree ?? {
+    projects: snapshot!.projects.map(project => ({ id: project.id, parent_id: project.parentId })),
+    membership: snapshot!.membership,
+    descendants: (id: string) => {
+      const ids = new Set([id]);
+      let grew = true;
+      while (grew) {
+        grew = false;
+        for (const project of snapshot!.projects) if (project.parentId && ids.has(project.parentId) && !ids.has(project.id)) { ids.add(project.id); grew = true; }
+      }
+      return ids;
+    },
+  };
   const names = new Map<string, string[]>();
   for (const role of state.roles) {
     for (const userId of holdersForRole(state, memberIds, tree, org, role.id, now)) {

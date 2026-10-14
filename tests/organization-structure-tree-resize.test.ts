@@ -10,7 +10,7 @@ import { i18nPlugin } from "../src/client/i18n";
 
 describe("organization structure tree width", () => {
   it("keeps a saved width between the tree minimum and the room left for the inspector", () => {
-    expect(preferredStructureTreeWidth(null)).toBe(330);
+    expect(preferredStructureTreeWidth(null)).toBe(250);
     expect(preferredStructureTreeWidth("80")).toBe(72);
     expect(preferredStructureTreeWidth("200")).toBe(72);
     expect(preferredStructureTreeWidth("40")).toBe(72);
@@ -51,7 +51,7 @@ describe("organization structure tree resizer", () => {
     const wrapper = mount(Host, { attachTo: document.body, global: { plugins: [ElementPlus, i18nPlugin] } });
     await flushPromises();
     const separator = wrapper.get("button[role='separator']");
-    expect(separator.attributes("aria-valuenow")).toBe("260");
+    expect(separator.attributes("aria-valuenow")).toBe("250");
 
     separator.element.dispatchEvent(pointer("pointerdown", 80));
     document.dispatchEvent(pointer("pointermove", 500));
@@ -96,7 +96,7 @@ const Host = defineComponent({
   setup() {
     provideOrganizationContext({
       activePanel: ref("structure"),
-      session: { user: { username: "测试成员", isPlatformAdmin: false }, workspace: { name: "示例组织" } },
+      session: { user: { username: "测试成员", isPlatformAdmin: false }, workspace: { name: "示例组织" }, workspaces: [] },
       activateWorkspace: vi.fn(),
       canManageOrganization: ref(false),
       changeRole: vi.fn(),
@@ -133,7 +133,7 @@ const Host = defineComponent({
         label: "onepro",
         meta: "1 人",
         children: [
-          { key: "project:project-1", type: "project", entityId: "project-1", label: "研发", meta: "2 人" },
+          { key: "project:project-1", type: "project", entityId: "project-1", label: "研发", meta: "2 人", children: [{ key: "project:child", type: "project", entityId: "child", label: "订单研发", meta: "1 人" }] },
           { key: "member:root:u1", type: "member", entityId: "u1", label: "付同永", meta: "成员" },
           { key: "member:root:u2", type: "member", entityId: "u2", label: "Michelle Bill", meta: "成员" },
         ],

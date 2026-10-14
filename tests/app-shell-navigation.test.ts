@@ -36,7 +36,7 @@ describe("app shell navigation", () => {
   });
 
   it("expands the collapsed sidebar on hover and collapses it on leave", () => {
-    expect(shell).toContain("const sidebarPinned = ref(!window.matchMedia(\"(max-width: 900px)\").matches);");
+    expect(shell).toContain("const standardSidebarPinned = ref(!window.matchMedia(\"(max-width: 900px)\").matches);");
     expect(shell).toContain("const sidebarHoverOpen = ref(false);");
     expect(shell).toContain("const sidebarExpanded = computed(() => sidebarPinned.value || sidebarHoverOpen.value);");
     expect(shell).toContain("function onSidebarPointerEnter()");

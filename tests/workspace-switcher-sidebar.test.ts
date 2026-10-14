@@ -86,6 +86,7 @@ async function mountShell(handleOpen: ReturnType<typeof vi.fn>, handleClose: Ret
     history: createMemoryHistory(),
     routes: [
       { name: "overview", path: "/", component: { template: "<div />" } },
+      { name: "organization", path: "/organization", component: { template: "<div />" } },
       { name: "settings", path: "/settings", component: { template: "<div />" } },
       { name: "active-connections", path: "/active-connections", component: { template: "<div />" } },
       { name: "client-downloads", path: "/client-downloads", component: { template: "<div />" } },
@@ -122,6 +123,20 @@ async function mountShell(handleOpen: ReturnType<typeof vi.fn>, handleClose: Ret
 describe("collapsed sidebar hover expand", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("keeps the organization rail collapsed on hover and preserves the other pages' sidebar preference", async () => {
+    mockMatchMedia();
+    const wrapper = await mountShell(vi.fn(), vi.fn());
+    await wrapper.vm.$router.push("/organization");
+    await flushPromises();
+    expect(wrapper.get(".app-frame").classes()).not.toContain("is-sidebar-expanded");
+    await wrapper.get(".app-sidebar").trigger("pointerenter");
+    expect(wrapper.get(".app-frame").classes()).not.toContain("is-sidebar-expanded");
+    await wrapper.vm.$router.push("/");
+    await flushPromises();
+    expect(wrapper.get(".app-frame").classes()).toContain("is-sidebar-expanded");
+    wrapper.unmount();
   });
 
   it("expands the collapsed sidebar on pointer enter and collapses it on leave", async () => {

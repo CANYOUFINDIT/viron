@@ -62,13 +62,13 @@ export async function requireAdmin(request: FastifyRequest, reply: FastifyReply)
   }
 
   let row = await request.server.db.prepare(`
-    SELECT s.id AS session_id, s.expires_at, s.workspace_type, s.workspace_id,
+    SELECT s.id AS session_id, s.expires_at, s.last_seen_at, s.workspace_type, s.workspace_id,
       u.id, u.username, u.is_platform_admin, u.status
     FROM sessions s
     JOIN admin_users u ON u.id = s.user_id
     WHERE s.token_hash = ?
   `).get(tokenHash(token)) as
-    | { session_id: string; expires_at: string; workspace_type: string; workspace_id: string; id: string; username: string; is_platform_admin: number; status: string }
+    | { session_id: string; expires_at: string; last_seen_at: string; workspace_type: string; workspace_id: string; id: string; username: string; is_platform_admin: number; status: string }
     | undefined;
 
   if (!row || row.status !== "active" || new Date(row.expires_at).getTime() <= Date.now()) {
@@ -108,14 +108,18 @@ export async function requireAdmin(request: FastifyRequest, reply: FastifyReply)
     isPlatformAdmin: Boolean(row.is_platform_admin),
     workspace,
   };
-  await attachOrganizationAccess(request.server.db, request.admin);
+  // Membership and own-connection directories do not use resource permissions.
+  // Other organization requests still resolve a fresh permission snapshot on every call.
+  const membershipRead = request.method === "GET" && ["/api/v1/organizations", "/api/v1/active-connections"].includes(request.url.split("?", 1)[0]);
+  if (!membershipRead) await attachOrganizationAccess(request.server.db, request.admin);
   await organizationExecutionFence(request, reply);
   if (reply.sent) return;
   request.sessionId = row.session_id;
-  await request.server.db.prepare("UPDATE sessions SET last_seen_at = ? WHERE id = ?").run(
-    new Date().toISOString(),
-    row.session_id,
-  );
+  // Activity reporting tolerates thirty-second precision; authentication and expiry checks do not cache.
+  const lastSeen = Date.parse(row.last_seen_at);
+  if (!Number.isFinite(lastSeen) || Date.now() - lastSeen >= 30_000) {
+    await request.server.db.prepare("UPDATE sessions SET last_seen_at = ? WHERE id = ? AND last_seen_at = ?").run(new Date().toISOString(), row.session_id, row.last_seen_at);
+  }
 }
 
 async function workspacesFor(app: FastifyInstance, user: AuthenticatedUser) {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
-import { Plus, Copy, RefreshCw, ShieldCheck } from "@lucide/vue";
+import { Plus, Copy, RefreshCw, ShieldCheck, KeyRound } from "@lucide/vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { api } from "../../api";
 import { loadSession } from "../../session";
@@ -299,12 +299,11 @@ watch(() => dataRevision?.value, () => void load());
   <section class="console-panel roles-panel" v-loading="loading">
     <header class="roles-toolbar">
       <div>
-        <h3>角色维护</h3>
-        <p>操作权限、资源范围和角色分配分别维护</p>
+        <div class="organization-eyebrow">{{ detail?.organization.name }} / 组织工作空间</div><h1>角色</h1>
+        <p>角色定义可执行的操作；数据权限授予角色，已授权对象维护成员与子组织的角色分配。</p>
       </div>
       <div>
-        <el-button @click="load"><RefreshCw :size="14" />刷新</el-button
-        ><el-button
+        <el-button
           v-if="state?.capabilities.roleCreate"
           type="primary"
           @click="openRole()"
@@ -321,11 +320,11 @@ watch(() => dataRevision?.value, () => void load());
           :class="{ 'is-selected': selected === role.id }"
           @click="selected = role.id"
         >
-          <strong>{{ role.name }}</strong
+          <KeyRound :size="17" /><span><strong>{{ role.name }}</strong
           ><small
             >{{ role.enabled ? "启用" : "已停用" }} ·
             {{ role.permissionCodes.length }} 项操作</small
-          >
+          ></span>
         </button>
         <p v-if="!state.roles.length">暂无可查看的角色</p>
       </aside>

@@ -127,6 +127,27 @@ async function fixture() {
 }
 
 describe("organization role permissions", () => {
+  it("skips resource authorization for membership reads and reuses the request snapshot in organization views", async () => {
+    const f = await fixture();
+    const prepare = vi.spyOn(f.db, "prepare");
+    const catalogReads = () => prepare.mock.calls.filter(([sql]) => sql.includes("UNION ALL") && sql.includes("FROM knowledge_nodes"));
+    try {
+      const organizations = await f.app.inject({ url: "/api/v1/organizations", cookies: f.cookies });
+      expect(organizations.statusCode).toBe(200);
+      expect(organizations.json().items.some((item: { id: string }) => item.id === f.org)).toBe(true);
+      expect(catalogReads()).toHaveLength(0);
+      const connections = await f.app.inject({ url: "/api/v1/active-connections", cookies: f.cookies });
+      expect(connections.statusCode).toBe(200);
+      expect(catalogReads()).toHaveLength(0);
+      for (const path of ["/resource-overview", "/my-access"]) {
+        prepare.mockClear();
+        const response = await f.app.inject({ url: f.base + path, cookies: f.cookies });
+        expect(response.statusCode, response.body).toBe(200);
+        expect(catalogReads()).toHaveLength(1);
+      }
+    } finally { prepare.mockRestore(); }
+  });
+
   it("loads organization access once per session refresh and recomputes it after switching workspaces", async () => {
     const f = await fixture();
     const prepare = vi.spyOn(f.db, "prepare");
@@ -134,7 +155,7 @@ describe("organization role permissions", () => {
       const me = await f.app.inject({ url: "/api/v1/auth/me", cookies: f.cookies });
       expect(me.statusCode).toBe(200);
       expect(me.json().workspace.id).toBe(f.org);
-      const catalogReads = () => prepare.mock.calls.filter(([sql]) => sql.includes("SELECT id, name, group_id FROM environments"));
+      const catalogReads = () => prepare.mock.calls.filter(([sql]) => sql.includes("UNION ALL") && sql.includes("FROM knowledge_nodes"));
       expect(catalogReads()).toHaveLength(1);
 
       const personal = await f.app.inject({ method: "PUT", url: "/api/v1/auth/workspace", cookies: f.cookies, payload: { type: "personal" } });

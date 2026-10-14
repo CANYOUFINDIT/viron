@@ -90,7 +90,7 @@ const modes = [
 const knownModes = new Set<string>(modes.map((item) => item[0]));
 
 
-const { currentOrganizationId } = useOrganizationContext();
+const { currentOrganizationId, session } = useOrganizationContext();
 const { dataRevision } = useOrganizationContext();
 const tab = ref<"flows" | "requests" | "ledger">("flows");
 const flows = ref<FlowItem[]>([]);
@@ -400,6 +400,7 @@ watch(() => dataRevision?.value, () => void load());
 
 <template>
   <section class="console-panel approval-panel" aria-label="审批与台账" v-loading="loading">
+    <header class="organization-page-heading"><div class="organization-eyebrow">{{ session?.workspace?.name }} / 组织工作空间</div><h1>审批与台账</h1><p>维护资源审批流程，处理授权申请，并查看授权变化记录。</p></header>
     <nav class="access-switch" aria-label="审批流程、授权申请、授权台账">
       <button type="button" :class="{ 'is-active': tab === 'flows' }" @click="tab = 'flows'">审批流程</button>
       <button type="button" :class="{ 'is-active': tab === 'requests' }" @click="tab = 'requests'">授权申请</button>
@@ -412,27 +413,9 @@ watch(() => dataRevision?.value, () => void load());
         <p>默认流程承接尚未划入指定流程的资源。指定流程保存的是当前选中的固定目标，同一资源不能同时属于两条指定流程。</p>
         <el-button v-if="canMaintain" type="primary" @click="openCreate"><Plus :size="15" />新增指定流程</el-button>
       </div>
-      <article v-for="flow in flows" :key="flow.id" class="approval-flow-card">
-        <header>
-          <strong>{{ flow.name }}</strong>
-          <em>{{ flow.isDefault ? "默认流程" : "指定流程" }}</em>
-          <small v-if="!flow.enabled">已停用</small>
-        </header>
-        <p>覆盖 {{ flow.coverage }} 个资源</p>
-        <ul v-if="flow.isDefault">
-          <li v-for="target in unassigned" :key="resourceKey(target)">{{ targetText(target) }}</li>
-          <li v-if="!unassigned.length">指定流程已经覆盖当前全部资源，新的未分配资源仍由默认流程承接。</li>
-        </ul>
-        <ul v-else>
-          <li v-for="target in flow.targets" :key="resourceKey(target)">{{ targetText(target) }}</li>
-        </ul>
-        <p v-if="flowLocked(flow)" class="approval-error">流程包含不支持的旧节点，已保留原配置，不能编辑或降级。</p>
-        <footer>
-          <el-button v-if="canMaintain" @click="openEdit(flow)">{{ flow.isDefault ? "编辑节点" : "编辑" }}</el-button>
-          <el-button v-if="canMaintain && !flow.isDefault" :disabled="flowLocked(flow)" @click="removeFlow(flow)">删除</el-button>
-          <small v-if="flow.isDefault">不能删除、停用或改成指定范围</small>
-        </footer>
-      </article>
+      <div v-if="flows.length" class="organization-table"><table><thead><tr><th>审批流程</th><th>授权范围</th><th>当前覆盖</th><th>审批节点</th><th>操作</th></tr></thead><tbody>
+        <tr v-for="flow in flows" :key="flow.id"><td><strong>{{ flow.name }}</strong><small v-if="!flow.enabled">已停用</small><small v-if="flowLocked(flow)" class="approval-error">包含不支持的旧节点，已保留原配置</small></td><td><span class="organization-status" :class="{ 'is-active': flow.isDefault }">{{ flow.isDefault ? '所有连接 · 默认承接' : '指定连接 / 环境' }}</span><small>{{ flow.isDefault ? '排除已划入其他流程的连接' : '保存时按连接检查唯一归属' }}</small></td><td>{{ flow.coverage }} 个授权目标<details class="approval-targets"><summary>查看范围</summary><ul><li v-for="target in (flow.isDefault ? unassigned : flow.targets)" :key="resourceKey(target)">{{ targetText(target) }}</li><li v-if="flow.isDefault && !unassigned.length">指定流程已覆盖当前全部资源，新的未分配资源由默认流程承接。</li></ul></details></td><td>{{ flow.nodes.map(node => `${node.name} · ${modeLabel(node.mode)}`).join(' → ') || '暂无节点' }}</td><td class="approval-flow-actions"><el-button v-if="canMaintain" link type="primary" @click="openEdit(flow)">{{ flow.isDefault ? '编辑节点' : '编辑' }}</el-button><el-button v-if="canMaintain && !flow.isDefault" link type="danger" :disabled="flowLocked(flow)" @click="removeFlow(flow)">删除</el-button></td></tr>
+      </tbody></table></div>
       <p v-if="!flows.length && !error" class="access-empty">还没有审批流程</p>
     </template>
 

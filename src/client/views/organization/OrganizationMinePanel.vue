@@ -78,6 +78,7 @@ const catalog = ref<NamedCatalogItem[]>([]);
 const error = ref("");
 const message = ref("");
 const loading = ref(false);
+const requestDialog = ref<"data" | "feature" | null>(null);
 const dataRoleId = ref("");
 const dataTargets = ref<Array<{ type: ResourceType; id: string }>>([]);
 const featureTargets = ref<Array<{ type: ResourceType; id: string }>>([]);
@@ -237,6 +238,7 @@ async function submit(kind: "data" | "feature", group?: ApprovalFlowGroup) {
       if (!split.value.groups.length) split.value = null;
     } else split.value = null;
     await load();
+    requestDialog.value = null;
   } catch (cause) {
     const groups = approvalFlowGroups(cause);
     if (groups) {
@@ -262,6 +264,7 @@ function groupFlagText(group: ApprovalFlowGroup) {
         <h1>{{ session.user?.username }}</h1>
         <p>查看自己的授权，提交数据或功能申请，并处理当前轮到自己的审批。</p>
       </div>
+      <div class="mine-panel__actions"><el-button @click="requestDialog = 'data'">申请数据授权</el-button><el-button type="primary" @click="requestDialog = 'feature'">申请功能授权</el-button></div>
     </header>
     <nav class="console-tabs mine-tabs" aria-label="我的授权、我的申请、待我审批">
       <button type="button" :class="{ 'is-active': tab === 'mine' }" @click="openTab('mine')">我的授权</button>
@@ -274,43 +277,83 @@ function groupFlagText(group: ApprovalFlowGroup) {
       <template v-if="tab === 'mine'">
         <section>
           <h4>已分配角色</h4>
-          <p class="mine-note">管理范围只说明管理能力。角色有效不等于可以操作资源。</p>
-          <p v-if="!access.roles.length">暂无角色</p>
-          <article v-for="role in access.roles" :key="role.id">
-            <strong>{{ role.name }}</strong>
-            <small>{{ capability(role.usable, role.invalidReason) }} · {{ sourceText(role.source, role.subjectName) }}</small>
-            <small>管理范围：{{ scopeText(role.managementScope) }}</small>
-            <small>{{ period(role.startsAt, role.expiresAt) }}</small>
-            <small>当前有效共享成员：{{ role.holders.map((holder) => holder.name).join("、") || "无" }}</small>
-            <RolePermissionList :codes="role.permissionCodes" />
-          </article>
+          <div class="organization-table"><table><thead><tr><th>成员 / 子组织</th><th>角色</th><th>分配有效期 / 状态</th></tr></thead><tbody>
+            <tr v-for="role in access.roles" :key="role.id"><td><strong>{{ role.subjectName }}</strong><small>{{ sourceText(role.source, role.subjectName) }}</small></td><td><strong>{{ role.name }}</strong><small>{{ scopeText(role.managementScope) }}</small><RolePermissionList :codes="role.permissionCodes" /></td><td><span class="organization-status" :class="{ 'is-active': role.usable }">{{ capability(role.usable, role.invalidReason) }}</span><small>{{ period(role.startsAt, role.expiresAt) }}</small></td></tr>
+            <tr v-if="!access.roles.length"><td colspan="3" class="organization-table__empty">暂无角色</td></tr>
+          </tbody></table></div>
         </section>
         <section>
-          <h4>角色数据授权</h4>
-          <p v-if="!access.dataGrants.length">暂无数据授权</p>
-          <article v-for="grant in access.dataGrants" :key="grant.id">
-            <strong>{{ grant.target.name || "目标已删除" }} · {{ RESOURCE_TYPE_LABELS[grant.target.type] }}</strong>
-            <small>{{ grant.roleName }} · {{ grant.usable ? "当前可操作" : (grant.invalidReason || "当前不能操作该资源") }}</small>
-            <small>{{ grant.sources.map((item) => sourceText(item.source, item.subjectName)).join("、") || "未记录来源" }}</small>
-            <small>{{ period(grant.startsAt, grant.expiresAt) }}</small>
-            <RolePermissionList v-if="grant.permissionCodes.length" :codes="grant.permissionCodes" />
-            <p v-else>没有匹配该资源的操作码。角色分配是否有效，不表示这条资源现在可以操作。</p>
-          </article>
+          <h4>角色的数据授权</h4>
+          <div class="organization-table"><table><thead><tr><th>角色</th><th>授权资源</th><th>有效期 / 状态</th></tr></thead><tbody>
+            <tr v-for="grant in access.dataGrants" :key="grant.id"><td><strong>{{ grant.roleName }}</strong><small>{{ grant.sources.map(item => sourceText(item.source, item.subjectName)).join('、') }}</small></td><td><strong>{{ grant.target.name || '目标已删除' }}</strong><small>{{ RESOURCE_TYPE_LABELS[grant.target.type] }}</small><RolePermissionList v-if="grant.permissionCodes.length" :codes="grant.permissionCodes" /></td><td><span class="organization-status" :class="{ 'is-active': grant.usable }">{{ grant.usable ? '当前可操作' : (grant.invalidReason || '当前不可用') }}</span><small>{{ period(grant.startsAt, grant.expiresAt) }}</small></td></tr>
+            <tr v-if="!access.dataGrants.length"><td colspan="3" class="organization-table__empty">暂无数据授权</td></tr>
+          </tbody></table></div>
         </section>
         <section>
-          <h4>独立功能授权</h4>
-          <p v-if="!access.featureGrants.length">暂无功能授权</p>
-          <article v-for="grant in access.featureGrants" :key="grant.id">
-            <strong>{{ featureText(grant.features) }}</strong>
-            <small>{{ capability(grant.usable, grant.invalidReason) }} · {{ sourceText(grant.source, grant.subjectName) }}</small>
-            <small>{{ period(grant.startsAt, grant.expiresAt) }}</small>
-            <p>{{ grant.targets.map((target) => `${target.name || "目标已删除"}（${RESOURCE_TYPE_LABELS[target.type]}）`).join("、") }}</p>
-          </article>
+          <h4>功能授权 · 环境与连接</h4>
+          <div class="organization-table"><table><thead><tr><th>成员 / 子组织</th><th>资源范围</th><th>允许的功能</th><th>有效期 / 状态</th></tr></thead><tbody>
+            <tr v-for="grant in access.featureGrants" :key="grant.id"><td><strong>{{ grant.subjectName }}</strong><small>{{ sourceText(grant.source, grant.subjectName) }}</small></td><td>{{ grant.targets.map(target => `${target.name || '目标已删除'}（${RESOURCE_TYPE_LABELS[target.type]}）`).join('、') }}</td><td>{{ featureText(grant.features) }}</td><td><span class="organization-status" :class="{ 'is-active': grant.usable }">{{ capability(grant.usable, grant.invalidReason) }}</span><small>{{ period(grant.startsAt, grant.expiresAt) }}</small></td></tr>
+            <tr v-if="!access.featureGrants.length"><td colspan="4" class="organization-table__empty">暂无功能授权</td></tr>
+          </tbody></table></div>
         </section>
       </template>
 
       <template v-else-if="tab === 'requests'">
-        <form class="mine-form" @submit.prevent="submit('data')">
+
+
+      </template>
+
+      <section v-if="tab !== 'mine'">
+        <h4>{{ tab === "todo" ? "待我审批" : "我的申请" }}</h4>
+        <p v-if="!visibleRequests.length">暂无记录</p>
+        <article v-for="item in visibleRequests" :key="item.id">
+          <strong>{{ item.kind === "data" ? "数据申请" : "功能申请" }} · {{ grantRequestStatusLabel[item.status] ?? item.status }}</strong>
+          <small>{{ item.flowName || "流程见详情" }} · {{ item.reason }}</small>
+          <small v-if="item.pauseReason || item.blockReason">{{ item.pauseReason || item.blockReason }}</small>
+          <button type="button" @click="openDetail(item.id)">查看详情</button>
+        </article>
+      </section>
+    </div>
+<el-dialog append-to-body :model-value="requestDialog === 'feature'" @update:model-value="requestDialog = null" title="申请功能授权" width="min(680px, calc(100% - 32px))" align-center class="envman-dialog"><p v-if="message" class="mine-note">{{ message }}</p><form class="mine-form" @submit.prevent="submit('feature')">
+          <h4>申请功能授权</h4>
+          <p class="mine-note">功能申请不选择角色，只作用在本人。单个连接不能申请 Web 插件。</p>
+          <fieldset>
+            <legend>功能</legend>
+            <el-checkbox v-model="featureFlags.mcp">MCP</el-checkbox>
+            <el-checkbox v-model="featureFlags.agent">Agent</el-checkbox>
+            <el-checkbox v-model="featureFlags.webPlugins" :disabled="!hasEnvironmentTarget(featureTargets)">Web 插件</el-checkbox>
+            <small v-if="!hasEnvironmentTarget(featureTargets)">当前选择没有环境，不能勾选 Web 插件。</small>
+          </fieldset>
+          <OrganizationGrantTargetPicker v-model="featureTargets" v-model:query="featureQuery" :catalog="catalog" />
+          <fieldset>
+            <legend>时长</legend>
+            <small>从最终生效时开始计算。</small>
+            <el-radio-group v-model="featureDuration">
+              <el-radio v-for="item in DURATION_PRESETS" :key="item.id" :value="item.id">{{ item.label }}</el-radio>
+              <el-radio value="custom">自定义</el-radio>
+            </el-radio-group>
+            <div v-if="featureDuration === 'custom'" class="mine-duration">
+              <el-input-number v-model="featureAmount" :min="1" :step="1" />
+              <el-select v-model="featureUnit" style="width: 120px">
+                <el-option label="分钟" value="minute" />
+                <el-option label="小时" value="hour" />
+                <el-option label="天" value="day" />
+              </el-select>
+            </div>
+          </fieldset>
+          <label>理由 <el-input v-model="featureReason" maxlength="2000" /></label>
+          <el-button type="primary" native-type="submit">提交功能申请</el-button>
+          <div v-if="featureSplit" class="mine-groups">
+            <h5>按流程分别提交</h5>
+            <article v-for="group in featureSplit.groups" :key="group.flowId">
+              <strong>{{ group.flowName }}</strong>
+              <p v-for="target in group.targets" :key="`${target.type}:${target.id}`">{{ catalogLabel(catalog, target) }}</p>
+              <p>本组功能：{{ groupFlagText(group).text }}</p>
+              <el-button type="primary" :disabled="!groupFlagText(group).ready" @click="submit('feature', group)">提交这一组</el-button>
+            </article>
+          </div>
+        </form><template #footer><el-button @click="requestDialog = null">关闭</el-button></template></el-dialog>
+<el-dialog append-to-body :model-value="requestDialog === 'data'" @update:model-value="requestDialog = null" title="申请数据授权" width="min(680px, calc(100% - 32px))" align-center class="envman-dialog"><p v-if="message" class="mine-note">{{ message }}</p><form class="mine-form" @submit.prevent="submit('data')">
           <h4>申请数据授权</h4>
           <p class="mine-note">只为自己当前有效持有的角色申请。通过后，该角色的全部有效成员共享这些资源权限。时长从最终生效时开始。</p>
           <label>角色
@@ -350,59 +393,7 @@ function groupFlagText(group: ApprovalFlowGroup) {
               <el-button type="primary" @click="submit('data', group)">提交这一组</el-button>
             </article>
           </div>
-        </form>
-        <form class="mine-form" @submit.prevent="submit('feature')">
-          <h4>申请功能授权</h4>
-          <p class="mine-note">功能申请不选择角色，只作用在本人。单个连接不能申请 Web 插件。</p>
-          <fieldset>
-            <legend>功能</legend>
-            <el-checkbox v-model="featureFlags.mcp">MCP</el-checkbox>
-            <el-checkbox v-model="featureFlags.agent">Agent</el-checkbox>
-            <el-checkbox v-model="featureFlags.webPlugins" :disabled="!hasEnvironmentTarget(featureTargets)">Web 插件</el-checkbox>
-            <small v-if="!hasEnvironmentTarget(featureTargets)">当前选择没有环境，不能勾选 Web 插件。</small>
-          </fieldset>
-          <OrganizationGrantTargetPicker v-model="featureTargets" v-model:query="featureQuery" :catalog="catalog" />
-          <fieldset>
-            <legend>时长</legend>
-            <small>从最终生效时开始计算。</small>
-            <el-radio-group v-model="featureDuration">
-              <el-radio v-for="item in DURATION_PRESETS" :key="item.id" :value="item.id">{{ item.label }}</el-radio>
-              <el-radio value="custom">自定义</el-radio>
-            </el-radio-group>
-            <div v-if="featureDuration === 'custom'" class="mine-duration">
-              <el-input-number v-model="featureAmount" :min="1" :step="1" />
-              <el-select v-model="featureUnit" style="width: 120px">
-                <el-option label="分钟" value="minute" />
-                <el-option label="小时" value="hour" />
-                <el-option label="天" value="day" />
-              </el-select>
-            </div>
-          </fieldset>
-          <label>理由 <el-input v-model="featureReason" maxlength="2000" /></label>
-          <el-button type="primary" native-type="submit">提交功能申请</el-button>
-          <div v-if="featureSplit" class="mine-groups">
-            <h5>按流程分别提交</h5>
-            <article v-for="group in featureSplit.groups" :key="group.flowId">
-              <strong>{{ group.flowName }}</strong>
-              <p v-for="target in group.targets" :key="`${target.type}:${target.id}`">{{ catalogLabel(catalog, target) }}</p>
-              <p>本组功能：{{ groupFlagText(group).text }}</p>
-              <el-button type="primary" :disabled="!groupFlagText(group).ready" @click="submit('feature', group)">提交这一组</el-button>
-            </article>
-          </div>
-        </form>
-      </template>
-
-      <section v-if="tab !== 'mine'">
-        <h4>{{ tab === "todo" ? "待我审批" : "我的申请" }}</h4>
-        <p v-if="!visibleRequests.length">暂无记录</p>
-        <article v-for="item in visibleRequests" :key="item.id">
-          <strong>{{ item.kind === "data" ? "数据申请" : "功能申请" }} · {{ grantRequestStatusLabel[item.status] ?? item.status }}</strong>
-          <small>{{ item.flowName || "流程见详情" }} · {{ item.reason }}</small>
-          <small v-if="item.pauseReason || item.blockReason">{{ item.pauseReason || item.blockReason }}</small>
-          <button type="button" @click="openDetail(item.id)">查看详情</button>
-        </article>
-      </section>
-    </div>
+        </form><template #footer><el-button @click="requestDialog = null">关闭</el-button></template></el-dialog>
     <GrantRequestDetail v-if="detailOpen && currentOrganizationId" v-model="detailOpen" :organization-id="currentOrganizationId" :request-id="detailId" @changed="load" />
   </section>
 </template>
@@ -411,7 +402,7 @@ function groupFlagText(group: ApprovalFlowGroup) {
 .mine-panel { display: flex; flex-direction: column; gap: 12px; }
 .mine-panel__heading { display: flex; gap: 16px; align-items: flex-start; justify-content: space-between; }
 .mine-panel__heading nav { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
-.mine-panel__heading button, article button { border: 0; background: transparent; color: var(--teal-700, #0f6e56); cursor: pointer; font: inherit; }
+article button { border: 0; background: transparent; color: var(--teal-700, #0f6e56); cursor: pointer; font: inherit; }
 .mine-panel__heading p, .mine-note, small { color: var(--el-text-color-secondary); font-size: 12px; }
 .mine-error { color: #a33b32; font-size: 12px; }
 .mine-form { display: flex; flex-direction: column; gap: 10px; padding: 12px 0; border-top: 1px solid var(--el-border-color-lighter); }

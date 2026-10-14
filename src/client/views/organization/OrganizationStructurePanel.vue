@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { ArrowRight, Building2, Link2, Network, Pencil, Plus, Search, Trash2, Users } from "@lucide/vue";
+import { ArrowRight, Building2, Info, Link2, MoreHorizontal, Network, Pencil, Plus, Search, Trash2, Users } from "@lucide/vue";
 import { nameInitials } from "../../../shared/name-initials";
 import { useOrganizationContext } from "./context";
 import OrganizationInvitationPanel from "./OrganizationInvitationPanel.vue";
@@ -51,8 +51,7 @@ function showMember(id: string) { inspectedMember.value = detail.value?.members.
                       <el-button @click="openInvitationDialog(null)"><Link2 :size="15" />邀请成员</el-button>
                     </template>
                     <template v-else-if="selectedProject">
-                      <el-button @click="openInvitationDialog(selectedProject.id)"><Link2 :size="15" />邀请成员</el-button><el-button @click="openEditProject(selectedProject)"><Pencil :size="15" />{{ $t('编辑') }}</el-button>
-                      <el-button type="danger" plain @click="deleteProject(selectedProject)"><Trash2 :size="15" />{{ $t('删除') }}</el-button>
+                      <el-button @click="openInvitationDialog(selectedProject.id)"><Link2 :size="15" />邀请成员</el-button><el-dropdown trigger="click"><button class="organization-node-menu" type="button" aria-label="子组织操作"><MoreHorizontal :size="18" /></button><template #dropdown><el-dropdown-menu><el-dropdown-item @click="openEditProject(selectedProject!)"><Pencil :size="14" />编辑子组织</el-dropdown-item><el-dropdown-item @click="deleteProject(selectedProject!)"><Trash2 :size="14" />删除子组织</el-dropdown-item></el-dropdown-menu></template></el-dropdown>
                     </template>
                     <template v-else-if="selectedMember">
                       <el-button @click="changeRole(selectedMember)">{{ $t('分配角色') }}</el-button>
@@ -69,7 +68,7 @@ function showMember(id: string) { inspectedMember.value = detail.value?.members.
                     <div class="organization-members__table"><div class="organization-members__head"><span>成员</span><span>角色</span><span>所属子组织</span><span>操作</span></div><div v-for="member in filteredMembers" :key="member.id" class="organization-members__row"><span class="organization-members__identity"><i>{{ nameInitials(member.username) }}</i><strong>{{ member.username }}</strong><small v-if="member.status !== 'active'">已停用</small></span><span>{{ (member.roleNames || []).join('、') || '暂无角色' }}</span><span>{{ member.projectIds.map(id => detail?.projects.find(project => project.id === id)?.name).filter(Boolean).join('、') || '整个组织' }}</span><button type="button" @click="showMember(member.id)">查看权限</button></div></div><p v-if="!filteredMembers.length" class="organization-members__empty">{{ memberKeyword ? '没有匹配的成员' : '暂无成员' }}</p>
                     <OrganizationInvitationPanel v-if="showInvitations && !selectedProject" />
                   </section>
-                  <template v-else-if="detailTab === 'resources'"><p class="organization-related-note">按与资源总览相同的方式查看本组织的关联资源；包含下级子组织与独立资源。</p><OrganizationResourceOverview :project-id="selectedProject?.id" /></template>
+                  <template v-else-if="detailTab === 'resources'"><p class="organization-related-note"><Info :size="15" />按与资源总览相同的方式查看本组织的关联资源；包含下级子组织与独立资源。</p><OrganizationResourceOverview :project-id="selectedProject?.id" /></template>
                 </template>
                 <section v-if="selectedMember && currentOrganizationId" class="node-grants" aria-label="成员权限">
                   <header><div><strong>成员权限</strong><small>{{ (selectedMember.roleNames || []).join("、") || "暂无有效角色" }}</small></div><el-button type="primary" @click="memberPermissionOpen = true">查看权限</el-button></header>

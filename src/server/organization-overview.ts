@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { EnvmanDatabase } from "./database-client.js";
 import { roleHolderIds } from "./organization-approval.js";
-import { loadOrganizationAccess, OrganizationPermissionError, roleState } from "./organization-rbac.js";
+import { loadOrganizationAccess, OrganizationPermissionError, roleState, type OrganizationAccess } from "./organization-rbac.js";
 import { presentEnvironmentWindow, presentTargetWindow, serverNow } from "./organization-boundary.js";
 import {
   PERMISSION_DEFINITIONS,
@@ -125,9 +125,9 @@ function publicItem(item: ResourceCatalogItem, extra: Record<string, unknown> = 
   return safe;
 }
 
-export async function resourceOverview(db: EnvmanDatabase, org: string, userId: string, projectId?: string | null) {
+export async function resourceOverview(db: EnvmanDatabase, org: string, userId: string, projectId?: string | null, requestAccess?: OrganizationAccess) {
   const now = serverNow();
-  const access = await loadOrganizationAccess(db, org, userId, now);
+  const access = requestAccess ?? await loadOrganizationAccess(db, org, userId, now);
   const related = projectId ? await relatedResourceKeys(db, org, projectId, now) : null;
   const visible = (item: ResourceCatalogItem) =>
     !related ||
@@ -340,9 +340,9 @@ function scopeProjects(scope: ManagementScope, projectName: Map<string, string>)
 }
 
 /** The caller's own roles, grants, and feature grants. It does not require authorization.view and omits other people's requests. */
-export async function personalAuthorization(db: EnvmanDatabase, org: string, userId: string) {
+export async function personalAuthorization(db: EnvmanDatabase, org: string, userId: string, requestAccess?: OrganizationAccess) {
   const now = serverNow();
-  const access = await loadOrganizationAccess(db, org, userId, now);
+  const access = requestAccess ?? await loadOrganizationAccess(db, org, userId, now);
   const [projectRows, organization, selfRow] = await Promise.all([
     db.prepare("SELECT id, name FROM projects WHERE organization_id = ?").all<{ id: string; name: string }>(org),
     db.prepare("SELECT name FROM organizations WHERE id = ?").get<{ name: string }>(org),

@@ -104,7 +104,7 @@ export async function registerOrganizationPhaseRoutes(app: FastifyInstance): Pro
           .get(request.query.projectId, request.params.id);
         if (!project) return reply.code(404).send({ error: "NOT_FOUND", message: "子组织不存在" });
       }
-      return resourceOverview(app.db, request.params.id, request.admin!.id, request.query.projectId);
+      return resourceOverview(app.db, request.params.id, request.admin!.id, request.query.projectId, request.admin!.organizationAccess);
     },
   );
 
@@ -123,7 +123,7 @@ export async function registerOrganizationPhaseRoutes(app: FastifyInstance): Pro
 
   app.get<{ Params: { id: string } }>("/api/v1/organizations/:id/my-access", async (request, reply) => {
     if (!workspaceReady(request, reply, request.params.id)) return;
-    return personalAuthorization(app.db, request.params.id, request.admin!.id);
+    return personalAuthorization(app.db, request.params.id, request.admin!.id, request.admin!.organizationAccess);
   });
 
   app.get<{ Params: { id: string; memberId: string } }>("/api/v1/organizations/:id/members/:memberId/permissions", async (request, reply) => {

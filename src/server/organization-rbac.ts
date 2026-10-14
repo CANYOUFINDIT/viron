@@ -60,143 +60,68 @@ export async function organizationResourceCatalog(
   db: EnvmanDatabase,
   org: string,
 ): Promise<ResourceCatalogItem[]> {
-  const environments = await db
-    .prepare(
-      "SELECT id, name, group_id FROM environments WHERE workspace_type = 'organization' AND workspace_id = ?",
-    )
-    .all<{ id: string; name: string; group_id: string | null }>(org);
-  const environmentById = new Map(environments.map((e) => [e.id, e]));
-  const result: ResourceCatalogItem[] = environments.map((e) => ({
-    type: "environment",
-    id: e.id,
-    name: e.name,
-    capability: "environment",
-    environmentIds: [e.id],
-    groupIds: e.group_id ? [e.group_id] : [],
-  }));
-  for (const [type, table, links] of [
-    ["ssh_connection", "ssh_connections", "ssh_connection_environments"],
-    [
-      "database_connection",
-      "database_connections",
-      "database_connection_environments",
-    ],
-    ["redis_connection", "redis_connections", "redis_connection_environments"],
-  ] as const) {
-    const rows = await db
-      .prepare(
-        `SELECT id, name FROM ${table} WHERE workspace_type = 'organization' AND workspace_id = ?`,
-      )
-      .all<{ id: string; name: string }>(org);
-    const associations = await db
-      .prepare(
-        `SELECT l.connection_id, l.environment_id FROM ${links} l JOIN environments e ON e.id = l.environment_id WHERE e.workspace_type = 'organization' AND e.workspace_id = ?`,
-      )
-      .all<{ connection_id: string; environment_id: string }>(org);
-    for (const row of rows)
-      result.push({
-        type,
-        ...row,
-        capability: RESOURCE_CAPABILITIES[type],
-        environmentIds: associations
-          .filter((a) => a.connection_id === row.id)
-          .map((a) => a.environment_id),
-        groupIds: [],
-      });
-  }
-  for (const [type, table] of [
-    ["web_entry", "web_entries"],
-    ["environment_log", "environment_logs"],
-    ["service", "services"],
-  ] as const) {
-    const rows = await db
-      .prepare(
-        `SELECT r.id, r.name, r.environment_id FROM ${table} r JOIN environments e ON e.id = r.environment_id WHERE e.workspace_type = 'organization' AND e.workspace_id = ?`,
-      )
-      .all<{ id: string; name: string; environment_id: string }>(org);
-    for (const row of rows)
-      result.push({
-        type,
-        id: row.id,
-        name: row.name,
-        capability: RESOURCE_CAPABILITIES[type],
-        environmentIds: [row.environment_id],
-        groupIds: [],
-      });
-  }
-  const knowledge = await db
-    .prepare(
-      "SELECT id, name, environment_id, parent_id FROM knowledge_nodes WHERE workspace_type = 'organization' AND workspace_id = ?",
-    )
-    .all<{
-      id: string;
-      name: string;
-      environment_id: string | null;
-      parent_id: string | null;
-    }>(org);
-  const knowledgeLinks = await db
-    .prepare(
-      "SELECT k.node_id, k.environment_id FROM knowledge_node_environments k JOIN environments e ON e.id = k.environment_id WHERE e.workspace_type = 'organization' AND e.workspace_id = ?",
-    )
-    .all<{ node_id: string; environment_id: string }>(org);
-  for (const row of knowledge) {
-    const envs = new Set<string>();
-    let current: typeof row | undefined = row;
-    const seen = new Set<string>();
-    while (current && !seen.has(current.id)) {
-      seen.add(current.id);
-      if (current.environment_id) envs.add(current.environment_id);
-      knowledgeLinks
-        .filter((l) => l.node_id === current!.id)
-        .forEach((l) => envs.add(l.environment_id));
-      current = knowledge.find((k) => k.id === current!.parent_id);
+  // One round trip supplies the complete directory. Associations are grouped in memory,
+  // including unlinked connections and knowledge inherited from parent folders.
+  const scope = "workspace_type = 'organization' AND workspace_id = ?";
+  const selects = [
+    `SELECT 'environment' AS type, id, name, id AS environment_id, group_id, NULL AS parent_id FROM environments WHERE ${scope}`,
+    ...([
+      ["ssh_connection", "ssh_connections", "ssh_connection_environments"],
+      ["database_connection", "database_connections", "database_connection_environments"],
+      ["redis_connection", "redis_connections", "redis_connection_environments"],
+    ] as const).map(([type, table, links]) => `SELECT '${type}' AS type, r.id, r.name, e.id AS environment_id, e.group_id, NULL AS parent_id
+      FROM ${table} r LEFT JOIN ${links} l ON l.connection_id = r.id
+      LEFT JOIN environments e ON e.id = l.environment_id AND e.workspace_type = 'organization' AND e.workspace_id = r.workspace_id
+      WHERE r.workspace_type = 'organization' AND r.workspace_id = ?`),
+    ...([
+      ["web_entry", "web_entries"], ["environment_log", "environment_logs"], ["service", "services"],
+    ] as const).map(([type, table]) => `SELECT '${type}' AS type, r.id, r.name, e.id AS environment_id, e.group_id, NULL AS parent_id
+      FROM ${table} r JOIN environments e ON e.id = r.environment_id WHERE e.workspace_type = 'organization' AND e.workspace_id = ?`),
+    `SELECT 'knowledge_node' AS type, n.id, n.name, e.id AS environment_id, e.group_id, n.parent_id
+      FROM knowledge_nodes n LEFT JOIN environments e ON e.id = n.environment_id AND e.workspace_type = 'organization' AND e.workspace_id = n.workspace_id
+      WHERE n.workspace_type = 'organization' AND n.workspace_id = ?`,
+    `SELECT 'knowledge_node' AS type, n.id, n.name, e.id AS environment_id, e.group_id, n.parent_id
+      FROM knowledge_nodes n JOIN knowledge_node_environments l ON l.node_id = n.id
+      JOIN environments e ON e.id = l.environment_id AND e.workspace_type = 'organization' AND e.workspace_id = n.workspace_id
+      WHERE n.workspace_type = 'organization' AND n.workspace_id = ?`,
+    ...([
+      ["service_deployment", "service_deployments", "display_name"], ["service_script", "service_script_actions", "name"],
+    ] as const).map(([type, table, name]) => `SELECT '${type}' AS type, r.id, r.${name} AS name, e.id AS environment_id, e.group_id, NULL AS parent_id
+      FROM ${table} r JOIN services s ON s.id = r.service_id JOIN environments e ON e.id = s.environment_id
+      WHERE e.workspace_type = 'organization' AND e.workspace_id = ?`),
+  ];
+  const rows = await db.prepare(selects.join(" UNION ALL ")).all<{
+    type: ResourceRef["type"]; id: string; name: string; environment_id: string | null; group_id: string | null; parent_id: string | null;
+  }>(...selects.map(() => org));
+  const items = new Map<string, ResourceCatalogItem>();
+  const parents = new Map<string, string | null>();
+  for (const row of rows) {
+    const key = resourceKey(row);
+    let item = items.get(key);
+    if (!item) {
+      item = { type: row.type, id: row.id, name: row.name || (row.type === "service_deployment" ? "服务部署" : ""), capability: RESOURCE_CAPABILITIES[row.type], environmentIds: [], groupIds: [] };
+      items.set(key, item);
     }
-    result.push({
-      type: "knowledge_node",
-      id: row.id,
-      name: row.name,
-      capability: "knowledge",
-      environmentIds: [...envs],
-      groupIds: [],
-    });
+    if (row.environment_id && !item.environmentIds.includes(row.environment_id)) item.environmentIds.push(row.environment_id);
+    if (row.group_id && !item.groupIds.includes(row.group_id)) item.groupIds.push(row.group_id);
+    if (row.type === "knowledge_node") parents.set(row.id, row.parent_id);
   }
-  for (const [type, table, name] of [
-    ["service_deployment", "service_deployments", "display_name"],
-    ["service_script", "service_script_actions", "name"],
-  ] as const) {
-    const rows = await db
-      .prepare(
-        `SELECT r.id, r.${name} AS name, s.environment_id FROM ${table} r JOIN services s ON s.id = r.service_id JOIN environments e ON e.id = s.environment_id WHERE e.workspace_type = 'organization' AND e.workspace_id = ?`,
-      )
-      .all<{ id: string; name: string; environment_id: string }>(org);
-    for (const row of rows)
-      result.push({
-        type,
-        id: row.id,
-        name: row.name || "服务部署",
-        capability: "maintenance",
-        environmentIds: [row.environment_id],
-        groupIds: [],
-      });
+  for (const item of items.values()) {
+    if (item.type !== "knowledge_node") continue;
+    const seen = new Set([item.id]);
+    let parent = parents.get(item.id);
+    while (parent && !seen.has(parent)) {
+      seen.add(parent);
+      const inherited = items.get(`knowledge_node:${parent}`);
+      inherited?.environmentIds.forEach(id => { if (!item.environmentIds.includes(id)) item.environmentIds.push(id); });
+      inherited?.groupIds.forEach(id => { if (!item.groupIds.includes(id)) item.groupIds.push(id); });
+      parent = parents.get(parent);
+    }
   }
-  // Host monitoring has its own typed target even though its ID is the SSH connection ID.
-  for (const ssh of result.filter((r) => r.type === "ssh_connection"))
-    result.push({
-      ...ssh,
-      type: "monitor_host",
-      capability: "maintenance",
-      name: ssh.name + " · 主机监控",
-    });
-  for (const item of result)
-    item.groupIds = [
-      ...new Set(
-        item.environmentIds.flatMap((id) =>
-          environmentById.get(id)?.group_id
-            ? [environmentById.get(id)!.group_id!]
-            : [],
-        ),
-      ),
-    ];
+  const result = [...items.values()];
+  // Monitoring retains its typed target even when it shares an SSH connection ID.
+  for (const ssh of result.filter(item => item.type === "ssh_connection")) result.push({ ...ssh, type: "monitor_host", capability: "maintenance", name: ssh.name + " · 主机监控" });
+
   return result;
 }
 
@@ -215,28 +140,20 @@ export function freezeFeatureTargets(
   return [...new Map(frozen.map((target) => [resourceKey(target), target])).values()];
 }
 
-export async function roleState(db: EnvmanDatabase, org: string) {
+export async function roleState(db: EnvmanDatabase, org: string, includeResourceGrants = true) {
   const [rs, as, ds, fs] = await Promise.all([
     db
       .prepare(
-        "SELECT * FROM organization_roles WHERE organization_id = ? ORDER BY created_at, name",
+        "SELECT id, name, description, permission_codes_json, enabled, version FROM organization_roles WHERE organization_id = ? ORDER BY created_at, name",
       )
       .all<Record<string, unknown>>(org),
     db
       .prepare(
-        "SELECT * FROM organization_role_assignments WHERE organization_id = ?",
+        "SELECT id, role_id, subject_type, subject_id, enabled, starts_at, expires_at, reason, management_scope_json FROM organization_role_assignments WHERE organization_id = ?",
       )
       .all<Record<string, unknown>>(org),
-    db
-      .prepare(
-        "SELECT * FROM organization_role_data_grants WHERE organization_id = ?",
-      )
-      .all<Record<string, unknown>>(org),
-    db
-      .prepare(
-        "SELECT * FROM organization_feature_grants WHERE organization_id = ?",
-      )
-      .all<Record<string, unknown>>(org),
+    includeResourceGrants ? db.prepare("SELECT id, role_id, target_type, target_id, batch_id, enabled, starts_at, expires_at, reason, source FROM organization_role_data_grants WHERE organization_id = ?").all<Record<string, unknown>>(org) : Promise.resolve([]),
+    includeResourceGrants ? db.prepare("SELECT id, subject_type, subject_id, enabled, starts_at, expires_at, reason, targets_json, features_json FROM organization_feature_grants WHERE organization_id = ?").all<Record<string, unknown>>(org) : Promise.resolve([]),
   ]);
   const roles: OrganizationRole[] = rs.map((r) => ({
     id: String(r.id),
@@ -807,6 +724,13 @@ export async function loadOrganizationAccess(
   const activeRoles = new Map(
     state.roles.filter((r) => r.enabled).map((r) => [r.id, r]),
   );
+  const validDataTargets = new Map<string, Set<string>>();
+  for (const grant of state.dataGrants) {
+    if (!validAt(grant, now)) continue;
+    const keys = validDataTargets.get(grant.roleId) ?? new Set<string>();
+    keys.add(resourceKey(grant.target));
+    validDataTargets.set(grant.roleId, keys);
+  }
   const targets = new Set(catalog.map(resourceKey));
   const scopeCovers = (scope: ManagementScope, target: string) =>
     scope.kind === "organization" ||
@@ -865,12 +789,7 @@ export async function loadOrganizationAccess(
         return false;
       if (code.startsWith("resource.") && code.split(".")[1] !== cap)
         return false;
-      return state.dataGrants.some(
-        (g) =>
-          g.roleId === a.roleId &&
-          validAt(g, now) &&
-          resourceKey(g.target) === resourceKey(target),
-      );
+      return validDataTargets.get(a.roleId)?.has(resourceKey(target)) === true;
     });
   };
   const permissionCodes = PERMISSION_CODES.filter(

@@ -2,7 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
-import { BookOpen, Boxes, ChevronDown, Database, FileText, Folder, FolderTree, Globe2, KeyRound, MemoryStick, Search, Server, ShieldCheck, Star, TerminalSquare } from "@lucide/vue";
+import { BookOpen, Boxes, ChevronDown, ChevronLeft, ChevronRight, Layers, Database, FileText, Folder, FolderTree, Globe2, KeyRound, MemoryStick, Search, Server, ShieldCheck, Star, TerminalSquare } from "@lucide/vue";
 import { ApiError, api } from "../../api";
 import { loadSession } from "../../session";
 import { RESOURCE_TYPE_LABELS, RESOURCE_TYPES, type ResourceType } from "../../../shared/organization-rbac";
@@ -36,8 +36,11 @@ type Item = Record<string, any>;
 const entries = ref<Array<{ id: EntryId; label: string; count: number; items: Item[]; unlinked?: Item[] }>>(
   labels.map((entry) => ({ ...entry, count: 0, items: [] })),
 );
+const entryIcons = { environments: Layers, credentials: KeyRound, ssh: TerminalSquare, database: Database, redis: Layers, knowledge: BookOpen };
 const selected = ref<EntryId>("environments");
 const keyword = ref("");
+const draftKeyword = ref("");
+function applySearch() { keyword.value = draftKeyword.value; }
 const credentialKind = ref<"ssh_key" | "ssl_certificate">("ssh_key");
 const error = ref("");
 const loading = ref(false);
@@ -153,6 +156,7 @@ async function load() {
 
 watch(() => [currentOrganizationId.value, props.projectId, dataRevision?.value], load, { immediate: true });
 watch(selected, () => {
+  draftKeyword.value = "";
   keyword.value = "";
   openedEnvironmentId.value = null;
   previewId.value = null;
@@ -328,15 +332,16 @@ function environmentNames(item: Item) {
 
 <template>
   <section v-loading="loading" class="console-panel organization-resource-browser" aria-label="资源总览">
-    <nav class="console-tabs" aria-label="资源入口">
+    <nav class="console-tabs resource-client-tabs lens" aria-label="资源入口">
       <button v-for="entry in entries" :key="entry.id" type="button" :class="{ 'is-active': selected === entry.id }" @click="selected = entry.id">
-        {{ entry.label }} <small>{{ entry.count }}</small>
+        <component :is="entryIcons[entry.id]" :size="15" />{{ entry.label }} <small>{{ entry.count }}</small>
       </button>
     </nav>
     <section class="overview-commandbar" :aria-label="current.label">
-      <el-input v-model="keyword" clearable :placeholder="`搜索${current.label}`">
+      <el-input v-model="draftKeyword" clearable :placeholder="selected === 'environments' ? '搜索环境名称、别称或标签' : `搜索${current.label}`" @keyup.enter="applySearch" @clear="keyword = ''">
         <template #prefix><Search :size="16" /></template>
       </el-input>
+      <el-button @click="applySearch">应用筛选</el-button>
       <span>{{ queryText ? `找到 ${selected === "environments" ? environments.length : selected === "credentials" ? credentialItems.length : selected === "knowledge" ? knowledgeItems.length : connectionSections.reduce((sum, section) => sum + section.items.length, 0)} 项` : `共 ${current.count} 项` }}</span>
     </section>
     <p v-if="error" class="browser-error">{{ error }}</p>
@@ -370,9 +375,10 @@ function environmentNames(item: Item) {
                 <div class="environment-card" :class="{ 'is-open': openedEnvironmentId === item.id }" :style="{ '--environment-card-accent': group.favorite ? (item.groupColor || '#1d8a74') : group.color }" @click="openedEnvironmentId = item.id">
                   <div class="environment-browser__chrome">
                     <div class="environment-browser__windowbar">
-                      <span class="environment-browser__tab"><i></i><strong :title="item.name">{{ item.name }}</strong></span>
+                      <span class="environment-browser__tab"><i></i><strong :title="item.name">{{ item.name }}</strong><span aria-hidden="true">×</span></span><span class="environment-browser__grip" aria-hidden="true">⠿</span>
                     </div>
                     <div class="environment-browser__toolbar">
+                      <ChevronLeft :size="14" class="is-muted" /><ChevronRight :size="14" class="is-muted" />
                       <span class="environment-browser__address"><i></i><strong>{{ item.name }}</strong></span>
                       <button type="button" class="environment-favorite-action" :class="{ 'is-favorite': item.favorite }" :aria-pressed="item.favorite" :aria-label="item.favorite ? `取消收藏 ${item.name}` : `收藏 ${item.name}`" @click.stop="toggleFavorite(item)"><Star :size="13" :fill="item.favorite ? 'currentColor' : 'none'" /></button>
                     </div>
@@ -391,7 +397,7 @@ function environmentNames(item: Item) {
                       <span><MemoryStick :size="14" /><strong>{{ item.counts?.redis ?? 0 }}</strong><small>Redis</small></span>
                     </div>
                     <div class="resource-auth-actions" @click.stop>
-                      <el-button v-if="item.authorization?.maintain" link type="primary" @click="openMaintain(item)">数据授权</el-button>
+                      <el-button v-if="item.authorization?.maintain" type="primary" @click="openMaintain(item)">数据授权</el-button>
                       <el-button v-else-if="item.authorization?.request" link @click="openRequest(item)">申请授权</el-button>
                       <el-button v-if="item.authorization?.view" link @click="openView(item)">查看授权</el-button>
                     </div>
@@ -422,7 +428,7 @@ function environmentNames(item: Item) {
                 <p v-if="item.content" class="knowledge-preview">{{ item.content }}</p>
               </div>
               <div class="resource-auth-actions">
-                <el-button v-if="item.authorization?.maintain" link type="primary" @click="openMaintain(item)">数据授权</el-button>
+                <el-button v-if="item.authorization?.maintain" type="primary" @click="openMaintain(item)">数据授权</el-button>
                 <el-button v-else-if="item.authorization?.request" link @click="openRequest(item)">申请授权</el-button>
                 <el-button v-if="item.authorization?.view" link @click="openView(item)">查看授权</el-button>
               </div>
@@ -436,7 +442,7 @@ function environmentNames(item: Item) {
           <article v-for="item in unlinked" :key="item.id" class="located-row">
             <div><strong>{{ item.name }}</strong><OperationWindow :window="item.operationWindow" @expired="load" /><small>{{ RESOURCE_TYPE_LABELS[item.type as ResourceType] || item.type }}</small><small v-if="item.url">{{ item.url }}</small></div>
             <div class="resource-auth-actions">
-              <el-button v-if="item.authorization?.maintain" link type="primary" @click="openMaintain(item)">数据授权</el-button>
+              <el-button v-if="item.authorization?.maintain" type="primary" @click="openMaintain(item)">数据授权</el-button>
               <el-button v-else-if="item.authorization?.request" link @click="openRequest(item)">申请授权</el-button>
               <el-button v-if="item.authorization?.view" link @click="openView(item)">查看授权</el-button>
             </div>
@@ -492,7 +498,7 @@ function environmentNames(item: Item) {
             </div>
             <small class="connection-environments">{{ environmentNames(item) }}</small>
             <div class="resource-auth-actions">
-              <el-button v-if="item.authorization?.maintain" link type="primary" @click="openMaintain(item)">数据授权</el-button>
+              <el-button v-if="item.authorization?.maintain" type="primary" @click="openMaintain(item)">数据授权</el-button>
               <el-button v-else-if="item.authorization?.request" link @click="openRequest(item)">申请授权</el-button>
               <el-button v-if="item.authorization?.view" link @click="openView(item)">查看授权</el-button>
             </div>
@@ -513,7 +519,7 @@ function environmentNames(item: Item) {
           </div>
           <small class="connection-environments">{{ environmentNames(item) }}</small>
           <div class="resource-auth-actions">
-            <el-button v-if="item.authorization?.maintain" link type="primary" @click="openMaintain(item)">数据授权</el-button>
+            <el-button v-if="item.authorization?.maintain" type="primary" @click="openMaintain(item)">数据授权</el-button>
             <el-button v-else-if="item.authorization?.request" link @click="openRequest(item)">申请授权</el-button>
             <el-button v-if="item.authorization?.view" link @click="openView(item)">查看授权</el-button>
           </div>
@@ -535,7 +541,7 @@ function environmentNames(item: Item) {
             <small>{{ environmentNames(item) }}</small>
           </div>
           <div class="resource-auth-actions">
-            <el-button v-if="item.authorization?.maintain" link type="primary" @click="openMaintain(item)">数据授权</el-button>
+            <el-button v-if="item.authorization?.maintain" type="primary" @click="openMaintain(item)">数据授权</el-button>
             <el-button v-else-if="item.authorization?.request" link @click="openRequest(item)">申请授权</el-button>
             <el-button v-if="item.authorization?.view" link @click="openView(item)">查看授权</el-button>
           </div>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowRight, Ban, Building2, Check, Clock3, Copy, Link2, Plus, RefreshCw, UserPlus } from "@lucide/vue";
+import { ArrowRight, Ban, Building2, Check, Clock3, Copy, Link2, Plus, RefreshCw, UserPlus, UserRound } from "@lucide/vue";
 import OrganizationNavigation from "./organization/OrganizationNavigation.vue";
 import TipIcon from "../components/TipIcon.vue";
 import { nameInitials } from "../../shared/name-initials";
@@ -46,39 +46,19 @@ watch(activePanel, (panel) => {
 function openPanel(panel: "structure" | "resources" | "roles" | "approval" | "mine" | "requests" | "todo" | "platform") {
   context.activePanel.value = panel;
 }
-function selectOrganization(organizationId: string) {
-  const organization = organizations.value.find((item) => item.id === organizationId);
-  if (!organization) return;
-  void activateWorkspace({ type: "organization", id: organization.id, name: organization.name, role: organization.role });
-}
+
 </script>
 
 <template>
   <div class="organization-view">
     <div class="organization-workspace">
-      <OrganizationNavigation v-if="currentOrganizationId || session.user?.isPlatformAdmin" @open-panel="openPanel" />
+      <OrganizationNavigation @open-panel="openPanel" />
       <div class="organization-main-shell">
         <header class="organization-topbar">
           <div class="organization-breadcrumb"><span>{{ detail?.organization.name || session.workspace?.name || '组织与用户' }}</span><ArrowRight :size="14" /><strong>{{ panelLabel }}</strong></div>
           <div class="organization-topbar__actions">
-        <el-select
-          class="organization-switcher"
-          :model-value="currentOrganizationId || undefined"
-          :disabled="!organizations.length"
-          :placeholder="organizations.length ? $t('选择组织') : $t('尚未加入任何组织')"
-          :aria-label="$t('选择组织')"
-          :fit-input-width="false"
-          popper-class="organization-switcher-popper"
-          @change="selectOrganization"
-        >
-          <template #prefix><Building2 :size="15" /></template>
-          <el-option v-for="organization in organizations" :key="organization.id" :label="organization.name" :value="organization.id">
-            <span class="organization-switcher__option"><strong>{{ organization.name }}</strong><small>{{ organization.role === 'admin' ? $t('组织管理员') : $t('普通成员') }}</small></span>
-          </el-option>
-        </el-select>
-        <el-button :aria-label="$t('通过邀请链接加入组织')" @click="joinOrganizationDialog = true"><Link2 :size="16" />{{ $t('加入组织') }}</el-button>
-        <el-button :aria-label="$t('创建组织')" @click="createOrganizationDialog = true"><Plus :size="16" />{{ $t('创建组织') }}</el-button>
-        <el-button type="primary" :aria-label="$t('同步组织数据')" :loading="loading" @click="synchronize"><RefreshCw v-if="!loading" :size="16" />{{ $t('同步数据') }}</el-button>
+            <button class="organization-topbar__refresh" type="button" aria-label="同步组织数据" title="同步数据" :disabled="loading" @click="synchronize"><RefreshCw :size="16" :class="{ 'is-spinning': loading }" /></button>
+            <span class="organization-topbar__persona"><UserRound :size="18" />{{ session.user?.username }}</span>
           </div>
         </header>
         <main class="workspace-console">
@@ -158,3 +138,5 @@ function selectOrganization(organizationId: string) {
 </template>
 
 <style scoped src="./organization/organization-parent.css"></style>
+
+<style src="./organization/organization-prototype.css"></style>
