@@ -6,10 +6,11 @@ import { ElMessage } from "element-plus";
 import AppShell from "./components/AppShell.vue";
 import EnvironmentWorkspaceHost from "./components/EnvironmentWorkspaceHost.vue";
 import RouteErrorState from "./components/RouteErrorState.vue";
+import SessionStartupState from "./components/SessionStartupState.vue";
 import { isDesktopApp, setDesktopTitleBarTheme } from "./desktop";
 import { elementPlusLocale } from "./i18n";
 import { theme } from "./theme";
-import { logout } from "./session";
+import { logout, sessionInitialization } from "./session";
 
 type EnvManWindow = Window & { __envmanRouteErrorMessage?: string };
 
@@ -77,7 +78,8 @@ onErrorCaptured((error) => {
 
 <template>
   <el-config-provider :locale="elementPlusLocale" :message="{ showClose: true, grouping: true, duration: 4500, offset: 24 }">
-    <RouterView v-slot="{ Component, route }">
+    <SessionStartupState v-if="sessionInitialization.pending || sessionInitialization.error || (!activeRoute.name && !routeError)" :allow-logout="desktop" :signing-out="signingOut" @reload="reloadApp" @logout="signOut" />
+    <RouterView v-else v-slot="{ Component, route }">
       <component :is="Component" v-if="route.meta.public && !routeError" />
       <RouteErrorState v-else-if="route.meta.public" :message="routeError" :allow-logout="desktop" :signing-out="signingOut" @reload="reloadApp" @logout="signOut" />
       <AppShell v-else>

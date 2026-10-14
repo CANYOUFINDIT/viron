@@ -63,6 +63,29 @@ export async function endpointFetch(request: DesktopRequest, signal?: AbortSigna
   });
 }
 
+/** Bound startup reads including the response body, releasing Chromium's connection on timeout. */
+export async function endpointSessionResponse(request: DesktopRequest, timeoutMs = 12_000): Promise<{ response: Response; body: string }> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      (async () => {
+        const response = await endpointFetch(request, controller.signal);
+        return { response, body: await response.text() };
+      })(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          const error = new DesktopApiError(504, "ENDPOINT_TIMEOUT", tr("Endpoint 登录状态请求超时，请检查服务和数据库响应。"));
+          reject(error);
+          controller.abort(error);
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function endpointJson<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
   const response = await endpointFetch({
     path,

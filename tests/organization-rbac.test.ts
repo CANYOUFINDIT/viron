@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createDeviceIdentity,
   openDatabaseCredentialEnvelope,
@@ -127,6 +127,30 @@ async function fixture() {
 }
 
 describe("organization role permissions", () => {
+  it("loads organization access once per session refresh and recomputes it after switching workspaces", async () => {
+    const f = await fixture();
+    const prepare = vi.spyOn(f.db, "prepare");
+    try {
+      const me = await f.app.inject({ url: "/api/v1/auth/me", cookies: f.cookies });
+      expect(me.statusCode).toBe(200);
+      expect(me.json().workspace.id).toBe(f.org);
+      const catalogReads = () => prepare.mock.calls.filter(([sql]) => sql.includes("SELECT id, name, group_id FROM environments"));
+      expect(catalogReads()).toHaveLength(1);
+
+      const personal = await f.app.inject({ method: "PUT", url: "/api/v1/auth/workspace", cookies: f.cookies, payload: { type: "personal" } });
+      expect(personal.statusCode).toBe(200);
+      expect(personal.json().workspace).toMatchObject({ type: "personal", id: f.adminId });
+      expect(personal.json().workspace.permissionCodes).toBeUndefined();
+      prepare.mockClear();
+      const organization = await f.app.inject({ method: "PUT", url: "/api/v1/auth/workspace", cookies: f.cookies, payload: { type: "organization", id: f.org } });
+      expect(organization.statusCode).toBe(200);
+      expect(organization.json().workspace.permissionCodes).toContain("role.update");
+      expect(catalogReads()).toHaveLength(1);
+    } finally {
+      prepare.mockRestore();
+    }
+  });
+
   it("requires operation and target on the same assigned role and never grants channel access by role", async () => {
     const f = await fixture();
     const target = { type: "ssh_connection" as const, id: f.sshId };

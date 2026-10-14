@@ -133,7 +133,9 @@ async function workspacesFor(app: FastifyInstance, user: AuthenticatedUser) {
 }
 
 async function authResponse(app: FastifyInstance, user: AuthenticatedUser) {
-  await attachOrganizationAccess(app.db, user);
+  // requireAdmin already resolved this request's organization permissions.
+  // Reuse that context rather than loading the entire resource catalog twice.
+  if (!user.organizationAccess) await attachOrganizationAccess(app.db, user);
   const profile = await app.db.prepare("SELECT created_at FROM admin_users WHERE id = ?").get(user.id) as { created_at: string };
   return {
     user: { id: user.id, username: user.username, isPlatformAdmin: user.isPlatformAdmin, createdAt: profile.created_at },
@@ -258,6 +260,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     );
     await revokeUserRuntime(app, request.admin.id, false);
     request.admin.workspace = workspace;
+    request.admin.organizationAccess = undefined;
     await writeAudit(app.db, { action: "auth.workspace_switched", resourceType: "workspace", resourceId: workspace.id, summary: `切换到${workspace.name}`, request });
     return authResponse(app, request.admin);
   });

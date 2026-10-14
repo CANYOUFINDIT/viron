@@ -37,7 +37,7 @@ import {
   isDesktopDatabaseOperationPath,
 } from "../database-operations-runtime.js";
 import { isDesktopRedisExecutionPath } from "../redis-runtime.js";
-import { endpointFetch, type DesktopRequest } from "../http-proxy.js";
+import { endpointFetch, endpointSessionResponse, type DesktopRequest } from "../http-proxy.js";
 import {
   closeAllDesktopWebViews,
   desktopWebMutationContext,
@@ -135,12 +135,17 @@ export function registerDesktopExecutionIpc(): void {
       return desktopDatabaseOperationRuntime.handle(request, await currentDesktopSshContext());
     }
     const mutationContext = await desktopWebMutationContext(request.path, method);
-    const response = await endpointFetch(request);
+    const { response, body } = request.path === "/api/v1/auth/me"
+      ? await endpointSessionResponse(request)
+      : await (async () => {
+        const response = await endpointFetch(request);
+        return { response, body: await response.text() };
+      })();
     const result = {
       status: response.status,
       statusText: response.statusText,
       headers: [...response.headers.entries()],
-      body: await response.text(),
+      body,
     };
     if (response.ok && ["/api/v1/auth/login", "/api/v1/auth/logout", "/api/v1/auth/workspace"].includes(request.path)) {
       const reason = request.path.endsWith("login") ? tr("用户已重新登录") : request.path.endsWith("logout") ? tr("用户已退出登录") : tr("工作空间已切换");

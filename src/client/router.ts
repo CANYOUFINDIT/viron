@@ -4,7 +4,7 @@ import { createRouter, createWebHashHistory, createWebHistory } from "vue-router
 import { onAuthenticationRequired } from "./authentication-required";
 import { isDesktopApp } from "./desktop";
 import { resolveRouteScrollPosition } from "./route-scroll";
-import { clearSession, loadSession, session } from "./session";
+import { clearSession, loadSession, session, SessionInitializationCancelledError } from "./session";
 
 type EnvManWindow = Window & { __envmanRouteErrorMessage?: string };
 
@@ -60,7 +60,14 @@ onAuthenticationRequired(() => {
 });
 
 router.beforeEach(async (to) => {
-  if (!session.loaded && !(isDesktopApp() && to.name === "login")) await loadSession();
+  if (!session.loaded && !(isDesktopApp() && to.name === "login")) {
+    try {
+      await loadSession();
+    } catch (error) {
+      if (error instanceof SessionInitializationCancelledError) return false;
+      throw error;
+    }
+  }
   if (!to.meta.public && !session.user) return { name: "login", query: { redirect: to.fullPath } };
   if (to.name === "login" && session.user) return { name: "monitoring" };
   if (to.meta.webOnly && isDesktopApp()) return { name: "overview" };

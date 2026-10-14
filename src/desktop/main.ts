@@ -292,14 +292,17 @@ function registerIpc(): void {
     trustedSender(event);
     return currentExecutionActivity();
   });
+  let endpointSelectionVersion = 0;
   ipcMain.handle("viron:endpoint:set", async (event, input: string) => {
     trustedSender(event);
+    const selectionVersion = ++endpointSelectionVersion;
     try {
       const normalized = normalizeEndpoint(input);
       const endpointPartition = endpointSession(normalized);
       const validated = await validateEndpoint(normalized, {
         fetcher: (url, init) => endpointPartition.fetch(url instanceof URL ? url.href : url, init),
       });
+      if (selectionVersion !== endpointSelectionVersion) throw new Error(tr("Endpoint 验证已取消"));
       if (activeEndpoint?.endpoint && activeEndpoint.endpoint !== validated.endpoint) {
         await Promise.all([
           closeDesktopMcpOperations(),
@@ -308,6 +311,7 @@ function registerIpc(): void {
           closeServerForwardingRuntime(tr("Endpoint 已切换")),
         ]);
       }
+      if (selectionVersion !== endpointSelectionVersion) throw new Error(tr("Endpoint 验证已取消"));
       setActiveEndpoint({ ...validated, partition: endpointPartition });
       writeState({ ...readState(), recentEndpoint: validated.endpoint });
       void desktopUpdater.check().catch((error) => {
@@ -328,6 +332,7 @@ function registerIpc(): void {
 
   ipcMain.handle("viron:endpoint:clear", async (event) => {
     trustedSender(event);
+    endpointSelectionVersion++;
     await logoutDesktopEndpoint();
     return publishDesktopAppState();
   });

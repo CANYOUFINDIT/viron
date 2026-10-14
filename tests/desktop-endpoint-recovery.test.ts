@@ -10,7 +10,7 @@ import App from "../src/client/App.vue";
 import { desktopAppState, selectDesktopEndpoint } from "../src/client/desktop";
 import { i18nPlugin, language } from "../src/client/i18n";
 import { router } from "../src/client/router";
-import { clearSession, login, session } from "../src/client/session";
+import { cancelSessionInitialization, clearSession, login, session, sessionInitialization, SESSION_INITIALIZATION_TIMEOUT_MS } from "../src/client/session";
 
 const endpointA = "https://endpoint-a.example.test";
 const endpointB = "https://endpoint-b.example.test";
@@ -57,6 +57,8 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+  cancelSessionInitialization();
+  vi.useRealTimers();
   wrapper?.unmount();
   wrapper = undefined;
   delete window.vironDesktop;
@@ -82,7 +84,7 @@ describe("offline desktop Endpoint recovery", () => {
     const app = mountApp();
     await expect(router.push({ name: "overview" })).rejects.toThrow("net::ERR_CONNECTION_REFUSED");
     await flushPromises();
-    expect(app.find(".route-error-state").exists()).toBe(true);
+    expect(app.find(".session-startup").exists()).toBe(true);
     expect(session.loaded).toBe(false);
     const logoutButton = app.findAll("button").find((button) => button.text() === "退出登录")!;
     await logoutButton.trigger("click");
@@ -123,5 +125,71 @@ describe("offline desktop Endpoint recovery", () => {
     expect(app.find(".fixture-login").exists()).toBe(true);
     expect(session.user).toBeNull();
     expect(bridge.request).not.toHaveBeenCalled();
+  });
+
+  it("shows slow startup and lets logout cancel verification without a late route error", async () => {
+    vi.useFakeTimers();
+    let finishVerification!: (result: unknown) => void;
+    bridge.setEndpoint.mockReturnValue(new Promise((resolve) => { finishVerification = resolve; }));
+    const app = mountApp();
+    const navigation = router.push({ name: "monitoring" });
+    await flushPromises();
+    expect(app.text()).toContain("正在验证 Endpoint 和服务能力");
+    expect(app.text()).toContain(endpointA);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(app.text()).toContain("连接耗时较长");
+    expect(app.text()).toContain("3 秒");
+
+    await app.findAll("button").find((button) => button.text() === "退出登录")!.trigger("click");
+    await flushPromises();
+    await navigation;
+    expect(app.find(".fixture-login").exists()).toBe(true);
+    finishVerification({ ok: false, error: { message: "连接 Endpoint 超时" } });
+    await flushPromises();
+    expect(app.find(".fixture-login").exists()).toBe(true);
+    expect(window.__envmanRouteErrorMessage).toBeUndefined();
+    expect(bridge.request).not.toHaveBeenCalled();
+  });
+
+  it("bounds a stalled session request and ignores its late successful response after logout", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    let finishSession!: (result: unknown) => void;
+    bridge.getState.mockResolvedValue({ endpoint: endpointA, recentEndpoint: endpointA });
+    bridge.request.mockReturnValue(new Promise((resolve) => { finishSession = resolve; }));
+    const app = mountApp();
+    const navigation = router.push({ name: "monitoring" }).catch(() => undefined);
+    await flushPromises();
+    expect(app.text()).toContain("正在读取登录状态与工作空间");
+    await vi.advanceTimersByTimeAsync(SESSION_INITIALIZATION_TIMEOUT_MS);
+    await navigation;
+    await flushPromises();
+    expect(app.text()).toContain("读取登录状态超时");
+    expect(sessionInitialization.pending).toBe(false);
+
+    await app.findAll("button").find((button) => button.text() === "退出登录")!.trigger("click");
+    await flushPromises();
+    finishSession({ status: 200, body: JSON.stringify(auth), headers: [] });
+    await flushPromises();
+    expect(session.user).toBeNull();
+    expect(app.find(".fixture-login").exists()).toBe(true);
+  });
+
+  it("restores the dashboard when a slow session request succeeds before the deadline", async () => {
+    vi.useFakeTimers();
+    let finishSession!: (result: unknown) => void;
+    bridge.getState.mockResolvedValue({ endpoint: endpointA, recentEndpoint: endpointA });
+    bridge.request.mockReturnValue(new Promise((resolve) => { finishSession = resolve; }));
+    const app = mountApp();
+    const navigation = router.push({ name: "monitoring" });
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(app.text()).toContain("连接耗时较长");
+    finishSession({ status: 200, body: JSON.stringify(auth), headers: [] });
+    await navigation;
+    await flushPromises();
+    expect(app.find(".fixture-monitoring").exists()).toBe(true);
+    expect(app.find(".session-startup").exists()).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
