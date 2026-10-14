@@ -397,9 +397,9 @@ function environmentNames(item: Item) {
                       <span><MemoryStick :size="14" /><strong>{{ item.counts?.redis ?? 0 }}</strong><small>Redis</small></span>
                     </div>
                     <div class="resource-auth-actions" @click.stop>
+                      <el-button v-if="item.authorization?.view" link @click="openView(item)">查看授权</el-button>
                       <el-button v-if="item.authorization?.maintain" type="primary" @click="openMaintain(item)">数据授权</el-button>
                       <el-button v-else-if="item.authorization?.request" link @click="openRequest(item)">申请授权</el-button>
-                      <el-button v-if="item.authorization?.view" link @click="openView(item)">查看授权</el-button>
                     </div>
                   </div>
                 </div>

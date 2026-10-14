@@ -92,9 +92,16 @@ async function verifyPackagedApplication(appPath) {
   if ((mcpStat.mode & 0o111) === 0 || !mcpDescription.includes("Mach-O 64-bit executable") || !mcpStrings.includes("ELECTRON_RUN_AS_NODE") || !mcpStrings.includes("mcp-stdio.js")) {
     throw new Error("打包 App 的 viron-mcp 启动器无效");
   }
-  const smokeDirectory = await mkdtemp(join(tmpdir(), "viron-macos-smoke-"));
+  await mkdir(join(root, "private"), { recursive: true });
+  const smokeDirectory = await mkdtemp(join(root, "private", "macos-package-smoke-"));
   try {
-    const executable = join(appPath, "Contents", "MacOS", "Viron");
+    // macOS routes activation by bundle identity. A live Viron instance must not
+    // compete with the isolated smoke process for focus or single-instance state.
+    const smokeApp = join(smokeDirectory, "Viron Smoke.app");
+    await cp(appPath, smokeApp, { recursive: true, verbatimSymlinks: true });
+    run("/usr/libexec/PlistBuddy", ["-c", `Set :CFBundleIdentifier com.viron.desktop.smoke.${randomBytes(6).toString("hex")}`, join(smokeApp, "Contents", "Info.plist")]);
+    run("codesign", ["--force", "--sign", "-", "--preserve-metadata=entitlements,flags", smokeApp]);
+    const executable = join(smokeApp, "Contents", "MacOS", "Viron");
     const result = spawnSync(executable, [`--user-data-dir=${smokeDirectory}`, "--smoke-test"], {
       cwd: dirname(executable),
       encoding: "utf8",

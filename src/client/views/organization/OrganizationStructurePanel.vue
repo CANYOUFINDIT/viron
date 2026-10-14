@@ -37,7 +37,7 @@ function showMember(id: string) { inspectedMember.value = detail.value?.members.
                     <p>{{ detail.organization.description || '—' }}</p>
                   </div>
                   <div v-else-if="selectedProject">
-                    <small>{{ selectedProjectPath }}</small>
+                    <small>组织架构 / 子组织</small>
                     <h1>{{ selectedProject.name }}</h1>
                     <p>{{ selectedProject.description || '—' }}</p>
                   </div>
