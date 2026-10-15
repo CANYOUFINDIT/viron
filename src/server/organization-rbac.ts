@@ -45,6 +45,7 @@ const json = <T>(value: unknown, fallback: T): T => {
   }
 };
 const bool = (value: unknown) => Number(value) === 1;
+const permissionDefinitionsByCode = new Map(PERMISSION_DEFINITIONS.map(definition => [definition.code, definition]));
 const unrestricted: ManagementScope = {
   kind: "organization",
   ids: [],
@@ -678,11 +679,12 @@ export async function loadOrganizationAccess(
   org: string,
   userId: string,
   now = Date.now(),
+  snapshot?: Pick<OrganizationAccess, "state" | "catalog">,
 ): Promise<OrganizationAccess> {
-  await ensureOrganizationRoles(db, org);
+  if (!snapshot) await ensureOrganizationRoles(db, org);
   const [state, catalog, projects, member, direct, maintenanceRows] = await Promise.all([
-    roleState(db, org),
-    organizationResourceCatalog(db, org),
+    snapshot ? Promise.resolve(snapshot.state) : roleState(db, org),
+    snapshot ? Promise.resolve(snapshot.catalog) : organizationResourceCatalog(db, org),
     db
       .prepare("SELECT id, parent_id FROM projects WHERE organization_id = ?")
       .all<{ id: string; parent_id: string | null }>(org),
@@ -703,12 +705,13 @@ export async function loadOrganizationAccess(
       .all<{ code: string; target_type: ResourceRef["type"]; target_id: string }>(org, userId),
   ]);
   const maintained = new Set(maintenanceRows.map((row) => `${row.code}:${row.target_type}:${row.target_id}`));
+  const parentByProject = new Map(projects.map(project => [project.id, project.parent_id]));
   const ancestors = new Set<string>();
   for (const d of direct) {
     let id: string | null = d.project_id;
     while (id && !ancestors.has(id)) {
       ancestors.add(id);
-      id = projects.find((p) => p.id === id)?.parent_id ?? null;
+      id = parentByProject.get(id) ?? null;
     }
   }
   const applies = (type: SubjectType, id: string) =>
@@ -725,7 +728,14 @@ export async function loadOrganizationAccess(
     state.roles.filter((r) => r.enabled).map((r) => [r.id, r]),
   );
   const validDataTargets = new Map<string, Set<string>>();
+  const dataGrantsByTarget = new Map<string, RoleDataGrant[]>();
   for (const grant of state.dataGrants) {
+    if (grant.enabled) {
+      const key = resourceKey(grant.target);
+      const grants = dataGrantsByTarget.get(key) ?? [];
+      grants.push(grant);
+      dataGrantsByTarget.set(key, grants);
+    }
     if (!validAt(grant, now)) continue;
     const keys = validDataTargets.get(grant.roleId) ?? new Set<string>();
     keys.add(resourceKey(grant.target));
@@ -742,12 +752,12 @@ export async function loadOrganizationAccess(
           if (current === id) return true;
           if (!scope.includeChildren) return false;
           seen.add(current);
-          current = projects.find((p) => p.id === current)?.parent_id ?? null;
+          current = parentByProject.get(current) ?? null;
         }
         return false;
       }));
   const allows = (code: string, target?: ResourceRef | string) => {
-    const definition = PERMISSION_DEFINITIONS.find((p) => p.code === code);
+    const definition = permissionDefinitionsByCode.get(code);
     if (!definition || !member) return false;
     if (typeof target === "object" && !targets.has(resourceKey(target)))
       return false;
@@ -792,7 +802,11 @@ export async function loadOrganizationAccess(
       return validDataTargets.get(a.roleId)?.has(resourceKey(target)) === true;
     });
   };
-  const permissionCodes = PERMISSION_CODES.filter(
+  const possibleCodes = new Set([
+    ...assignments.flatMap(assignment => activeRoles.get(assignment.roleId)?.permissionCodes ?? []),
+    ...maintenanceRows.map(row => row.code),
+  ]);
+  const permissionCodes = PERMISSION_CODES.filter(code => possibleCodes.has(code)).filter(
     (code) =>
       allows(code) ||
       catalog.some((t) => allows(code, t)) ||
@@ -824,7 +838,7 @@ export async function loadOrganizationAccess(
   );
   const operationPaths = (code: string, target: ResourceRef) => {
     if (!member || !targets.has(resourceKey(target))) return [];
-    const definition = PERMISSION_DEFINITIONS.find((item) => item.code === code);
+    const definition = permissionDefinitionsByCode.get(code);
     if (!definition || definition.scope !== "resource") return [];
     const cap = RESOURCE_CAPABILITIES[target.type];
     if (
@@ -856,7 +870,7 @@ export async function loadOrganizationAccess(
         if (interval) paths.push(interval);
         continue;
       }
-      for (const grant of state.dataGrants) {
+      for (const grant of dataGrantsByTarget.get(resourceKey(target)) ?? []) {
         if (grant.roleId !== assignment.roleId || !grant.enabled) continue;
         if (resourceKey(grant.target) !== resourceKey(target)) continue;
         const interval = intersectRecord(assignment, grant);
@@ -871,12 +885,21 @@ export async function loadOrganizationAccess(
         (path.startsAt === null || path.startsAt <= now) &&
         (path.expiresAt === null || path.expiresAt > now),
     );
+  const featureGrantsByTarget = new Map<string, FeatureGrant[]>();
+  for (const grant of state.featureGrants) {
+    if (!grant.enabled || !applies(grant.subjectType, grant.subjectId)) continue;
+    for (const key of new Set(grant.targets.map(resourceKey))) {
+      const grants = featureGrantsByTarget.get(key) ?? [];
+      grants.push(grant);
+      featureGrantsByTarget.set(key, grants);
+    }
+  }
   const featurePaths = (
     feature: keyof FeatureGrant["features"],
     target: ResourceRef,
   ) =>
     targets.has(resourceKey(target))
-      ? state.featureGrants.flatMap((grant) => {
+      ? (featureGrantsByTarget.get(resourceKey(target)) ?? []).flatMap((grant) => {
           if (!grant.enabled || !applies(grant.subjectType, grant.subjectId) || !grant.features[feature]) return [];
           if (!grant.targets.some((item) => resourceKey(item) === resourceKey(target))) return [];
           const interval = openInterval(parsed(grant.startsAt), parsed(grant.expiresAt));
@@ -895,12 +918,9 @@ export async function loadOrganizationAccess(
     for (const assignment of assignments) {
       const role = activeRoles.get(assignment.roleId);
       if (!role?.permissionCodes.includes(code)) continue;
-      const holdsEnvironment = state.dataGrants.some(
-        (grant) => grant.roleId === assignment.roleId && validAt(grant, now) && resourceKey(grant.target) === environmentKey,
-      );
-      const holdsExisting = state.dataGrants.some(
-        (grant) => grant.roleId === assignment.roleId && validAt(grant, now) && existing.has(resourceKey(grant.target)),
-      );
+      const granted = validDataTargets.get(assignment.roleId);
+      const holdsEnvironment = granted?.has(environmentKey);
+      const holdsExisting = granted && [...existing].some(key => granted.has(key));
       // Organization scope is the creator's explicit maintain code, not the admin name.
       // A data grant on this environment is the narrower configuration target.
       if (assignment.managementScope.kind === "organization" || holdsEnvironment || holdsExisting) ids.add(assignment.roleId);

@@ -153,7 +153,9 @@ export async function registerOrganizationRoleAccessRoutes(
     return reply.send(error);
   });
   const access = (request: FastifyRequest) =>
-    loadOrganizationAccess(
+    request.method === "GET" && request.admin!.organizationAccess
+      ? Promise.resolve(request.admin!.organizationAccess)
+      : loadOrganizationAccess(
       app.db,
       request.admin!.workspace.id,
       request.admin!.id,

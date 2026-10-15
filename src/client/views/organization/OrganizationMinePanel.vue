@@ -78,6 +78,9 @@ const catalog = ref<NamedCatalogItem[]>([]);
 const error = ref("");
 const message = ref("");
 const loading = ref(false);
+const optionsLoading = ref(false);
+let loadSequence = 0;
+let optionsSequence = 0;
 const requestDialog = ref<"data" | "feature" | null>(null);
 const dataRoleId = ref("");
 const dataTargets = ref<Array<{ type: ResourceType; id: string }>>([]);
@@ -153,31 +156,60 @@ function durationValue(preset: string, amount: number, unit: "minute" | "hour" |
 }
 
 async function load() {
+  const sequence = ++loadSequence;
   const organizationId = currentOrganizationId.value;
   if (!organizationId) return;
+  const currentTab = tab.value;
   loading.value = true;
   error.value = "";
   try {
-    const view = tab.value === "todo" ? "todo" : "mine";
-    const [mine, list] = await Promise.all([
-      api<AccessPayload>(`/api/v1/organizations/${organizationId}/my-access`),
-      api<{ items: RequestSummary[] }>(`/api/v1/organizations/${organizationId}/grant-requests?view=${view}`),
-    ]);
-    access.value = mine;
-    requests.value = list.items;
-    try {
-      catalog.value = (await api<{ catalog: NamedCatalogItem[] }>(`/api/v1/organizations/${organizationId}/approval-flows`)).catalog;
-    } catch {
-      catalog.value = [];
+    if (currentTab === "mine") {
+      const mine = await api<AccessPayload>(`/api/v1/organizations/${organizationId}/my-access`);
+      if (sequence !== loadSequence) return;
+      access.value = mine;
+      if (!requestRoles.value.some((role) => role.roleId === dataRoleId.value)) dataRoleId.value = requestRoles.value[0]?.roleId ?? "";
+    } else {
+      const view = currentTab === "todo" ? "todo" : "mine";
+      const list = await api<{ items: RequestSummary[] }>(`/api/v1/organizations/${organizationId}/grant-requests?view=${view}&summary=1`);
+      if (sequence !== loadSequence) return;
+      requests.value = list.items;
     }
-    if (!requestRoles.value.some((role) => role.roleId === dataRoleId.value)) dataRoleId.value = requestRoles.value[0]?.roleId ?? "";
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : "我的授权加载失败";
+    if (sequence === loadSequence) error.value = cause instanceof Error ? cause.message : "我的授权加载失败";
   } finally {
-    loading.value = false;
+    if (sequence === loadSequence) loading.value = false;
   }
 }
+watch(requestDialog, async (kind) => {
+  const sequence = ++optionsSequence;
+  if (!kind) { optionsLoading.value = false; return; }
+  const organizationId = currentOrganizationId.value;
+  optionsLoading.value = true;
+  message.value = "";
+  try {
+    const [response, mine] = await Promise.all([
+      api<{ catalog: NamedCatalogItem[] }>(`/api/v1/organizations/${organizationId}/approval-flows`),
+      kind === "data" ? api<AccessPayload>(`/api/v1/organizations/${organizationId}/my-access`) : Promise.resolve(null),
+    ]);
+    if (sequence !== optionsSequence || organizationId !== currentOrganizationId.value) return;
+    catalog.value = response.catalog;
+    if (mine) {
+      access.value = mine;
+      if (!requestRoles.value.some(role => role.roleId === dataRoleId.value)) dataRoleId.value = requestRoles.value[0]?.roleId ?? "";
+    }
+  } catch (cause) {
+    if (sequence === optionsSequence) message.value = cause instanceof Error ? cause.message : "申请选项加载失败";
+  } finally {
+    if (sequence === optionsSequence) optionsLoading.value = false;
+  }
+});
 watch(() => [currentOrganizationId.value, tab.value, dataRevision?.value] as const, load, { immediate: true });
+watch(currentOrganizationId, () => {
+  access.value = { roles: [], dataGrants: [], featureGrants: [] };
+  requests.value = [];
+  catalog.value = [];
+  requestDialog.value = null;
+});
 watch(() => [currentOrganizationId.value, tab.value] as const, () => {
   permissionsOpen.value = false;
   permissionDetail.value = null;
@@ -198,6 +230,7 @@ function openDetail(id: string) {
   detailOpen.value = true;
 }
 async function submit(kind: "data" | "feature", group?: ApprovalFlowGroup) {
+  if (optionsLoading.value) return;
   const organizationId = currentOrganizationId.value;
   if (!organizationId) return;
   message.value = "";
@@ -341,7 +374,7 @@ function groupFlagText(group: ApprovalFlowGroup) {
         </article>
       </section>
     </div>
-<el-dialog append-to-body :model-value="requestDialog === 'feature'" @update:model-value="requestDialog = null" title="申请功能授权" width="min(680px, calc(100% - 32px))" align-center class="envman-dialog"><p v-if="message" class="mine-note">{{ message }}</p><form class="mine-form" @submit.prevent="submit('feature')">
+<el-dialog append-to-body :model-value="requestDialog === 'feature'" @update:model-value="requestDialog = null" title="申请功能授权" width="min(680px, calc(100% - 32px))" align-center class="envman-dialog"><p v-if="message" class="mine-note">{{ message }}</p><form v-loading="optionsLoading" class="mine-form" @submit.prevent="submit('feature')">
           <h4>申请功能授权</h4>
           <p class="mine-note">功能申请不选择角色，只作用在本人。单个连接不能申请 Web 插件。</p>
           <fieldset>
@@ -369,7 +402,7 @@ function groupFlagText(group: ApprovalFlowGroup) {
             </div>
           </fieldset>
           <label>理由 <el-input v-model="featureReason" maxlength="2000" /></label>
-          <el-button type="primary" native-type="submit">提交功能申请</el-button>
+          <el-button type="primary" native-type="submit" :disabled="optionsLoading">提交功能申请</el-button>
           <div v-if="featureSplit" class="mine-groups">
             <h5>按流程分别提交</h5>
             <article v-for="group in featureSplit.groups" :key="group.flowId">
@@ -380,7 +413,7 @@ function groupFlagText(group: ApprovalFlowGroup) {
             </article>
           </div>
         </form><template #footer><el-button @click="requestDialog = null">关闭</el-button></template></el-dialog>
-<el-dialog append-to-body :model-value="requestDialog === 'data'" @update:model-value="requestDialog = null" title="申请数据授权" width="min(680px, calc(100% - 32px))" align-center class="envman-dialog"><p v-if="message" class="mine-note">{{ message }}</p><form class="mine-form" @submit.prevent="submit('data')">
+<el-dialog append-to-body :model-value="requestDialog === 'data'" @update:model-value="requestDialog = null" title="申请数据授权" width="min(680px, calc(100% - 32px))" align-center class="envman-dialog"><p v-if="message" class="mine-note">{{ message }}</p><form v-loading="optionsLoading" class="mine-form" @submit.prevent="submit('data')">
           <h4>申请数据授权</h4>
           <p class="mine-note">只为自己当前有效持有的角色申请。通过后，该角色的全部有效成员共享这些资源权限。时长从最终生效时开始。</p>
           <label>角色
@@ -411,7 +444,7 @@ function groupFlagText(group: ApprovalFlowGroup) {
             </div>
           </fieldset>
           <label>理由 <el-input v-model="dataReason" maxlength="2000" /></label>
-          <el-button type="primary" native-type="submit">提交数据申请</el-button>
+          <el-button type="primary" native-type="submit" :disabled="optionsLoading">提交数据申请</el-button>
           <div v-if="dataSplit" class="mine-groups">
             <h5>按流程分别提交</h5>
             <article v-for="group in dataSplit.groups" :key="group.flowId">

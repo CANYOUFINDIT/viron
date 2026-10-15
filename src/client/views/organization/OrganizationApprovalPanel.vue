@@ -104,6 +104,7 @@ const error = ref("");
 const requestsError = ref("");
 const ledgerError = ref("");
 const loading = ref(false);
+let loadSequence = 0;
 const editorOpen = ref(false);
 const saving = ref(false);
 const formError = ref("");
@@ -272,7 +273,9 @@ function nodePayload(node: FlowNode) {
 }
 
 async function loadFlows() {
+  const sequence = loadSequence;
   const response = await api<{ items: FlowItem[]; catalog: CatalogItem[]; unassigned: CatalogItem[]; roles: FlowRole[]; members: Array<{ id: string; username: string; status: string }> }>(`${base.value}/approval-flows`);
+  if (sequence !== loadSequence) return;
   flows.value = response.items;
   catalog.value = response.catalog;
   unassigned.value = response.unassigned;
@@ -280,10 +283,14 @@ async function loadFlows() {
   flowMembers.value = response.members ?? [];
 }
 async function loadRequests() {
+  const sequence = loadSequence;
   requestsError.value = "";
   try {
-    requests.value = (await api<{ items: GrantRequestRow[] }>(`${base.value}/grant-requests?view=all`)).items;
+    const response = await api<{ items: GrantRequestRow[] }>(`${base.value}/grant-requests?view=all&summary=1`);
+    if (sequence !== loadSequence) return;
+    requests.value = response.items;
   } catch (cause) {
+    if (sequence !== loadSequence) return;
     requests.value = [];
     requestsError.value = cause instanceof Error ? cause.message : "授权申请加载失败";
   }
@@ -301,29 +308,44 @@ function ledgerPath(exporting = false) {
   return `${base.value}/grant-ledger${query ? `?${query}` : ""}`;
 }
 async function loadLedger() {
+  const sequence = loadSequence;
   ledgerError.value = "";
   try {
-    ledger.value = (await api<{ items: LedgerRow[] }>(ledgerPath())).items;
+    const response = await api<{ items: LedgerRow[] }>(ledgerPath());
+    if (sequence !== loadSequence) return;
+    ledger.value = response.items;
   } catch (cause) {
+    if (sequence !== loadSequence) return;
     ledger.value = [];
     ledgerError.value = cause instanceof Error ? cause.message : "台账加载失败";
   }
 }
 async function load() {
+  const sequence = ++loadSequence;
   if (!currentOrganizationId.value) return;
   loading.value = true;
   error.value = "";
   try {
-    await loadFlows();
+    if (tab.value === "flows") await loadFlows();
+    else if (tab.value === "requests") await loadRequests();
+    else await loadLedger();
   } catch (cause) {
+    if (sequence !== loadSequence) return;
     flows.value = [];
     error.value = cause instanceof Error ? cause.message : "审批流程加载失败";
   } finally {
-    loading.value = false;
+    if (sequence === loadSequence) loading.value = false;
   }
-  await Promise.all([loadRequests(), loadLedger()]);
 }
-watch(currentOrganizationId, () => void load(), { immediate: true });
+watch(() => [currentOrganizationId.value, tab.value, dataRevision?.value] as const, (value, previous) => {
+  if (value[0] !== previous?.[0]) {
+    flows.value = [];
+    catalog.value = [];
+    requests.value = [];
+    ledger.value = [];
+  }
+  void load();
+}, { immediate: true });
 
 async function saveFlow() {
   if (draftLocked.value || saving.value) return;
@@ -395,7 +417,6 @@ function when(value: string) {
   const time = new Date(value);
   return Number.isFinite(time.getTime()) ? time.toLocaleString() : value;
 }
-watch(() => dataRevision?.value, () => void load());
 </script>
 
 <template>

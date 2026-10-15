@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { EnvmanDatabase } from "./database-client.js";
-import { roleHolderIds } from "./organization-approval.js";
+import { roleHoldersByRole } from "./organization-approval.js";
 import { loadOrganizationAccess, OrganizationPermissionError, roleState, type OrganizationAccess } from "./organization-rbac.js";
 import { presentEnvironmentWindow, presentTargetWindow, serverNow } from "./organization-boundary.js";
 import {
@@ -52,9 +52,9 @@ function statusOf(record: { enabled: boolean; startsAt: string | null; expiresAt
   return "active";
 }
 
-export async function relatedResourceKeys(db: EnvmanDatabase, org: string, projectId: string, now = serverNow()) {
+export async function relatedResourceKeys(db: EnvmanDatabase, org: string, projectId: string, now = serverNow(), requestState?: OrganizationAccess["state"]) {
   const [state, projects, members, activeMembers] = await Promise.all([
-    roleState(db, org),
+    requestState ?? roleState(db, org),
     db.prepare("SELECT id, parent_id FROM projects WHERE organization_id = ?").all<{ id: string; parent_id: string | null }>(org),
     db
       .prepare(
@@ -128,7 +128,7 @@ function publicItem(item: ResourceCatalogItem, extra: Record<string, unknown> = 
 export async function resourceOverview(db: EnvmanDatabase, org: string, userId: string, projectId?: string | null, requestAccess?: OrganizationAccess) {
   const now = serverNow();
   const access = requestAccess ?? await loadOrganizationAccess(db, org, userId, now);
-  const related = projectId ? await relatedResourceKeys(db, org, projectId, now) : null;
+  const related = projectId ? await relatedResourceKeys(db, org, projectId, now, access.state) : null;
   const visible = (item: ResourceCatalogItem) =>
     !related ||
     related.keys.has(resourceKey(item)) ||
@@ -136,20 +136,55 @@ export async function resourceOverview(db: EnvmanDatabase, org: string, userId: 
       access.catalog.some((other) => other.id !== item.id && related.keys.has(resourceKey(other)) && other.environmentIds.includes(item.id)));
   const environments = access.catalog.filter((item) => item.type === "environment" && visible(item));
   const environmentName = new Map(access.catalog.filter((item) => item.type === "environment").map((item) => [item.id, item.name]));
-  const groups = await db
-    .prepare("SELECT id, name, color FROM environment_groups WHERE workspace_type = 'organization' AND workspace_id = ?")
-    .all<{ id: string; name: string; color: string }>(org);
-  const groupName = new Map(groups.map((group) => [group.id, group.name]));
-  const groupColor = new Map(groups.map((group) => [group.id, group.color]));
-  const favorites = await db
-    .prepare(
+
+  const [groups, favorites, environmentRows, connectionGroups, keys, certificateRows, knowledgeRows, sshMetaRows, databaseMetaRows, redisMetaRows, webMetaRows, connectionConfigRows] = await Promise.all([
+    db
+      .prepare("SELECT id, name, color FROM environment_groups WHERE workspace_type = 'organization' AND workspace_id = ?")
+      .all<{ id: string; name: string; color: string }>(org),
+    db
+      .prepare(
       `SELECT environment_id FROM environment_preferences WHERE owner_user_id = ? AND is_favorite = 1`,
     )
-    .all<{ environment_id: string }>(userId);
+      .all<{ environment_id: string }>(userId),
+    db
+      .prepare("SELECT id, group_id, owner, description FROM environments WHERE workspace_type = 'organization' AND workspace_id = ?")
+      .all<{ id: string; group_id: string | null; owner: string; description: string }>(org),
+    db
+      .prepare("SELECT id, path FROM connection_groups WHERE workspace_type = 'organization' AND workspace_id = ?")
+      .all<{ id: string; path: string }>(org),
+    db
+      .prepare(
+      "SELECT id, name, algorithm, fingerprint FROM ssh_keys WHERE workspace_type = 'organization' AND workspace_id = ?",
+    )
+      .all<{ id: string; name: string; algorithm: string; fingerprint: string }>(org),
+    db
+      .prepare(
+      `SELECT c.id, c.leaf_cn, c.fingerprint_sha256, c.not_after, ep.environment_id, ep.host, ep.port
+       FROM ssl_certificates c
+       LEFT JOIN ssl_endpoints ep ON ep.certificate_id = c.id
+       WHERE c.workspace_type = 'organization' AND c.workspace_id = ?`,
+    )
+      .all<{ id: string; leaf_cn: string; fingerprint_sha256: string; not_after: string; environment_id: string | null; host: string | null; port: number | null }>(org),
+    db
+      .prepare("SELECT id, parent_id, type, content FROM knowledge_nodes WHERE workspace_type = 'organization' AND workspace_id = ?")
+      .all<{ id: string; parent_id: string | null; type: string; content: string }>(org),
+    db.prepare("SELECT id, connection_group_id, ssh_key_id FROM ssh_connections WHERE workspace_type = 'organization' AND workspace_id = ?").all<{ id: string; connection_group_id: string | null; ssh_key_id: string | null }>(org),
+    db.prepare("SELECT id, connection_group_id, engine, default_database FROM database_connections WHERE workspace_type = 'organization' AND workspace_id = ?").all<{ id: string; connection_group_id: string | null; engine: string; default_database: string }>(org),
+    db.prepare("SELECT id, connection_group_id, default_database FROM redis_connections WHERE workspace_type = 'organization' AND workspace_id = ?").all<{ id: string; connection_group_id: string | null; default_database: number }>(org),
+    db.prepare("SELECT id, url FROM web_entries WHERE environment_id IN (SELECT id FROM environments WHERE workspace_type = 'organization' AND workspace_id = ?)").all<{ id: string; url: string }>(org),
+    Promise.all(([
+      ["ssh_connection", "ssh_connections"],
+      ["database_connection", "database_connections"],
+      ["redis_connection", "redis_connections"],
+    ] as const).map(async ([type, table]) => [type, await db
+      .prepare(`SELECT id, host, port, username FROM ${table} WHERE workspace_type = 'organization' AND workspace_id = ?`)
+      .all<{ id: string; host: string; port: number; username: string }>(org)] as const)),
+  ]);
+  const groupName = new Map(groups.map((group) => [group.id, group.name]));
+  const groupColor = new Map(groups.map((group) => [group.id, group.color]));
+
   const favoriteIds = new Set(favorites.map((row) => row.environment_id));
-  const environmentRows = await db
-    .prepare("SELECT id, group_id, owner, description FROM environments WHERE workspace_type = 'organization' AND workspace_id = ?")
-    .all<{ id: string; group_id: string | null; owner: string; description: string }>(org);
+
   const environmentMeta = new Map(environmentRows.map((row) => [row.id, row]));
   const windowFor = (target: ResourceRef) => presentTargetWindow(access, target, undefined, now);
   const authorizationFor = (target: ResourceRef) => ({
@@ -189,25 +224,16 @@ export async function resourceOverview(db: EnvmanDatabase, org: string, userId: 
     });
   });
   const safeConfig = new Map<string, { host: string; port: number; username: string }>();
-  for (const [type, table] of [
-    ["ssh_connection", "ssh_connections"],
-    ["database_connection", "database_connections"],
-    ["redis_connection", "redis_connections"],
-  ] as const) {
-    const rows = await db
-      .prepare(`SELECT id, host, port, username FROM ${table} WHERE workspace_type = 'organization' AND workspace_id = ?`)
-      .all<{ id: string; host: string; port: number; username: string }>(org);
+  for (const [type, rows] of connectionConfigRows) {
     for (const row of rows)
       safeConfig.set(resourceKey({ type, id: row.id }), { host: row.host, port: Number(row.port), username: row.username });
   }
-  const connectionGroups = await db
-    .prepare("SELECT id, path FROM connection_groups WHERE workspace_type = 'organization' AND workspace_id = ?")
-    .all<{ id: string; path: string }>(org);
+
   const connectionGroupPath = new Map(connectionGroups.map((group) => [group.id, group.path]));
-  const sshMeta = new Map((await db.prepare("SELECT id, connection_group_id, ssh_key_id FROM ssh_connections WHERE workspace_type = 'organization' AND workspace_id = ?").all<{ id: string; connection_group_id: string | null; ssh_key_id: string | null }>(org)).map((row) => [row.id, row]));
-  const databaseMeta = new Map((await db.prepare("SELECT id, connection_group_id, engine, default_database FROM database_connections WHERE workspace_type = 'organization' AND workspace_id = ?").all<{ id: string; connection_group_id: string | null; engine: string; default_database: string }>(org)).map((row) => [row.id, row]));
-  const redisMeta = new Map((await db.prepare("SELECT id, connection_group_id, default_database FROM redis_connections WHERE workspace_type = 'organization' AND workspace_id = ?").all<{ id: string; connection_group_id: string | null; default_database: number }>(org)).map((row) => [row.id, row]));
-  const webMeta = new Map((await db.prepare("SELECT id, url FROM web_entries WHERE environment_id IN (SELECT id FROM environments WHERE workspace_type = 'organization' AND workspace_id = ?)").all<{ id: string; url: string }>(org)).map((row) => [row.id, row.url]));
+  const sshMeta = new Map(sshMetaRows.map((row) => [row.id, row]));
+  const databaseMeta = new Map(databaseMetaRows.map((row) => [row.id, row]));
+  const redisMeta = new Map(redisMetaRows.map((row) => [row.id, row]));
+  const webMeta = new Map(webMetaRows.map((row) => [row.id, row.url]));
   const groupOf = (id: string | null | undefined) => (id ? connectionGroupPath.get(id) || "" : "");
   const connections = (type: ResourceCatalogItem["type"]) =>
     access.catalog.filter((item) => item.type === type && visible(item)).map((item) => {
@@ -235,19 +261,7 @@ export async function resourceOverview(db: EnvmanDatabase, org: string, userId: 
     const config = access.allows("ssh.view", target) ? safeConfig.get(resourceKey(target)) : undefined;
     return { type: target.type, id: row.id, name: sshName.get(row.id) ?? "", operationWindow: windowFor(target), ...(config ?? {}) };
   });
-  const keys = await db
-    .prepare(
-      "SELECT id, name, algorithm, fingerprint FROM ssh_keys WHERE workspace_type = 'organization' AND workspace_id = ?",
-    )
-    .all<{ id: string; name: string; algorithm: string; fingerprint: string }>(org);
-  const certificateRows = await db
-    .prepare(
-      `SELECT c.id, c.leaf_cn, c.fingerprint_sha256, c.not_after, ep.environment_id, ep.host, ep.port
-       FROM ssl_certificates c
-       LEFT JOIN ssl_endpoints ep ON ep.certificate_id = c.id
-       WHERE c.workspace_type = 'organization' AND c.workspace_id = ?`,
-    )
-    .all<{ id: string; leaf_cn: string; fingerprint_sha256: string; not_after: string; environment_id: string | null; host: string | null; port: number | null }>(org);
+
   const canReadCredentials = access.allows("credential.view");
   const certificates = new Map<string, { id: string; leaf_cn: string; fingerprint_sha256: string; not_after: string; environmentIds: string[]; seen: Set<string>; references: Array<{ environmentId: string; environmentName: string; host?: string; port?: number }> }>();
   for (const row of certificateRows) {
@@ -283,9 +297,7 @@ export async function resourceOverview(db: EnvmanDatabase, org: string, userId: 
         references: item.references,
       })),
   ];
-  const knowledgeRows = await db
-    .prepare("SELECT id, parent_id, type, content FROM knowledge_nodes WHERE workspace_type = 'organization' AND workspace_id = ?")
-    .all<{ id: string; parent_id: string | null; type: string; content: string }>(org);
+
   const knowledgeById = new Map(knowledgeRows.map((row) => [row.id, row]));
   const knowledge = access.catalog
     .filter((item) => item.type === "knowledge_node" && visible(item))
@@ -354,9 +366,7 @@ export async function personalAuthorization(db: EnvmanDatabase, org: string, use
     type === "user" ? (id === userId ? selfName : "") : type === "project" ? projectName.get(id) ?? "" : id === org ? organization?.name ?? "" : "";
   const rolesById = new Map(access.state.roles.map((role) => [role.id, role]));
   const held = access.state.assignments.filter((assignment) => access.applies(assignment.subjectType, assignment.subjectId));
-  const holderLists = new Map<string, string[]>();
-  for (const roleId of new Set(held.map((assignment) => assignment.roleId)))
-    holderLists.set(roleId, await roleHolderIds(db, org, roleId, now));
+  const holderLists = await roleHoldersByRole(db, org, held.map(assignment => assignment.roleId), now, access.state);
   const holderIds = [...new Set([...holderLists.values()].flat())];
   const holderRows = holderIds.length
     ? await db.prepare(`SELECT id, username FROM admin_users WHERE id IN (${holderIds.map(() => "?").join(",")})`).all<{ id: string; username: string | null }>(...holderIds)
@@ -498,11 +508,12 @@ function recordStatus(record: { enabled: boolean; startsAt: string | null; expir
 }
 
 /** Read one member's real roles, grants, and feature grants. The caller's access only decides what may be returned. */
-export async function memberPermissions(db: EnvmanDatabase, org: string, viewerId: string, memberId: string) {
+export async function memberPermissions(db: EnvmanDatabase, org: string, viewerId: string, memberId: string, requestAccess?: OrganizationAccess) {
   const now = serverNow();
+  const viewerAccess = requestAccess ? Promise.resolve(requestAccess) : loadOrganizationAccess(db, org, viewerId, now);
   const [viewer, target, viewerRow, memberRow, directRows, projectRows, organization] = await Promise.all([
-    loadOrganizationAccess(db, org, viewerId, now),
-    loadOrganizationAccess(db, org, memberId, now),
+    viewerAccess,
+    viewerId === memberId ? viewerAccess : loadOrganizationAccess(db, org, memberId, now),
     db.prepare(
       "SELECT u.status FROM organization_members m JOIN admin_users u ON u.id = m.user_id WHERE m.organization_id = ? AND m.user_id = ?",
     ).get<{ status: string }>(org, viewerId),
@@ -765,11 +776,11 @@ async function rowsByIds<T extends { id: string }>(db: EnvmanDatabase, sql: stri
 }
 
 /** Read-only authorization rows for one resource. Does not return the organization's other records. */
-export async function resourceAuthorization(db: EnvmanDatabase, org: string, userId: string, target: ResourceRef) {
+export async function resourceAuthorization(db: EnvmanDatabase, org: string, userId: string, target: ResourceRef, requestAccess?: OrganizationAccess) {
   if (!RESOURCE_TYPES.includes(target.type))
     throw new OrganizationPermissionError("INVALID_RESOURCE", 400, "资源类型无效");
   const now = serverNow();
-  const access = await loadOrganizationAccess(db, org, userId, now);
+  const access = requestAccess ?? await loadOrganizationAccess(db, org, userId, now);
   const item = access.catalog.find((entry) => resourceKey(entry) === resourceKey(target));
   if (!item) throw new OrganizationPermissionError("NOT_FOUND", 404, "资源不存在");
   if (!access.allows("authorization.view", target))

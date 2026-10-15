@@ -117,7 +117,7 @@ export async function registerOrganizationPhaseRoutes(app: FastifyInstance): Pro
       return resourceAuthorization(app.db, request.params.id, request.admin!.id, {
         type: parsed.data.type,
         id: parsed.data.resourceId,
-      });
+      }, request.admin!.organizationAccess);
     },
   );
 
@@ -130,7 +130,7 @@ export async function registerOrganizationPhaseRoutes(app: FastifyInstance): Pro
     if (!workspaceReady(request, reply, request.params.id)) return;
     const memberId = z.string().uuid().safeParse(request.params.memberId);
     if (!memberId.success) return reply.code(400).send({ error: "INVALID_MEMBER", message: "成员不存在" });
-    return memberPermissions(app.db, request.params.id, request.admin!.id, memberId.data);
+    return memberPermissions(app.db, request.params.id, request.admin!.id, memberId.data, request.admin!.organizationAccess);
   });
 
   app.get<{ Params: { id: string } }>("/api/v1/organizations/:id/member-roles", async (request, reply) => {
@@ -144,7 +144,7 @@ export async function registerOrganizationPhaseRoutes(app: FastifyInstance): Pro
     const access = request.admin!.organizationAccess;
     if (!access?.allows("approval.view") && !access?.allows("authorization.request") && !access?.allows("approval.approve") && !access?.allows("approval.reject") && !access?.allows("approval.workflow"))
       return reply.code(403).send({ error: "ACTION_FORBIDDEN", message: "没有查看审批流程的权限" });
-    return listApprovalFlows(app.db, request.params.id);
+    return listApprovalFlows(app.db, request.params.id, access);
   });
 
   app.post<{ Params: { id: string } }>("/api/v1/organizations/:id/approval-flows", async (request, reply) => {
@@ -185,18 +185,21 @@ export async function registerOrganizationPhaseRoutes(app: FastifyInstance): Pro
     return reply.code(201).send(created);
   });
 
-  app.get<{ Params: { id: string }; Querystring: { view?: "mine" | "todo" | "all" } }>(
+  app.get<{ Params: { id: string }; Querystring: { view?: "mine" | "todo" | "all"; summary?: string } }>(
     "/api/v1/organizations/:id/grant-requests",
     async (request, reply) => {
       if (!workspaceReady(request, reply, request.params.id)) return;
       const view = request.query.view ?? "mine";
-      return listGrantRequests(app.db, request.params.id, request.admin!.id, view);
+      return listGrantRequests(app.db, request.params.id, request.admin!.id, view, {
+        access: request.admin!.organizationAccess,
+        summary: request.query.summary === "1",
+      });
     },
   );
 
   app.get<{ Params: { id: string; requestId: string } }>("/api/v1/organizations/:id/grant-requests/:requestId", async (request, reply) => {
     if (!workspaceReady(request, reply, request.params.id)) return;
-    return readGrantRequest(app.db, request.params.id, request.params.requestId, request.admin!.id);
+    return readGrantRequest(app.db, request.params.id, request.params.requestId, request.admin!.id, request.admin!.organizationAccess);
   });
 
   app.post<{ Params: { id: string; requestId: string } }>("/api/v1/organizations/:id/grant-requests/:requestId/decision", async (request, reply) => {
@@ -255,7 +258,7 @@ export async function registerOrganizationPhaseRoutes(app: FastifyInstance): Pro
       to,
     };
     if (exporting) reply.header("content-disposition", "attachment; filename=\"grant-ledger.json\"");
-    return listGrantLedger(app.db, request.params.id, request.admin!.id, exporting, filter);
+    return listGrantLedger(app.db, request.params.id, request.admin!.id, exporting, filter, request.admin!.organizationAccess);
   });
 
   app.get<{ Querystring: { environmentId?: string; entryId?: string; url?: string } }>("/api/v1/web-plugin-policy", async (request) => {

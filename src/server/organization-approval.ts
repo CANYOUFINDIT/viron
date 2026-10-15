@@ -7,6 +7,7 @@ import {
   freezeFeatureTargets,
   organizationResourceCatalog,
   roleState,
+  type OrganizationAccess,
 } from "./organization-rbac.js";
 import { RESOURCE_TYPE_LABELS, resourceKey, validAt, type ResourceCatalogItem, type ResourceRef } from "../shared/organization-rbac.js";
 import { serverNow } from "./organization-boundary.js";
@@ -314,15 +315,14 @@ async function activeMembers(db: EnvmanDatabase, org: string) {
 }
 
 async function projectTree(db: EnvmanDatabase, org: string) {
-  const projects = await db
+  const [projects, membership] = await Promise.all([db
     .prepare("SELECT id, parent_id FROM projects WHERE organization_id = ?")
-    .all<{ id: string; parent_id: string | null }>(org);
-  const membership = await db
+    .all<{ id: string; parent_id: string | null }>(org), db
     .prepare(
       `SELECT pm.project_id, pm.user_id FROM project_members pm
        JOIN projects p ON p.id = pm.project_id WHERE p.organization_id = ?`,
     )
-    .all<{ project_id: string; user_id: string }>(org);
+    .all<{ project_id: string; user_id: string }>(org)]);
   const descendants = (id: string) => {
     const ids = new Set<string>([id]);
     let grew = true;
@@ -363,9 +363,48 @@ function holdersForRole(
 }
 
 export async function roleHolderIds(db: EnvmanDatabase, org: string, roleId: string, now = serverNow()) {
-  const [state, members, tree] = await Promise.all([roleState(db, org, false), activeMembers(db, org), projectTree(db, org)]);
-  return holdersForRole(state, new Set(members.map(member => member.user_id)), tree, org, roleId, now);
+  return (await roleHoldersByRole(db, org, [roleId], now)).get(roleId) ?? [];
 }
+
+/** One membership/tree read for all roles, scoped to this read's permission snapshot. */
+export async function roleHoldersByRole(db: EnvmanDatabase, org: string, roleIds: string[], now = serverNow(), snapshot?: OrganizationAccess["state"]) {
+  if (!roleIds.length) return new Map<string, string[]>();
+  const [state, members, tree] = await Promise.all([snapshot ?? roleState(db, org, false), activeMembers(db, org), projectTree(db, org)]);
+  const memberIds = new Set(members.map(member => member.user_id));
+  return new Map([...new Set(roleIds)].map(id => [id, holdersForRole(state, memberIds, tree, org, id, now)]));
+}
+
+// Read-only, per invocation: concurrent/repeated rows share reads, never across requests or writes.
+function requestReadContext(db: EnvmanDatabase, org: string, snapshot: OrganizationAccess) {
+  const accesses = new Map<string, Promise<OrganizationAccess>>([[snapshot.userId, Promise.resolve(snapshot)]]);
+  const names = new Map<string, ReturnType<typeof accountNames>>();
+  let holders: ReturnType<typeof roleHoldersByRole> | undefined;
+  return {
+    snapshot,
+    accessFor(userId: string) {
+      let value = accesses.get(userId);
+      if (!value) {
+        value = loadOrganizationAccess(db, org, userId, snapshot.now, snapshot);
+        accesses.set(userId, value);
+      }
+      return value;
+    },
+    async holdersFor(roleId: string) {
+      holders ??= roleHoldersByRole(db, org, snapshot.state.roles.map(role => role.id), snapshot.now, snapshot.state);
+      return (await holders).get(roleId) ?? [];
+    },
+    namesFor(ids: string[]) {
+      const key = [...new Set(ids)].sort().join("\0");
+      let value = names.get(key);
+      if (!value) {
+        value = accountNames(db, ids);
+        names.set(key, value);
+      }
+      return value;
+    },
+  };
+}
+type RequestReadContext = ReturnType<typeof requestReadContext>;
 
 async function defaultFlowId(db: EnvmanDatabase, org: string) {
   const row = await db
@@ -466,24 +505,24 @@ async function flows(db: EnvmanDatabase, org: string) {
   }));
 }
 
-export async function listApprovalFlows(db: EnvmanDatabase, org: string) {
-  const catalog = await organizationResourceCatalog(db, org);
-  const items = await flows(db, org);
+export async function listApprovalFlows(db: EnvmanDatabase, org: string, requestAccess?: OrganizationAccess) {
+  const [catalog, items, state, members] = await Promise.all([
+    requestAccess?.catalog ?? organizationResourceCatalog(db, org),
+    flows(db, org),
+    requestAccess?.state ?? roleState(db, org, false),
+    db.prepare(`SELECT u.id, u.username, u.status FROM organization_members m
+       JOIN admin_users u ON u.id = m.user_id
+       WHERE m.organization_id = ? ORDER BY u.username, u.id`).all<{ id: string; username: string; status: string }>(org),
+  ]);
+  const catalogByKey = new Map(catalog.map(item => [resourceKey(item), item]));
   const owned = new Set(items.flatMap((item) => item.targets.map(resourceKey)));
   const named = (target: ResourceRef) => ({
     ...target,
-    name: catalog.find((item) => item.type === target.type && item.id === target.id)?.name ?? "",
+    name: catalogByKey.get(resourceKey(target))?.name ?? "",
   });
   const unassigned = catalog
     .filter((target) => !owned.has(resourceKey(target)))
     .map((target) => ({ type: target.type, id: target.id, name: target.name, environmentIds: target.environmentIds }));
-  const members = await db
-    .prepare(
-      `SELECT u.id, u.username, u.status FROM organization_members m
-       JOIN admin_users u ON u.id = m.user_id
-       WHERE m.organization_id = ? ORDER BY u.username, u.id`,
-    )
-    .all<{ id: string; username: string; status: string }>(org);
   return {
     items: items.map((item) => ({
       ...item,
@@ -493,7 +532,7 @@ export async function listApprovalFlows(db: EnvmanDatabase, org: string) {
     })),
     catalog: catalog.map((target) => ({ type: target.type, id: target.id, name: target.name, environmentIds: target.environmentIds })),
     unassigned,
-    roles: (await roleState(db, org)).roles.map((role) => ({ id: role.id, name: role.name, enabled: role.enabled })),
+    roles: state.roles.map((role) => ({ id: role.id, name: role.name, enabled: role.enabled })),
     members: members.map((member) => ({ id: member.id, username: member.username, status: member.status })),
   };
 }
@@ -704,11 +743,11 @@ function coversApproval(access: Awaited<ReturnType<typeof loadOrganizationAccess
 }
 
 /** Node membership is approve or reject on the current targets. Each decision still checks its own code. */
-async function approverCapabilities(db: EnvmanDatabase, org: string, userIds: string[], targets: ResourceRef[]) {
+async function approverCapabilities(db: EnvmanDatabase, org: string, userIds: string[], targets: ResourceRef[], read?: RequestReadContext) {
   const capabilities = new Map<string, { approve: boolean; reject: boolean }>();
   for (const userId of userIds) {
     if (capabilities.has(userId)) continue;
-    const access = await loadOrganizationAccess(db, org, userId);
+    const access = await (read ? read.accessFor(userId) : loadOrganizationAccess(db, org, userId));
     const approve = coversApproval(access, "approval.approve", targets);
     const reject = coversApproval(access, "approval.reject", targets);
     if (approve || reject) capabilities.set(userId, { approve, reject });
@@ -752,10 +791,14 @@ async function resolveNode(
 
 async function accountNames(db: EnvmanDatabase, userIds: string[]) {
   const names: Record<string, string> = {};
-  for (const userId of [...new Set(userIds)]) {
-    const row = await db.prepare("SELECT username FROM admin_users WHERE id = ?").get<{ username: string | null }>(userId);
-    const name = row?.username?.trim();
-    if (name) names[userId] = name;
+  const ids = [...new Set(userIds)];
+  for (let offset = 0; offset < ids.length; offset += 500) {
+    const batch = ids.slice(offset, offset + 500);
+    const rows = await db.prepare(`SELECT id, username FROM admin_users WHERE id IN (${batch.map(() => "?").join(",")})`).all<{ id: string; username: string | null }>(...batch);
+    for (const row of rows) {
+      const name = row.username?.trim();
+      if (name) names[row.id] = name;
+    }
   }
   return names;
 }
@@ -966,16 +1009,17 @@ async function grantBusinessBlock(
   snapshot: PermissionSnapshot,
   roleId: string | null,
   now: number,
+  read?: RequestReadContext,
 ) {
-  const member = await activeMember(db, org, requesterId);
+  const member = read ? (await read.accessFor(requesterId)).applies("user", requesterId) : await activeMember(db, org, requesterId);
   if (!member) return { code: "REQUESTER_INACTIVE" as const, message: "申请人已经不是有效组织成员" };
-  const catalog = await organizationResourceCatalog(db, org);
+  const catalog = read?.snapshot.catalog ?? await organizationResourceCatalog(db, org);
   if (snapshot.targets.some((target) => !catalog.some((item) => sameTarget(item, target))))
     return { code: "INVALID_RESOURCE" as const, message: "申请中的资源已经不存在" };
   if (kind !== "data") return null;
   if (!roleId) return { code: "ROLE_REQUIRED" as const, message: "数据申请缺少角色" };
-  const holders = await roleHolderIds(db, org, roleId, now);
-  const role = (await roleState(db, org)).roles.find((item) => item.id === roleId);
+  const holders = await (read ? read.holdersFor(roleId) : roleHolderIds(db, org, roleId, now));
+  const role = (read?.snapshot.state ?? await roleState(db, org)).roles.find((item) => item.id === roleId);
   if (!role?.enabled || !holders.includes(requesterId))
     return { code: "ROLE_NOT_HELD" as const, message: "申请人已经不再持有该角色，不能授予" };
   if ([...role.permissionCodes].sort().join("\0") !== snapshot.permissionCodes.join("\0") || holders.join("\0") !== snapshot.holderIds.join("\0"))
@@ -1061,7 +1105,7 @@ function flowOf(row: RequestRow) {
   return parse<{ flowId: string; flowName: string }>(row.workflow_snapshot_json, { flowId: "", flowName: "" });
 }
 
-async function stageState(db: EnvmanDatabase, org: string, row: RequestRow) {
+async function stageState(db: EnvmanDatabase, org: string, row: RequestRow, read?: RequestReadContext) {
   const nodes = nodesOf(row);
   const stage = Number(row.stage_index);
   const node = nodes[stage];
@@ -1082,7 +1126,7 @@ async function stageState(db: EnvmanDatabase, org: string, row: RequestRow) {
       canReject: [] as string[],
       passIds: [] as string[],
     };
-  const capabilities = human.has(node.mode) ? await approverCapabilities(db, org, node.resolvedApproverIds, targets) : null;
+  const capabilities = human.has(node.mode) ? await approverCapabilities(db, org, node.resolvedApproverIds, targets, read) : null;
   const qualified = capabilities ? node.resolvedApproverIds.filter((id) => capabilities.has(id)) : node.resolvedApproverIds;
   const canApprove = node.resolvedApproverIds.filter((id) => capabilities?.get(id)?.approve);
   const canReject = node.resolvedApproverIds.filter((id) => capabilities?.get(id)?.reject);
@@ -1096,7 +1140,7 @@ async function stageState(db: EnvmanDatabase, org: string, row: RequestRow) {
   const approvePaused =
     (node.mode === "all" || node.mode === "sequence") &&
     passIds.some((id) => !canApprove.includes(id) && !approved.has(id));
-  const business = await grantBusinessBlock(db, org, row.requester_id, row.kind, snapshotOf(row), row.role_id, serverNow());
+  const business = await grantBusinessBlock(db, org, row.requester_id, row.kind, snapshotOf(row), row.role_id, read?.snapshot.now ?? serverNow(), read);
   return {
     node,
     decisions,
@@ -1144,31 +1188,44 @@ export async function listGrantRequests(
   org: string,
   viewerId: string,
   view: "mine" | "todo" | "all",
+  options: { access?: OrganizationAccess; summary?: boolean } = {},
 ) {
+  const access = options.access ?? await loadOrganizationAccess(db, org, viewerId);
+  const read = requestReadContext(db, org, access);
+  const orgWideView = access.allows("approval.view");
+  if (view === "all" && !orgWideView && !access.catalog.some((item) => access.allows("approval.view", item)))
+    throw new OrganizationPermissionError("ACTION_FORBIDDEN", 403, "没有查看全部申请的权限");
   const rows = await db
     .prepare(
-      "SELECT * FROM organization_grant_requests WHERE organization_id = ? ORDER BY created_at DESC, id DESC",
+      `SELECT * FROM organization_grant_requests WHERE organization_id = ?${view === "mine" ? " AND requester_id = ?" : view === "todo" ? " AND status = 'pending'" : ""} ORDER BY created_at DESC, id DESC`,
     )
-    .all<RequestRow>(org);
+    .all<RequestRow>(...(view === "mine" ? [org, viewerId] : [org]));
   const selectorCache = new Map<string, Promise<RevisionCandidate[]>>();
-  const access = view === "all" ? await loadOrganizationAccess(db, org, viewerId) : null;
-  const orgWideView = access?.allows("approval.view") ?? false;
-  if (view === "all" && access && !orgWideView && !access.catalog.some((item) => access.allows("approval.view", item)))
-    throw new OrganizationPermissionError("ACTION_FORBIDDEN", 403, "没有查看全部申请的权限");
   const items = [];
   for (const row of rows) {
-    const state = await stageState(db, org, row);
     const mine = row.requester_id === viewerId;
     const stage = Number(row.stage_index);
-    const todo = currentNodePending(row.status, stage, state.paused, state.node, state.qualified, state.decisions, viewerId);
     if (view === "mine" && !mine) continue;
-    if (view === "todo" && !todo) continue;
+    if (view === "todo" && !nodesOf(row)[stage]?.resolvedApproverIds.includes(viewerId)) continue;
     if (view === "all" && !orgWideView) {
       const targets = snapshotOf(row).targets;
       const covered = targets.length > 0 && targets.every((target) => access?.allows("approval.view", target));
       if (!mine && !covered) continue;
     }
-    items.push(await presentRequest(db, org, row, viewerId, state, todo, selectorCache));
+    const state = await stageState(db, org, row, read);
+    const todo = currentNodePending(row.status, stage, state.paused, state.node, state.qualified, state.decisions, viewerId);
+    if (view === "todo" && !todo) continue;
+    if (options.summary) {
+      const shown = await shownRequestNames(db, org, row, snapshotOf(row), read);
+      const pauseReason = [state.paused || state.approvePaused ? state.reason : "", state.businessBlock].filter(Boolean).join("；");
+      items.push({
+        id: row.id, kind: row.kind, status: row.status, reason: row.reason,
+        flowId: flowOf(row).flowId, flowName: flowOf(row).flowName,
+        requesterId: row.requester_id, requesterName: shown.requesterName,
+        targets: shown.targets, paused: state.paused || state.approvePaused || Boolean(state.businessBlock),
+        pauseReason, blockReason: pauseReason || state.reason || "",
+      });
+    } else items.push(await presentRequest(db, org, row, viewerId, state, todo, selectorCache, read));
   }
   return { items };
 }
@@ -1180,7 +1237,7 @@ interface RevisionCandidate {
   canReject: boolean;
 }
 
-async function loadRevisionCandidates(db: EnvmanDatabase, org: string, targets: ResourceRef[]): Promise<RevisionCandidate[]> {
+async function loadRevisionCandidates(db: EnvmanDatabase, org: string, targets: ResourceRef[], read?: RequestReadContext): Promise<RevisionCandidate[]> {
   const members = await db
     .prepare(
       `SELECT u.id, u.username FROM organization_members m JOIN admin_users u ON u.id = m.user_id
@@ -1188,7 +1245,7 @@ async function loadRevisionCandidates(db: EnvmanDatabase, org: string, targets: 
     )
     .all<{ id: string; username: string }>(org);
   const unique = [...new Map(members.map((member) => [member.id, member])).values()];
-  const capabilities = await approverCapabilities(db, org, unique.map((member) => member.id), targets);
+  const capabilities = await approverCapabilities(db, org, unique.map((member) => member.id), targets, read);
   return unique.flatMap((member) => {
     const capability = capabilities.get(member.id);
     if (!capability) return [];
@@ -1203,11 +1260,12 @@ async function revisionCandidates(
   org: string,
   targets: ResourceRef[],
   cache: Map<string, Promise<RevisionCandidate[]>>,
+  read?: RequestReadContext,
 ) {
   const key = targets.map((target) => resourceKey(target)).sort().join("\n");
   const cached = cache.get(key);
   if (cached) return cached;
-  const loading = loadRevisionCandidates(db, org, targets);
+  const loading = loadRevisionCandidates(db, org, targets, read);
   cache.set(key, loading);
   return loading;
 }
@@ -1229,7 +1287,7 @@ async function requestLedger(db: EnvmanDatabase, org: string, requestId: string)
     .all<RequestLedgerRow>(org, requestId);
 }
 
-async function shownRequestNames(db: EnvmanDatabase, org: string, row: RequestRow, snapshot: PermissionSnapshot) {
+async function shownRequestNames(db: EnvmanDatabase, org: string, row: RequestRow, snapshot: PermissionSnapshot, read?: RequestReadContext) {
   const frozen = frozenDisplay(snapshot);
   if (frozen) {
     return {
@@ -1242,10 +1300,10 @@ async function shownRequestNames(db: EnvmanDatabase, org: string, row: RequestRo
     };
   }
   const [catalog, roles, holderNames, requesterNames] = await Promise.all([
-    organizationResourceCatalog(db, org),
-    row.role_id ? roleState(db, org) : Promise.resolve(null),
-    accountNames(db, snapshot.holderIds),
-    accountNames(db, [row.requester_id]),
+    read?.snapshot.catalog ?? organizationResourceCatalog(db, org),
+    row.role_id ? read?.snapshot.state ?? roleState(db, org) : Promise.resolve(null),
+    read ? read.namesFor(snapshot.holderIds) : accountNames(db, snapshot.holderIds),
+    read ? read.namesFor([row.requester_id]) : accountNames(db, [row.requester_id]),
   ]);
   return {
     namesFrozen: false,
@@ -1304,9 +1362,10 @@ async function presentRequest(
   state: Awaited<ReturnType<typeof stageState>>,
   todo: boolean,
   selectorCache: Map<string, Promise<RevisionCandidate[]>>,
+  read?: RequestReadContext,
 ) {
   const snapshot = snapshotOf(row);
-  const shown = await shownRequestNames(db, org, row, snapshot);
+  const shown = await shownRequestNames(db, org, row, snapshot, read);
   const nodes = nodesOf(row);
   const stageIndex = Number(row.stage_index);
   const current = row.status === "pending" ? state.node : undefined;
@@ -1322,7 +1381,7 @@ async function presentRequest(
     ...ledger.flatMap((item) => (item.actor_id && !String(item.actor_name ?? "").trim() ? [item.actor_id] : [])),
   ];
   const [capabilities, liveNames] = await Promise.all([
-    approverCapabilities(db, org, approverIds, snapshot.targets),
+    approverCapabilities(db, org, approverIds, snapshot.targets, read),
     accountNames(db, nameIds),
   ]);
   const live = new Map(Object.entries(liveNames));
@@ -1401,7 +1460,7 @@ async function presentRequest(
     rollbackTargets: canRollback
       ? nodes.slice(0, stageIndex).map((node, index) => ({ stageIndex: index, id: node.id, name: node.name, mode: node.mode }))
       : [],
-    revisionCandidates: (canTransfer || canAddSign ? await revisionCandidates(db, org, snapshot.targets, selectorCache) : [])
+    revisionCandidates: (canTransfer || canAddSign ? await revisionCandidates(db, org, snapshot.targets, selectorCache, read) : [])
       .filter((candidate) => current?.allowSelf === true || candidate.userId !== row.requester_id),
     canWithdraw: row.status === "pending" && row.requester_id === viewerId,
     version: Number(row.version),
@@ -1422,19 +1481,20 @@ async function requestParticipant(db: EnvmanDatabase, org: string, row: RequestR
   return Boolean(ledger);
 }
 
-export async function readGrantRequest(db: EnvmanDatabase, org: string, requestId: string, viewerId: string) {
+export async function readGrantRequest(db: EnvmanDatabase, org: string, requestId: string, viewerId: string, requestAccess?: OrganizationAccess) {
   const row = await db
     .prepare("SELECT * FROM organization_grant_requests WHERE organization_id = ? AND id = ?")
     .get<RequestRow>(org, requestId);
   if (!row) throw new OrganizationPermissionError("NOT_FOUND", 404, "申请不存在");
-  const state = await stageState(db, org, row);
+  const access = requestAccess ?? await loadOrganizationAccess(db, org, viewerId);
+  const read = requestReadContext(db, org, access);
+  const state = await stageState(db, org, row, read);
   const todo = currentNodePending(row.status, Number(row.stage_index), state.paused, state.node, state.qualified, state.decisions, viewerId);
-  const access = await loadOrganizationAccess(db, org, viewerId);
   const targets = snapshotOf(row).targets;
   const covered = access.allows("approval.view") || (targets.length > 0 && targets.every((target) => access.allows("approval.view", target)));
   if (row.requester_id !== viewerId && !todo && !covered && !(await requestParticipant(db, org, row, viewerId)))
     throw new OrganizationPermissionError("NOT_FOUND", 404, "申请不存在或无权查看");
-  return presentRequest(db, org, row, viewerId, state, todo, new Map());
+  return presentRequest(db, org, row, viewerId, state, todo, new Map(), read);
 }
 
 async function activeMember(db: EnvmanDatabase, org: string, userId: string) {
@@ -1836,8 +1896,9 @@ export async function listGrantLedger(
   viewerId: string,
   exporting = false,
   filter: GrantLedgerFilter = {},
+  requestAccess?: OrganizationAccess,
 ) {
-  const access = await loadOrganizationAccess(db, org, viewerId);
+  const access = requestAccess ?? await loadOrganizationAccess(db, org, viewerId);
   if (exporting && !access.allows("audit.export"))
     throw new OrganizationPermissionError("ACTION_FORBIDDEN", 403, "没有导出台账的权限");
   const orgWide = access.allows("audit.view") || access.allows("approval.view") || access.allows("authorization.view");

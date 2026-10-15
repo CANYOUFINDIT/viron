@@ -80,22 +80,38 @@ const base = computed(
   () => `/api/v1/organizations/${currentOrganizationId.value}`,
 );
 let sequence = 0;
+let catalogSequence = 0;
+let catalogOrganizationId = "";
+const catalogLoading = ref(false);
+async function loadCatalog(force = false) {
+  const organizationId = currentOrganizationId.value;
+  if (!force && catalogOrganizationId === organizationId) return;
+  const current = ++catalogSequence;
+  catalogLoading.value = true;
+  try {
+    const resources = await api<{ items: ResourceCatalogItem[] }>(`${base.value}/role-resource-catalog`);
+    if (current !== catalogSequence || organizationId !== currentOrganizationId.value) return;
+    catalog.value = resources.items;
+    catalogOrganizationId = organizationId;
+  } catch (cause) {
+    if (current === catalogSequence) error.value = cause instanceof Error ? cause.message : String(cause);
+  } finally {
+    if (current === catalogSequence) catalogLoading.value = false;
+  }
+}
 async function load() {
   const current = ++sequence;
   loading.value = true;
   error.value = "";
   try {
-    const [result, resources] = await Promise.all([
-      api<RoleAccessState>(base.value + "/role-access"),
-      api<{ items: ResourceCatalogItem[] }>(
-        base.value + "/role-resource-catalog",
-      ),
-    ]);
+    const result = await api<RoleAccessState>(base.value + "/role-access");
     if (current !== sequence) return;
     state.value = result;
-    catalog.value = resources.items;
     if (!result.roles.some((r) => r.id === selected.value))
       selected.value = result.roles[0]?.id ?? "";
+    loading.value = false;
+    catalogOrganizationId = "";
+    if (tab.value === "data") void loadCatalog(true);
     events.value = [];
     if (
       result.permissions &&
@@ -286,12 +302,17 @@ watch(pendingResourceGrant, (target) => {
   pendingResourceGrant.value = null;
 }, { immediate: true });
 watch(currentOrganizationId, () => {
+  catalogSequence++;
+  catalog.value = [];
+  catalogOrganizationId = "";
+  catalogLoading.value = false;
   selected.value = "";
   roleDialog.value = false;
   assignmentDialog.value = false;
   grantDialog.value = false;
   void load();
 });
+watch(tab, (value) => { if (value === "data") void loadCatalog(); });
 onMounted(load);
 watch(() => dataRevision?.value, () => void load());
 </script>
@@ -375,7 +396,7 @@ watch(() => dataRevision?.value, () => void load());
               >新增数据授权</el-button
             >
           </div>
-          <el-table :data="dataGrants" empty-text="暂无数据授权"
+          <el-table v-loading="catalogLoading" :data="dataGrants" empty-text="暂无数据授权"
             ><el-table-column label="资源" min-width="170"
               ><template #default="{ row }"
                 >{{ resourceName(row.target)
