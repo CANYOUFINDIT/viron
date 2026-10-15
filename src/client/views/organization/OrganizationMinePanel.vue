@@ -97,6 +97,8 @@ const dataSplit = ref<PendingSplit | null>(null);
 const featureSplit = ref<PendingSplit | null>(null);
 const detailId = ref("");
 const detailOpen = ref(false);
+const permissionsOpen = ref(false);
+const permissionDetail = ref<{ name: string; codes: string[]; resource?: string } | null>(null);
 
 const tab = computed(() => activePanel.value === "requests" || activePanel.value === "todo" ? activePanel.value : "mine");
 const requestRoles = computed(() => {
@@ -114,9 +116,14 @@ function openTab(next: "mine" | "requests" | "todo") {
   activePanel.value = next;
 }
 function period(startsAt: string | null, expiresAt: string | null) {
-  const start = startsAt ? new Date(startsAt).toLocaleString() : "立即";
-  const end = expiresAt ? new Date(expiresAt).toLocaleString() : "不限";
-  return `${start} 至 ${end}`;
+  return [
+    startsAt ? `生效 ${new Date(startsAt).toLocaleString()}` : "立即生效",
+    expiresAt ? `到期 ${new Date(expiresAt).toLocaleString()}` : "长期有效",
+  ];
+}
+function openPermissions(name: string, codes: string[], resource?: string) {
+  permissionDetail.value = { name, codes, resource };
+  permissionsOpen.value = true;
 }
 function scopeText(scope: ManagementScopeView) {
   if (scope.kind === "organization") return `组织${scope.includeChildren ? "，包含下级" : "，不含下级"}`;
@@ -171,6 +178,10 @@ async function load() {
   }
 }
 watch(() => [currentOrganizationId.value, tab.value, dataRevision?.value] as const, load, { immediate: true });
+watch(() => [currentOrganizationId.value, tab.value] as const, () => {
+  permissionsOpen.value = false;
+  permissionDetail.value = null;
+});
 watch(pendingResourceGrant, (target) => {
   if (!target) return;
   dataTargets.value = toggleResource(dataTargets.value, target, true);
@@ -277,22 +288,38 @@ function groupFlagText(group: ApprovalFlowGroup) {
       <template v-if="tab === 'mine'">
         <section>
           <h4>已分配角色</h4>
-          <div class="organization-table"><table><thead><tr><th>成员 / 子组织</th><th>角色</th><th>分配有效期 / 状态</th></tr></thead><tbody>
-            <tr v-for="role in access.roles" :key="role.id"><td><strong>{{ role.subjectName }}</strong><small>{{ sourceText(role.source, role.subjectName) }}</small></td><td><strong>{{ role.name }}</strong><small>{{ scopeText(role.managementScope) }}</small><RolePermissionList :codes="role.permissionCodes" /></td><td><span class="organization-status" :class="{ 'is-active': role.usable }">{{ capability(role.usable, role.invalidReason) }}</span><small>{{ period(role.startsAt, role.expiresAt) }}</small></td></tr>
-            <tr v-if="!access.roles.length"><td colspan="3" class="organization-table__empty">暂无角色</td></tr>
+          <div class="organization-table mine-access-table"><table aria-label="已分配角色">
+            <colgroup><col class="mine-access-table__subject"><col><col class="mine-access-table__validity"><col class="mine-access-table__action"></colgroup>
+            <thead><tr><th scope="col">成员 / 子组织</th><th scope="col">角色</th><th scope="col">分配有效期 / 状态</th><th scope="col">操作</th></tr></thead><tbody>
+            <tr v-for="role in access.roles" :key="role.id">
+              <td><strong>{{ role.subjectName }}</strong><small>{{ sourceText(role.source, role.subjectName) }}</small></td>
+              <td><strong>{{ role.name }}</strong><small>{{ scopeText(role.managementScope) }}</small><small>{{ role.permissionCodes.length }} 项操作权限</small></td>
+              <td><span class="organization-status" :class="{ 'is-active': role.usable }">{{ capability(role.usable, role.invalidReason) }}</span><small v-for="line in period(role.startsAt, role.expiresAt)" :key="line">{{ line }}</small></td>
+              <td><el-button link type="primary" :aria-label="`查看 ${role.name} 的操作权限`" @click="openPermissions(role.name, role.permissionCodes)">查看权限</el-button></td>
+            </tr>
+            <tr v-if="!access.roles.length"><td colspan="4" class="organization-table__empty">暂无角色</td></tr>
           </tbody></table></div>
         </section>
         <section>
           <h4>角色的数据授权</h4>
-          <div class="organization-table"><table><thead><tr><th>角色</th><th>授权资源</th><th>有效期 / 状态</th></tr></thead><tbody>
-            <tr v-for="grant in access.dataGrants" :key="grant.id"><td><strong>{{ grant.roleName }}</strong><small>{{ grant.sources.map(item => sourceText(item.source, item.subjectName)).join('、') }}</small></td><td><strong>{{ grant.target.name || '目标已删除' }}</strong><small>{{ RESOURCE_TYPE_LABELS[grant.target.type] }}</small><RolePermissionList v-if="grant.permissionCodes.length" :codes="grant.permissionCodes" /></td><td><span class="organization-status" :class="{ 'is-active': grant.usable }">{{ grant.usable ? '当前可操作' : (grant.invalidReason || '当前不可用') }}</span><small>{{ period(grant.startsAt, grant.expiresAt) }}</small></td></tr>
-            <tr v-if="!access.dataGrants.length"><td colspan="3" class="organization-table__empty">暂无数据授权</td></tr>
+          <div class="organization-table mine-access-table"><table aria-label="角色的数据授权">
+            <colgroup><col class="mine-access-table__role"><col><col class="mine-access-table__validity"><col class="mine-access-table__action"></colgroup>
+            <thead><tr><th scope="col">角色</th><th scope="col">授权资源</th><th scope="col">有效期 / 状态</th><th scope="col">操作</th></tr></thead><tbody>
+            <tr v-for="grant in access.dataGrants" :key="grant.id">
+              <td><strong>{{ grant.roleName }}</strong><small>{{ grant.sources.map(item => sourceText(item.source, item.subjectName)).join('、') }}</small></td>
+              <td><strong>{{ grant.target.name || '目标已删除' }}</strong><small>{{ RESOURCE_TYPE_LABELS[grant.target.type] }} · {{ grant.permissionCodes.length }} 项操作权限</small></td>
+              <td><span class="organization-status" :class="{ 'is-active': grant.usable }">{{ grant.usable ? '当前可操作' : (grant.invalidReason || '当前不可用') }}</span><small v-for="line in period(grant.startsAt, grant.expiresAt)" :key="line">{{ line }}</small></td>
+              <td><el-button link type="primary" :aria-label="`查看 ${grant.target.name || '目标已删除'} 的授权操作权限`" @click="openPermissions(grant.roleName, grant.permissionCodes, grant.target.name || '目标已删除')">查看权限</el-button></td>
+            </tr>
+            <tr v-if="!access.dataGrants.length"><td colspan="4" class="organization-table__empty">暂无数据授权</td></tr>
           </tbody></table></div>
         </section>
         <section>
           <h4>功能授权 · 环境与连接</h4>
-          <div class="organization-table"><table><thead><tr><th>成员 / 子组织</th><th>资源范围</th><th>允许的功能</th><th>有效期 / 状态</th></tr></thead><tbody>
-            <tr v-for="grant in access.featureGrants" :key="grant.id"><td><strong>{{ grant.subjectName }}</strong><small>{{ sourceText(grant.source, grant.subjectName) }}</small></td><td>{{ grant.targets.map(target => `${target.name || '目标已删除'}（${RESOURCE_TYPE_LABELS[target.type]}）`).join('、') }}</td><td>{{ featureText(grant.features) }}</td><td><span class="organization-status" :class="{ 'is-active': grant.usable }">{{ capability(grant.usable, grant.invalidReason) }}</span><small>{{ period(grant.startsAt, grant.expiresAt) }}</small></td></tr>
+          <div class="organization-table mine-access-table"><table aria-label="功能授权">
+            <colgroup><col class="mine-access-table__subject"><col><col class="mine-access-table__features"><col class="mine-access-table__validity"></colgroup>
+            <thead><tr><th scope="col">成员 / 子组织</th><th scope="col">资源范围</th><th scope="col">允许的功能</th><th scope="col">有效期 / 状态</th></tr></thead><tbody>
+            <tr v-for="grant in access.featureGrants" :key="grant.id"><td><strong>{{ grant.subjectName }}</strong><small>{{ sourceText(grant.source, grant.subjectName) }}</small></td><td><div v-for="target in grant.targets" :key="`${target.type}:${target.id}`" class="mine-access-table__target"><strong>{{ target.name || '目标已删除' }}</strong><small>{{ RESOURCE_TYPE_LABELS[target.type] }}</small></div></td><td>{{ featureText(grant.features) }}</td><td><span class="organization-status" :class="{ 'is-active': grant.usable }">{{ capability(grant.usable, grant.invalidReason) }}</span><small v-for="line in period(grant.startsAt, grant.expiresAt)" :key="line">{{ line }}</small></td></tr>
             <tr v-if="!access.featureGrants.length"><td colspan="4" class="organization-table__empty">暂无功能授权</td></tr>
           </tbody></table></div>
         </section>
@@ -394,6 +421,16 @@ function groupFlagText(group: ApprovalFlowGroup) {
             </article>
           </div>
         </form><template #footer><el-button @click="requestDialog = null">关闭</el-button></template></el-dialog>
+    <el-dialog v-model="permissionsOpen" title="操作权限" width="min(780px, calc(100% - 32px))" append-to-body align-center destroy-on-close class="envman-dialog">
+      <template v-if="permissionDetail">
+        <div class="mine-permission-detail">
+          <strong>{{ permissionDetail.name }}</strong>
+          <p v-if="permissionDetail.resource">授权资源：{{ permissionDetail.resource }}</p>
+        </div>
+        <RolePermissionList :codes="permissionDetail.codes" />
+      </template>
+      <template #footer><el-button @click="permissionsOpen = false">关闭</el-button></template>
+    </el-dialog>
     <GrantRequestDetail v-if="detailOpen && currentOrganizationId" v-model="detailOpen" :organization-id="currentOrganizationId" :request-id="detailId" @changed="load" />
   </section>
 </template>
@@ -421,4 +458,22 @@ article strong, article small, article p { display: block; }
 .mine-panel article small { margin-top: 5px; line-height: 1.6; }
 .mine-form { padding: 18px; border: 1px solid var(--color-rule); border-radius: 6px; background: var(--color-paper-raised); }
 .mine-duration { flex-wrap: wrap; }
+.mine-panel .mine-access-table table { table-layout: fixed; min-width: 720px; }
+.mine-access-table__subject { width: 22%; }
+.mine-access-table__role { width: 28%; }
+.mine-access-table__validity { width: 210px; }
+.mine-access-table__action { width: 100px; }
+.mine-access-table__features { width: 120px; }
+.mine-panel .mine-access-table :is(th, td) { line-height: 1.65; overflow-wrap: anywhere; }
+.mine-panel .mine-access-table td { vertical-align: middle; }
+.mine-panel .mine-access-table .organization-status { white-space: normal; }
+.mine-panel .mine-access-table .el-button { font-size: 12px; }
+.mine-panel .mine-access-table small { line-height: 1.6; }
+.mine-access-table__target + .mine-access-table__target { margin-top: 10px; }
+.mine-permission-detail { margin-bottom: 16px; overflow-wrap: anywhere; }
+.mine-permission-detail strong { font-size: 15px; font-weight: 600; color: var(--el-text-color-primary); }
+.mine-permission-detail p { margin: 6px 0 0; font-size: 12px; line-height: 1.6; color: var(--el-text-color-secondary); }
+@media (max-width: 700px) {
+  .mine-panel__heading { flex-direction: column; }
+}
 </style>
