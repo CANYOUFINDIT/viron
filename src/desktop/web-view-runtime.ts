@@ -7,9 +7,11 @@ import {
   Menu,
   BrowserWindow,
   session,
+  WebContentsView,
   type NativeImage,
   type Rectangle,
   type Session,
+  type WebContents,
 } from "electron";
 import {
   DESKTOP_WEB_PAGE_LIMIT,
@@ -60,6 +62,7 @@ import { endpointJson } from "./http-proxy.js";
 import { translate as tr } from "./i18n.js";
 import { sendToAgentChat } from "./overlays/agent-chat-window.js";
 import { closeBrowserGuests, createBrowserGuest, type BrowserPageHost } from "./browser-guest-host.js";
+import { createDesktopWebPopupWindow } from "./web-popup-window.js";
 import {
   immersiveNavigationState,
   sendImmersiveNavigationAction,
@@ -208,6 +211,7 @@ export interface ManagedDesktopWebPage {
 
 export interface IsolatedWebPluginPopup {
   window: BrowserWindow;
+  contents: WebContents;
   partition: Session;
   environmentId: string;
   entryId: string;
@@ -574,7 +578,7 @@ function configureDesktopWebPage(
   id = randomUUID(),
 ): ManagedDesktopWebPage {
   if (!mainWindow) throw new Error(tr("主窗口不可用"));
-  nativeView.webContents.setBackgroundThrottling(!view.visible && !view.previewing);
+  nativeView.webContents.setBackgroundThrottling(nativeView.kind === "guest" && !view.visible && !view.previewing);
   const page: ManagedDesktopWebPage = {
     id,
     view: nativeView,
@@ -698,17 +702,26 @@ function configureDesktopWebPage(
       outlivesOpener: true,
       overrideBrowserWindowOptions: { webPreferences: { ...desktopWebPreferences(view.partition), devTools: view.loginConfig.mode !== "locked" } },
       createWindow: (options) => {
-        // Preserve window.opener and script-created about:blank documents in a
-        // real page popup. App chrome is never moved into this document.
-        const popup = new BrowserWindow({ ...options, show: !process.argv.includes("--smoke-test"), width: 1000, height: 720 });
+        // Keep the popup's original webContents and window.opener. The shell
+        // window hosts a compact address bar above the page as a native view.
+        const targetContents = (options as Electron.WebContentsViewConstructorOptions).webContents;
+        if (!targetContents) {
+          const fallback = new BrowserWindow({ ...options, show: !process.argv.includes("--smoke-test"), width: 1000, height: 720 });
+          return fallback.webContents;
+        }
+        const popup = createDesktopWebPopupWindow(targetContents, options, !process.argv.includes("--smoke-test"));
         const popupHost: BrowserPageHost = {
-          kind: "window", webContents: popup.webContents,
-          setBounds() {}, getBounds: () => popup.getContentBounds(), setVisible() {},
-          focus: () => popup.focus(), dispose: () => { if (!popup.isDestroyed()) popup.destroy(); },
+          kind: "window",
+          webContents: targetContents,
+          setBounds() {},
+          getBounds: popup.pageBounds,
+          setVisible() {},
+          focus: () => popup.window.focus(),
+          dispose: popup.dispose,
         };
         const child = configureDesktopWebPage(view, false, popupHost);
-        popup.on("closed", () => { void removeDesktopWebPage(view, child.id, false); });
-        return popup.webContents;
+        popup.window.on("closed", () => { void removeDesktopWebPage(view, child.id, false); });
+        return targetContents;
       },
     };
   });
@@ -917,7 +930,7 @@ async function migratePopupToPolicyEnvironment(
 }
 
 function bindIsolatedPopupNavigation(view: ManagedDesktopWebView, popup: IsolatedWebPluginPopup): void {
-  const contents = popup.window.webContents;
+  const contents = popup.contents;
   contents.on("will-navigate", (event, url) => {
     if (!supportedDesktopWebUrl(url) || consumeApprovedOrganizationWebLoad(contents, url) || popup.closing || view.closing) return;
     event.preventDefault();
@@ -946,6 +959,7 @@ async function openCrossEnvironmentWebPopup(view: ManagedDesktopWebView, url: st
   const environmentKey = policy.environmentId || "unknown";
   const popup: IsolatedWebPluginPopup = {
     window: null as unknown as BrowserWindow,
+    contents: null as unknown as WebContents,
     partition: environmentKey === view.pluginEnvironmentId
       ? view.partition
       : session.fromPartition(desktopWebPartitionName(endpoint, view.ownerUserId, view.credentialId, environmentKey)),
@@ -965,12 +979,12 @@ async function openCrossEnvironmentWebPopup(view: ManagedDesktopWebView, url: st
     } else await suspendDesktopWebSessionExtensions(popup.partition);
   } else popup.allowExtensions = allowed && view.allowExtensions;
   if (view.closing) return;
-  popup.window = new BrowserWindow({
-    show: !process.argv.includes("--smoke-test"),
-    width: 1000,
-    height: 720,
+  const targetView = new WebContentsView({
     webPreferences: { ...desktopWebPreferences(popup.partition), devTools: view.loginConfig.mode !== "locked" },
   });
+  const popupWindow = createDesktopWebPopupWindow(targetView.webContents, { width: 1000, height: 720 }, !process.argv.includes("--smoke-test"), targetView);
+  popup.window = popupWindow.window;
+  popup.contents = popupWindow.target;
   view.isolatedPopups.push(popup);
   popup.window.on("closed", () => {
     popup.closing = true;
@@ -978,8 +992,8 @@ async function openCrossEnvironmentWebPopup(view: ManagedDesktopWebView, url: st
     releasePopupPartition(view, popup);
   });
   bindIsolatedPopupNavigation(view, popup);
-  approveOrganizationWebLoad(popup.window.webContents, url);
-  await popup.window.loadURL(url).catch(() => undefined);
+  approveOrganizationWebLoad(popup.contents, url);
+  await popup.contents.loadURL(url).catch(() => undefined);
 }
 
 async function applyCurrentWebPluginPolicy(view: ManagedDesktopWebView, url: string): Promise<void> {
@@ -995,8 +1009,8 @@ export async function syncOpenWebPluginPolicies(): Promise<void> {
   for (const view of open) {
     targets.push(pluginBinding(view));
     for (const popup of view.isolatedPopups) {
-      if (popup.closing || popup.window.isDestroyed()) continue;
-      const live = popup.window.webContents.getURL();
+      if (popup.closing || popup.window.isDestroyed() || popup.contents.isDestroyed()) continue;
+      const live = popup.contents.getURL();
       if (supportedDesktopWebUrl(live)) popup.currentUrl = live;
       targets.push(popupBinding(view, popup));
     }

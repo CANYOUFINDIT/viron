@@ -24,6 +24,12 @@ interface Window {
     onState(listener: (state: import("../shared/agent-floating-overlay").AgentFloatingOverlayState | null) => void): () => void;
     action(action: import("../shared/agent-floating-overlay").AgentFloatingOverlayAction): Promise<void>;
   };
+  vironWebPopup?: {
+    getState(): Promise<import("../shared/web-popup").DesktopWebPopupState>;
+    onState(listener: (state: import("../shared/web-popup").DesktopWebPopupState) => void): () => void;
+    onFocusAddress(listener: () => void): () => void;
+    action(action: import("../shared/web-popup").DesktopWebPopupAction): Promise<void>;
+  };
   vironDesktop?: {
     layoutDomOverlay(name: string, bounds: { x: number; y: number; width: number; height: number }, order: number, focus?: boolean): Promise<void>;
     hideDomOverlay(name: string): Promise<void>;
