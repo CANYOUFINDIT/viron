@@ -1,0 +1,119 @@
+/* Organization panels: shared tab bars and legacy list classes kept in the app's design language. */
+.organization-view .console-tabs {
+  display: flex;
+  gap: var(--space-lg);
+  min-height: 42px;
+  margin: 0 0 var(--space-md);
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--ink-100);
+  border-radius: 0;
+  background: transparent;
+  overflow-x: auto;
+}
+.organization-view .console-tabs button {
+  flex-shrink: 0;
+  min-height: 42px;
+  padding: 0 2px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink-400);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  font-weight: 650;
+  white-space: nowrap;
+  transition: color var(--dur-micro) var(--ease-out);
+}
+.organization-view .console-tabs button:hover { color: var(--ink-800); }
+.organization-view .console-tabs button.is-active { color: var(--ink-900); box-shadow: inset 0 -2px 0 var(--ink-900); }
+.organization-view .console-tabs button:focus-visible { outline: 2px solid var(--teal-500); outline-offset: 1px; }
+
+.organization-view .resource-client-tabs { gap: var(--space-md); }
+.organization-view .resource-client-tabs button { gap: 7px; padding-inline: 2px; }
+.organization-view .organization-resource-browser { min-width: 0; }
+.organization-view .organization-resource-browser button { cursor: pointer; }
+
+.organization-view .mine-tabs { gap: var(--space-lg); }
+
+.organization-view .organization-eyebrow {
+  margin-block-end: var(--space-2xs);
+  color: var(--teal-600);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 800;
+  letter-spacing: .12em;
+}
+
+.organization-view .organization-table { overflow-x: auto; border: 1px solid var(--ink-100); border-radius: var(--radius-control); background: var(--surface); }
+.organization-view .organization-table table { width: 100%; min-width: 640px; border-collapse: collapse; text-align: left; }
+.organization-view .organization-table th { padding: 10px 14px; border-bottom: 1px solid var(--ink-100); background: var(--ink-50); color: var(--ink-500); font-size: var(--text-2xs); font-weight: 600; }
+.organization-view .organization-table td { padding: 12px 14px; border-bottom: 1px solid var(--ink-100); color: var(--ink-700); font-size: var(--text-xs); vertical-align: top; }
+.organization-view .organization-table tr:last-child td { border-bottom: 0; }
+.organization-view .organization-table td strong { display: block; color: var(--ink-900); font-weight: 600; }
+.organization-view .organization-table td small { display: block; margin-top: 3px; color: var(--ink-400); font-size: var(--text-2xs); }
+.organization-view .organization-table__empty { padding: 24px !important; color: var(--ink-400); text-align: center; }
+
+.organization-view .organization-status { display: inline-block; padding: 2px 7px; border-radius: 999px; background: var(--amber-100); color: var(--amber-600); font-size: var(--text-2xs); }
+.organization-view .organization-status.is-active { background: var(--teal-50); color: var(--teal-700); }
+
+.organization-view .approval-targets { margin-top: 5px; font-size: var(--text-2xs); }
+.organization-view .approval-targets summary { color: var(--teal-700); cursor: pointer; }
+.organization-view .approval-targets ul { margin: 0; padding: var(--space-xs) 0 0; max-height: 220px; overflow: auto; list-style: none; }
+.organization-view .approval-targets li { margin-bottom: 6px; color: var(--ink-500); }
+.organization-view .approval-flow-actions { white-space: nowrap; }
+
+@media (max-width: 42.5rem) {
+  .organization-view .console-tabs { gap: var(--space-md); }
+}
+
+/* Panels were authored for a full-width workspace; they follow the detail card width now. */
+.organization-view .directory-panel { min-width: 0; }
+.organization-view .data-list { max-width: 100%; overflow-x: auto; }
+.organization-view .mine-panel__actions { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-xs); flex-shrink: 0; }
+.organization-view .mine-panel__actions .el-button + .el-button { margin-inline-start: 0; }
+
+/* The platform page is always a single column inside the organization detail card:
+   the account directory needs the full card width, the composer stays compact. */
+.organization-view .platform-workspace { grid-template-columns: minmax(0, 1fr); }
+.organization-view .composer-card { max-width: 420px; }
+
+@container (max-width: 820px) {
+  .organization-view .data-list--users .data-list__head,
+  .organization-view .data-list--users .data-list__row {
+    grid-template-columns: minmax(110px, 1fr) 78px 44px 76px 146px;
+    gap: var(--space-xs);
+    padding-inline: var(--space-sm);
+    min-width: 0;
+  }
+  .organization-view .data-list--users .row-actions { justify-content: flex-end; }
+}
+.organization-view .data-list__row > span { min-width: 0; }
+.organization-view .data-list__row .member-identity strong,
+.organization-view .data-list__row > span > strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Six resource entries must fit one line inside the detail card. Keep the shared 14px
+   tab type and drop the per-tab count badge (the count stays in the filter bar and
+   each resource section) so the labels never clip. */
+@container (max-width: 900px) {
+  .organization-view .resource-client-tabs { gap: 6px; }
+  .organization-view .resource-client-tabs button small { display: none; }
+  .organization-view .resource-client-tabs button svg { width: 14px; height: 14px; }
+}
+
+/* Element Plus tabs (roles panel) follow the same tab language as every other org tab bar. */
+.organization-view .role-detail .el-tabs__nav-wrap::after { height: 1px; background-color: var(--ink-100); }
+.organization-view .role-detail .el-tabs__item { color: var(--ink-400); font-weight: 650; }
+.organization-view .role-detail .el-tabs__item:hover { color: var(--ink-800); }
+.organization-view .role-detail .el-tabs__item.is-active { color: var(--ink-900); }
+.organization-view .role-detail .el-tabs__active-bar { height: 2px; background-color: var(--ink-900); }
+
+/* Legacy .data-list tables share the .organization-table type scale. */
+.organization-view .data-list .data-list__head { min-height: 40px; border-bottom: 1px solid var(--ink-100); background: var(--ink-50); color: var(--ink-500); font-size: var(--text-2xs); font-weight: 600; letter-spacing: 0; }
+.organization-view .data-list .data-list__row { border-bottom: 1px solid var(--ink-100); color: var(--ink-700); font-size: var(--text-xs); }
+.organization-view .data-list .member-identity strong { font-size: var(--text-xs); font-weight: 600; }
+.organization-view .data-list .member-identity small { font-size: var(--text-2xs); }

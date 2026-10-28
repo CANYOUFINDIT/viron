@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { Building2, ChevronDown, History, KeyRound, Layers, Network, Plus, ShieldCheck, Link2, RefreshCw } from "@lucide/vue";
+import { Building2, History, KeyRound, Layers, Network, Plus, ShieldCheck } from "@lucide/vue";
 import { nameInitials } from "../../../shared/name-initials";
 import { useOrganizationContext } from "./context";
 import { STRUCTURE_TREE_MAX, STRUCTURE_TREE_MIN, STRUCTURE_TREE_TEXT_MIN, STRUCTURE_TREE_WIDTH_KEY, clampStructureTreeWidth, preferredStructureTreeWidth, settleStructureTreeWidth } from "./structure-tree-width";
 const emit = defineEmits<{ openPanel: [panel: "structure" | "resources" | "roles" | "approval" | "mine" | "platform"] }>();
-const { activePanel, activateWorkspace, organizations, createOrganizationDialog, joinOrganizationDialog, synchronize, loading, canManageOrganization, detail, openCreateProject, selectedNode, session, structureTree } = useOrganizationContext();
+const { activePanel, canManageOrganization, detail, openCreateProject, selectedNode, session, structureTree } = useOrganizationContext();
 const personal = computed(() => ["mine", "requests", "todo"].includes(activePanel.value));
 const maintenance = [
   { id: "resources", label: "资源总览", icon: Layers },
@@ -125,20 +125,13 @@ onBeforeUnmount(() => {
 </script>
 <template>
   <aside ref="workbenchElement" class="organization-navigation structure-tree" :class="{ 'is-avatar-rail': avatarRail }" :style="workbenchStyle" aria-label="组织导航">
-    <div class="organization-navigation__workspace">
-      <div class="organization-navigation__wordmark">viron<span>.</span></div>
-      <el-dropdown trigger="click" placement="bottom-start" popper-class="organization-workspace-menu">
-        <button class="organization-workspace-trigger" type="button" aria-label="组织工作空间选项"><Building2 :size="16" /><span>{{ detail?.organization.name || (session.workspace?.type === 'organization' ? session.workspace.name : '选择组织') }}</span><ChevronDown :size="14" /></button>
-        <template #dropdown><el-dropdown-menu>
-          <el-dropdown-item v-for="organization in organizations" :key="organization.id" @click="activateWorkspace({ type: 'organization', id: organization.id, name: organization.name, role: organization.role })">{{ organization.name }}</el-dropdown-item>
-          <el-dropdown-item v-for="workspace in session.workspaces.filter(item => item.type === 'personal')" :key="`personal:${workspace.id}`" divided @click="activateWorkspace(workspace)">{{ session.user?.username }} 的个人空间</el-dropdown-item>
-          <el-dropdown-item divided><el-button text @click="joinOrganizationDialog = true"><Link2 :size="15" />加入组织</el-button></el-dropdown-item>
-          <el-dropdown-item><el-button text aria-label="创建组织" @click="createOrganizationDialog = true"><Plus :size="15" />创建组织</el-button></el-dropdown-item>
-          <el-dropdown-item><el-button text :loading="loading" @click="synchronize"><RefreshCw :size="15" />同步数据</el-button></el-dropdown-item>
-        </el-dropdown-menu></template>
-      </el-dropdown>
-      <small>{{ detail ? '组织工作空间' : '组织管理' }}</small>
-    </div>
+    <header class="organization-navigation__workspace">
+      <span class="organization-navigation__workspace-icon"><Building2 :size="16" /></span>
+      <span class="organization-navigation__workspace-copy">
+        <strong>{{ detail?.organization.name || (session.workspace?.type === 'organization' ? session.workspace.name : '选择组织') }}</strong>
+        <small>{{ detail ? '组织工作空间' : '组织管理' }}</small>
+      </span>
+    </header>
     <div class="organization-navigation__body">
       <template v-if="detail">
         <button class="organization-navigation__mine" :class="{ 'is-active': personal }" type="button" aria-label="我的授权、申请与待办" :aria-current="personal ? 'page' : undefined" @click="emit('openPanel', 'mine')">
@@ -166,4 +159,5 @@ onBeforeUnmount(() => {
     <button class="structure-tree-resizer" type="button" role="separator" aria-orientation="vertical" aria-label="调整组织导航宽度" :aria-valuemin="STRUCTURE_TREE_MIN" :aria-valuemax="STRUCTURE_TREE_MAX" :aria-valuenow="treeWidth" @pointerdown="startTreeResize" @keydown.left.prevent="nudgeTreeWidth(-20)" @keydown.right.prevent="nudgeTreeWidth(20)"><span></span></button>
   </aside>
 </template>
+
 <style scoped src="./organization-navigation.css"></style>

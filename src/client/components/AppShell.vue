@@ -50,10 +50,9 @@ const desktop = isDesktopApp();
 const macosDesktop = desktop && /Macintosh|Mac OS X/.test(navigator.userAgent);
 const immersive = ref(sessionStorage.getItem("envman-immersive-mode") === "1");
 const standardSidebarPinned = ref(!window.matchMedia("(max-width: 900px)").matches);
-const organizationSidebarPinned = ref(false);
 const sidebarPinned = computed({
-  get: () => route.name === "organization" ? organizationSidebarPinned.value : standardSidebarPinned.value,
-  set: (value: boolean) => { if (route.name === "organization") organizationSidebarPinned.value = value; else standardSidebarPinned.value = value; },
+  get: () => standardSidebarPinned.value,
+  set: (value: boolean) => { standardSidebarPinned.value = value; },
 });
 const sidebarHoverOpen = ref(false);
 const sidebarExpanded = computed(() => sidebarPinned.value || sidebarHoverOpen.value);
@@ -196,7 +195,6 @@ function toggleSidebar() {
 }
 
 function canHoverExpandSidebar() {
-  if (route.name === "organization") return false;
   return !window.matchMedia("(max-width: 900px)").matches && !window.matchMedia("(hover: none)").matches;
 }
 
@@ -333,11 +331,11 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="app-frame" :class="{ 'is-immersive': immersive, 'is-sidebar-expanded': sidebarExpanded, 'is-sidebar-pinned': sidebarPinned, 'is-desktop': desktop, 'is-macos-desktop': macosDesktop, 'is-organization-workspace': route.name === 'organization' }">
+  <div class="app-frame" :class="{ 'is-immersive': immersive, 'is-sidebar-expanded': sidebarExpanded, 'is-sidebar-pinned': sidebarPinned, 'is-desktop': desktop, 'is-macos-desktop': macosDesktop }">
     <aside class="app-sidebar" :aria-label="$t('应用导航')" @pointerenter="onSidebarPointerEnter" @pointerleave="onSidebarPointerLeave">
       <div class="app-sidebar__panel">
         <button class="brand-lockup" type="button" :aria-label="$t('打开环境总览')" :title="$t('Viron 环境运维平台')" @click="activateMenuItem('overview')">
-          <span class="brand-mark"><svg v-if="route.name === 'organization'" viewBox="0 0 32 32" aria-hidden="true"><path d="M5 7l10 18L27 7M10 7l6 10 6-10" /></svg><img v-else :src="vironLogoUrl" alt="" /></span>
+          <span class="brand-mark"><img :src="vironLogoUrl" alt="" /></span>
           <span class="brand-copy sidebar-label"><strong>Viron</strong><small>{{ $t('环境运维平台') }}</small></span>
         </button>
 
@@ -483,7 +481,7 @@ onBeforeUnmount(() => {
 
     <section class="app-surface">
       <header v-if="desktop" class="desktop-window-header" :aria-label="$t('窗口标题栏')"></header>
-      <main class="app-content" :class="{ 'is-workbench-page': isWorkbenchPage, 'is-organization-page': route.name === 'organization' }">
+      <main class="app-content" :class="{ 'is-workbench-page': isWorkbenchPage }">
         <slot />
       </main>
     </section>

@@ -34,12 +34,12 @@ function showMember(id: string) { inspectedMember.value = detail.value?.members.
                   <div v-if="selectedNode.type === 'organization'">
                     <small>组织架构 / 整个组织</small>
                     <h1>{{ detail.organization.name }}</h1>
-                    <p>{{ detail.organization.description || '—' }}</p>
+                    <p v-if="detail.organization.description">{{ detail.organization.description }}</p>
                   </div>
                   <div v-else-if="selectedProject">
                     <small>组织架构 / 子组织</small>
                     <h1>{{ selectedProject.name }}</h1>
-                    <p>{{ selectedProject.description || '—' }}</p>
+                    <p v-if="selectedProject.description">{{ selectedProject.description }}</p>
                   </div>
                   <div v-else-if="selectedMember">
                     <small>{{ $t('组织成员') }}</small>

@@ -608,8 +608,7 @@ async function verifySettings(page, baseUrl) {
 async function verifyOrganization(page, baseUrl) {
   await page.goto(`${baseUrl}/organization`, { waitUntil: "domcontentloaded" });
   await expectVisible(page.locator(".organization-view"), "组织管理页");
-  await page.getByRole("button", { name: "组织工作空间选项", exact: true }).click();
-  await page.getByRole("button", { name: "创建组织", exact: true }).click();
+  await page.locator(".page-header__actions").getByRole("button", { name: "创建组织", exact: true }).click();
   const organizationDialog = page.getByRole("dialog", { name: "创建新组织" });
   await expectVisible(organizationDialog, "创建组织对话框");
   await organizationDialog.getByPlaceholder("例如：基础架构团队").fill(organizationName);
@@ -641,8 +640,10 @@ async function verifyOrganization(page, baseUrl) {
   assert.match(await invitationLink.inputValue(), /\/join\//, "邀请链接格式错误");
   await invitationDialog.getByRole("button", { name: "关闭", exact: true }).click();
 
-  await page.getByRole("button", { name: "组织工作空间选项", exact: true }).click();
-  await page.locator(".organization-workspace-menu").getByRole("menuitem", { name: `${adminUsername} 的个人空间` }).click();
+  await page.locator(".workspace-switcher__trigger").click();
+  await page.locator(".workspace-switcher-popper").getByRole("menuitem", { name: `${adminUsername} 的个人空间` }).click();
+  await page.waitForLoadState("domcontentloaded");
+  await page.goto(`${baseUrl}/organization`, { waitUntil: "domcontentloaded" });
   await expectVisible(page.locator(".organization-card-grid"), "个人空间的组织目录");
   await page.locator("#envman-primary-menu").getByRole("button", { name: "组织与用户", exact: true }).click();
   await page.locator(".organization-navigation").getByRole("button", { name: "平台账号", exact: true }).click();

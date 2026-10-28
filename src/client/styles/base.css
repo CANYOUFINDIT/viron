@@ -5224,16 +5224,3 @@ button { color: inherit; }
   background: var(--viron-menu-hover);
   color: var(--viron-menu-danger);
 }
-
-.app-content.is-organization-page { padding: 0; background: var(--color-paper-muted); }
-
-.app-frame.is-organization-workspace { --app-sidebar-collapsed-width: 66px; }
-.is-organization-workspace .app-sidebar__panel { background: #172b26; background-image: none; border-right-color: #21392f; box-shadow: none; }
-.is-organization-workspace .brand-lockup { background: transparent; border-bottom: 0; }
-.is-organization-workspace .brand-mark img { filter: brightness(0) saturate(100%) invert(86%) sepia(13%) saturate(466%) hue-rotate(102deg) brightness(90%) contrast(92%); }
-.is-organization-workspace .workspace-switcher { display: none; }
-.is-organization-workspace .primary-menu { padding-top: 22px; }
-.is-organization-workspace .primary-menu__item { color: #a2b7ad; border: 0; }
-.is-organization-workspace .primary-menu__item.is-active { color: #b3dfc4; background: #335742; }
-
-.is-organization-workspace .brand-mark svg { width: 32px; height: 32px; fill: none; stroke: #b4dfc4; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }

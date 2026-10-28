@@ -125,15 +125,17 @@ describe("collapsed sidebar hover expand", () => {
     vi.restoreAllMocks();
   });
 
-  it("keeps the organization rail collapsed on hover and preserves the other pages' sidebar preference", async () => {
+  it("keeps the organization route on the standard pinned sidebar and re-expands it on hover", async () => {
     mockMatchMedia();
     const wrapper = await mountShell(vi.fn(), vi.fn());
     await wrapper.vm.$router.push("/organization");
     await flushPromises();
+    expect(wrapper.get(".app-frame").classes()).toContain("is-sidebar-expanded");
+
+    await wrapper.get(".sidebar-toggle").trigger("click");
     expect(wrapper.get(".app-frame").classes()).not.toContain("is-sidebar-expanded");
+
     await wrapper.get(".app-sidebar").trigger("pointerenter");
-    expect(wrapper.get(".app-frame").classes()).not.toContain("is-sidebar-expanded");
-    await wrapper.vm.$router.push("/");
     await flushPromises();
     expect(wrapper.get(".app-frame").classes()).toContain("is-sidebar-expanded");
     wrapper.unmount();
