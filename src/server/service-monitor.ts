@@ -814,6 +814,7 @@ export async function pollMonitorHostsOnce(app: FastifyInstance, shouldStop: () 
 }
 
 export function startMonitorHostPuller(app: FastifyInstance, tickMs = 10_000): () => Promise<void> {
+  if (app.config.monitorPullEnabled === false) return async () => {};
   let polling = false;
   let stopped = false;
   let currentPoll = Promise.resolve();

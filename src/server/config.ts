@@ -30,6 +30,7 @@ export interface AppConfig {
   connectionIdleMinutes?: number;
   userConnectionLimit?: number;
   auditRetentionDays: number;
+  monitorPullEnabled?: boolean;
   monitorPullIntervalSeconds?: number;
   monitorStoragePolicy?: Partial<MonitorStoragePolicy>;
   apiRateLimit?: ApiRateLimitSettings;
@@ -159,6 +160,7 @@ export function loadConfig(): AppConfig {
     connectionIdleMinutes: positiveInteger(process.env.CONNECTION_IDLE_MINUTES ?? process.env.TERMINAL_IDLE_MINUTES, 30),
     userConnectionLimit: positiveInteger(process.env.USER_CONNECTION_LIMIT, 30),
     auditRetentionDays: positiveInteger(process.env.AUDIT_RETENTION_DAYS, 30),
+    monitorPullEnabled: booleanValue("VIRON_MONITOR_PULL_ENABLED", true),
     monitorPullIntervalSeconds: Math.min(3600, Math.max(10, positiveInteger(process.env.VIRON_MONITOR_PULL_INTERVAL_SECONDS, 60))),
     monitorStoragePolicy: Object.fromEntries(Object.entries(defaultMonitorStoragePolicy).map(([key, fallback]) => {
       const name = `VIRON_MONITOR_STORAGE_${key.replace(/[A-Z]/g, letter => `_${letter}`).toUpperCase()}`;

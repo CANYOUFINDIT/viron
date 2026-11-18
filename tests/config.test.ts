@@ -9,6 +9,7 @@ const managedKeys = [
   "DATA_DIR",
   "DATABASE_HOST",
   "VIRON_SERVER_EDITION",
+  "VIRON_MONITOR_PULL_ENABLED",
   "WEB_CLIENT_ENABLED",
   "VIRON_MCP_ENABLED",
   "CONNECTION_IDLE_MINUTES",
@@ -34,6 +35,14 @@ function freshDataDirectory(): string {
 }
 
 describe("runtime configuration", () => {
+  it("enables background monitor pulls by default and supports disabling them", () => {
+    freshDataDirectory();
+    delete process.env.VIRON_MONITOR_PULL_ENABLED;
+    expect(loadConfig().monitorPullEnabled).toBe(true);
+    process.env.VIRON_MONITOR_PULL_ENABLED = "false";
+    expect(loadConfig().monitorPullEnabled).toBe(false);
+  });
+
   it("keeps a login session valid for 45 days by default", () => {
     freshDataDirectory();
     delete process.env.SESSION_TTL_HOURS;
